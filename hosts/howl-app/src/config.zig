@@ -33,6 +33,8 @@ pub const Profile = struct {
     environment: []const Environment = &.{},
     font_pixels: i32 = 0,
 };
+/// Saved tab sizing policy; fitted titles remain bounded by available caption space.
+pub const TabWidth = enum { fixed, fit };
 /// Strict Local-only saved configuration; no remote route vocabulary.
 pub const Schema = struct {
     schema: i16 = 0,
@@ -45,6 +47,7 @@ pub const Schema = struct {
     terminal_theme: []const u8 = "howl_dark",
     terminal_colors: colors.TerminalColors = .{},
     hide_single_tab: bool = false,
+    tab_width: TabWidth = .fixed,
     discover_shells: bool = false,
     discover_ssh_hosts: bool = false,
     font: Font = .{},

@@ -74,7 +74,19 @@ pub const Range = struct {
             .context_changed => return error.SelectionContextChanged,
             .evicted => return error.SelectionEvicted,
         }
-        return observation.copyText(allocator, self.ordered(), max_bytes);
+        var range = self.ordered();
+        const live = observation.semanticView(0);
+        if (!live.is_alternate_screen) {
+            if (try textEnd(live)) |end| {
+                if (after(range.end, end)) range.end = end;
+            } else {
+                const first = try Context.fromView(live).row(0);
+                if (range.start.row >= first) return &.{};
+                range.end = .{ .row = first - 1, .col = live.cols - 1 };
+            }
+            if (after(range.start, range.end)) return &.{};
+        }
+        return observation.copyText(allocator, range, max_bytes);
     }
     /// Paints text-shaped spans, including a hard newline cell and the complete final wide glyph.
     pub fn paint(self: Range, view: vt.SemanticView, serial: u64) !Paint {
@@ -82,11 +94,17 @@ pub const Range = struct {
         if (view.rows > result.spans.len) return error.InvalidSelection;
         const context = Context.fromView(view);
         if (self.validity(context) != .valid) return result;
-        const range = self.ordered();
+        var range = self.ordered();
+        const end = if (!view.is_alternate_screen and view.history_offset == 0) (try textEnd(view)) else null;
+        if (!view.is_alternate_screen and view.history_offset == 0 and end == null) return result;
+        if (end) |last| {
+            if (after(range.end, last)) range.end = last;
+            if (after(range.start, range.end)) return result;
+        }
         for (0..view.rows) |index| {
             const row_index: u16 = @intCast(index);
             const absolute = try context.row(row_index);
-            if (absolute < range.start.row or absolute > range.end.row) continue;
+            if (absolute < range.start.row or absolute > range.end.row or (end != null and absolute > end.?.row)) continue;
             const first = if (absolute == range.start.row) range.start.col else 0;
             var last = if (absolute == range.end.row) range.end.col else view.cols - 1;
             if (absolute == range.end.row) {
@@ -107,6 +125,34 @@ pub const Range = struct {
         return result;
     }
 };
+fn after(a: vt.TextPoint, b: vt.TextPoint) bool {
+    return a.row > b.row or (a.row == b.row and a.col > b.col);
+}
+/// Last actual glyph in this projected view, independent of the cursor position.
+pub fn textEnd(view: vt.SemanticView) error{InvalidSelection}!?vt.TextPoint {
+    var row_index = view.rows;
+    while (row_index != 0) {
+        row_index -= 1;
+        const end = rowContentEnd(view, row_index);
+        if (end != 0) return try point(view, row_index, end - 1);
+    }
+    return null;
+}
+/// Primary live padding cannot start a selection; interior blank rows remain selectable.
+pub fn canStart(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!bool {
+    if (view.is_alternate_screen or view.history_offset != 0) return true;
+    const end = (try textEnd(view)) orelse return false;
+    const value = try point(view, row_index, column);
+    return !after(value, end);
+}
+/// A drag into unused live rows stops at the last actual glyph.
+pub fn dragPoint(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!vt.TextPoint {
+    const value = try point(view, row_index, column);
+    if (!view.is_alternate_screen and view.history_offset == 0) {
+        if (try textEnd(view)) |end| if (after(value, end)) return end;
+    }
+    return value;
+}
 /// Resolves one visible cell or continuation to stable canonical lead identity.
 pub fn point(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!vt.TextPoint {
     if (row_index >= view.rows or column >= view.cols) return error.InvalidSelection;
@@ -234,4 +280,30 @@ test "canonical word and visual-row selection preserve graphemes soft wraps and 
     try std.testing.expectEqualStrings("r \xe7\x95\x8cz", line_text);
     try std.testing.expect((try word(view, 0, 3)) == null);
     try std.testing.expect((try visualRow(view, 3)) == null);
+}
+
+test "prompt selection excludes unused live padding but retains interior blank rows and wide glyphs" {
+    var terminal = try vt.init(std.testing.allocator, 6, 20);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: This selection proof checks canonical text and overlay spans instead of parser progress counters.
+    _ = try terminal.feed("first\r\n\r\nwide: 界\r\nprompt> ");
+    const view = terminal.semanticView(0);
+    try std.testing.expect(!(try canStart(view, 5, 0)));
+    try std.testing.expect(!(try canStart(view, 3, 19)));
+    try std.testing.expect(try canStart(view, 1, 0));
+    var selected = try start(view, 0, 0);
+    selected.focus = try point(view, 5, 19);
+    const text = try selected.copy(terminal.observation(), std.testing.allocator, 128);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("first\n\nwide: 界\nprompt>", text);
+    const paint = try selected.paint(view, 1);
+    try std.testing.expect(paint.spans[1] != null);
+    try std.testing.expect(paint.spans[4] == null and paint.spans[5] == null);
+    try std.testing.expectEqual(try textEnd(view), try dragPoint(view, 5, 19));
+    // A prompt cursor at the top does not hide real text farther down.
+    // zig-audit: acknowledge discard
+    // reason: The assertions inspect content after cursor-only movement, not parser counters.
+    _ = try terminal.feed("\x1b[H");
+    try std.testing.expect(try canStart(terminal.semanticView(0), 3, 0));
 }

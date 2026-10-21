@@ -19,6 +19,8 @@ pub const Route = union(enum) { handled, overlay, command: mappings.Target };
 pub const Keyboard = struct {
     held: [c.SDL_SCANCODE_COUNT]Held = @splat(.{}),
     suppress_text: bool = false,
+    pending_text: ?c.SDL_Scancode = null,
+    pending_repeat: bool = false,
 
     /// Routes one key lifecycle to its original owner, regardless of later modifier state.
     pub fn route(
@@ -32,6 +34,7 @@ pub const Keyboard = struct {
         if (event.scancode >= self.held.len) return .handled;
         const entry = &self.held[event.scancode];
         if (!press) {
+            if (self.pending_text == event.scancode) self.pending_text = null;
             const previous = entry.*;
             entry.* = .{};
             if (previous.kind == .terminal) {
@@ -43,6 +46,7 @@ pub const Keyboard = struct {
             return .handled;
         }
         self.suppress_text = false;
+        self.pending_text = null;
         if (event.repeat) {
             switch (entry.kind) {
                 .application => {
@@ -51,9 +55,15 @@ pub const Keyboard = struct {
                 },
                 .overlay => return if (overlay) .overlay else .handled,
                 .terminal => {
-                    self.suppress_text = true;
                     const owner = entry.target.?;
                     const status = owner.snapshot();
+                    if (entry.key.? == .unicode and !entry.mods.control and !entry.mods.alt and !entry.mods.super) {
+                        self.pending_text = event.scancode;
+                        entry.mods = semanticModifiers(event.mod);
+                        self.pending_repeat = true;
+                        return .handled;
+                    }
+                    self.suppress_text = true;
                     if (status.failure == null and !status.closed)
                         try owner.submit(.{ .input = .{ .key = .{ .key = entry.key.?, .mods = semanticModifiers(event.mod), .action = .repeat } } });
                     return .handled;
@@ -78,6 +88,13 @@ pub const Keyboard = struct {
             try instance.Key.initUnicode(@intCast(event.key))
         else {
             entry.* = .{ .kind = .text };
+            if (status.interaction != null and status.interaction.?.kitty_keyboard_flags & 8 != 0 and event.key >= 0x20 and event.key <= 0x10ffff) {
+                entry.target = owner;
+                entry.key = try instance.Key.initUnicode(@intCast(event.key));
+                entry.mods = mods;
+                self.pending_text = event.scancode;
+                self.pending_repeat = false;
+            }
             return .handled;
         };
         try owner.submit(.{ .input = .{ .key = .{ .key = key, .mods = mods, .action = .press } } });
@@ -88,7 +105,12 @@ pub const Keyboard = struct {
 
     /// Retires held terminal keys when keyboard ownership changes; application chords remain owned.
     pub fn releaseTerminal(self: *Keyboard) !void {
+        self.pending_text = null;
         for (&self.held) |*entry| {
+            if (entry.kind == .text) {
+                entry.* = .{};
+                continue;
+            }
             if (entry.kind != .terminal) continue;
             const previous = entry.*;
             entry.* = .{};
@@ -104,6 +126,21 @@ pub const Keyboard = struct {
         for (&self.held) |*entry| if (entry.target == target) {
             entry.* = .{};
         };
+    }
+
+    /// Attaches SDL's committed text to the physical key requested by report-all.
+    /// The worker copies the bytes before SDL may retire this event.
+    pub fn commitText(self: *Keyboard, text: []const u8) !bool {
+        if (self.consumeText()) return true;
+        const scan = self.pending_text orelse return false;
+        self.pending_text = null;
+        const entry = &self.held[scan];
+        const owner = entry.target orelse return false;
+        const status = owner.snapshot();
+        if (status.failure != null or status.closed) return true;
+        try owner.submit(.{ .input = .{ .key = .{ .key = entry.key.?, .mods = entry.mods, .action = if (self.pending_repeat) .repeat else .press, .text = text } } });
+        entry.kind = .terminal;
+        return true;
     }
 
     /// Consumes committed text belonging to an application-owned or semantic key event.
@@ -206,4 +243,62 @@ test "overlay and unclaimed releases cannot become terminal keys; standalone mod
     try std.testing.expect((try keyboard.route(event, false, null, null, false)) == .handled);
     try std.testing.expect(namedKey(c.SDLK_LCTRL) == null);
     try std.testing.expectEqual(@as(?instance.KeyName, .keypad_enter), namedKey(c.SDLK_KP_ENTER));
+}
+
+test "report-all alphabet keys carry committed text repeat release and focus cleanup exactly once" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const expected = "\x1b[119;;119u\x1b[119;1:2;119u\x1b[119;1:3u\x1b[119;;119u\x1b[119;1:3u";
+    const command = try std.fmt.allocPrint(std.testing.allocator, "stty raw -echo; printf '\\033[>31u\\033]0;READY\\007'; value=$(dd bs=1 count={d} 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\033]0;%s\\007' \"$value\"; sleep 30", .{expected.len});
+    defer std.testing.allocator.free(command);
+    const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 4,
+        .columns = 80,
+        .history_rows = 8,
+    }, .{
+        .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+        .command_limit = instance.render.limits.maximum_frame_commands,
+    }, c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    var attempt: u16 = 0;
+    while (attempt < 5000) : (attempt += 1) {
+        const status = owner.snapshot();
+        if (status.interaction != null and status.interaction.?.kitty_keyboard_flags == 31) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempt < 5000);
+    var keyboard: Keyboard = .{};
+    var event: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event.scancode = c.SDL_SCANCODE_W;
+    event.key = c.SDLK_W;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(try keyboard.commitText("w"));
+    event.repeat = true;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(try keyboard.commitText("w"));
+    try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    event.repeat = false;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(try keyboard.commitText("w"));
+    try keyboard.releaseTerminal();
+    try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    const expected_hex = std.fmt.bytesToHex(expected, .lower);
+    attempt = 0;
+    while (attempt < 5000) : (attempt += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], &expected_hex)) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempt < 5000);
+    try std.testing.expectEqual(Kind.none, keyboard.held[event.scancode].kind);
 }

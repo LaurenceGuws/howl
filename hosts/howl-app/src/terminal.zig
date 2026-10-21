@@ -301,17 +301,18 @@ const State = struct {
         var task = supplied;
         const bytes = taskBytes(task);
         if (bytes.len > input_byte_limit) return error.InputLimit;
-        // Key events contain no asynchronous borrowed text in this app.
+        // Associated text shares the bounded owned byte lane; legacy fallback text is not submitted by this host.
         if (task == .input and task.input == .key and
-            (task.input.key.text.len != 0 or task.input.key.legacy_text.len != 0))
+            task.input.key.legacy_text.len != 0)
             return error.BorrowedKeyText;
         if (bytes.len != 0) {
             const owned = try self.allocator.dupe(u8, bytes);
             switch (task.input) {
                 .bytes => task.input.bytes = owned,
                 .paste => task.input.paste = owned,
+                .key => task.input.key.text = owned,
                 // zig-audit: acknowledge unreachable
-                // reason: taskBytes can return nonempty bytes only for these two input tags, and no mutation changes the active tag before this switch.
+                // reason: taskBytes can return nonempty bytes only for these three input tags, and no mutation changes the active tag before this switch.
                 else => unreachable,
             }
         }
@@ -442,11 +443,11 @@ const State = struct {
         const view = resolved.view;
         const row_index = resolved.row;
         const current = selection.Context.fromView(view);
-        const point = try selection.point(view, row_index, intent.point.col);
+        const point = try selection.dragPoint(view, row_index, intent.point.col);
         switch (intent.kind) {
-            .start => self.selected = try selection.start(view, @intCast(row_index), intent.point.col),
+            .start => self.selected = if (try selection.canStart(view, row_index, intent.point.col)) try selection.start(view, row_index, intent.point.col) else null,
             .extend => {
-                const range = self.selected orelse return error.InvalidSelection;
+                const range = self.selected orelse return;
                 switch (range.validity(current)) {
                     .valid => {},
                     .context_changed => return error.SelectionContextChanged,
@@ -809,6 +810,7 @@ fn taskBytes(task: Task) []const u8 {
     return switch (task.input) {
         .bytes => |bytes| bytes,
         .paste => |bytes| bytes,
+        .key => |key| key.text,
         else => "",
     };
 }
@@ -887,11 +889,12 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     try waitTitle(owner, "DONE");
     try std.testing.expect(!owner.state().takeFrame());
     try std.testing.expect(instance.acquirePublishedFrame(owner.state().exchange) == null);
-    // Oversized input and borrowed key text are rejected without mutation.
+    // Every owned payload is bounded; unused legacy key fallback remains rejected.
     const oversized = try std.testing.allocator.alloc(u8, input_byte_limit + 1);
     defer std.testing.allocator.free(oversized);
     try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .paste = oversized } }));
-    try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .text = "borrowed" } } }));
+    try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .text = oversized } } }));
+    try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .legacy_text = "borrowed" } } }));
 }
 
 test "a held immutable publication cannot pace canonical progress or prevent cleanup" {

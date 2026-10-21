@@ -88,6 +88,7 @@ const App = struct {
     scale: f32,
     tabs: [tab_limit]?*Tab = @splat(null),
     tab_count: u8 = 0,
+    tab_desired: [tab_limit]f32 = @splat(200),
     active: u8 = 0,
     keyboard: input.Keyboard = .{},
     preedit: composition.Composition = .{},
@@ -124,6 +125,9 @@ const App = struct {
     }
     fn pane(self: *App) *Pane {
         return self.tab().panes[self.tab().tree.active].?;
+    }
+    fn headerTabs(self: *const App, width: f32) chrome.Tabs {
+        return chrome.Tabs.init(self.tab_count, width, if (self.configuration.value.tab_width == .fit) self.tab_desired[0..self.tab_count] else null);
     }
     fn headerHeight(self: *const App) f32 {
         return if (self.configuration.value.hide_single_tab and self.tab_count <= 1) 0 else chrome.height;
@@ -316,10 +320,12 @@ const App = struct {
     }
     fn openPalette(self: *App, profile: bool) !void {
         if (self.settings_editor != null) self.settings_editor = null;
-        if (self.palette != null) {
-            self.palette = null;
-            try self.gainKeyboard();
-            return;
+        if (self.palette) |current| {
+            if (current.profile == profile) {
+                self.palette = null;
+                try self.gainKeyboard();
+                return;
+            }
         }
         try self.loseKeyboard();
         if (profile) {
@@ -1117,8 +1123,8 @@ const App = struct {
             c.SDL_EVENT_TEXT_INPUT => {
                 if (!self.focused or !self.preedit.accepts(value.text.timestamp)) return;
                 self.preedit.clear();
-                if (self.keyboard.consumeText()) return;
                 const text = std.mem.span(value.text.text);
+                if (try self.keyboard.commitText(text)) return;
                 if (self.chooser) |chooser| {
                     try chooser.append(text);
                 } else if (self.settings_editor) |*e| {
@@ -1164,7 +1170,7 @@ const App = struct {
                 } else if (self.drag == .divider) {
                     self.tab().tree.drag(self.drag.divider, value.motion.x, value.motion.y);
                 } else if (self.drag == .tab) {
-                    self.moveTab(self.drag.tab.move(value.motion.x, self.tab_count, self.width));
+                    self.moveTab(self.drag.tab.move(value.motion.x, self.headerTabs(self.width)));
                 } else if (self.palette != null) {
                     try self.paletteHover(value.motion.x, value.motion.y);
                 } else if (self.settings_editor == null) {
@@ -1240,7 +1246,7 @@ const App = struct {
             if (button != .left) return;
             for (0..self.tab_count) |number| {
                 const index: u8 = @intCast(number);
-                const rect = chrome.tab(index, self.tab_count, self.width);
+                const rect = self.headerTabs(self.width).tab(index);
                 if (!rect.contains(x, y)) continue;
                 try self.selectTab(index);
                 if (self.tab_count > 1 and rect.width >= 96 and x >= rect.x + rect.width - 30) {
@@ -1249,9 +1255,9 @@ const App = struct {
                 } else self.drag = .{ .tab = chrome.Drag.begin(rect, x) };
                 return;
             }
-            if (chrome.plus(self.tab_count, self.width).contains(x, y)) {
+            if (self.headerTabs(self.width).plus().contains(x, y)) {
                 try self.createTab(try self.startup(), null);
-            } else if (chrome.profiles(self.tab_count, self.width).contains(x, y)) {
+            } else if (self.headerTabs(self.width).profiles().contains(x, y)) {
                 try self.openPalette(true);
             } else if (chrome.settings(self.width).contains(x, y)) {
                 try self.toggleSettings();
@@ -1499,7 +1505,7 @@ const App = struct {
     fn paletteRect(self: *const App) layout.Rect {
         if (self.palette.?.profile) {
             const width = @min(480, @max(1, self.width - 24));
-            return .{ .x = @min(chrome.profiles(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 136 + @as(f32, @floatFromInt(self.paletteRows())) * 44) };
+            return .{ .x = @min(self.headerTabs(self.width).profiles().x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 136 + @as(f32, @floatFromInt(self.paletteRows())) * 44) };
         }
         const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
         const width = @min(580, @max(1, self.width - 32));
@@ -1546,7 +1552,11 @@ const App = struct {
         const field = self.paletteField();
         try fill(self.renderer, field, colors.panel);
         try outline(self.renderer, field, colors.border);
-        try self.clippedTextColor(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else if (profiles) "Search profiles" else "Search commands", .{ .x = field.x + 8, .y = field.y + 1, .width = @max(1, field.width - 16), .height = 30 }, field.x + 8, if (self.palette.?.len == 0) colors.muted else colors.text);
+        const query = self.palette.?.query[0..self.palette.?.len];
+        const query_width = try self.textWidth(query);
+        const query_scroll = @max(0, query_width - @max(1, field.width - 20));
+        try self.clippedTextColor(if (query.len != 0) query else if (profiles) "Search profiles" else "Search commands", .{ .x = field.x + 8, .y = field.y + 1, .width = @max(1, field.width - 16), .height = 30 }, field.x + 8 - query_scroll, if (query.len == 0) colors.muted else colors.text);
+        if (self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = field.x + 8 + query_width - query_scroll, .y = field.y + 7, .width = 1, .height = @min(18, @max(1, field.height - 8)) }, colors.accent);
         if (profiles) for (picker.labels, 0..) |label, index| {
             const chip = self.paletteFilterRect(index);
             const active = @backingInt(self.palette.?.filter) == index;
@@ -1929,7 +1939,7 @@ const App = struct {
             y = clip.y + 6;
         } else if (self.palette) |p| {
             clip = self.paletteField();
-            x = @min(clip.x + 8 + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
+            x = clip.x + 8 + @min(try self.textWidth(p.query[0..p.len]), @max(1, clip.width - 20));
             y = clip.y + 1;
         } else if (self.pane().finder) |editor| {
             const p = self.pane();
@@ -2040,7 +2050,7 @@ const App = struct {
                 return true;
             }
         }
-        if (down and event_button.button == c.SDL_BUTTON_RIGHT and chrome.caption(self.tab_count, self.width).contains(event_button.x, event_button.y)) {
+        if (down and event_button.button == c.SDL_BUTTON_RIGHT and self.headerTabs(self.width).caption().contains(event_button.x, event_button.y)) {
             if (!c.SDL_ShowWindowSystemMenu(self.window, @intFromFloat(event_button.x), @intFromFloat(event_button.y))) return error.SDL;
             return true;
         }
@@ -2082,21 +2092,26 @@ const App = struct {
     fn drawHeader(self: *App) !void {
         if (self.headerHeight() == 0) return;
         const colors = try self.uiPalette();
+        if (self.configuration.value.tab_width == .fit) for (self.tabs[0..self.tab_count], 0..) |value, i| {
+            const t = value.?;
+            const status = t.panes[t.tree.active].?.snapshot();
+            self.tab_desired[i] = try self.textWidth(status.title[0..status.title_len]) + (if (self.tab_count > 1) @as(f32, 45) else 15);
+        };
         try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = chrome.height }, colors.title);
         for (0..self.tab_count) |number| {
             const index: u8 = @intCast(number);
-            const rect = chrome.tab(index, self.tab_count, self.width);
+            const rect = self.headerTabs(self.width).tab(index);
             if (self.drag == .tab and index == self.active) {
                 try outline(self.renderer, rect, colors.border);
             } else try self.drawTab(index, rect);
         }
         if (self.drag == .tab) {
-            var rect = chrome.tab(self.active, self.tab_count, self.width);
+            var rect = self.headerTabs(self.width).tab(self.active);
             rect.x = self.drag.tab.x;
             try self.drawTab(self.active, rect);
             try outline(self.renderer, rect, colors.accent);
         }
-        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.profiles(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.profile_icon, chrome.settings_icon }) |rect, glyph| {
+        for ([_]layout.Rect{ self.headerTabs(self.width).plus(), self.headerTabs(self.width).profiles(), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.profile_icon, chrome.settings_icon }) |rect, glyph| {
             for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = rect.y + part.y, .width = part.width, .height = part.height }, colors.text);
         }
         try self.drawWindowControls();
@@ -2318,7 +2333,7 @@ fn windowHitTest(window: ?*c.SDL_Window, point: [*c]const c.SDL_Point, data: ?*a
     var width: c_int = 0;
     var height: c_int = 0;
     if (!c.SDL_GetWindowSize(window, &width, &height)) return c.SDL_HITTEST_NORMAL;
-    return chrome.hit(@floatFromInt(point.*.x), @floatFromInt(point.*.y), @floatFromInt(width), @floatFromInt(height), app.tab_count, c.SDL_GetWindowFlags(window), app.headerHeight() != 0);
+    return chrome.hit(@floatFromInt(point.*.x), @floatFromInt(point.*.y), @floatFromInt(width), @floatFromInt(height), app.headerTabs(@floatFromInt(width)), c.SDL_GetWindowFlags(window), app.headerHeight() != 0);
 }
 fn outline(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
     const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
@@ -2547,7 +2562,15 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     try app.event(event_value);
     try std.testing.expectEqualStrings("filter", app.palette.?.query[0..app.palette.?.len]);
     try app.drawComposition();
+    try app.openPalette(true);
+    try std.testing.expect(app.palette.?.profile);
+    try std.testing.expectEqual(@as(usize, 0), app.palette.?.len);
     try app.openPalette(false);
+    try std.testing.expect(!app.palette.?.profile);
+    try app.palette.?.append("profile menu");
+    try app.paletteKey(c.SDLK_RETURN, 0);
+    try std.testing.expect(app.palette.?.profile);
+    try app.openPalette(true);
     try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
     const profile_button = chrome.profiles(app.tab_count, app.width);
     try app.pointerDown(profile_button.x + 16, profile_button.y + 15, .left, .{}, 1);

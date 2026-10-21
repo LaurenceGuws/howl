@@ -28,6 +28,7 @@ pub const Target = union(enum) {
     reset_app_colors,
     reset_terminal_colors,
     hide_single_tab,
+    tab_width,
     discover_shells,
     discover_ssh_hosts,
     font: u8,
@@ -61,6 +62,7 @@ pub const Row = struct {
             .app_color => |index| try value.app_colors.get(index),
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
+            .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit title",
             .discover_shells => if (value.discover_shells) "On" else "Off",
             .discover_ssh_hosts => if (value.discover_ssh_hosts) "On" else "Off",
             .font => |index| if (index < 6) value.font.paths()[index] else error.InvalidSetting,
@@ -117,6 +119,7 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .startup, .label = "Discover SSH config hosts", .target = .discover_ssh_hosts });
     try b.add(.{ .page = .interaction, .label = "Terminal input", .target = .{ .information = "Negotiated keys/mouse, owned input, local IME and stable history" } });
     try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
+    try b.add(.{ .page = .appearance, .label = "Tab chip width", .target = .tab_width });
     try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
     try b.add(.{ .page = .appearance, .label = "Default terminal font size (8–48)", .target = .default_font });
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
@@ -183,6 +186,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .reset_app_colors => value.app_colors = .{},
         .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = !value.hide_single_tab,
+        .tab_width => value.tab_width = if (value.tab_width == .fixed) .fit else .fixed,
         .discover_shells => value.discover_shells = !value.discover_shells,
         .discover_ssh_hosts => value.discover_ssh_hosts = !value.discover_ssh_hosts,
         .font => |index| {
@@ -603,4 +607,16 @@ test "theme display names never replace persisted ids during editing or preset c
         defer reopened.deinit();
         try std.testing.expectEqualStrings(preset.id, reopened.value.app_theme);
     }
+}
+
+test "tab width setting cycles fixed and fit and survives strict JSON roundtrip" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try std.testing.expectEqual(config.TabWidth.fixed, current.value.tab_width);
+    var fitted = try change(&current, std.testing.io, .tab_width, "");
+    defer fitted.deinit();
+    try std.testing.expectEqual(config.TabWidth.fit, fitted.value.tab_width);
+    var fixed = try change(&fitted, std.testing.io, .tab_width, "");
+    defer fixed.deinit();
+    try std.testing.expectEqual(config.TabWidth.fixed, fixed.value.tab_width);
 }
