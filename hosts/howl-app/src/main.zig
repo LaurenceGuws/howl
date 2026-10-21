@@ -73,7 +73,7 @@ const FindEditor = struct {
     bytes: [find.query_limit]u8 = undefined,
     len: usize = 0,
 };
-const Drag = union(enum) { none, divider: layout.Divider, tab: chrome.Drag };
+const Drag = union(enum) { none, divider: layout.Drag, tab: chrome.Drag };
 const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
 const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u32 = null };
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
@@ -107,9 +107,9 @@ const App = struct {
     chrome_pressed: chrome.Button = .none,
     hover_point: ?struct { x: f32, y: f32 } = null,
     pointer_buttons: u32 = 0,
-    hover_divider: ?u8 = null,
+    hover_divider: ?layout.Drag = null,
     color_drag: ?u8 = null,
-    cursors: [3]?*c.SDL_Cursor = @splat(null),
+    cursors: [4]?*c.SDL_Cursor = @splat(null),
     cursor_shape: ?usize = null,
     consume_left_release: bool = false,
     focused: bool = false,
@@ -460,7 +460,7 @@ const App = struct {
                 }
             },
             .pane_resize => |direction| {
-                const changed = self.tab().tree.resize(direction);
+                const changed = self.tab().tree.resize(self.terminalBody(), direction);
                 if (!changed) self.setNotice("No divider in that direction");
             },
             .toggle_find => try self.toggleFind(),
@@ -1414,8 +1414,8 @@ const App = struct {
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
-        for (dividers[0..result.dividers]) |divider| if (button == .left and divider.rect.contains(x, y)) {
-            self.drag = .{ .divider = divider };
+        if (button == .left) if (self.tab().tree.grab(self.terminalBody(), x, y)) |held| {
+            self.drag = .{ .divider = held };
             return;
         };
         for (places[0..result.panes]) |place| if (place.rect.contains(x, y)) {
@@ -2210,7 +2210,7 @@ const App = struct {
     fn setPointer(self: *App, shape: ?usize) !void {
         if (shape == self.cursor_shape) return;
         if (shape) |index| {
-            if (self.cursors[index] == null) self.cursors[index] = c.SDL_CreateSystemCursor(([_]c.SDL_SystemCursor{ c.SDL_SYSTEM_CURSOR_EW_RESIZE, c.SDL_SYSTEM_CURSOR_NS_RESIZE, c.SDL_SYSTEM_CURSOR_TEXT })[index]) orelse return error.SDL;
+            if (self.cursors[index] == null) self.cursors[index] = c.SDL_CreateSystemCursor(([_]c.SDL_SystemCursor{ c.SDL_SYSTEM_CURSOR_EW_RESIZE, c.SDL_SYSTEM_CURSOR_NS_RESIZE, c.SDL_SYSTEM_CURSOR_TEXT, c.SDL_SYSTEM_CURSOR_MOVE })[index]) orelse return error.SDL;
             if (!c.SDL_SetCursor(self.cursors[index].?)) return error.SDL;
         } else if (!c.SDL_SetCursor(c.SDL_GetDefaultCursor())) return error.SDL;
         self.cursor_shape = shape;
@@ -2233,16 +2233,12 @@ const App = struct {
         }
         if (self.palette != null) return self.setPointer(if (self.paletteField().contains(x, y)) 2 else null);
         if (self.drag == .divider) {
-            self.hover_divider = self.drag.divider.node;
-            return self.setPointer(if (self.drag.divider.axis == .horizontal) 0 else 1);
+            const held = self.drag.divider;
+            return self.setPointer(if (held.corner()) 3 else if (held.dividers[0].axis == .horizontal) 0 else 1);
         }
-        var places: [layout.pane_limit]layout.Placement = undefined;
-        var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-        const visible = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
-        for (dividers[0..visible.dividers]) |divider| if (divider.rect.contains(x, y)) {
-            self.hover_divider = divider.node;
-            return self.setPointer(if (divider.axis == .horizontal) 0 else 1);
-        };
+        self.hover_divider = self.tab().tree.hover(self.terminalBody(), x, y);
+        if (self.hover_divider) |held|
+            return self.setPointer(if (held.corner()) 3 else if (held.dividers[0].axis == .horizontal) 0 else 1);
         try self.setPointer(null);
     }
     fn chromeEvent(self: *App, event_value: c.SDL_Event) !bool {
@@ -2362,6 +2358,17 @@ const App = struct {
         }
         try self.drawWindowControls();
     }
+    fn drawDivider(self: *App, divider: layout.Divider, color: c.SDL_Color) !void {
+        var line = divider.rect;
+        if (divider.axis == .horizontal) {
+            line.x += @max(0, (line.width - 2) / 2);
+            line.width = @min(2, line.width);
+        } else {
+            line.y += @max(0, (line.height - 2) / 2);
+            line.height = @min(2, line.height);
+        }
+        try fill(self.renderer, line, color);
+    }
     fn draw(self: *App) !void {
         try self.desktopHost();
         var width: c_int = 0;
@@ -2370,6 +2377,7 @@ const App = struct {
         self.width = @floatFromInt(@max(1, width));
         self.height = @floatFromInt(@max(1, height));
         self.displayScale();
+        if (self.hover_point) |point| try self.pointerHover(point.x, point.y);
         const colors = try self.uiPalette();
         if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
             !c.SDL_SetRenderDrawColor(self.renderer, colors.window.r, colors.window.g, colors.window.b, colors.window.a) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
@@ -2434,18 +2442,11 @@ const App = struct {
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
             }
         }
-        for (dividers[0..result.dividers]) |divider| {
-            if (self.hover_divider == divider.node or (self.drag == .divider and self.drag.divider.node == divider.node)) {
-                var line = divider.rect;
-                if (divider.axis == .horizontal) {
-                    line.x += @max(0, (line.width - 2) / 2);
-                    line.width = @min(2, line.width);
-                } else {
-                    line.y += @max(0, (line.height - 2) / 2);
-                    line.height = @min(2, line.height);
-                }
-                try fill(self.renderer, line, colors.accent);
-            }
+        if (self.drag == .divider) {
+            for (dividers[0..result.dividers]) |divider|
+                if (self.drag.divider.contains(divider.node)) try self.drawDivider(divider, colors.accent);
+        } else if (self.hover_divider) |held| {
+            for (held.dividers[0..held.count]) |divider| try self.drawDivider(divider, colors.accent);
         }
         self.expireNotice(c.SDL_GetTicks());
         if (self.notice_len != 0) {

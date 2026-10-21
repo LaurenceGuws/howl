@@ -9,7 +9,13 @@ or internal C ABI. Application allocations use Zig's SMP allocator.
 The shell supports eight tabs and nested panes, duplicate/new window, tab order,
 divider drag, directional focus/resize/swap, pane cycling, balanced splits, zoom,
 leaf collapse and restart. Hovering a pane divider highlights its grab surface and
-shows its horizontal/vertical resize cursor. A neutral light tint serves header
+shows its horizontal/vertical resize cursor. At an aligned four-way junction,
+drag either divider half independently, or grab the junction to move both axes.
+Staggered crossings keep the uninterrupted border shared; returning a half within
+8 logical pixels of its neighbor snaps them together and lets either axis detach
+again. Pointer and keyboard resizing use the same geometry-aware border choice.
+The move cursor and highlights show all borders captured by a junction grab.
+A neutral light tint serves header
 controls, list/category chips and scrollbars. Tab bodies and their close buttons
 have independent hover rectangles shared with pointer hit geometry.
 One bounded mapping registry supplies shortcuts; the command palette exposes
