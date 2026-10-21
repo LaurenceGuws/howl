@@ -22,5 +22,6 @@
     "bold_italic": "/usr/share/fonts/TTF/IosevkaNerdFont-BoldItalic.ttf",
     "fallback": "",
     "secondary_fallback": ""
-  }
+  },
+  "hide_single_tab": true
 }
