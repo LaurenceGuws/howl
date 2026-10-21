@@ -4061,6 +4061,12 @@ const TerminalStream = struct {
             state.string.reset();
         }
 
+        if (state.parser.consumeOrdinarySgrFinal(byte)) |sgr| {
+            const changed = self.applyOrdinarySgr(sgr.params[0..sgr.count], sgr.separators);
+            if (changed) self.synchronized_output.trailing_effect = true;
+            return .{ .text = changed };
+        }
+
         const phases = state.parser.next(byte);
         if (state.parser.takeStringControlFailed()) |err| return err;
 
@@ -4212,6 +4218,23 @@ const TerminalStream = struct {
         };
     }
 
+    fn applyOrdinarySgr(
+        self: *TerminalStream,
+        params: []const i32,
+        separators: parser_mod.CsiSeparatorList,
+    ) bool {
+        const screen = self.terminal.screen_state.active();
+        return if (params.len == 3 and
+            separators.eql(parser_mod.CsiSeparatorList.empty) and
+            (params[0] == 38 or params[0] == 48) and params[1] == 5)
+            @call(.always_inline, Screen.applyIndexedColor, .{ screen, params[2], params[0] == 38 })
+        else
+            @call(.always_inline, Screen.applySgr, .{
+                screen,
+                screenSgrOperands(params, separators),
+            });
+    }
+
     // Plain CUP/HVP and SGR already have exact Screen owners. Keep these
     // common actions on that direct semantic path instead of rebuilding the
     // same parser event through the general routing vocabulary.
@@ -4232,16 +4255,7 @@ const TerminalStream = struct {
                 };
             },
             'm' => {
-                const screen = self.terminal.screen_state.active();
-                const changed = if (params.len == 3 and
-                    csi.separators.eql(parser_mod.CsiSeparatorList.empty) and
-                    (params[0] == 38 or params[0] == 48) and params[1] == 5)
-                    @call(.always_inline, Screen.applyIndexedColor, .{ screen, params[2], params[0] == 38 })
-                else
-                    @call(.always_inline, Screen.applySgr, .{
-                        screen,
-                        screenSgrOperands(params, csi.separators),
-                    });
+                const changed = self.applyOrdinarySgr(params, csi.separators);
                 return .{
                     .changed = changed,
                     .mutations = .{ .text = changed },
@@ -11340,4 +11354,35 @@ test "configured color baseline is queried and restored by OSC, Kitty and iTerm 
     _ = try terminal.feed("\x1b]104\x1b\\\x1bc\x1b]110\x1b\\");
     try std.testing.expectEqual(defaults.palette[1], terminal.presentation().palette[1]);
     try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
+}
+
+test "parameterized SGR preserves synchronized progress noops and failure before colour mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const held = try terminal.feed("\x1b[?2026h");
+    try std.testing.expect(held.stateChanged());
+    const prefix = try terminal.feed("\x1b[38;5;");
+    try std.testing.expect(!prefix.stateChanged());
+    const written = try terminal.feed("196mA");
+    try std.testing.expect(written.mutations.text);
+    try std.testing.expect(written.synchronized_output.trailing_effect);
+    try std.testing.expect(terminal.synchronizedOutput());
+    try std.testing.expectEqual(Screen.Color.indexed(196), terminal.screen_state.active().cellInfoAt(0, 0).attrs.fg);
+
+    const noop = try terminal.feed("\x1b[38;5;196m");
+    try std.testing.expect(!noop.stateChanged());
+    try std.testing.expect(!noop.synchronized_output.trailing_effect);
+
+    const released = try terminal.feed("\x1b[?2026l\x1b[38;5;42m");
+    try std.testing.expect(released.synchronized_output.ended);
+    try std.testing.expect(released.synchronized_output.trailing_effect);
+    try std.testing.expect(!terminal.synchronizedOutput());
+
+    const pending = try terminal.feed("\x1b[38;5;196");
+    try std.testing.expect(!pending.stateChanged());
+    terminal.stream_state.parser.osc.alloc_failed = true;
+    try std.testing.expectError(error.OutOfMemory, terminal.feed("m"));
+    const recovered = try terminal.feed("B");
+    try std.testing.expect(recovered.mutations.text);
+    try std.testing.expectEqual(Screen.Color.indexed(42), terminal.screen_state.active().cellInfoAt(0, 1).attrs.fg);
 }

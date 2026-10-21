@@ -397,6 +397,17 @@ pub const Parser = struct {
         return count;
     }
 
+    /// Completes one ordinary parameterized SGR final without empty phases.
+    /// The returned slices remain parser-owned and must be consumed synchronously.
+    pub fn consumeOrdinarySgrFinal(self: *Parser, byte: u8) ?CsiAction {
+        if (self.state != .csi_param or byte != 'm' or
+            self.intermediates_len != 0 or self.osc.alloc_failed) return null;
+        std.debug.assert(self.activeControlCount() == 0);
+        const action = self.csiAction(byte);
+        self.state = .ground;
+        return action;
+    }
+
     /// Advance the parser by one byte and return ordered phase actions.
     pub fn next(self: *Parser, byte: u8) PhaseActions {
         std.debug.assert(self.activeControlCount() <= 1);
@@ -883,6 +894,10 @@ pub const Parser = struct {
     }
 
     fn consumeCsiDispatch(self: *Parser, byte: u8) ?Action {
+        return .{ .csi_dispatch = self.csiAction(byte) };
+    }
+
+    fn csiAction(self: *Parser, byte: u8) CsiAction {
         std.debug.assert(byte >= 0x40);
         std.debug.assert(byte <= 0x7E);
 
@@ -913,7 +928,7 @@ pub const Parser = struct {
             .intermediates = self.intermediates[intermediate_start .. intermediate_start + intermediates_len],
             .intermediates_len = intermediates_len,
         };
-        return .{ .csi_dispatch = action };
+        return action;
     }
 };
 
@@ -2736,4 +2751,67 @@ test "APC payload runs reject non-APC and pending escape states" {
         }
         try std.testing.expectEqual(@as(usize, 0), parser.plainApcPayloadPrefix("abc"));
     }
+}
+
+test "ordinary SGR final preserves canonical parameters guarded states and pending failure" {
+    var direct = try Parser.init(std.testing.allocator);
+    defer direct.deinit();
+    var canonical = try Parser.init(std.testing.allocator);
+    defer canonical.deinit();
+    const prefixes = [_][]const u8{
+        "\x1b[38;5;196",
+        "\x1b[4:3;58:2::12:34:56",
+        "\x1b[0",
+        "\x1b[9999999999999999999999;38;5;42",
+    };
+    for (prefixes) |prefix| {
+        direct.reset();
+        canonical.reset();
+        for (prefix) |byte| {
+            try expectPhaseTags(direct.next(byte), null, null, null);
+            try expectPhaseTags(canonical.next(byte), null, null, null);
+        }
+        const actual = direct.consumeOrdinarySgrFinal('m') orelse return error.NoEvent;
+        const phases = canonical.next('m');
+        try expectPhaseTags(phases, null, .csi_dispatch, null);
+        const expected = phases[1].?.csi_dispatch;
+        try std.testing.expectEqual(expected.final, actual.final);
+        try std.testing.expectEqualSlices(i32, expected.params, actual.params);
+        try std.testing.expect(expected.separators.eql(actual.separators));
+        try std.testing.expectEqual(expected.count, actual.count);
+        try std.testing.expectEqual(expected.leader, actual.leader);
+        try std.testing.expectEqual(expected.private, actual.private);
+        try std.testing.expectEqualSlices(u8, expected.intermediates, actual.intermediates);
+        try std.testing.expectEqual(expected.intermediates_len, actual.intermediates_len);
+        try std.testing.expectEqual(canonical.state, direct.state);
+    }
+    const refused = [_]struct { prefix: []const u8, final: u8 }{
+        .{ .prefix = "\x1b[", .final = 'm' },
+        .{ .prefix = "\x1b[?1", .final = 'm' },
+        .{ .prefix = "\x1b[>1", .final = 'm' },
+        .{ .prefix = "\x1b[1 ", .final = 'm' },
+        .{ .prefix = "\x1b[38;5;196", .final = 'H' },
+        .{ .prefix = "\xe9", .final = 'm' },
+    };
+    for (refused) |case| {
+        direct.reset();
+        for (case.prefix) |byte| try expectPhaseTags(direct.next(byte), null, null, null);
+        const state = direct.state;
+        const count = direct.csi_count;
+        const in_param = direct.csi_in_param;
+        const utf8_needed = direct.utf8.needed;
+        try std.testing.expect(direct.consumeOrdinarySgrFinal(case.final) == null);
+        try std.testing.expectEqual(state, direct.state);
+        try std.testing.expectEqual(count, direct.csi_count);
+        try std.testing.expectEqual(in_param, direct.csi_in_param);
+        try std.testing.expectEqual(utf8_needed, direct.utf8.needed);
+    }
+    direct.reset();
+    for ("\x1b[38;5;196") |byte| try expectPhaseTags(direct.next(byte), null, null, null);
+    direct.osc.alloc_failed = true;
+    try std.testing.expect(direct.consumeOrdinarySgrFinal('m') == null);
+    try std.testing.expect(direct.osc.alloc_failed);
+    try expectPhaseTags(direct.next('m'), null, .csi_dispatch, null);
+    const failure = direct.takeStringControlFailed() orelse return error.MissingFailure;
+    try std.testing.expect(failure == error.OutOfMemory);
 }

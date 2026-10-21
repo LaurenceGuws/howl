@@ -4049,14 +4049,14 @@ pub const Screen = struct {
 
     fn rowStart(self: *const Screen, logical_row: u16) u32 {
         if (self.rows == 0) return 0;
-        const physical_row = (self.row_origin + logical_row) % self.rows;
+        const physical_row = (@as(u32, self.row_origin) + @as(u32, logical_row)) % @as(u32, self.rows);
         return @as(u32, physical_row) * @as(u32, self.cols);
     }
 
     fn rowWrapIndex(self: *const Screen, logical_row: u16) ?u16 {
         if (self.row_flags == null) return null;
         if (self.rows == 0 or logical_row >= self.rows) return null;
-        return (self.row_origin + logical_row) % self.rows;
+        return @intCast((@as(u32, self.row_origin) + @as(u32, logical_row)) % @as(u32, self.rows));
     }
 
     /// Reports whether a visible row continues into the next row.
@@ -8320,4 +8320,57 @@ test "ordinary ASCII overwrite replaces complete rendition and stops before cont
     try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
     try std.testing.expectEqual(@as(u32, 'D'), screen.cellInfoAt(0, 3).codepoint);
     try std.testing.expectEqualDeep(initial_cell_attrs, screen.cellInfoAt(0, 3).attrs);
+}
+
+test "maximum-height rotated rows preserve cell metadata and ASCII destinations" {
+    var screen = try Screen.initWithCells(std.testing.allocator, std.math.maxInt(u16), 1);
+    defer screen.deinit(std.testing.allocator);
+    const cells = screen.cells.?;
+    cells[0].codepoint = 'A';
+    cells[1].codepoint = 'B';
+    cells[32767].codepoint = 'C';
+    cells[32768].codepoint = 'D';
+    cells[65533].codepoint = 'E';
+    cells[65534].codepoint = 'F';
+    screen.row_flags.?[1] |= Screen.row_wrapped_bit;
+    screen.row_origin = 32768;
+    try std.testing.expectEqual(@as(u32, 'D'), screen.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u32, 'B'), screen.cellInfoAt(32768, 0).codepoint);
+    try std.testing.expectEqual(@as(?u64, 2), screen.rowGeneration(32768));
+    try std.testing.expect(screen.rowWrapped(32768));
+    screen.cursor.setPositionStructural(32768, 0);
+    try std.testing.expectEqual(@as(usize, 1), screen.writePlainAsciiPrefix("Z"));
+    try std.testing.expectEqual(@as(u32, 'Z'), cells[1].codepoint);
+    screen.row_origin = 65534;
+    try std.testing.expectEqual(@as(u32, 'F'), screen.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u32, 'A'), screen.cellInfoAt(1, 0).codepoint);
+    try std.testing.expectEqual(@as(u32, 'E'), screen.cellInfoAt(65534, 0).codepoint);
+    try std.testing.expectEqual(@as(u32, 0), screen.cellInfoAt(65535, 0).codepoint);
+    try std.testing.expect(screen.rowGeneration(65535) == null);
+    try std.testing.expect(!screen.rowWrapped(65535));
+}
+
+test "row-ring rotations keep cell flags and identity in one physical order" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 7, 1);
+    defer screen.deinit(std.testing.allocator);
+    var expected = [_]u32{ 'a', 'b', 'c', 'd', 'e', 'f', 'g' };
+    for (expected, 0..) |cp, i| {
+        screen.cells.?[i].codepoint = cp;
+        if (i % 2 == 1) screen.row_flags.?[i] |= Screen.row_wrapped_bit;
+    }
+    for (0..expected.len) |origin| {
+        screen.row_origin = @intCast(origin);
+        for (expected, 0..) |cp, row| {
+            try std.testing.expectEqual(cp, screen.cellInfoAt(@intCast(row), 0).codepoint);
+            try std.testing.expectEqual(@as(?u64, cp - 'a' + 1), screen.rowGeneration(@intCast(row)));
+            try std.testing.expectEqual((cp - 'a') % 2 == 1, screen.rowWrapped(@intCast(row)));
+        }
+        const first = expected[0];
+        @memmove(expected[0 .. expected.len - 1], expected[1..]);
+        expected[expected.len - 1] = first;
+    }
+    const empty = Screen.init(0, 0);
+    try std.testing.expectEqual(@as(u32, 0), empty.rowStart(0));
+    try std.testing.expect(!empty.rowWrapped(0));
+    try std.testing.expect(empty.rowGeneration(0) == null);
 }
