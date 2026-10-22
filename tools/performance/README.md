@@ -17,6 +17,29 @@ grid and use the full 384×83 producer lattice. The fresh 32-run physical Hyprla
 race is recorded in [race.html](race.html#dp1-race-20261021), including every CPU
 observation, cold memory peak and producer miss.
 
+## Private full-grid and cursor controls · 22 October
+
+The [current private cohort](race.html#private-cursor-race-20261022) records 48
+four-horse pressure trials and 42 cursor-only trials at the exact 384×83 native
+grid. Howl is the daily ReleaseSafe a9eaab2 artifact; keep it separate from
+ReleaseFast and physical Hyprland. Private refresh is not exposed. Producer
+emission/backpressure, whole-terminal CPU and observed timed Anonymous/PSS peaks
+remain separate dimensions.
+
+The [cursor batching candidate](race.html#cursor-batching-20261022) passes its
+correctness gates and is withheld after 44 primary and 16 independent controls:
+the small trail saving does not repeat at 240 Hz. The original Canvas and
+installed cursor checkpoint remain accepted. [Current CPU attribution](race.html#scratch-profile-20261022)
+identifies contextual scratch initialization for the next bounded experiment;
+it establishes no source gain yet.
+
+The benchmark build helper now targets `hosts/howl-app` and forwards build
+arguments. Choose a separate artifact prefix and bounded jobs, for example:
+
+```bash
+HORSES_HOWL_FAST_ROOT=/absolute/benchmark-output tools/performance/build-howl-fast.sh -j2
+```
+
 ## Historical tracks
 
 The historical `horses.sh` harness uses WMIO's retired `--environment`/`launch`

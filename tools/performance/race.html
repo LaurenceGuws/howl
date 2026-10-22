@@ -20,10 +20,117 @@ ul{padding-left:22px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;color:black}main{max-width:none;padding:0}.card,.note,thead{background:none}.context,.lede,small,footer,.scroll{overflow:visible}table{min-width:0}details{display:block}nav{display:none}section{break-inside:avoid}}
 </style></head><body><main>
-<header><div class="kicker">Howl · measurement record · updated 21 October 2026</div><h1>Where the horses stand.</h1>
-<p class="lede">Fresh Hyprland DP-1 standings: 32 physical fullscreen trials with all four horses on the same complete 384×83 grid at 1920×1080 / 240 Hz. CPU observations, producer misses and cold peaks are retained below; earlier cohorts keep their original conditions.</p>
+<header><div class="kicker">Howl · measurement record · updated 22 October 2026</div><h1>Where the horses stand.</h1>
+<p class="lede">New private full-grid and cursor controls: 90 fresh trials, followed by 60 source-candidate controls and a retained rejection. The physical Hyprland DP-1 race and earlier cohorts keep their original conditions.</p>
 <nav aria-label="Race overview"><a href="#sparse-night-20261020">Render reuse · Oct 20</a><a href="#hyprland-20261020">Physical race · Oct 20</a><a href="#bg-glyph">BG / glyph retention · Oct 19</a><a href="#colour-queue">Colour queue · Oct 19</a><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Row reuse</a><a href="#cutoff">Cutoff tradeoffs</a><a href="#direct-row">Direct rows</a><a href="#glyph-bound-profile">Glyph bounds</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
-<nav aria-label="Latest measurements"><a href="#dp1-race-20261021">Physical equal-grid race · Oct 21</a><a href="#dp1-grid-20261021">Equal DP-1 grid · Oct 21</a><a href="#single-tab-20261021">Single-tab bar hidden · Oct 21</a><a href="#zoo-current-20261021">Visible-bar baseline · Oct 21</a><a href="#sgr-final-20261021">SGR and row mapping · Oct 21</a><a href="#measurement-control-20261021">Matched inputs · Oct 21</a><a href="#withdrawn-screen-20261021">Withheld experiments · Oct 21</a><a href="#cpu-parser-20261020">CPU attribution · Oct 20</a><a href="#opaque-clear-20261020">Opaque clear · Oct 20</a><a href="#visibility-borrow-20261020">Visibility borrowing · Oct 20</a><a href="#private-painting-20261020">Private painting · Oct 20</a><a href="#canvas-clip-20261020">Canvas clipping · Oct 20</a><a href="#prepared-borrow-20261020">Prepared projection · Oct 20</a><a href="#physical-final-20261020">Shipped physical rerun · Oct 20</a></nav>
+<nav aria-label="Latest measurements"><a href="#private-cursor-race-20261022">Private grid + cursor costs · Oct 22</a><a href="#cursor-batching-20261022">Batching withheld · Oct 22</a><a href="#scratch-profile-20261022">Scratch attribution · Oct 22</a><a href="#dp1-race-20261021">Physical equal-grid race · Oct 21</a><a href="#dp1-grid-20261021">Equal DP-1 grid · Oct 21</a><a href="#single-tab-20261021">Single-tab bar hidden · Oct 21</a><a href="#zoo-current-20261021">Visible-bar baseline · Oct 21</a><a href="#sgr-final-20261021">SGR and row mapping · Oct 21</a><a href="#measurement-control-20261021">Matched inputs · Oct 21</a><a href="#withdrawn-screen-20261021">Withheld experiments · Oct 21</a><a href="#cpu-parser-20261020">CPU attribution · Oct 20</a><a href="#opaque-clear-20261020">Opaque clear · Oct 20</a><a href="#visibility-borrow-20261020">Visibility borrowing · Oct 20</a><a href="#private-painting-20261020">Private painting · Oct 20</a><a href="#canvas-clip-20261020">Canvas clipping · Oct 20</a><a href="#prepared-borrow-20261020">Prepared projection · Oct 20</a><a href="#physical-final-20261020">Shipped physical rerun · Oct 20</a></nav>
+<section id="private-cursor-race-20261022"><h2>Private equal-grid race and cursor costs · 22 October</h2>
+<p class="context">90 fresh 20-second trials: 48 pressure controls across four terminals and 42 cursor-only controls across seven Howl variants. Native fullscreen 1920×1080, 384×83 cells, 5×13 physical pixels per cell; every corner verifies 65 pixels. Private kwin-seat, scale 1. WMIO does not expose its refresh rate. This cohort is separate from physical Hyprland DP-1 race and must not be pooled with it.</p>
+<p class="context">Howl daily ReleaseSafe checkpoint a9eaab2, ELF 4bb34cff; preceding linear-motion ELF a06ce89a. Installed Foot 1.28.0 (+pgo), Kitty 0.49.2, Alacritty 0.17.0 and version-matched documented profiles. Same native Fast stage2LLVM Zig 0.17.0 tui-zoo, seed 20261020, synchronized output and full-grid payload. No build or profiling overlaps ordinary timing.</p>
+<div class="scroll"><table><thead><tr><th>Median CPU · one core</th><th>Howl</th><th>Foot</th><th>Kitty</th><th>Alacritty</th></tr></thead><tbody>
+<tr><th>64 · ASCII</th><td>16.53%</td><td>6.57%</td><td>54.86%</td><td>15.50%</td></tr>
+<tr><th>4096 · ASCII</th><td>32.74%</td><td>29.24%</td><td>81.28%</td><td>27.70%</td></tr>
+<tr><th>4096 · ASCII + FG/BG</th><td>46.08%</td><td>32.85%</td><td>83.53%</td><td>34.40%</td></tr>
+<tr><th>4096 · Unicode + FG/BG</th><td>78.00%</td><td>58.20%</td><td>49.11%</td><td>38.89%</td></tr>
+<tr><th>8192 · ASCII</th><td>44.30%</td><td>48.61%</td><td>86.79%</td><td>41.63%</td></tr>
+<tr><th>65536 · ASCII</th><td>105.51%</td><td>187.78%</td><td>106.89%</td><td>95.74%</td></tr>
+</tbody></table></div>
+
+<p class="context">Two runs per cell, forward/reverse horse order. Sparse and colour have zero producer misses. Plain: Foot 0/1; Unicode: Howl 2/23, Foot 3/3, Kitty 0/0, Alacritty 0/0; 8192: Howl 0/1. All four are backpressured at 65536 writes; their emission rates below are a different dimension from CPU cost.</p>
+<div class="scroll"><table><thead><tr><th>65536 writes</th><th>Producer emissionHz · both runs</th><th>Skipped slots</th></tr></thead><tbody>
+<tr><th>howl</th><td>113.689 / 113.553</td><td>2526 / 2529</td></tr>
+<tr><th>foot</th><td>148.361 / 150.937</td><td>1833 / 1781</td></tr>
+<tr><th>kitty</th><td>77.086 / 75.499</td><td>3260 / 3290</td></tr>
+<tr><th>alacritty</th><td>104.809 / 105.301</td><td>2704 / 2695</td></tr>
+</tbody></table></div>
+
+<h3>Cursor-only costs on retained full text</h3><p class="context">Steady block, 80 ms motion duration, blink off. The producer primes a full viewport then moves only the cursor at 1/60/240 Hz. Off, linear, eased, stretch and trail share the current exact ELF; old off/on use the preceding linear-motion checkpoint. Each table entry is the observed median of two reversed-order trials.</p>
+<div class="scroll"><table><thead><tr><th>Cursor variant · CPU one core</th><th>1Hz producer</th><th>60Hz producer</th><th>240Hz producer</th></tr></thead><tbody>
+<tr><th>howl-old-off</th><td>0.057%</td><td>2.767%</td><td>2.751%</td></tr>
+<tr><th>howl-old-on</th><td>0.253%</td><td>2.315%</td><td>2.749%</td></tr>
+<tr><th>howl-off</th><td>0.058%</td><td>2.721%</td><td>2.753%</td></tr>
+<tr><th>howl-linear</th><td>0.252%</td><td>2.386%</td><td>2.792%</td></tr>
+<tr><th>howl-eased</th><td>0.247%</td><td>2.342%</td><td>2.810%</td></tr>
+<tr><th>howl-stretch</th><td>0.255%</td><td>2.219%</td><td>2.766%</td></tr>
+<tr><th>howl-trail</th><td>0.558%</td><td>2.346%</td><td>2.778%</td></tr>
+</tbody></table></div>
+
+<details><summary>Every CPU observation, producer miss and timed memory peak</summary><div class="scroll"><table><thead><tr><th>Case / variant</th><th>CPU%</th><th>ProducerHz</th><th>Misses</th><th>Anonymous MiB</th><th>PSS MiB</th></tr></thead><tbody>
+<tr><th>baseline / sparse / howl</th><td>16.457 / 16.612</td><td>239.999 / 239.996</td><td>0 / 0</td><td>101.12 / 100.00</td><td>203.83 / 202.78</td></tr>
+<tr><th>baseline / sparse / foot</th><td>6.624 / 6.509</td><td>239.993 / 239.999</td><td>0 / 0</td><td>17.66 / 18.17</td><td>49.82 / 50.31</td></tr>
+<tr><th>baseline / sparse / kitty</th><td>54.986 / 54.728</td><td>239.999 / 239.999</td><td>0 / 0</td><td>132.35 / 124.37</td><td>208.56 / 200.38</td></tr>
+<tr><th>baseline / sparse / alacritty</th><td>14.801 / 16.206</td><td>239.999 / 239.999</td><td>0 / 0</td><td>88.69 / 88.70</td><td>176.37 / 176.19</td></tr>
+<tr><th>baseline / plain / alacritty</th><td>26.724 / 28.683</td><td>239.999 / 239.999</td><td>0 / 0</td><td>89.52 / 88.58</td><td>177.56 / 176.45</td></tr>
+<tr><th>baseline / plain / kitty</th><td>81.009 / 81.546</td><td>239.999 / 239.999</td><td>0 / 0</td><td>135.20 / 123.27</td><td>211.45 / 199.10</td></tr>
+<tr><th>baseline / plain / foot</th><td>29.286 / 29.188</td><td>239.999 / 239.949</td><td>0 / 1</td><td>19.16 / 19.05</td><td>51.25 / 51.21</td></tr>
+<tr><th>baseline / plain / howl</th><td>33.843 / 31.641</td><td>239.999 / 239.999</td><td>0 / 0</td><td>100.07 / 99.99</td><td>200.76 / 200.70</td></tr>
+<tr><th>baseline / colour / howl</th><td>45.907 / 46.262</td><td>239.999 / 239.999</td><td>0 / 0</td><td>109.31 / 109.01</td><td>214.01 / 213.77</td></tr>
+<tr><th>baseline / colour / foot</th><td>32.598 / 33.109</td><td>239.999 / 239.999</td><td>0 / 0</td><td>19.59 / 19.08</td><td>51.74 / 51.22</td></tr>
+<tr><th>baseline / colour / kitty</th><td>83.549 / 83.507</td><td>239.999 / 239.999</td><td>0 / 0</td><td>128.84 / 125.15</td><td>204.53 / 201.13</td></tr>
+<tr><th>baseline / colour / alacritty</th><td>34.327 / 34.475</td><td>239.999 / 239.999</td><td>0 / 0</td><td>89.56 / 88.78</td><td>177.63 / 176.77</td></tr>
+<tr><th>baseline / unicode / alacritty</th><td>39.023 / 38.755</td><td>239.999 / 239.999</td><td>0 / 0</td><td>91.59 / 88.84</td><td>185.98 / 183.32</td></tr>
+<tr><th>baseline / unicode / kitty</th><td>49.452 / 48.771</td><td>239.999 / 239.999</td><td>0 / 0</td><td>138.93 / 131.39</td><td>220.14 / 212.08</td></tr>
+<tr><th>baseline / unicode / foot</th><td>57.855 / 58.551</td><td>239.849 / 239.849</td><td>3 / 3</td><td>18.90 / 22.81</td><td>55.59 / 59.49</td></tr>
+<tr><th>baseline / unicode / howl</th><td>76.518 / 79.475</td><td>239.899 / 238.849</td><td>2 / 23</td><td>113.53 / 112.79</td><td>219.58 / 218.82</td></tr>
+<tr><th>baseline / knee / howl</th><td>43.764 / 44.832</td><td>239.999 / 239.949</td><td>0 / 1</td><td>102.24 / 102.20</td><td>202.99 / 202.94</td></tr>
+<tr><th>baseline / knee / foot</th><td>52.486 / 44.737</td><td>239.999 / 240.000</td><td>0 / 0</td><td>19.57 / 19.50</td><td>51.71 / 51.69</td></tr>
+<tr><th>baseline / knee / kitty</th><td>86.877 / 86.708</td><td>239.999 / 239.999</td><td>0 / 0</td><td>133.23 / 126.46</td><td>209.34 / 202.55</td></tr>
+<tr><th>baseline / knee / alacritty</th><td>41.696 / 41.567</td><td>239.999 / 239.999</td><td>0 / 0</td><td>88.80 / 88.85</td><td>176.85 / 176.83</td></tr>
+<tr><th>baseline / saturation / alacritty</th><td>95.938 / 95.536</td><td>104.809 / 105.301</td><td>2704 / 2695</td><td>92.05 / 90.91</td><td>180.07 / 178.96</td></tr>
+<tr><th>baseline / saturation / kitty</th><td>107.082 / 106.704</td><td>77.086 / 75.499</td><td>3260 / 3290</td><td>126.71 / 125.84</td><td>202.38 / 201.78</td></tr>
+<tr><th>baseline / saturation / foot</th><td>187.916 / 187.638</td><td>148.361 / 150.937</td><td>1833 / 1781</td><td>18.04 / 18.02</td><td>50.17 / 50.16</td></tr>
+<tr><th>baseline / saturation / howl</th><td>105.545 / 105.478</td><td>113.689 / 113.553</td><td>2526 / 2529</td><td>101.93 / 103.91</td><td>202.71 / 204.66</td></tr>
+<tr><th>cursor / cursor-1 / howl-old-off</th><td>0.056 / 0.058</td><td>1.000 / 1.000</td><td>0 / 0</td><td>99.65 / 101.59</td><td>190.37 / 192.30</td></tr>
+<tr><th>cursor / cursor-1 / howl-old-on</th><td>0.263 / 0.243</td><td>1.000 / 1.000</td><td>0 / 0</td><td>99.67 / 101.66</td><td>190.40 / 192.38</td></tr>
+<tr><th>cursor / cursor-1 / howl-off</th><td>0.061 / 0.056</td><td>1.000 / 1.000</td><td>0 / 0</td><td>99.64 / 100.60</td><td>190.41 / 191.37</td></tr>
+<tr><th>cursor / cursor-1 / howl-linear</th><td>0.258 / 0.246</td><td>1.000 / 1.000</td><td>0 / 0</td><td>101.62 / 101.64</td><td>192.39 / 192.44</td></tr>
+<tr><th>cursor / cursor-1 / howl-eased</th><td>0.261 / 0.233</td><td>1.000 / 1.000</td><td>0 / 0</td><td>101.62 / 101.66</td><td>192.41 / 192.42</td></tr>
+<tr><th>cursor / cursor-1 / howl-stretch</th><td>0.265 / 0.245</td><td>1.000 / 1.000</td><td>0 / 0</td><td>102.54 / 100.50</td><td>193.31 / 191.29</td></tr>
+<tr><th>cursor / cursor-1 / howl-trail</th><td>0.592 / 0.524</td><td>1.000 / 1.000</td><td>0 / 0</td><td>99.71 / 101.69</td><td>190.45 / 192.46</td></tr>
+<tr><th>cursor / cursor-60 / howl-trail</th><td>2.353 / 2.339</td><td>60.000 / 60.000</td><td>0 / 0</td><td>104.09 / 104.09</td><td>194.84 / 194.85</td></tr>
+<tr><th>cursor / cursor-60 / howl-stretch</th><td>2.065 / 2.374</td><td>60.000 / 60.000</td><td>0 / 0</td><td>104.11 / 103.82</td><td>194.86 / 193.75</td></tr>
+<tr><th>cursor / cursor-60 / howl-eased</th><td>2.330 / 2.354</td><td>60.000 / 60.000</td><td>0 / 0</td><td>103.33 / 101.86</td><td>194.09 / 192.63</td></tr>
+<tr><th>cursor / cursor-60 / howl-linear</th><td>2.412 / 2.361</td><td>59.998 / 59.998</td><td>0 / 0</td><td>101.87 / 102.29</td><td>192.64 / 193.05</td></tr>
+<tr><th>cursor / cursor-60 / howl-off</th><td>2.697 / 2.746</td><td>60.000 / 59.999</td><td>0 / 0</td><td>101.88 / 101.86</td><td>192.61 / 192.62</td></tr>
+<tr><th>cursor / cursor-60 / howl-old-on</th><td>2.333 / 2.297</td><td>59.998 / 59.999</td><td>0 / 0</td><td>101.90 / 101.97</td><td>191.79 / 192.68</td></tr>
+<tr><th>cursor / cursor-60 / howl-old-off</th><td>2.791 / 2.742</td><td>60.000 / 59.998</td><td>0 / 0</td><td>100.09 / 101.55</td><td>190.81 / 192.28</td></tr>
+<tr><th>cursor / cursor-240 / howl-old-off</th><td>2.713 / 2.790</td><td>239.996 / 239.999</td><td>0 / 0</td><td>99.92 / 101.13</td><td>190.63 / 191.87</td></tr>
+<tr><th>cursor / cursor-240 / howl-old-on</th><td>2.675 / 2.822</td><td>239.996 / 239.999</td><td>0 / 0</td><td>101.13 / 101.88</td><td>191.84 / 192.61</td></tr>
+<tr><th>cursor / cursor-240 / howl-off</th><td>2.706 / 2.800</td><td>239.993 / 239.999</td><td>0 / 0</td><td>100.37 / 100.81</td><td>191.16 / 191.58</td></tr>
+<tr><th>cursor / cursor-240 / howl-linear</th><td>2.725 / 2.858</td><td>239.999 / 239.999</td><td>0 / 0</td><td>99.93 / 100.12</td><td>190.71 / 190.91</td></tr>
+<tr><th>cursor / cursor-240 / howl-eased</th><td>2.791 / 2.829</td><td>239.991 / 239.999</td><td>0 / 0</td><td>101.88 / 100.23</td><td>192.67 / 191.01</td></tr>
+<tr><th>cursor / cursor-240 / howl-stretch</th><td>2.806 / 2.726</td><td>239.999 / 239.999</td><td>0 / 0</td><td>99.93 / 101.89</td><td>190.70 / 192.66</td></tr>
+<tr><th>cursor / cursor-240 / howl-trail</th><td>2.790 / 2.765</td><td>239.998 / 239.995</td><td>0 / 0</td><td>101.87 / 101.88</td><td>192.64 / 192.66</td></tr>
+</tbody></table></div>
+</details>
+<p class="context">CPU counts user+system time across terminal threads/helpers, excluding runner/producer/coordinator/compositor. First 1 s warmup excluded; the same 0.5 s tail retained. Memory values are observed timed peaks. Producer frequency describes emission/backpressure, not displayed cadence or latency. Two runs per table cell give no formal confidence interval, universal ranking, cold-memory or global-RAM claim. Per-trial native geometry, argv/config/ELF/font/producer hashes, process identities/maps, quarter-second CPU/memory samples, producer receipts and host pressure remain in the raw evidence.</p>
+<p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/RESULTS.md">All folded observations</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/baseline/manifest.json">Baseline exact environment</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/cursor/manifest.json">Cursor exact environment</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/controls-inspect.json">Sealed controls receipt</a></p></section>
+<section id="cursor-batching-20261022"><h2>Cursor paint batching · candidate withheld · 22 October</h2>
+<p class="context">One bounded geometry pass combined trail bodies, head and clipped ink. All 149 Safe app tests, 947 reported root tests, 278 root steps, 238 checks, 40 audit steps, protocol validation, 1,200 native pixel compositions and 123 private UI captures passed. The exact candidate was f3072167; the accepted comparison remained a9eaab2 / 4bb34cff. Correct pixels alone did not qualify the performance change.</p>
+<div class="scroll"><table><thead><tr><th>Case</th><th>Primary CPU% · before / candidate</th><th>Primary relative</th><th>Independent CPU% · before / candidate</th><th>Independent relative</th></tr></thead><tbody>
+<tr><th>cursor-60-linear</th><td>2.378 / 2.336</td><td>-1.77%</td><td>—</td><td>—</td></tr>
+<tr><th>cursor-60-trail</th><td>2.356 / 2.319</td><td>-1.57%</td><td>2.318 / 2.293</td><td>-1.09%</td></tr>
+<tr><th>cursor-240-linear</th><td>2.881 / 2.890</td><td>+0.30%</td><td>—</td><td>—</td></tr>
+<tr><th>cursor-240-trail</th><td>2.942 / 2.879</td><td>-2.12%</td><td>2.822 / 2.846</td><td>+0.85%</td></tr>
+<tr><th>sparse</th><td>16.541 / 16.531</td><td>-0.06%</td><td>—</td><td>—</td></tr>
+<tr><th>plain</th><td>30.464 / 30.129</td><td>-1.10%</td><td>—</td><td>—</td></tr>
+<tr><th>unicode</th><td>76.657 / 77.293</td><td>+0.83%</td><td>—</td><td>—</td></tr>
+</tbody></table></div>
+
+<p class="context">Primary cohort: 44 fresh 20s trials, ABBA twice per cursor case and once per bulk guard. Independent cohort: 16 fresh 20s trail-only trials, alternating BAAB/ABBA at 60/240 Hz, with no source, binary or settings revision. Trail savings at 60 Hz repeat at a small magnitude. The 240 Hz result reverses from −2.12% to +0.85%, with three of four independent pairs higher. Linear and bulk pairs remain mixed or near flat. The candidate is withheld, the original Canvas is restored, and neither installed binary changes.</p>
+<p class="context">Cohorts remain separate. Every pair direction, producer miss, timed Anonymous/PSS peak, native grid, process/component identity, config/ELF hash and host-pressure sample remains retained. These short shared-host observations have no formal confidence interval, physical-desktop ranking, general RAM saving, displayed-cadence or latency claim. No compilation or profiling overlapped timing.</p>
+<p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/one-pass/PAIRS.md">All 44 primary observations and pairs</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/one-pass/REPLICATION.md">All 16 independent observations and pairs</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/one-pass/decision.json">Exact rejection and retained candidate</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/one-pass/qualification.json">Correctness qualification</a></p></section>
+<section id="scratch-profile-20261022"><h2>Current Safe CPU attribution · contextual scratch</h2>
+<p class="context">Eight separate 30s diagnostic trials collect 78,478 user-only leaf-IP samples at 1 ms CPU periods across all three app threads, with zero lost/throttled samples or newly uncovered threads. Exact accepted a9eaab2 / 4bb34cff, full native grid, two reversed rounds. These instrumented observations are excluded from ordinary CPU acceptance.</p>
+<div class="scroll"><table><thead><tr><th>Diagnostic case</th><th>Main thread · CPU one core</th><th>Terminal worker · CPU one core</th></tr></thead><tbody>
+<tr><th>sparse</th><td>9.51% / 9.67%</td><td>6.68% / 7.00%</td></tr>
+<tr><th>colour</th><td>15.86% / 16.99%</td><td>30.60% / 30.05%</td></tr>
+<tr><th>unicode</th><td>14.21% / 14.55%</td><td>63.04% / 62.86%</td></tr>
+<tr><th>cursor-trail</th><td>1.68% / 1.70%</td><td>0.81% / 0.81%</td></tr>
+</tbody></table></div>
+
+<p class="context">Unicode repeats about 28.5% of user leaf samples inside memset. Disassembly and a parent-owned GDB trace identify a 24,576-byte 0xaa fill from renderer.zig contextual glyph scratch, alongside two 2,048-byte arrays inside the per-cell path. This single caller trace does not attribute every memset sample to that call. The next bounded candidate will reuse the same scratch for one projection while preserving runtime safety, native shaping and complete immutable output; no gain is claimed yet.</p>
+<p class="context">Leaf samples are exclusive execution locations, not inclusive function costs. CPU_CLOCK counters include user and system CPU; per-thread ticks preserve separate coarse accounting. Private refresh is not exposed, and no displayed cadence or latency is inferred. <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/profiles-folded.json">All samples, modules and function attribution</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/day-20261022/performance/scratch-trace/trace.stdout">Exact dynamic caller</a></p></section>
 <section id="dp1-race-20261021"><h2>Hyprland DP-1 · equal-grid physical race · 21 October</h2>
 <p class="context">32 fresh 20-second trials, two per horse/case in forward and reverse order. Every run is native Wayland fullscreen on Dell DP-1 at 1920×1080, scale 1, 240 Hz, with the complete 384×83 PTY grid and 1920×1079 terminal drawing pixels asserted before release. Same Iosevka Nerd Font source, seed 20261020, synchronized-output native tui-zoo producer at 240 Hz. Calibrated profiles at c6e25c5: Howl single-tab bar hidden/vsync on; Foot default workers; Kitty 3ms input/4ms repaint/monitor sync; Alacritty documented [general] settings and default offsets, without a warning banner.</p>
 <div class="scroll"><table><thead><tr><th>One-core CPU median</th><th>Howl</th><th>Foot</th><th>Kitty</th><th>Alacritty</th></tr></thead><tbody>
