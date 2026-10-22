@@ -27,6 +27,17 @@ are verified against accepted calibration. Keep this private cohort separate
 from daily Safe and physical Hyprland results. CPU, producer emission/backpressure
 and observed timed Anonymous/PSS peaks remain separate dimensions.
 
+[Current Fast attribution](race.html#fast-attribution-20261022) adds eight separate
+30s profiles: 71,756 user leaf samples across all three threads, zero loss or
+throttling, and 41 hot source chains agreed by GNU/LLVM addr2line. Inspected hot runtime
+PCs resolve to canonical VT parsing/actions. Four separate SDL submission
+diagnostics show sparse text changes submit about 89.6–89.7% of plain geometry
+vertices despite 1/64 the writes. The current host clears/repaints the full
+content texture on changed content revisions; cursor-only motion already reuses
+it. Less content painting is the next evidence-backed investigation, with complete
+immutable frames and pixel/resource/recovery guarantees preserved. Diagnostics
+remain separate from ordinary CPU and displayed cadence.
+
 The [scratch source controls](race.html#context-scratch-20261022) retain all
 64 primary and 16 independent Fast observations. Reusing the same bounded arrays
 once per projection saves 26.59% Safe Unicode CPU. Explicit costs remain:
