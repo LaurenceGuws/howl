@@ -145,3 +145,12 @@ does not carry a zero-resource-event claim; neither performance cohort overlappe
 it. No runtime artifact was installed.
 
 Scalar ownership fix: 1938f4115b6c41c058f72c79c44d05c659e2abc0.
+
+## Desktop compiler follow-up
+
+The desktop host uses LLVM, unlike the self-hosted core experiment above.
+The [whole-path timing follow-up](SYSTEM_TIMING.md) measures the same refined
+candidate under matching Fast LLVM: plain VT CPU +3.39% (6/8 slower), Unicode
++1.29% (5/8 slower). The cohorts have different byte targets and remain separate.
+The +12.56% result remains specific to its self-hosted lane; neither result
+establishes the net application cost of a complete reuse consumer.

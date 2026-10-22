@@ -51,6 +51,17 @@ cohorts rather than described as untried follow-ups. Raw qualification, archived
 candidate source/ELFs, failed fixture attempts and every count remain in the
 Home workstream's performance/sparse-paint directory.
 
+## Whole-path timing and design · 22 October
+
+[The system timing review](SYSTEM_TIMING.md) corrects the compiler scope of the
+isolated VT result and records matching LLVM costs plus 16 current-path trials.
+All 9,097 checked prepared cuts reach acquisition and window submission; coalesced
+row repairs drop glyph hints in every measured refresh. Sparse retains about 29,700
+commands per cut versus rain's 572. The next complete experiment should connect
+fine source evidence through Render to retained painting under the existing pacer.
+Observer effects, producer misses and the unmeasured actual display timeline stay
+explicit. Product source and installed binaries are unchanged.
+
 ## Logical mutation contract · 22 October
 
 The [column-block contract experiment](BLOCK_CONTRACT.md) proves independent observers
