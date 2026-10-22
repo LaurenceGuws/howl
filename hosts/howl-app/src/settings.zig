@@ -34,6 +34,8 @@ pub const Target = union(enum) {
     cursor_shape,
     cursor_motion,
     cursor_motion_ms,
+    cursor_easing,
+    cursor_effect,
     cursor_stroke_pixels,
     cursor_outline_pixels,
     cursor_blink_interval_ms,
@@ -73,6 +75,15 @@ pub const Row = struct {
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit available space",
+            .cursor_easing => switch (value.cursor_easing) {
+                .linear => "Linear",
+                .ease_out => "Ease out",
+            },
+            .cursor_effect => switch (value.cursor_effect) {
+                .none => "None",
+                .stretch => "Stretch",
+                .trail => "Trail",
+            },
             .cursor_motion => if (value.cursor_motion) "On" else "Off",
             .cursor_motion_ms => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_motion_ms}),
             .cursor_stroke_pixels => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_stroke_pixels}),
@@ -123,14 +134,14 @@ pub const Row = struct {
     /// Finite settings use staged choices and never accept arbitrary text.
     pub fn choice(self: Row) bool {
         return switch (self.target) {
-            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_motion, .discover_shells, .discover_ssh_hosts => true,
+            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_motion, .cursor_easing, .cursor_effect, .discover_shells, .discover_ssh_hosts => true,
             else => false,
         };
     }
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_motion, .cursor_motion_ms, .cursor_stroke_pixels, .cursor_outline_pixels, .cursor_blink_interval_ms, .cursor_blink_idle_ms, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_motion, .cursor_motion_ms, .cursor_easing, .cursor_effect, .cursor_stroke_pixels, .cursor_outline_pixels, .cursor_blink_interval_ms, .cursor_blink_idle_ms, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -164,6 +175,8 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .appearance, .label = "Cursor shape", .target = .cursor_shape });
     try b.add(.{ .page = .appearance, .label = "Cursor motion", .target = .cursor_motion });
     try b.add(.{ .page = .appearance, .label = "Cursor motion duration (ms)", .target = .cursor_motion_ms });
+    try b.add(.{ .page = .appearance, .label = "Cursor easing", .target = .cursor_easing });
+    try b.add(.{ .page = .appearance, .label = "Cursor effect", .target = .cursor_effect });
     try b.add(.{ .page = .appearance, .label = "Cursor stroke (px)", .target = .cursor_stroke_pixels });
     try b.add(.{ .page = .appearance, .label = "Inactive cursor stroke (px)", .target = .cursor_outline_pixels });
     try b.add(.{ .page = .appearance, .label = "Blink interval (ms)", .target = .cursor_blink_interval_ms });
@@ -231,6 +244,8 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = if (text.len == 0) !value.hide_single_tab else try boolean(text),
         .tab_width => value.tab_width = if (text.len == 0) (if (value.tab_width == .fixed) .fit else .fixed) else if (std.mem.eql(u8, text, "Fixed")) .fixed else if (std.mem.eql(u8, text, "Fit available space")) .fit else return error.InvalidSetting,
+        .cursor_easing => value.cursor_easing = if (std.mem.eql(u8, text, "Linear")) .linear else if (std.mem.eql(u8, text, "Ease out")) .ease_out else return error.InvalidSetting,
+        .cursor_effect => value.cursor_effect = if (std.mem.eql(u8, text, "None")) .none else if (std.mem.eql(u8, text, "Stretch")) .stretch else if (std.mem.eql(u8, text, "Trail")) .trail else return error.InvalidSetting,
         .cursor_motion => value.cursor_motion = try boolean(text),
         .cursor_motion_ms => value.cursor_motion_ms = try std.fmt.parseInt(u16, text, 10),
         .cursor_stroke_pixels => value.cursor_stroke_pixels = try std.fmt.parseInt(u8, text, 10),
@@ -459,6 +474,16 @@ pub const Editor = struct {
                     break;
                 };
                 next = choices[@intCast(@mod(index + delta, @as(i16, @intCast(choices.len))))];
+            },
+            .cursor_easing => next = if (std.mem.eql(u8, value, "Linear")) "Ease out" else "Linear",
+            .cursor_effect => {
+                const choices = [_][]const u8{ "None", "Stretch", "Trail" };
+                var index: i16 = 0;
+                for (choices, 0..) |choice, i| if (std.mem.eql(u8, choice, value)) {
+                    index = @intCast(i);
+                    break;
+                };
+                next = choices[@intCast(@mod(index + delta, @as(i16, choices.len)))];
             },
             .tab_width => next = if (std.mem.eql(u8, value, "Fixed")) "Fit available space" else "Fixed",
             .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
@@ -836,4 +861,32 @@ test "cursor motion choices and duration stage bounded preferences with unchange
     try std.testing.expect(!current.value.cursor_motion and current.value.cursor_motion_ms == 80);
     try std.testing.expectError(error.InvalidCursorMotion, change(&current, std.testing.io, .cursor_motion_ms, "19"));
     try std.testing.expectError(error.InvalidCursorMotion, change(&current, std.testing.io, .cursor_motion_ms, "251"));
+}
+
+test "cursor easing and effects are staged closed choices and wrap both ways" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    var editor: Editor = .{};
+    try editor.begin(.{ .page = .appearance, .label = "", .target = .cursor_easing }, &current);
+    try editor.append("arbitrary");
+    try std.testing.expectEqualStrings("Linear", editor.buffer[0..editor.len]);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("Ease out", editor.buffer[0..editor.len]);
+    var eased = try change(&current, std.testing.io, .cursor_easing, editor.buffer[0..editor.len]);
+    defer eased.deinit();
+    try std.testing.expectEqual(.ease_out, eased.value.cursor_easing);
+    try editor.begin(.{ .page = .appearance, .label = "", .target = .cursor_effect }, &current);
+    try editor.cycle(&current, -1);
+    try std.testing.expectEqualStrings("Trail", editor.buffer[0..editor.len]);
+    var trail = try change(&eased, std.testing.io, .cursor_effect, editor.buffer[0..editor.len]);
+    defer trail.deinit();
+    try std.testing.expectEqual(.trail, trail.value.cursor_effect);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("None", editor.buffer[0..editor.len]);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("Stretch", editor.buffer[0..editor.len]);
+    try std.testing.expectEqual(.none, current.value.cursor_effect);
+    try std.testing.expectEqual(.linear, current.value.cursor_easing);
+    try std.testing.expectError(error.InvalidSetting, change(&current, std.testing.io, .cursor_effect, "Anything"));
+    try std.testing.expectError(error.InvalidSetting, change(&current, std.testing.io, .cursor_easing, "Anything"));
 }

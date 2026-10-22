@@ -95,7 +95,18 @@ Block ink is replayed at its original destination through the moving cursor clip
 using the shared painted-row lookup. Alpha glyphs recolor; intrinsic RGBA glyphs
 keep their colors. The host indexes immutable content lazily without allocating
 on motion ticks. Frame publication, text shaping and retained content pixels do
-not change for an animation tick. Easing, stretch and trails remain deferred.
+not change for an animation tick.
+
+“Cursor easing” selects Linear (default) or Ease out. “Cursor effect” selects
+None (default), Stretch or Trail. Stretch extends the painted body by at most one
+cursor width/height, clipped to the terminal surface, then collapses at completion.
+Ink stays anchored and recolors under the expanded body, including stretched bars
+and underlines. Trail retains at most four translucent cursor bodies (opacity at
+most 72/255); ghosts tint the content beneath them without carrying glyphs.
+Their lifetime is twice the movement duration, capped at 200ms. Tails share the
+same finite host wake schedule and disappear on focus/modal/hidden/history,
+geometry, shape or preference changes. Effects require Cursor motion On.
+The disabled/settled path keeps its original retained suffix and has no animation timer.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal

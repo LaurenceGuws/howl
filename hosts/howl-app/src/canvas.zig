@@ -4,6 +4,7 @@ const c = @import("desktop");
 const instance = @import("howl_instance");
 const terminal = @import("terminal.zig");
 const selection = @import("selection.zig");
+const cursor_effects = @import("cursor.zig");
 const render = instance.render.terminal;
 
 /// Host focus/blink composition over one immutable cursor frame.
@@ -179,7 +180,7 @@ pub const Canvas = struct {
     }
 
     /// Draws canonical commands with exact pane/resource clipping using shared bounded batches.
-    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, cursor: CursorDisplay, outline_pixels: u8, motion: ?render.Rect) !void {
+    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, cursor: CursorDisplay, outline_pixels: u8, motion: ?cursor_effects.Visual) !void {
         std.debug.assert(outline_pixels >= 1 and outline_pixels <= 16);
         const value = self.frame() orelse return;
         // Canonical commands already use physical pixels. Dividing then letting
@@ -239,8 +240,8 @@ pub const Canvas = struct {
             !c.SDL_RenderTexture(renderer, target, null, &destination_rect)) return error.SDLTexture;
         try self.drawSelection(renderer, pane, value);
         switch (cursor) {
-            .shown => if (motion) |rect|
-                try self.drawMovingCursor(renderer, geometry, pane, value, rect)
+            .shown => if (motion) |visual|
+                try self.drawMovingCursor(renderer, geometry, pane, value, visual)
             else
                 try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]),
             .hidden => {},
@@ -264,23 +265,31 @@ pub const Canvas = struct {
         if (!c.SDL_SetRenderScale(renderer, previous_x, previous_y)) return error.SDLScale;
     }
 
-    fn drawMovingCursor(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, value: instance.PublishedFrame, rect: render.Rect) !void {
+    fn drawMovingCursor(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, value: instance.PublishedFrame, visual: cursor_effects.Visual) !void {
         const overlay = value.cursor orelse return;
         const suffix = value.commands[value.content_command_count..];
         if (suffix.len == 0) return;
-        std.debug.assert(suffix[0] == .solid);
-        var painted = suffix[0];
-        painted.solid.rect.x += rect.x - overlay.rect.x;
-        painted.solid.rect.y += rect.y - overlay.rect.y;
+        std.debug.assert(suffix[0] == .solid and visual.ghost_count <= visual.ghosts.len);
+        var ghosts: [4]render.Command = undefined;
+        for (0..visual.ghost_count) |index| {
+            const ghost = visual.ghosts[visual.ghost_count - 1 - index];
+            var color = suffix[0].solid.color;
+            color.a = @intCast((@as(u16, color.a) * ghost.alpha + 127) / 255);
+            ghosts[index] = .{ .solid = .{ .rect = cursorBody(suffix[0].solid.rect, overlay.rect, ghost.rect), .color = color } };
+        }
+        if (visual.ghost_count != 0) try self.drawCommands(renderer, geometry, pane, ghosts[0..visual.ghost_count]);
+        const body = cursorBody(suffix[0].solid.rect, overlay.rect, visual.rect);
+        const painted_rect = stretchedBody(body, visual.stretch, value.surface);
+        const painted: render.Command = .{ .solid = .{ .rect = painted_rect, .color = suffix[0].solid.color } };
         try self.drawCommands(renderer, geometry, pane, &.{painted});
-        if (overlay.shape != .block) return;
+        if (overlay.shape != .block and std.meta.eql(visual.stretch, [2]i32{ 0, 0 })) return;
         const content = value.commands[0..value.content_command_count];
         if (self.cursor_index_revision != value.content_revision) {
             try self.cursor_rows.build(render.Command, content, value.surface, value.cell_size.height, overlay.color_resource);
             self.cursor_index_revision = value.content_revision;
         }
-        for (self.cursor_rows.candidates(render.Command, content, rect)) |command| {
-            const replay = (try render.CursorRows.recolor(command, rect, overlay.text_color, overlay.color_resource)) orelse continue;
+        for (self.cursor_rows.candidates(render.Command, content, painted_rect)) |command| {
+            const replay = (try render.CursorRows.recolor(command, painted_rect, overlay.text_color, overlay.color_resource)) orelse continue;
             try self.appendCommand(renderer, geometry, pane, pixelClip(pane), replay);
         }
         try geometry.finish(renderer);
@@ -383,6 +392,19 @@ pub const Canvas = struct {
         self.count = 0;
     }
 };
+
+fn cursorBody(body: render.Rect, origin: render.Rect, rect: render.Rect) render.Rect {
+    return .{ .x = body.x + rect.x - origin.x, .y = body.y + rect.y - origin.y, .width = body.width, .height = body.height };
+}
+
+fn stretchedBody(body: render.Rect, tail: [2]i32, surface: render.Size) render.Rect {
+    const left = @max(0, @min(body.x, body.x + tail[0]));
+    const top = @max(0, @min(body.y, body.y + tail[1]));
+    const right = @min(@as(i32, surface.width), @max(body.x, body.x + tail[0]) + @as(i32, body.width));
+    const bottom = @min(@as(i32, surface.height), @max(body.y, body.y + tail[1]) + @as(i32, body.height));
+    std.debug.assert(right > left and bottom > top);
+    return .{ .x = left, .y = top, .width = @intCast(right - left), .height = @intCast(bottom - top) };
+}
 
 fn destination(rect: render.Rect, pane: c.SDL_FRect) c.SDL_FRect {
     return .{
@@ -869,14 +891,24 @@ test "cursor shapes blink and outline above selection at fractional scales witho
             try std.testing.expectEqual(frame.sequence, backend.frame().?.sequence);
             try std.testing.expectEqual(frame.content_revision, backend.content_revision.?);
         };
-        for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| for ([_][2]i32{ .{ 1, 0 }, .{ @intCast(frame.cell_size.width / 2), 0 }, .{ @intCast(frame.cell_size.width), 0 }, .{ @intCast(frame.cell_size.width / 2), @intCast(frame.cell_size.height / 2) } }) |point| for ([_]bool{ false, true }) |selected| {
+        for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| for ([_][2]i32{ .{ 1, 0 }, .{ @intCast(frame.cell_size.width / 2), 0 }, .{ @intCast(frame.cell_size.width), 0 }, .{ @intCast(frame.cell_size.width / 2), @intCast(frame.cell_size.height / 2) } }) |point| for ([_]bool{ false, true }) |selected| for (0..4) |effect| {
             const moving: render.Rect = .{ .x = point[0], .y = point[1], .width = frame.cursor.?.rect.width, .height = frame.cursor.?.rect.height };
+            var visual: cursor_effects.Visual = .{ .rect = moving };
+            if (effect == 1) visual.stretch = .{ -@as(i32, frame.cell_size.width), -@as(i32, frame.cell_size.height) };
+            if (effect == 2) visual.stretch = .{ frame.cell_size.width, frame.cell_size.height };
+            if (effect == 3) {
+                visual.ghost_count = 4;
+                for (&visual.ghosts, 0..) |*ghost, index| ghost.* = .{
+                    .rect = .{ .x = @intCast(index * frame.cell_size.width), .y = frame.cell_size.height, .width = moving.width, .height = moving.height },
+                    .alpha = @intCast(72 - index * 18),
+                };
+            }
             backend.selection_paint = .{ .rows = 2 };
             if (selected) backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
             try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
-            try backend.draw(renderer, geometry, pane, scale, .shown, 1, moving);
+            try backend.draw(renderer, geometry, pane, scale, .shown, 1, visual);
             try std.testing.expect(c.SDL_RenderPresent(renderer));
             for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
                 const pixel = &pixels[y * frame.surface.width + x];
@@ -888,12 +920,32 @@ test "cursor shapes blink and outline above selection at fractional scales witho
             try std.testing.expect(c.SDL_RenderClear(renderer));
             try backend.drawCommands(renderer, geometry, pane, frame.commands[0..frame.content_command_count]);
             try backend.drawSelection(renderer, pane, frame);
+            for (0..visual.ghost_count) |index| {
+                const ghost = visual.ghosts[visual.ghost_count - 1 - index];
+                const original = frame.commands[frame.content_command_count].solid;
+                const alpha: u8 = @intCast((@as(u16, original.color.a) * ghost.alpha + 127) / 255);
+                try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, original.color.r, original.color.g, original.color.b, alpha));
+                const ghost_rect: c.SDL_FRect = .{ .x = @floatFromInt(original.rect.x + ghost.rect.x), .y = @floatFromInt(original.rect.y + ghost.rect.y), .w = @floatFromInt(original.rect.width), .h = @floatFromInt(original.rect.height) };
+                try std.testing.expect(c.SDL_RenderFillRect(renderer, &ghost_rect));
+            }
             var solid = frame.commands[frame.content_command_count];
             solid.solid.rect.x += moving.x;
             solid.solid.rect.y += moving.y;
+            if (effect == 1 or effect == 2) {
+                const base: c.SDL_Rect = .{ .x = solid.solid.rect.x, .y = solid.solid.rect.y, .w = solid.solid.rect.width, .h = solid.solid.rect.height };
+                var tail = base;
+                tail.x += visual.stretch[0];
+                tail.y += visual.stretch[1];
+                var union_rect: c.SDL_Rect = undefined;
+                try std.testing.expect(c.SDL_GetRectUnion(&base, &tail, &union_rect));
+                const whole: c.SDL_Rect = .{ .x = 0, .y = 0, .w = frame.surface.width, .h = frame.surface.height };
+                var clipped: c.SDL_Rect = undefined;
+                try std.testing.expect(c.SDL_GetRectIntersection(&whole, &union_rect, &clipped));
+                solid.solid.rect = .{ .x = clipped.x, .y = clipped.y, .width = @intCast(clipped.w), .height = @intCast(clipped.h) };
+            }
             try backend.drawCommands(renderer, geometry, pane, &.{solid});
-            if (frame.cursor.?.shape == .block) {
-                const cursor_clip: c.SDL_Rect = .{ .x = moving.x, .y = moving.y, .w = moving.width, .h = moving.height };
+            if (frame.cursor.?.shape == .block or effect == 1 or effect == 2) {
+                const cursor_clip: c.SDL_Rect = .{ .x = solid.solid.rect.x, .y = solid.solid.rect.y, .w = solid.solid.rect.width, .h = solid.solid.rect.height };
                 for (frame.commands[0..frame.content_command_count]) |command| {
                     var replay = command;
                     switch (replay) {

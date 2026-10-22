@@ -77,21 +77,57 @@ pub const Blink = struct {
     }
 };
 
+/// One closed-form position curve; retargeting always samples its current point.
+pub const Easing = enum {
+    linear,
+    ease_out,
+
+    fn value(self: Easing, t: f64) f64 {
+        std.debug.assert(t >= 0 and t <= 1);
+        return switch (self) {
+            .linear => t,
+            .ease_out => 1 - (1 - t) * (1 - t) * (1 - t),
+        };
+    }
+};
+
+/// Optional bounded decoration of the moving host cursor.
+pub const Effect = enum { none, stretch, trail };
+
 /// Saved opt-in host motion; no perpetual timer or retained frame ownership.
 pub const MotionOptions = struct {
     enabled: bool = false,
     duration_ms: u16 = 80,
+    easing: Easing = .linear,
+    effect: Effect = .none,
 
-    /// Keep the first movement implementation short and bounded.
+    /// All movement and tail lifetimes stay short and bounded.
     pub fn valid(self: MotionOptions) bool {
         return self.duration_ms >= 20 and self.duration_ms <= 250;
     }
 };
 
 const Rect = instance.render.terminal.Rect;
+const trail_limit = 4;
 
-/// One pane's finite linear movement. Sizes/styles and ownership changes snap.
+/// One translucent historic cursor body; never carries translated glyph ink.
+pub const Ghost = struct {
+    rect: Rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+    alpha: u8 = 0,
+};
+
+/// Complete bounded host composition for this instant.
+pub const Visual = struct {
+    rect: Rect,
+    /// Signed tail offset bounded to one cursor width/height.
+    stretch: [2]i32 = .{ 0, 0 },
+    ghosts: [trail_limit]Ghost = @splat(.{}),
+    ghost_count: u8 = 0,
+};
+
+/// One pane's finite motion/effects. Sizes/styles and ownership changes snap.
 pub const Motion = struct {
+    const Sample = struct { rect: Rect, at: u64 };
     target: ?Rect = null,
     from_x: f64 = 0,
     from_y: f64 = 0,
@@ -103,16 +139,20 @@ pub const Motion = struct {
     surface: instance.render.terminal.Size = .{ .width = 1, .height = 1 },
     cell_size: instance.render.terminal.Size = .{ .width = 1, .height = 1 },
     style: ?@TypeOf(@as(instance.render.terminal.CursorOverlay, undefined).shape) = null,
+    samples: [trail_limit]Sample = undefined,
+    sample_count: u8 = 0,
+    last_rect: ?Rect = null,
+    last_seen: u64 = 0,
+    last_emit: u64 = 0,
     deadline: ?u64 = null,
 
-    /// Hidden panes/focus transitions must never resume an old flight.
+    /// Hidden panes/focus transitions must never resume an old flight or tail.
     pub fn reset(self: *Motion) void {
         self.* = .{};
     }
 
-    /// Samples current position before retargeting, preserving continuous motion.
-    /// Returns null when canonical composition already represents this position.
-    pub fn update(self: *Motion, now: u64, frame: instance.PublishedFrame, focused: bool, options: MotionOptions, placement: [4]f32) ?Rect {
+    /// Samples current position before retargeting. Null uses the canonical suffix.
+    pub fn update(self: *Motion, now: u64, frame: instance.PublishedFrame, focused: bool, options: MotionOptions, placement: [4]f32) ?Visual {
         std.debug.assert(options.valid());
         const overlay = frame.cursor orelse {
             self.reset();
@@ -126,9 +166,11 @@ pub const Motion = struct {
         const changed_owner = self.target == null or self.generation != frame.presentation_generation or
             self.alternate != frame.alternate_screen or !std.meta.eql(self.placement, placement) or
             !std.meta.eql(self.surface, frame.surface) or !std.meta.eql(self.cell_size, frame.cell_size) or
-            !std.meta.eql(self.options, options) or self.style != overlay.shape or now < self.started;
-        const changed_size = if (self.target) |target| target.width != rect.width or target.height != rect.height else true;
-        if (changed_owner or changed_size) {
+            !std.meta.eql(self.options, options) or now < self.last_seen;
+        const changed_cursor = if (self.target) |previous| self.style != overlay.shape or
+            previous.width != rect.width or previous.height != rect.height else true;
+        if (changed_owner or changed_cursor) {
+            self.reset();
             self.target = rect;
             self.from_x = @floatFromInt(rect.x);
             self.from_y = @floatFromInt(rect.y);
@@ -140,7 +182,9 @@ pub const Motion = struct {
             self.surface = frame.surface;
             self.cell_size = frame.cell_size;
             self.style = overlay.shape;
-            self.deadline = null;
+            self.last_rect = rect;
+            self.last_seen = now;
+            self.last_emit = now;
             return null;
         }
         const current = self.position(now);
@@ -151,20 +195,68 @@ pub const Motion = struct {
             self.started = now;
         }
         const point = self.position(now);
-        if (now - self.started >= options.duration_ms or
-            (self.from_x == @as(f64, @floatFromInt(rect.x)) and self.from_y == @as(f64, @floatFromInt(rect.y))))
-        {
-            self.deadline = null;
-            return null;
+        var visual: Visual = .{ .rect = .{
+            .x = @intFromFloat(@round(point[0])),
+            .y = @intFromFloat(@round(point[1])),
+            .width = rect.width,
+            .height = rect.height,
+        } };
+        const moving = now - self.started < options.duration_ms and
+            (self.from_x != @as(f64, @floatFromInt(rect.x)) or self.from_y != @as(f64, @floatFromInt(rect.y)));
+        self.deadline = if (moving) @min(now +| 16, self.started +| options.duration_ms) else null;
+        switch (options.effect) {
+            .none => {},
+            .stretch => if (moving) {
+                const t = self.progress(now);
+                const envelope = 4 * t * (1 - t);
+                const dx = @as(f64, @floatFromInt(rect.x)) - self.from_x;
+                const dy = @as(f64, @floatFromInt(rect.y)) - self.from_y;
+                visual.stretch = .{
+                    @intFromFloat(@round(-std.math.sign(dx) * @min(@abs(dx), @as(f64, @floatFromInt(rect.width))) * envelope)),
+                    @intFromFloat(@round(-std.math.sign(dy) * @min(@abs(dy), @as(f64, @floatFromInt(rect.height))) * envelope)),
+                };
+            },
+            .trail => {
+                const lifetime: u64 = @min(@as(u64, options.duration_ms) * 2, 200);
+                var retained: u8 = 0;
+                for (self.samples[0..self.sample_count]) |sample| {
+                    if (now -| sample.at >= lifetime) continue;
+                    self.samples[retained] = sample;
+                    retained += 1;
+                }
+                self.sample_count = retained;
+                if (moving and now - self.last_emit >= 16) {
+                    if (self.last_rect) |previous| if (!std.meta.eql(previous, visual.rect) and now -| self.last_seen < lifetime) {
+                        const count: usize = @min(self.sample_count, trail_limit - 1);
+                        @memmove(self.samples[1 .. count + 1], self.samples[0..count]);
+                        self.samples[0] = .{ .rect = previous, .at = self.last_seen };
+                        self.sample_count = @intCast(count + 1);
+                        self.last_emit = now;
+                    };
+                }
+                for (self.samples[0..self.sample_count], 0..) |sample, index| {
+                    const age = now -| sample.at;
+                    std.debug.assert(age < lifetime);
+                    const alpha: u64 = (lifetime - age) * 72 / lifetime;
+                    visual.ghosts[index] = .{ .rect = sample.rect, .alpha = @intCast(alpha) };
+                    const next = @min(now +| 16, sample.at +| lifetime);
+                    self.deadline = @min(self.deadline orelse next, next);
+                }
+                visual.ghost_count = self.sample_count;
+            },
         }
-        // Finite on-demand frames; completion gets its exact deadline.
-        self.deadline = @min(now +| 16, self.started +| options.duration_ms);
-        return .{ .x = @intFromFloat(@round(point[0])), .y = @intFromFloat(@round(point[1])), .width = rect.width, .height = rect.height };
+        self.last_rect = visual.rect;
+        self.last_seen = now;
+        return if (moving or visual.ghost_count != 0) visual else null;
+    }
+
+    fn progress(self: *const Motion, now: u64) f64 {
+        return @as(f64, @floatFromInt(@min(now -| self.started, self.options.duration_ms))) / @as(f64, @floatFromInt(self.options.duration_ms));
     }
 
     fn position(self: *const Motion, now: u64) [2]f64 {
         const rect = self.target.?;
-        const t = @as(f64, @floatFromInt(@min(now -| self.started, self.options.duration_ms))) / @as(f64, @floatFromInt(self.options.duration_ms));
+        const t = self.options.easing.value(self.progress(now));
         return .{
             self.from_x + (@as(f64, @floatFromInt(rect.x)) - self.from_x) * t,
             self.from_y + (@as(f64, @floatFromInt(rect.y)) - self.from_y) * t,
@@ -279,21 +371,21 @@ test "motion retargets continuously and retires its exact completion deadline" {
     try std.testing.expectEqual(null, motion.deadline);
     frame.cursor.?.rect.x = 80;
     frame.cursor.?.rect.y = 40;
-    var rect = motion.update(100, frame, true, options, placement).?;
+    var rect = motion.update(100, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(i32, 0), rect.x);
     try std.testing.expectEqual(@as(?u64, 116), motion.deadline);
     frame.revision += 1; // Content refresh must not restart an ongoing flight.
-    rect = motion.update(140, frame, true, options, placement).?;
+    rect = motion.update(140, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(i32, 40), rect.x);
     try std.testing.expectEqual(@as(i32, 20), rect.y);
     frame.cursor.?.rect.x = 0; // Rapid reversal starts at the current visual point.
-    rect = motion.update(140, frame, true, options, placement).?;
+    rect = motion.update(140, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(i32, 40), rect.x);
     try std.testing.expectEqual(@as(i32, 20), rect.y);
-    rect = motion.update(160, frame, true, options, placement).?;
+    rect = motion.update(160, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(i32, 30), rect.x);
     try std.testing.expectEqual(@as(i32, 25), rect.y);
-    rect = motion.update(219, frame, true, options, placement).?;
+    rect = motion.update(219, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(?u64, 220), motion.deadline);
     try std.testing.expect(rect.x >= 0 and rect.y <= 40);
     try std.testing.expectEqual(null, motion.update(220, frame, true, options, placement));
@@ -345,4 +437,118 @@ test "motion snaps across focus viewport geometry style preference and clock cha
     try std.testing.expect(motion.target == null and motion.deadline == null);
     try std.testing.expect(!(MotionOptions{ .duration_ms = 19 }).valid());
     try std.testing.expect(!(MotionOptions{ .duration_ms = 251 }).valid());
+}
+
+test "easing samples its closed curve and reverses from the current visual point" {
+    var frame = testFrame();
+    frame.surface = .{ .width = 200, .height = 100 };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    var motion: Motion = .{};
+    const options: MotionOptions = .{ .enabled = true, .easing = .ease_out };
+    const placement: [4]f32 = .{ 0, 0, 200, 100 };
+    try std.testing.expectEqual(null, motion.update(100, frame, true, options, placement));
+    frame.cursor.?.rect.x = 80;
+    try std.testing.expectEqual(@as(i32, 0), motion.update(100, frame, true, options, placement).?.rect.x);
+    try std.testing.expectEqual(@as(i32, 70), motion.update(140, frame, true, options, placement).?.rect.x);
+    frame.cursor.?.rect.x = 0;
+    try std.testing.expectEqual(@as(i32, 70), motion.update(140, frame, true, options, placement).?.rect.x);
+    try std.testing.expectEqual(@as(i32, 9), motion.update(180, frame, true, options, placement).?.rect.x);
+    try std.testing.expectEqual(null, motion.update(220, frame, true, options, placement));
+    try std.testing.expectEqual(null, motion.deadline);
+    for ([_]Easing{ .linear, .ease_out }) |curve| {
+        var previous: f64 = 0;
+        for (0..101) |i| {
+            const value = curve.value(@as(f64, @floatFromInt(i)) / 100);
+            try std.testing.expect(value >= previous and value >= 0 and value <= 1);
+            previous = value;
+        }
+        try std.testing.expectEqual(@as(f64, 1), previous);
+    }
+}
+
+test "stretch stays within one cursor extent and collapses at exact completion" {
+    var frame = testFrame();
+    frame.surface = .{ .width = 200, .height = 100 };
+    frame.cursor = .{ .rect = .{ .x = 80, .y = 40, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    const options: MotionOptions = .{ .enabled = true, .effect = .stretch };
+    const placement: [4]f32 = .{ 0, 0, 200, 100 };
+    for ([_][2]i32{ .{ 0, 0 }, .{ 160, 80 }, .{ 0, 80 }, .{ 160, 0 } }) |target| {
+        var motion: Motion = .{};
+        try std.testing.expectEqual(null, motion.update(100, frame, true, options, placement));
+        var moved = frame;
+        moved.cursor.?.rect.x = target[0];
+        moved.cursor.?.rect.y = target[1];
+        const first = motion.update(100, moved, true, options, placement).?;
+        try std.testing.expectEqualDeep([2]i32{ 0, 0 }, first.stretch);
+        for (1..80) |elapsed| {
+            const visual = motion.update(100 + elapsed, moved, true, options, placement).?;
+            try std.testing.expect(@abs(visual.stretch[0]) <= frame.cursor.?.rect.width);
+            try std.testing.expect(@abs(visual.stretch[1]) <= frame.cursor.?.rect.height);
+            try std.testing.expect(visual.ghost_count == 0);
+        }
+        try std.testing.expectEqual(null, motion.update(180, moved, true, options, placement));
+        try std.testing.expectEqual(null, motion.deadline);
+    }
+}
+
+test "four trail samples fade out finitely and exact last expiry retires the timer" {
+    var frame = testFrame();
+    frame.surface = .{ .width = 200, .height = 100 };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    var motion: Motion = .{};
+    const options: MotionOptions = .{ .enabled = true, .effect = .trail };
+    const placement: [4]f32 = .{ 0, 0, 200, 100 };
+    try std.testing.expectEqual(null, motion.update(0, frame, true, options, placement));
+    frame.cursor.?.rect.x = 80;
+    try std.testing.expectEqual(@as(u8, 0), motion.update(0, frame, true, options, placement).?.ghost_count);
+    for (1..5) |i| {
+        const visual = motion.update(i * 16, frame, true, options, placement).?;
+        try std.testing.expectEqual(@as(u8, @intCast(i)), visual.ghost_count);
+        for (visual.ghosts[0..visual.ghost_count]) |ghost| try std.testing.expect(ghost.alpha <= 72);
+    }
+    const tail = motion.update(80, frame, true, options, placement).?;
+    try std.testing.expectEqual(@as(i32, 80), tail.rect.x);
+    try std.testing.expectEqual(@as(u8, 4), tail.ghost_count);
+    try std.testing.expect(motion.deadline != null);
+    const last = motion.update(207, frame, true, options, placement).?;
+    try std.testing.expectEqual(@as(u8, 1), last.ghost_count);
+    try std.testing.expectEqual(@as(?u64, 208), motion.deadline);
+    try std.testing.expectEqual(null, motion.update(208, frame, true, options, placement));
+    try std.testing.expectEqual(null, motion.deadline);
+    try std.testing.expectEqual(null, motion.update(9000, frame, true, options, placement));
+    try std.testing.expectEqual(@as(u8, 0), motion.sample_count);
+}
+
+test "rapid effect retargeting stays bounded visibility clears tails and live colors preserve motion" {
+    var frame = testFrame();
+    frame.surface = .{ .width = 200, .height = 100 };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .bar, .color_resource = null };
+    const placement: [4]f32 = .{ 0, 0, 200, 100 };
+    for ([_]Easing{ .linear, .ease_out }) |curve| for ([_]Effect{ .none, .stretch, .trail }) |effect| {
+        var motion: Motion = .{};
+        var cut = frame;
+        const options: MotionOptions = .{ .enabled = true, .duration_ms = 250, .easing = curve, .effect = effect };
+        try std.testing.expectEqual(null, motion.update(0, cut, true, options, placement));
+        for (1..1001) |i| {
+            cut.cursor.?.rect.x = if (i % 2 == 0) 0 else 160;
+            const visual = motion.update(i * 7, cut, true, options, placement).?;
+            try std.testing.expect(visual.rect.x >= 0 and visual.rect.x <= 160);
+            try std.testing.expect(visual.ghost_count <= 4 and motion.sample_count <= 4);
+        }
+        try std.testing.expectEqual(null, motion.update(7500, cut, true, options, placement));
+        try std.testing.expectEqual(null, motion.deadline);
+        cut.cursor.?.rect.x = if (cut.cursor.?.rect.x == 0) 160 else 0;
+        try std.testing.expect(motion.update(7501, cut, true, options, placement) != null);
+        try std.testing.expectEqual(null, motion.update(7510, cut, false, options, placement));
+        try std.testing.expect(motion.target == null and motion.sample_count == 0 and motion.deadline == null);
+        try std.testing.expectEqual(null, motion.update(7511, cut, true, options, placement));
+        cut.cursor.?.rect.x = if (cut.cursor.?.rect.x == 0) 160 else 0;
+        try std.testing.expect(motion.update(7512, cut, true, options, placement) != null);
+        cut.cursor.?.text_color.g = 1;
+        cut.cursor.?.color.r = 100;
+        // Colors naturally change across inverse/styled cells; latest frame colors
+        // compose over the same ongoing visual flight rather than pinning it.
+        try std.testing.expect(motion.update(7513, cut, true, options, placement) != null);
+        try std.testing.expect(motion.deadline != null);
+    };
 }

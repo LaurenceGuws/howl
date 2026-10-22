@@ -2438,10 +2438,10 @@ const App = struct {
                 const cursor_now = c.SDL_GetTicks();
                 const show_cursor = p.blink.update(cursor_now, frame, cursor_focused, .{ .policy = self.configuration.value.cursor_blink, .interval_ms = self.configuration.value.cursor_blink_interval_ms, .idle_ms = self.configuration.value.cursor_blink_idle_ms });
                 const cursor_display: canvas.CursorDisplay = if (!cursor_focused) .outline else if (show_cursor) .shown else .hidden;
-                const motion_rect = p.motion.update(cursor_now, frame, cursor_focused and show_cursor, .{ .enabled = self.configuration.value.cursor_motion, .duration_ms = self.configuration.value.cursor_motion_ms }, .{ placed.x, placed.y, placed.w, placed.h });
+                const cursor_visual = p.motion.update(cursor_now, frame, cursor_focused and show_cursor, .{ .enabled = self.configuration.value.cursor_motion, .duration_ms = self.configuration.value.cursor_motion_ms, .easing = self.configuration.value.cursor_easing, .effect = self.configuration.value.cursor_effect }, .{ placed.x, placed.y, placed.w, placed.h });
                 if (p.blink.deadline) |deadline| self.cursor_deadline = @min(self.cursor_deadline orelse deadline, deadline);
                 if (p.motion.deadline) |deadline| self.cursor_deadline = @min(self.cursor_deadline orelse deadline, deadline);
-                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, self.configuration.value.cursor_outline_pixels, motion_rect) catch |failure| {
+                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, self.configuration.value.cursor_outline_pixels, cursor_visual) catch |failure| {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {
