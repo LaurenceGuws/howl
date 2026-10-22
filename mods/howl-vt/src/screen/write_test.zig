@@ -201,3 +201,48 @@ test "screen write: out-of-bounds cell lookup returns zero" {
     defer s.deinit(gpa);
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(10, 0));
 }
+
+test "overlapping row edits move long scalar tails with their cells" {
+    const allocator = std.testing.allocator;
+    for (0..6) |operation| {
+        var screen = try Screen.initWithCells(allocator, 1, 32);
+        defer screen.deinit(allocator);
+        for (0..32) |col| {
+            apply(&screen, .{ .cursor_position = .{ .row = 0, .col = @intCast(col) } });
+            apply(&screen, .{ .write_codepoint = @intCast('A' + col % 26) });
+            for (0..8) |i| apply(&screen, .{ .write_codepoint = @intCast(0x0300 + i) });
+        }
+        var cells: [32]Screen.Cell = undefined;
+        var sequences: [32][24]u32 = undefined;
+        var lengths: [32]u8 = undefined;
+        for (&cells, 0..) |*cell, col| {
+            cell.* = screen.cellInfoAt(0, @intCast(col));
+            lengths[col] = @intCast(screen.cellScalarsAt(0, @intCast(col), &sequences[col]).len);
+            try std.testing.expectEqual(@as(u8, 9), lengths[col]);
+        }
+        apply(&screen, .{ .cursor_position = .{ .row = 0, .col = 0 } });
+        const right = operation % 2 == 0;
+        const changed = switch (operation) {
+            0 => screen.insertChars(3),
+            1 => screen.deleteChars(3),
+            2 => screen.insertColumns(3),
+            3 => screen.deleteColumns(3),
+            4 => screen.shiftColumnsRight(3),
+            else => screen.shiftColumnsLeft(3),
+        };
+        try std.testing.expect(changed);
+        for (0..32) |col| {
+            const erased = if (right) col < 3 else col >= 29;
+            var actual: [24]u32 = undefined;
+            const scalars = screen.cellScalarsAt(0, @intCast(col), &actual);
+            if (erased) {
+                try std.testing.expectEqualDeep(Screen.default_cell, screen.cellInfoAt(0, @intCast(col)));
+                try std.testing.expectEqual(@as(usize, 0), scalars.len);
+            } else {
+                const source = if (right) col - 3 else col + 3;
+                try std.testing.expectEqualDeep(cells[source], screen.cellInfoAt(0, @intCast(col)));
+                try std.testing.expectEqualSlices(u32, sequences[source][0..lengths[source]], scalars);
+            }
+        }
+    }
+}

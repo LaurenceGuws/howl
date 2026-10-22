@@ -2220,16 +2220,11 @@ pub const Screen = struct {
         }
         if (move_len > 0) {
             const base = self.rowStart(self.cursor.row);
-            self.moveScalarCells(
+            self.moveCells(
                 base + dst_col,
                 base + src_col,
                 move_len,
                 true,
-            );
-            std.mem.copyBackwards(
-                Cell,
-                row[@intCast(dst_col)..@intCast(dst_col + move_len)],
-                row[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
         self.clearScalarCells(
@@ -2282,12 +2277,7 @@ pub const Screen = struct {
         }
         if (move_len > 0) {
             const base = self.rowStart(self.cursor.row);
-            self.moveScalarCells(base + dst_col, base + src_col, move_len, false);
-            std.mem.copyForwards(
-                Cell,
-                row[@intCast(dst_col)..@intCast(dst_col + move_len)],
-                row[@intCast(src_col)..@intCast(src_col + move_len)],
-            );
+            self.moveCells(base + dst_col, base + src_col, move_len, false);
         }
         self.clearScalarCells(
             self.rowStart(self.cursor.row) + tail_start,
@@ -2327,16 +2317,11 @@ pub const Screen = struct {
 
         if (move_len > 0) {
             const base = self.rowStart(row);
-            self.moveScalarCells(
+            self.moveCells(
                 base + dst_col,
                 base + cursor_col,
                 move_len,
                 true,
-            );
-            std.mem.copyBackwards(
-                Cell,
-                cells[@intCast(dst_col)..@intCast(dst_col + move_len)],
-                cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
             );
         }
         self.clearScalarCells(
@@ -2377,16 +2362,11 @@ pub const Screen = struct {
 
         if (move_len > 0) {
             const base = self.rowStart(row);
-            self.moveScalarCells(
+            self.moveCells(
                 base + cursor_col,
                 base + src_col,
                 move_len,
                 false,
-            );
-            std.mem.copyForwards(
-                Cell,
-                cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
-                cells[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
         self.clearScalarCells(
@@ -2431,16 +2411,11 @@ pub const Screen = struct {
         if (move_len > 0) {
             const source_start = left_idx + screenColCount(amount);
             const base = self.rowStart(row);
-            self.moveScalarCells(
+            self.moveCells(
                 base + left_idx,
                 base + source_start,
                 move_len,
                 false,
-            );
-            std.mem.copyForwards(
-                Cell,
-                cells[@intCast(left_idx)..@intCast(left_idx + move_len)],
-                cells[@intCast(source_start)..@intCast(source_start + move_len)],
             );
         }
         self.clearScalarCells(
@@ -2480,16 +2455,11 @@ pub const Screen = struct {
         if (move_len > 0) {
             const destination_start = left_idx + amount_cols;
             const base = self.rowStart(row);
-            self.moveScalarCells(
+            self.moveCells(
                 base + destination_start,
                 base + left_idx,
                 move_len,
                 true,
-            );
-            std.mem.copyBackwards(
-                Cell,
-                cells[@intCast(destination_start)..@intCast(destination_start + move_len)],
-                cells[@intCast(left_idx)..@intCast(left_idx + move_len)],
             );
         }
         self.clearScalarCells(
@@ -2522,7 +2492,7 @@ pub const Screen = struct {
             clearAcceptedTail(storage, index, cells[index].combining_len);
     }
 
-    fn moveScalarCells(
+    fn moveCells(
         self: *Screen,
         destination: u32,
         source: u32,
@@ -2531,6 +2501,15 @@ pub const Screen = struct {
     ) void {
         const storage = if (self.scalars) |*value| value else return;
         const cells = self.cells orelse return;
+        if (source == destination or count == 0) return;
+        std.debug.assert(if (backwards) destination > source else destination < source);
+        if (!storage.hasAllocatedRanges()) {
+            if (backwards)
+                std.mem.copyBackwards(Cell, cells[destination..][0..count], cells[source..][0..count])
+            else
+                std.mem.copyForwards(Cell, cells[destination..][0..count], cells[source..][0..count]);
+            return;
+        }
         var preflight: u32 = 0;
         while (preflight < count) : (preflight += 1) {
             const source_count = storage.validate(
@@ -2563,10 +2542,12 @@ pub const Screen = struct {
                     // zig-audit: acknowledge catch_unreachable
                     // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
                 ) catch unreachable;
+                cells[destination + remaining] = cells[source + remaining];
+                cells[source + remaining] = blank_cell;
             }
         } else {
             var index: u32 = 0;
-            while (index < count) : (index += 1)
+            while (index < count) : (index += 1) {
                 storage.move(
                     source + index,
                     cells[source + index].combining_len,
@@ -2575,6 +2556,9 @@ pub const Screen = struct {
                     // zig-audit: acknowledge catch_unreachable
                     // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
                 ) catch unreachable;
+                cells[destination + index] = cells[source + index];
+                cells[source + index] = blank_cell;
+            }
         }
     }
 
