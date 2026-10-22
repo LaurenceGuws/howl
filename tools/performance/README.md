@@ -17,6 +17,20 @@ grid and use the full 384×83 producer lattice. The fresh 32-run physical Hyprla
 race is recorded in [race.html](race.html#dp1-race-20261021), including every CPU
 observation, cold memory peak and producer miss.
 
+## Rain cadence lanes
+
+[RAIN.md](RAIN.md) adds explicit **60 / 120 / 240 fps** rain workloads with the
+same full 384×83 native grid and seed across all four horses. Rain accepts
+`--fps`, `--duration-ms`, `--frames`, `--seed`, `--cols`, `--rows` and synchronized
+output. Requested/achieved producer cadence, missed slots, changed cells,
+producer timing, terminal CPU and memory remain separate measurements.
+Increasing fps also increases rain's simulation steps and work per second.
+Actual presentation timing remains a separate observation requirement.
+The [completed 24-run private sweep](race.html#rain-cadence-20261022) records two
+fresh 20s trials per horse/rate, every CPU/memory observation, producer work and
+miss. Total producer skipped slots: 22; all geometry and raw metrics reconcile.
+No product source or installed binary changed.
+
 ## Row repaint screen · 22 October
 
 The [row repaint experiment](race.html#row-repaint-20261022) is rejected and fully
