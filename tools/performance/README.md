@@ -17,6 +17,26 @@ grid and use the full 384×83 producer lattice. The fresh 32-run physical Hyprla
 race is recorded in [race.html](race.html#dp1-race-20261021), including every CPU
 observation, cold memory peak and producer miss.
 
+## Row repaint screen · 22 October
+
+The [row repaint experiment](race.html#row-repaint-20261022) is rejected and fully
+withdrawn. An optional bounded row witness passes the complete correctness gates,
+18 exact native old/new comparisons and 123 cursor/UI captures. Four fresh 20s
+Fast sparse SDL diagnostics still submit effectively identical work:
+113,622.106 → 113,623.910 vertices per content target, **+0.001588%**.
+All four producers sustain 239.999Hz with zero misses; the diagnostic receipts
+have no resource events or throttling. No ordinary CPU improvement is claimed.
+
+The first 3GiB whole correctness build passed but hit memory.max reclaim without
+OOM/throttling; that limitation stays in its receipt. Restored-source verification
+passes 1,206 reported tests and full check/audit at 4GiB, with zero resource events
+or throttling. Current accepted source and
+both installed Safe launch binaries are unchanged. Previous row-coalescing and
+cell/tile-painter rejections remain relevant; they are linked as distinct older
+cohorts rather than described as untried follow-ups. Raw qualification, archived
+candidate source/ELFs, failed fixture attempts and every count remain in the
+Home workstream's performance/sparse-paint directory.
+
 ## Current Fast race and accepted scratch reuse · 22 October
 
 The [latest Fast race](race.html#fast-race-20261022) records 48 fresh 20s trials
@@ -34,8 +54,8 @@ PCs resolve to canonical VT parsing/actions. Four separate SDL submission
 diagnostics show sparse text changes submit about 89.6–89.7% of plain geometry
 vertices despite 1/64 the writes. The current host clears/repaints the full
 content texture on changed content revisions; cursor-only motion already reuses
-it. Less content painting is the next evidence-backed investigation, with complete
-immutable frames and pixel/resource/recovery guarantees preserved. Diagnostics
+it. The later row repaint screen above rejects the conservative implementation;
+complete immutable frames and pixel/resource/recovery guarantees remain preserved. Diagnostics
 remain separate from ordinary CPU and displayed cadence.
 
 The [scratch source controls](race.html#context-scratch-20261022) retain all
