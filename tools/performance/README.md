@@ -17,11 +17,38 @@ grid and use the full 384×83 producer lattice. The fresh 32-run physical Hyprla
 race is recorded in [race.html](race.html#dp1-race-20261021), including every CPU
 observation, cold memory peak and producer miss.
 
+## Current Fast race and accepted scratch reuse · 22 October
+
+The [latest Fast race](race.html#fast-race-20261022) records 48 fresh 20s trials
+across Howl, Foot, Kitty and Alacritty at the complete native 384×83 grid.
+Howl accepted source is 1e32216, qualified Fast ELF 83259505; daily installed Safe
+is 814928a8. Exact upstream binaries, documented profiles, font and producer
+are verified against accepted calibration. Keep this private cohort separate
+from daily Safe and physical Hyprland results. CPU, producer emission/backpressure
+and observed timed Anonymous/PSS peaks remain separate dimensions.
+
+The [scratch source controls](race.html#context-scratch-20261022) retain all
+64 primary and 16 independent Fast observations. Reusing the same bounded arrays
+once per projection saves 26.59% Safe Unicode CPU. Explicit costs remain:
+Safe plain +0.46%; Fast plain +1.06% primary / +1.42% independent.
+Fast Unicode changes direction between cohorts. This is an accepted bounded
+tradeoff for the daily Safe gain, not a universal speedup.
+
+Bounds, safety, native shaping, immutable output and retained state remain
+unchanged. The independent multirow native raster oracle, complete root gates,
+1,200 cursor compositions, 123 UI captures and four exact old/new native RGBA
+comparisons at 10/18px in both modes pass. Four separate diagnostic postprofiles
+corroborate removal of the repeated scratch-fill hotspot. A nullable on-demand
+variant is rejected at code generation because it adds an unconditional clear.
+The exact qualified Safe is atomically installed in both launch paths; Fast
+remains a benchmark artifact. Raw hashes, source decisions, all adverse results
+and sealed containment receipts remain in the Home workstream.
+
 ## Private full-grid and cursor controls · 22 October
 
 The [current private cohort](race.html#private-cursor-race-20261022) records 48
 four-horse pressure trials and 42 cursor-only trials at the exact 384×83 native
-grid. Howl is the daily ReleaseSafe a9eaab2 artifact; keep it separate from
+grid. Howl in that cohort is the preceding ReleaseSafe a9eaab2 artifact; keep it separate from
 ReleaseFast and physical Hyprland. Private refresh is not exposed. Producer
 emission/backpressure, whole-terminal CPU and observed timed Anonymous/PSS peaks
 remain separate dimensions.
@@ -30,8 +57,8 @@ The [cursor batching candidate](race.html#cursor-batching-20261022) passes its
 correctness gates and is withheld after 44 primary and 16 independent controls:
 the small trail saving does not repeat at 240 Hz. The original Canvas and
 installed cursor checkpoint remain accepted. [Current CPU attribution](race.html#scratch-profile-20261022)
-identifies contextual scratch initialization for the next bounded experiment;
-it establishes no source gain yet.
+identifies the contextual scratch initialization mechanism; the completed
+[source controls](race.html#context-scratch-20261022) record its measured tradeoffs.
 
 The benchmark build helper now targets `hosts/howl-app` and forwards build
 arguments. Choose a separate artifact prefix and bounded jobs, for example:
