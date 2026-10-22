@@ -51,6 +51,17 @@ cohorts rather than described as untried follow-ups. Raw qualification, archived
 candidate source/ELFs, failed fixture attempts and every count remain in the
 Home workstream's performance/sparse-paint directory.
 
+## Logical mutation contract · 22 October
+
+The [column-block contract experiment](BLOCK_CONTRACT.md) proves independent observers
+can preserve column precision through skipped observations: 332/1,992 changed
+blocks despite all 83 rows changing. Both implementations are withdrawn on write
+cost. The first adds 7.90% Unicode wall time; the refined version adds 12.56%
+plain process CPU, all eight pairs slower. These are VT-only measurements, not
+application CPU or presentation timing. A pre-existing overlapping scalar-tail
+move panic found by the oracle is fixed and has an exact six-operation proof.
+No renderer, host or installed binary changed.
+
 ## Current Fast race and accepted scratch reuse · 22 October
 
 The [latest Fast race](race.html#fast-race-20261022) records 48 fresh 20s trials
