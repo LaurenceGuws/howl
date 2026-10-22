@@ -217,7 +217,7 @@ fn fontConfig(font: *render.text.FontSet) RR.Config {
     };
 }
 
-test "full row contextual operators equal one native shaping run beyond retained cluster capacity" {
+test "contextual runs match native shaping across long short and scalar fallback rows" {
     const font = try render.text.FontSet.init(allocator, .{
         .primary = @import("test_fonts").normal_ligature_font,
         .size = .{ .pixels = 18 },
@@ -234,36 +234,54 @@ test "full row contextual operators equal one native shaping run beyond retained
     var shaped: [1024]render.text.Glyph = undefined;
     for ([_]u16{ 8, 31, 512 }) |count| {
         var vt: VT = undefined;
-        try VT.initWithHistoryInto(&vt, allocator, 2, count, 0);
+        try VT.initWithHistoryInto(&vt, allocator, 3, count, 0);
         defer vt.deinit();
         // zig-audit: acknowledge discard
         // reason: Native glyph rasters and final positions below prove the complete output, independent of the feed summary.
         _ = try vt.feed("\x1b[?25l");
-        // zig-audit: acknowledge discard
-        // reason: The shaped native run below is compared against every published glyph for these exact bytes.
-        _ = try vt.feed(bytes[0..count]);
+        const row_lengths = [_]u16{ count, 1, @min(count, 7) };
+        for (row_lengths, 0..) |length, row| {
+            if (row != 0) {
+                // zig-audit: acknowledge discard
+                // reason: The native ink bounds below prove each later run belongs to its new row.
+                _ = try vt.feed("\r\n");
+            }
+            // zig-audit: acknowledge discard
+            // reason: Each native run below is compared against every published glyph for these exact bytes.
+            _ = try vt.feed(bytes[0..length]);
+        }
         const owner = try RR.initPrivate(allocator, .{ .regular = font }, fontConfig(font));
         defer RR.deinit(owner);
         try RR.updateObservation(owner, vt.observation(), 0, &.{});
         const frame = try output.frame(owner);
-        const native = try font.shape(buffer, .{ .codepoints = scalars[0..count], .clusters = clusters[0..count] }, &shaped);
         var command_index: usize = 0;
-        for (native.glyphs) |glyph| {
-            var raster = try font.rasterize(allocator, native.face_index, glyph.id);
-            defer raster.deinit();
-            if (raster.width == 0 or raster.height == 0) continue;
-            while (command_index < frame.commands.len and frame.commands[command_index] != .alpha_mask) command_index += 1;
-            try std.testing.expect(command_index < frame.commands.len);
-            const mask = frame.commands[command_index].alpha_mask;
-            command_index += 1;
-            const x = @as(i64, glyph.cluster) * font.metrics().advance_width * 64 + glyph.x_offset + @as(i64, raster.left) * 64;
-            try std.testing.expectEqual(@as(i32, @intCast(@divFloor(x, 64))), mask.destination.x);
-            try std.testing.expectEqual(raster.width, mask.resource.source.?.width);
-            try std.testing.expectEqual(raster.height, mask.resource.source.?.height);
-            const upload = frame.uploads[0];
-            for (0..raster.height) |row| {
-                const start = upload.pixel_offset + (@as(usize, mask.resource.source.?.y) + row) * upload.stride + mask.resource.source.?.x;
-                try std.testing.expectEqualSlices(u8, raster.pixels[row * raster.width ..][0..raster.width], frame.pixels[start..][0..raster.width]);
+        for (row_lengths, 0..) |length, row_index| {
+            const native = try font.shape(buffer, .{ .codepoints = scalars[0..length], .clusters = clusters[0..length] }, &shaped);
+            for (native.glyphs) |glyph| {
+                var raster = try font.rasterize(allocator, native.face_index, glyph.id);
+                defer raster.deinit();
+                if (raster.width == 0 or raster.height == 0) continue;
+                while (command_index < frame.commands.len and frame.commands[command_index] != .alpha_mask) command_index += 1;
+                try std.testing.expect(command_index < frame.commands.len);
+                const mask = frame.commands[command_index].alpha_mask;
+                const row_y: i64 = @intCast(row_index * font.metrics().line_height);
+                const y = (row_y + font.metrics().baseline) * 64 - glyph.y_offset - @as(i64, raster.top) * 64;
+                const top = @divFloor(y, 64);
+                const clip_y = @max(row_y, top);
+                const bottom = @min(row_y + font.metrics().line_height, top + raster.height);
+                try std.testing.expectEqual(@as(i32, @intCast(top)), mask.destination.y);
+                try std.testing.expectEqual(@as(i32, @intCast(clip_y)), mask.clip.y);
+                try std.testing.expectEqual(@as(u16, @intCast(bottom - clip_y)), mask.clip.height);
+                command_index += 1;
+                const x = @as(i64, glyph.cluster) * font.metrics().advance_width * 64 + glyph.x_offset + @as(i64, raster.left) * 64;
+                try std.testing.expectEqual(@as(i32, @intCast(@divFloor(x, 64))), mask.destination.x);
+                try std.testing.expectEqual(raster.width, mask.resource.source.?.width);
+                try std.testing.expectEqual(raster.height, mask.resource.source.?.height);
+                const upload = frame.uploads[0];
+                for (0..raster.height) |row| {
+                    const start = upload.pixel_offset + (@as(usize, mask.resource.source.?.y) + row) * upload.stride + mask.resource.source.?.x;
+                    try std.testing.expectEqualSlices(u8, raster.pixels[row * raster.width ..][0..raster.width], frame.pixels[start..][0..raster.width]);
+                }
             }
         }
         for (frame.commands[command_index..]) |command| try std.testing.expect(command != .alpha_mask);

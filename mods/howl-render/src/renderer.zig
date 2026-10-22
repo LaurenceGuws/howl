@@ -2433,6 +2433,11 @@ fn buildContentCommands(
         }
     }
 
+    // Each run is fully emitted before the next reuses this scratch.
+    // Its lifetime spans this projection, including every row.
+    var operator_scalars: [maximum_operator_run_cells]u32 = undefined;
+    var operator_clusters: [maximum_operator_run_cells]u32 = undefined;
+    var operator_glyphs: [maximum_operator_run_cells * 2]text.Glyph = undefined;
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
         const line_geometry = Source.lineGeometry(snapshot, row);
@@ -2529,10 +2534,6 @@ fn buildContentCommands(
 
             var run: text.Run = undefined;
             var contextual = false;
-            // These arrays are borrowed by run until its glyphs are emitted.
-            var operator_scalars: [maximum_operator_run_cells]u32 = undefined;
-            var operator_clusters: [maximum_operator_run_cells]u32 = undefined;
-            var operator_glyphs: [maximum_operator_run_cells * 2]text.Glyph = undefined;
             if (line_geometry == .single_width and
                 try contentIsContextualOperatorCell(Source, cell, sequence))
             {
