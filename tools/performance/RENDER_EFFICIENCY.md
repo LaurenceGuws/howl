@@ -4,6 +4,10 @@
 installed LLVM ReleaseFast ad407a2e. This is a first Render-owned improvement,
 not a resolution of the sparse reuse or high-refresh presentation targets.
 
+Follow-up: [Atlas working sets and lookup policy](ATLAS_WORKING_SET.md)
+records the accepted bounded index/compact-reference change, larger-corpus
+measurements and the still-open atlas admission and publication memory design.
+
 ## Findings
 
 Printable ASCII already has dense shape/atlas lookup and cached integer placement.

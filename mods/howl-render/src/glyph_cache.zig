@@ -200,6 +200,99 @@ const ShapeEntry = struct {
     face_index: u8,
 };
 
+// Large working sets index retained records; small sets keep their short scan.
+// Slots contain entry index + 1, with zero terminating a probe. There are no
+// individual deletions, so reset needs no tombstones or retained key copies.
+const EntryIndex = struct {
+    slots: []u32 = &.{},
+
+    const Probe = struct {
+        slots: []const u32,
+        at: usize,
+        remaining: usize,
+
+        fn next(self: *Probe) ?usize {
+            if (self.remaining == 0) return null;
+            self.remaining -= 1;
+            const value = self.slots[self.at];
+            self.at = (self.at + 1) & (self.slots.len - 1);
+            if (value == 0) {
+                self.remaining = 0;
+                return null;
+            }
+            return value - 1;
+        }
+    };
+
+    fn probe(self: EntryIndex, hash: u64) Probe {
+        std.debug.assert(self.slots.len != 0);
+        return .{ .slots = self.slots, .at = @as(usize, @truncate(hash)) & (self.slots.len - 1), .remaining = self.slots.len };
+    }
+
+    fn clear(self: *EntryIndex) void {
+        @memset(self.slots, 0);
+    }
+
+    fn deinit(self: *EntryIndex, allocator: std.mem.Allocator) void {
+        allocator.free(self.slots);
+        self.* = .{};
+    }
+
+    fn add(self: *EntryIndex, hash: u64, index: usize) void {
+        if (self.slots.len == 0) return;
+        std.debug.assert(index < std.math.maxInt(u32));
+        var at = @as(usize, @truncate(hash)) & (self.slots.len - 1);
+        for (0..self.slots.len) |_| {
+            if (self.slots[at] == 0) {
+                self.slots[at] = @intCast(index + 1);
+                return;
+            }
+            at = (at + 1) & (self.slots.len - 1);
+        }
+        // zig-audit: acknowledge unreachable
+        // reason: ensureInsert reserves at least twice the retained count; this bounded insertion must encounter an empty slot.
+        unreachable;
+    }
+
+    // zig-audit: acknowledge anytype
+    // reason: The private index is instantiated only for retained ShapeEntry or AtlasEntry slices, without copying their keys.
+    fn ensureInsert(self: *EntryIndex, allocator: std.mem.Allocator, entries: anytype) std.mem.Allocator.Error!void {
+        if (entries.len < 64 and self.slots.len == 0) return;
+        const count = std.math.add(usize, entries.len, 1) catch return error.OutOfMemory;
+        if (count <= self.slots.len / 2) return;
+        const needed = std.math.mul(usize, count, 2) catch return error.OutOfMemory;
+        const capacity = std.math.ceilPowerOfTwo(usize, needed) catch return error.OutOfMemory;
+        var replacement: EntryIndex = .{ .slots = try allocator.alloc(u32, capacity) };
+        replacement.clear();
+        for (entries, 0..) |entry, index| replacement.add(entryHash(entry), index);
+        self.deinit(allocator);
+        self.* = replacement;
+    }
+};
+
+fn shapeIndexHash(hash: u64, variant: FontVariant) u64 {
+    return hash ^ (@as(u64, @backingInt(variant)) *% 0x9e3779b97f4a7c15);
+}
+
+fn atlasIndexHash(identity: AtlasIdentity) u64 {
+    var value = identity.low ^ std.math.rotl(u64, identity.high, 23);
+    value = (value ^ (value >> 30)) *% 0xbf58476d1ce4e5b9;
+    value = (value ^ (value >> 27)) *% 0x94d049bb133111eb;
+    return value ^ (value >> 31);
+}
+
+// zig-audit: acknowledge anytype
+// reason: The two explicit compile-time cases are the cache-owned retained entry layouts; other types are rejected.
+fn entryHash(entry: anytype) u64 {
+    if (@TypeOf(entry) == ShapeEntry) {
+        return shapeIndexHash(entry.hash, entry.variant);
+    } else if (@TypeOf(entry) == AtlasEntry) {
+        return atlasIndexHash(entry.key);
+    } else {
+        @compileError("entry index requires ShapeEntry or AtlasEntry");
+    }
+}
+
 const printable_ascii_first: u32 = 0x20;
 const printable_ascii_last: u32 = 0x7e;
 const printable_ascii_count: usize = printable_ascii_last - printable_ascii_first + 1;
@@ -221,16 +314,18 @@ const ShapeCacheImpl = struct {
     scalars: []u32,
     glyphs: []text.Glyph,
     max_sequence_scalars: u32,
-    ascii_entries: [font_variant_count][printable_ascii_count]?usize = @splat(@splat(null)),
+    // Zero is absent; retained entry references use the same bounded one-based u32 as the index.
+    ascii_entries: [font_variant_count][printable_ascii_count]u32 = @splat(@splat(0)),
     entry_count: usize = 0,
     scalar_count: usize = 0,
     glyph_count: usize = 0,
+    lookup: EntryIndex = .{},
 };
 
 // A raster lookup may additionally retain the placement of one shaped glyph.
 // Font/raster coordinates are independent of terminal position and colour.
 const AsciiAtlasEntry = struct {
-    index: usize = 0,
+    index: u32 = 0,
     x: i16 = 0,
     y: i16 = 0,
     state: enum { missing, raster, placed } = .missing,
@@ -251,6 +346,7 @@ const AtlasImpl = struct {
     shelf_y: usize = 0,
     shelf_height: usize = 0,
     generation: u64 = 1,
+    lookup: EntryIndex = .{},
 };
 
 const AtlasPack = struct {
@@ -287,7 +383,7 @@ pub fn initShapeCache(
     fonts: FontFaces,
     config: ShapeCacheConfig,
 ) ShapeCacheInitError!*ShapeCache {
-    if (config.entry_capacity == 0 or config.scalar_capacity == 0 or
+    if (config.entry_capacity == 0 or config.entry_capacity > std.math.maxInt(u32) or config.scalar_capacity == 0 or
         config.glyph_capacity == 0 or config.max_sequence_scalars == 0 or
         config.max_sequence_scalars > text.max_codepoints or
         @as(usize, config.max_sequence_scalars) > config.scalar_capacity)
@@ -326,6 +422,7 @@ pub fn deinitShapeCache(cache: *ShapeCache) void {
     const entries = impl.entries;
     const scalars = impl.scalars;
     const glyphs = impl.glyphs;
+    impl.lookup.deinit(allocator);
     impl.* = undefined;
     shape.deinit();
     if (contextual_shape) |value| value.deinit();
@@ -341,7 +438,8 @@ pub fn resetShapeCache(cache: *ShapeCache) void {
     impl.entry_count = 0;
     impl.scalar_count = 0;
     impl.glyph_count = 0;
-    impl.ascii_entries = @splat(@splat(null));
+    impl.lookup.clear();
+    impl.ascii_entries = @splat(@splat(0));
 }
 
 /// Reports current retained shape/scalar/glyph counts without exposing cache storage.
@@ -362,7 +460,7 @@ pub fn initAtlas(
     box_drawing: generated.BoxDrawingConfig,
     config: AtlasConfig,
 ) AtlasInitError!*Atlas {
-    if (config.width == 0 or config.height == 0 or config.entry_capacity == 0)
+    if (config.width == 0 or config.height == 0 or config.entry_capacity == 0 or config.entry_capacity > std.math.maxInt(u32))
         return error.InvalidAtlasConfig;
     const pixel_count = std.math.mul(
         usize,
@@ -397,6 +495,7 @@ pub fn deinitAtlas(atlas: *Atlas) void {
     const entries = impl.entries;
     const pixels = impl.pixels;
     const color_pixels = impl.color_pixels;
+    impl.lookup.deinit(allocator);
     impl.* = undefined;
     allocator.free(pixels);
     if (color_pixels) |value| allocator.free(value);
@@ -410,6 +509,7 @@ pub fn resetAtlas(atlas: *Atlas) error{GenerationOverflow}!void {
     if (impl.generation == std.math.maxInt(u64)) return error.GenerationOverflow;
     impl.generation += 1;
     impl.entry_count = 0;
+    impl.lookup.clear();
     impl.color_entries = 0;
     impl.ascii_entries = @splat(@splat(.{}));
     impl.next_x = 0;
@@ -528,13 +628,14 @@ pub fn resolveShape(
 ) ShapeCacheError!text.Run {
     const impl = shapeCacheImpl(cache);
     const resolved_variant = impl.fonts.resolveVariant(variant);
-    const fonts = impl.fonts.select(resolved_variant);
     const variant_index = fontVariantIndex(resolved_variant);
     if (sequence.len == 0 or sequence.len > @as(usize, impl.max_sequence_scalars))
         return error.ShapeSequenceLimit;
     const ascii_index = printableAsciiIndex(sequence);
     if (ascii_index) |index| {
-        if (impl.ascii_entries[variant_index][index]) |entry_index| {
+        const retained = impl.ascii_entries[variant_index][index];
+        if (retained != 0) {
+            const entry_index: usize = retained - 1;
             const entry = impl.entries[entry_index];
             std.debug.assert(entry.scalar_count == 1);
             std.debug.assert(entry.variant == resolved_variant);
@@ -546,14 +647,26 @@ pub fn resolveShape(
         0x9e3779b97f4a7c15,
         std.mem.sliceAsBytes(sequence),
     );
-    for (impl.entries[0..impl.entry_count], 0..) |entry, entry_index| {
-        if (entry.variant != resolved_variant or entry.hash != hash or entry.scalar_count != sequence.len) continue;
-        const retained = impl.scalars[entry.scalar_offset .. entry.scalar_offset + entry.scalar_count];
-        if (!std.mem.eql(u32, retained, sequence)) continue;
-        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = entry_index;
+    if (@call(.always_inline, findShapeIndex, .{ impl, resolved_variant, sequence, hash })) |entry_index| {
+        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = @intCast(entry_index + 1);
         return shapeEntryRun(impl, entry_index);
     }
 
+    return @call(.never_inline, shapeAndRetain, .{ cache, resolved_variant, sequence, cluster_scratch, glyph_scratch, hash, ascii_index });
+}
+
+fn shapeAndRetain(
+    cache: *ShapeCache,
+    resolved_variant: FontVariant,
+    sequence: []const u32,
+    cluster_scratch: []u32,
+    glyph_scratch: []text.Glyph,
+    hash: u64,
+    ascii_index: ?usize,
+) ShapeCacheError!text.Run {
+    const impl = shapeCacheImpl(cache);
+    const fonts = impl.fonts.select(resolved_variant);
+    const variant_index = fontVariantIndex(resolved_variant);
     if (sequence.len > cluster_scratch.len) return error.ShapeSequenceLimit;
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index| cluster.* = @intCast(index);
     const shaped = fonts.shape(
@@ -580,6 +693,8 @@ pub fn resolveShape(
         shaped.glyphs.len > impl.glyphs.len - impl.glyph_count)
         resetShapeCache(cache);
 
+    try impl.lookup.ensureInsert(impl.allocator, impl.entries[0..impl.entry_count]);
+
     const scalar_offset = impl.scalar_count;
     const glyph_offset = impl.glyph_count;
     @memcpy(impl.scalars[scalar_offset .. scalar_offset + sequence.len], sequence);
@@ -597,8 +712,35 @@ pub fn resolveShape(
         .face_index = shaped.face_index,
     };
     impl.entry_count += 1;
-    if (ascii_index) |index| impl.ascii_entries[variant_index][index] = entry_index;
+    impl.lookup.add(shapeIndexHash(hash, resolved_variant), entry_index);
+    if (ascii_index) |index| impl.ascii_entries[variant_index][index] = @intCast(entry_index + 1);
     return shapeEntryRun(impl, entry_index);
+}
+
+fn shapeEntryMatches(impl: *const ShapeCacheImpl, index: usize, variant: FontVariant, sequence: []const u32, hash: u64) bool {
+    const entry = impl.entries[index];
+    if (entry.variant != variant or entry.hash != hash or entry.scalar_count != sequence.len) return false;
+    return std.mem.eql(u32, impl.scalars[entry.scalar_offset..][0..entry.scalar_count], sequence);
+}
+
+fn findIndexedShape(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: []const u32, hash: u64) ?usize {
+    var probe = impl.lookup.probe(shapeIndexHash(hash, variant));
+    while (probe.next()) |index| {
+        std.debug.assert(index < impl.entry_count);
+        if (shapeEntryMatches(impl, index, variant, sequence, hash)) return index;
+    }
+    return null;
+}
+
+fn findShapeIndex(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: []const u32, hash: u64) ?usize {
+    if (impl.entry_count > 64)
+        return @call(.never_inline, findIndexedShape, .{ impl, variant, sequence, hash });
+    for (impl.entries[0..impl.entry_count], 0..) |entry, index| {
+        if (entry.variant != variant or entry.hash != hash or entry.scalar_count != sequence.len) continue;
+        const retained = impl.scalars[entry.scalar_offset..][0..entry.scalar_count];
+        if (std.mem.eql(u32, retained, sequence)) return index;
+    }
+    return null;
 }
 
 /// Resolves one native font glyph into the fixed alpha atlas, rasterizing into
@@ -615,7 +757,6 @@ pub fn resolveFontAtlas(
 ) AtlasError!AtlasRaster {
     const impl = atlasImpl(atlas);
     const resolved_variant = impl.fonts.resolveVariant(variant);
-    const fonts = impl.fonts.select(resolved_variant);
     const variant_index = fontVariantIndex(resolved_variant);
     const key = AtlasKey{ .font = .{
         .variant = resolved_variant,
@@ -634,10 +775,20 @@ pub fn resolveFontAtlas(
         }
     }
     if (findAtlasIndex(impl, key)) |entry_index| {
-        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = .{ .index = entry_index, .state = .raster };
+        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = .{ .index = @intCast(entry_index), .state = .raster };
         return atlasRaster(impl.entries[entry_index]);
     }
 
+    return @call(.never_inline, rasterizeAndRetain, .{ atlas, key, raster_scratch, ascii_index });
+}
+
+fn rasterizeAndRetain(atlas: *Atlas, key: AtlasKey, raster_scratch: []u8, ascii_index: ?usize) AtlasError!AtlasRaster {
+    const impl = atlasImpl(atlas);
+    const fonts = impl.fonts.select(key.font.variant);
+    const variant_index = fontVariantIndex(key.font.variant);
+    const face_index = key.font.face_index;
+    const glyph_id = key.font.glyph_id;
+    const fit_width = key.font.fit_width;
     var raster_allocator = std.heap.FixedBufferAllocator.init(raster_scratch);
     var produced = if (fit_width == 0)
         try fonts.rasterizeGlyph(raster_allocator.allocator(), face_index, glyph_id)
@@ -664,7 +815,7 @@ pub fn resolveFontAtlas(
     );
     if (ascii_index) |index| {
         std.debug.assert(impl.entry_count != 0);
-        impl.ascii_entries[variant_index][index] = .{ .index = impl.entry_count - 1, .state = .raster };
+        impl.ascii_entries[variant_index][index] = .{ .index = @intCast(impl.entry_count - 1), .state = .raster };
     }
     return result;
 }
@@ -701,7 +852,7 @@ fn asciiPlacementOffset(shaped: text.Glyph, raster: AtlasRaster) ?struct { x: i1
 }
 
 test "ASCII placement cache floors negative fractions and declines oversized offsets" {
-    if (@sizeOf(usize) == 8) try std.testing.expectEqual(@sizeOf(?usize), @sizeOf(AsciiAtlasEntry));
+    try std.testing.expect(@sizeOf(AsciiAtlasEntry) <= 12);
     var shaped = std.mem.zeroes(text.Glyph);
     var raster: AtlasRaster = .{ .atlas_x = 0, .atlas_y = 0, .width = 1, .height = 1, .left = -1, .top = 1, .format = .alpha8 };
     shaped.x_offset = -1;
@@ -869,8 +1020,20 @@ fn atlasIdentity(key: AtlasKey) AtlasIdentity {
     };
 }
 
+fn findIndexedAtlas(impl: *const AtlasImpl, wanted: AtlasIdentity) ?usize {
+    var probe = impl.lookup.probe(atlasIndexHash(wanted));
+    while (probe.next()) |index| {
+        std.debug.assert(index < impl.entry_count);
+        const entry = impl.entries[index];
+        if (entry.key.low == wanted.low and entry.key.high == wanted.high) return index;
+    }
+    return null;
+}
+
 fn findAtlasIndex(impl: *const AtlasImpl, key: AtlasKey) ?usize {
     const wanted = atlasIdentity(key);
+    if (impl.entry_count > 64)
+        return @call(.never_inline, findIndexedAtlas, .{ impl, wanted });
     for (impl.entries[0..impl.entry_count], 0..) |*entry, index|
         if (entry.key.low == wanted.low and entry.key.high == wanted.high) return index;
     return null;
@@ -904,22 +1067,28 @@ test "atlas lookup matches generic key equality and first match across all varia
     var entries: [2]AtlasEntry = undefined;
     // Lookup borrows only entries/count: no font or raster owner is invoked.
     var impl = AtlasImpl{ .allocator = std.testing.allocator, .fonts = undefined, .box_drawing = undefined, .entries = &entries, .pixels = &.{}, .config = .{ .width = 1, .height = 1, .entry_capacity = 2 } };
-    for (keys) |first| for (keys) |second| {
-        const retained = [_]AtlasKey{ first, second };
-        for (retained, 0..) |key, index|
-            entries[index] = .{ .key = atlasIdentity(key), .atlas_x = 0, .atlas_y = 0, .width = 0, .height = 0, .left = 0, .top = 0 };
-        for (0..entries.len + 1) |count| {
-            impl.entry_count = count;
-            for (keys) |key| {
-                var expected: ?usize = null;
-                for (retained[0..count], 0..) |entry, index| if (std.meta.eql(entry, key)) {
-                    expected = index;
-                    break;
-                };
-                try std.testing.expectEqual(expected, findAtlasIndex(&impl, key));
+    var slots: [8]u32 = @splat(0);
+    for ([_]bool{ false, true }) |indexed| {
+        impl.lookup.slots = if (indexed) &slots else &.{};
+        for (keys) |first| for (keys) |second| {
+            const retained = [_]AtlasKey{ first, second };
+            for (retained, 0..) |key, index|
+                entries[index] = .{ .key = atlasIdentity(key), .atlas_x = 0, .atlas_y = 0, .width = 0, .height = 0, .left = 0, .top = 0 };
+            for (0..entries.len + 1) |count| {
+                impl.entry_count = count;
+                impl.lookup.clear();
+                for (entries[0..count], 0..) |entry, index| impl.lookup.add(atlasIndexHash(entry.key), index);
+                for (keys) |key| {
+                    var expected: ?usize = null;
+                    for (retained[0..count], 0..) |entry, index| if (std.meta.eql(entry, key)) {
+                        expected = index;
+                        break;
+                    };
+                    try std.testing.expectEqual(expected, if (indexed) findIndexedAtlas(&impl, atlasIdentity(key)) else findAtlasIndex(&impl, key));
+                }
             }
-        }
-    };
+        };
+    }
 }
 
 fn findAtlas(impl: *const AtlasImpl, key: AtlasKey) ?AtlasEntry {
@@ -936,7 +1105,7 @@ fn cacheAtlas(
     top: i16,
     pixels: []const u8,
 ) AtlasError!AtlasRaster {
-    return cacheRaster(impl, key, width, height, left, top, pixels, .alpha8);
+    return @call(.never_inline, cacheRaster, .{ impl, key, width, height, left, top, pixels, .alpha8 });
 }
 
 fn cacheRaster(
@@ -956,6 +1125,7 @@ fn cacheRaster(
     if (pixels.len != expected) return error.RasterExtentMismatch;
 
     const pack = try planAtlas(impl, width, height);
+    try impl.lookup.ensureInsert(impl.allocator, impl.entries[0..impl.entry_count]);
     if (format == .rgba8 and impl.color_pixels == null) {
         const total = std.math.mul(usize, impl.pixels.len, 5) catch return error.RasterTooLarge;
         const bytes = total - impl.pixels.len;
@@ -994,6 +1164,7 @@ fn cacheRaster(
         .format = format,
     };
     impl.entries[impl.entry_count] = entry;
+    impl.lookup.add(atlasIndexHash(entry.key), impl.entry_count);
     impl.entry_count += 1;
     if (format == .rgba8) impl.color_entries += 1;
     return atlasRaster(entry);
@@ -1086,4 +1257,111 @@ fn constAtlasImpl(atlas: *const Atlas) *const AtlasImpl {
     // zig-audit: acknowledge align_cast
     // reason: The originating AtlasImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(atlas));
+}
+
+test "shape index compares exact sequences and variants under a complete hash collision" {
+    const allocator = std.testing.allocator;
+    var entries: [130]ShapeEntry = undefined;
+    var scalars: [130]u32 = undefined;
+    var lookup: EntryIndex = .{};
+    defer lookup.deinit(allocator);
+    for (&entries, &scalars, 0..) |*entry, *scalar, index| {
+        scalar.* = @intCast(0x100 + index);
+        try lookup.ensureInsert(allocator, entries[0..index]);
+        entry.* = .{
+            .hash = 7,
+            .variant = .regular,
+            .scalar_offset = index,
+            .scalar_count = 1,
+            .glyph_offset = 0,
+            .glyph_count = 0,
+            .face_index = 0,
+        };
+        lookup.add(shapeIndexHash(7, .regular), index);
+    }
+    var impl: ShapeCacheImpl = .{
+        .allocator = allocator,
+        .fonts = undefined,
+        .shape = undefined,
+        .entries = &entries,
+        .lookup = lookup,
+        .scalars = &scalars,
+        .glyphs = &.{},
+        .max_sequence_scalars = 2,
+        .entry_count = entries.len,
+        .scalar_count = scalars.len,
+    };
+    try std.testing.expect(lookup.slots.len >= entries.len * 2);
+    for (scalars, 0..) |scalar, index| {
+        try std.testing.expectEqual(@as(?usize, index), findShapeIndex(&impl, .regular, &.{scalar}, 7));
+        try std.testing.expect(findShapeIndex(&impl, .bold, &.{scalar}, 7) == null);
+        try std.testing.expect(findShapeIndex(&impl, .regular, &.{scalar}, 8) == null);
+        try std.testing.expect(findShapeIndex(&impl, .regular, &.{ scalar, scalar }, 7) == null);
+    }
+    try std.testing.expect(findShapeIndex(&impl, .regular, &.{0xffff}, 7) == null);
+    impl.lookup.clear();
+    try std.testing.expect(findIndexedShape(&impl, .regular, &.{scalars[0]}, 7) == null);
+    // A malformed all-occupied synthetic table must still terminate its probe.
+    var full = [_]u32{ 1, 1, 1, 1 };
+    var probe = (EntryIndex{ .slots = &full }).probe(7);
+    for (0..full.len) |_| try std.testing.expectEqual(@as(?usize, 0), probe.next());
+    try std.testing.expect(probe.next() == null);
+}
+
+fn atlasIndexAllocationProof(allocator: std.mem.Allocator) !void {
+    const owner = try initAtlas(allocator, .{ .regular = undefined }, .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, .{ .width = 32, .height = 32, .entry_capacity = 130 });
+    defer deinitAtlas(owner);
+    const impl = atlasImpl(owner);
+    const pixels = [_]u8{ 255, 255, 255, 255 };
+    for (0..130) |index| {
+        const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = @intCast(index) } };
+        // zig-audit: acknowledge discard
+        // reason: Lookup identity, retained pixels and reset behavior are asserted after packing.
+        _ = try cacheRaster(impl, key, 1, 1, 0, 1, pixels[0..if (index == 65) @as(usize, 4) else 1], if (index == 65) .rgba8 else .alpha8);
+    }
+    try std.testing.expectEqual(@as(usize, 130), impl.entry_count);
+    try std.testing.expect(impl.lookup.slots.len >= 260);
+    for (0..130) |index| {
+        const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = @intCast(index) } };
+        try std.testing.expectEqual(@as(?usize, index), findAtlasIndex(impl, key));
+        const entry = impl.entries[index];
+        const plane = if (index == 65) impl.color_pixels.? else impl.pixels;
+        const stride: usize = if (index == 65) 4 else 1;
+        const at = (@as(usize, entry.atlas_y) * impl.config.width + entry.atlas_x) * stride;
+        try std.testing.expectEqualSlices(u8, pixels[0..stride], plane[at..][0..stride]);
+    }
+    const overflow = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 999 } };
+    try std.testing.expectError(error.CacheFull, cacheRaster(impl, overflow, 1, 1, 0, 1, pixels[0..1], .alpha8));
+    const before = impl.generation;
+    try resetAtlas(owner);
+    try std.testing.expectEqual(before + 1, impl.generation);
+    try std.testing.expectEqual(@as(usize, 0), impl.entry_count);
+    try std.testing.expect(findAtlasIndex(impl, overflow) == null);
+    // zig-audit: acknowledge discard
+    // reason: After reset, the new key must resolve at the first retained entry.
+    _ = try cacheRaster(impl, overflow, 1, 1, 0, 1, pixels[0..1], .alpha8);
+    try std.testing.expectEqual(@as(?usize, 0), findAtlasIndex(impl, overflow));
+}
+
+test "atlas indexing preserves raster identity reset bounds and allocation cleanup" {
+    try atlasIndexAllocationProof(std.testing.allocator);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, atlasIndexAllocationProof, .{});
+}
+
+test "entry capacity must fit nonzero u32 index records" {
+    if (@sizeOf(usize) == 4) return;
+    const fonts: FontFaces = .{ .regular = undefined };
+    try std.testing.expectError(error.InvalidShapeCacheConfig, initShapeCache(std.testing.allocator, fonts, .{
+        .entry_capacity = std.math.maxInt(usize),
+        .scalar_capacity = 1,
+        .glyph_capacity = 1,
+        .max_sequence_scalars = 1,
+    }));
+    try std.testing.expectError(error.InvalidAtlasConfig, initAtlas(std.testing.allocator, fonts, .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, .{ .width = 1, .height = 1, .entry_capacity = std.math.maxInt(usize) }));
 }
