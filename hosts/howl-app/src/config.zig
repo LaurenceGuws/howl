@@ -55,6 +55,7 @@ pub const Schema = struct {
     cursor_motion_ms: u16 = 80,
     cursor_easing: cursor.Easing = .linear,
     cursor_effect: cursor.Effect = .none,
+    // Reference widths at a 15-pixel font; the host scales and clamps to 1–16 physical pixels.
     cursor_stroke_pixels: u8 = 2,
     cursor_outline_pixels: u8 = 1,
     cursor_blink_interval_ms: u16 = 500,

@@ -26,6 +26,7 @@ const selection = @import("selection.zig");
 const find = @import("find.zig");
 const scrollbar = @import("scrollbar.zig");
 const desktop = @import("desktop.zig");
+const drawing = @import("pixels.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -183,7 +184,7 @@ const App = struct {
     }
     fn presentationConfig(self: *App, fonts: *font_owner.Fonts, pixels: u16, stroke: u8) !instance.PresentationConfig {
         var result = try fonts.config(self.init.io, pixels);
-        result.cursor_stroke_pixels = stroke;
+        result.cursor_stroke_pixels = drawing.cursorStroke(pixels, stroke);
         return result;
     }
     fn launch(self: *App, recipe: config.Profile, font_size: u16) CreationError!*terminal.Terminal {
@@ -2374,16 +2375,9 @@ const App = struct {
         try self.drawWindowControls();
     }
     fn drawDivider(self: *App, divider: layout.Divider, color: c.SDL_Color) !void {
-        var line = divider.rect;
-        if (divider.axis == .horizontal) {
-            line.x += @max(0, (line.width - 2) / 2);
-            line.width = @min(2, line.width);
-        } else {
-            line.y += @max(0, (line.height - 2) / 2);
-            line.height = @min(2, line.height);
-        }
-        try fill(self.renderer, line, color);
+        try drawing.divider(self.renderer, divider.rect, divider.axis, 2, color);
     }
+
     fn draw(self: *App) !void {
         try self.desktopHost();
         var width: c_int = 0;
@@ -2405,7 +2399,6 @@ const App = struct {
             const p = self.tab().panes[place.pane].?;
             const active = place.pane == self.tab().tree.active;
             try fill(self.renderer, place.rect, colors.panel);
-            if (active and result.panes > 1) try outline(self.renderer, place.rect, colors.border);
             const rect = paneContent(place.rect);
             if (p.graphics_failure == null) {
                 if (p.owner) |owner| p.canvas.update(self.renderer, owner) catch |failure| {
@@ -2441,7 +2434,7 @@ const App = struct {
                 const cursor_visual = p.motion.update(cursor_now, frame, cursor_focused and show_cursor, .{ .enabled = self.configuration.value.cursor_motion, .duration_ms = self.configuration.value.cursor_motion_ms, .easing = self.configuration.value.cursor_easing, .effect = self.configuration.value.cursor_effect }, .{ placed.x, placed.y, placed.w, placed.h });
                 if (p.blink.deadline) |deadline| self.cursor_deadline = @min(self.cursor_deadline orelse deadline, deadline);
                 if (p.motion.deadline) |deadline| self.cursor_deadline = @min(self.cursor_deadline orelse deadline, deadline);
-                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, self.configuration.value.cursor_outline_pixels, cursor_visual) catch |failure| {
+                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, drawing.cursorStroke(@intFromFloat(@round(@as(f32, @floatFromInt(p.font_size)) * self.scale)), self.configuration.value.cursor_outline_pixels), cursor_visual) catch |failure| {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {
@@ -2467,6 +2460,10 @@ const App = struct {
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
             }
         }
+        if (result.panes > 1) for (places[0..result.panes]) |place| {
+            if (place.pane == self.tab().tree.active) try outline(self.renderer, place.rect, colors.border);
+        };
+        for (dividers[0..result.dividers]) |divider| try drawing.divider(self.renderer, divider.rect, divider.axis, 1, colors.border);
         if (self.drag == .divider) {
             for (dividers[0..result.dividers]) |divider|
                 if (self.drag.divider.contains(divider.node)) try self.drawDivider(divider, colors.accent);
@@ -2620,14 +2617,8 @@ fn windowHitTest(window: ?*c.SDL_Window, point: [*c]const c.SDL_Point, data: ?*a
     if (!c.SDL_GetWindowSize(window, &width, &height)) return c.SDL_HITTEST_NORMAL;
     return chrome.hit(@floatFromInt(point.*.x), @floatFromInt(point.*.y), @floatFromInt(width), @floatFromInt(height), app.headerTabs(@floatFromInt(width)), c.SDL_GetWindowFlags(window), app.headerHeight() != 0);
 }
-fn outline(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
-    const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
-    if (!c.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a) or !c.SDL_RenderRect(renderer, &target)) return error.SDL;
-}
-fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
-    const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
-    if (!c.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a) or !c.SDL_RenderFillRect(renderer, &target)) return error.SDL;
-}
+const outline = drawing.outline;
+const fill = drawing.fill;
 fn mouseButton(button: u8) ?instance.MouseButton {
     return switch (button) {
         c.SDL_BUTTON_LEFT => .left,
@@ -2702,6 +2693,7 @@ test {
     std.testing.refAllDecls(discovery);
     std.testing.refAllDecls(picker);
     std.testing.refAllDecls(appearance);
+    std.testing.refAllDecls(drawing);
     std.testing.refAllDecls(color_config);
 }
 
@@ -3074,13 +3066,32 @@ test "failed settings save restores fonts without changing canonical history or 
         try panes[0].canvas.update(renderer, panes[0].owner.?);
         const frame = panes[0].canvas.frame().?;
         if (frame.presentation_generation > restored.presentation_generation) {
-            try std.testing.expectEqual(@as(u16, 4), frame.commands[frame.content_command_count].solid.rect.width);
+            try std.testing.expectEqual(@as(u16, 6), frame.commands[frame.content_command_count].solid.rect.width);
             break;
         }
         panes[0].owner.?.requestFrame();
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     try std.testing.expect(attempts < 5000);
+    // The same live pane follows font/display changes without fixed-pixel bars.
+    for ([_]u16{ 6, 9, 15, 23, 30, 15 }, [_]f32{ 1, 1, 1.25, 1.5, 1.7, 2 }, [_]u16{ 2, 2, 5, 9, 14, 8 }) |logical, factor, expected| {
+        const before_generation = panes[0].canvas.frame().?.presentation_generation;
+        app.scale = factor;
+        try app.configureFont(&panes[0], logical, false);
+        attempts = 0;
+        while (attempts < 5000) : (attempts += 1) {
+            try panes[0].canvas.update(renderer, panes[0].owner.?);
+            const frame = panes[0].canvas.frame().?;
+            if (frame.presentation_generation > before_generation) {
+                try std.testing.expectEqual(.bar, frame.cursor.?.shape);
+                try std.testing.expectEqual(@min(expected, frame.cursor.?.rect.width), frame.commands[frame.content_command_count].solid.rect.width);
+                break;
+            }
+            panes[0].owner.?.requestFrame();
+            try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+        }
+        try std.testing.expect(attempts < 5000);
+    }
 }
 
 test {

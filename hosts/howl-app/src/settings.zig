@@ -177,8 +177,8 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .appearance, .label = "Cursor motion duration (ms)", .target = .cursor_motion_ms });
     try b.add(.{ .page = .appearance, .label = "Cursor easing", .target = .cursor_easing });
     try b.add(.{ .page = .appearance, .label = "Cursor effect", .target = .cursor_effect });
-    try b.add(.{ .page = .appearance, .label = "Cursor stroke (px)", .target = .cursor_stroke_pixels });
-    try b.add(.{ .page = .appearance, .label = "Inactive cursor stroke (px)", .target = .cursor_outline_pixels });
+    try b.add(.{ .page = .appearance, .label = "Cursor stroke (at 15 px)", .target = .cursor_stroke_pixels });
+    try b.add(.{ .page = .appearance, .label = "Inactive cursor stroke (at 15 px)", .target = .cursor_outline_pixels });
     try b.add(.{ .page = .appearance, .label = "Blink interval (ms)", .target = .cursor_blink_interval_ms });
     try b.add(.{ .page = .appearance, .label = "Blink idle stop (ms)", .target = .cursor_blink_idle_ms });
     try b.add(.{ .page = .colors, .label = "App palette", .target = .theme });

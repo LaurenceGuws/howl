@@ -56,7 +56,7 @@ normal screen/reset scope. Changing the default does not unhide a program-hidden
 cursor or invalidate terminal content.
 
 Inactive panes and unfocused terminals show a steady hollow cell in the effective
-cursor color. It uses one physical pixel per edge at every scale, preserves the
+cursor color. Its stroke follows font and display size with at least one physical pixel per edge, preserves the
 original glyph underneath, and stays absent when the program hides its cursor.
 Focus changes compose this outline from the same immutable frame and retained
 content texture. Unicode wide glyphs use one complete two-cell cursor rectangle,
@@ -73,8 +73,8 @@ configuration and application colors stay exact. Block replay preserves intrinsi
 color-glyph ink. Selection is composed above retained content and below the cursor,
 so it cannot tint the cursor or its recolored ink. Appearance also exposes bounded cursor controls:
 
-- Cursor stroke (px): bar width/underline height, 1–16 physical pixels, default 2.
-- Inactive cursor stroke (px): outline border, 1–16 physical pixels, default 1.
+- Cursor stroke (at 15 px): bar width/underline height at a 15-pixel font, 1–16, default 2.
+- Inactive cursor stroke (at 15 px): outline width at a 15-pixel font, 1–16, default 1.
 - Blink interval (ms): each on/off phase, 100–2000ms, default 500.
 - Blink idle stop (ms): stop steadily visible after 0–60000ms without cursor activity; 0 (default) keeps blinking.
 
@@ -225,3 +225,9 @@ unchanged. ReleaseSafe retains bounds and safety checks.
 
 Build with the repository's exact compiler pin:
 zig build install check test -Doptimize=ReleaseSafe
+
+Hand-drawn UI fills, outlines and split indicators align to whole physical pixels.
+Pane outlines compose after terminal content; split boundaries remain visible when
+not hovered. Cursor reference widths scale with physical font size (including the
+display scale), rounded and bounded to 1–16 physical pixels. Block cursors continue
+to occupy the canonical cell; font changes resize that cell rather than its ink.
