@@ -1,5 +1,8 @@
 # Unicode track qualification — 23 October 2026
 
+Follow-up: [font coverage and fallback cost](FONT_COVERAGE.md) separates host
+recipe gaps from the corrected unsupported-selector behavior.
+
 TUI Zoo 0fb82f8b65efca33e6e8607b5062fd75da07b6c6 adds independent
 ASCII, UTF-8, combining, wide, emoji, scripts, presentation, churn and mixed
 cases. Every operation targets a nominal two-cell slot. Text, positions,

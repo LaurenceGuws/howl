@@ -238,7 +238,7 @@ test "font set reports missing glyph and remains reusable" {
         .clusters = &cluster,
     }));
 
-    const missing_variation = [_]u32{ '0', 0xfe0f };
+    const missing_variation = [_]u32{ 0x10ffff, 0xfe0f };
     const variation_clusters = [_]u32{ 1, 1 };
     try std.testing.expectError(error.MissingGlyph, shapeOwned(set, std.testing.allocator, .{
         .codepoints = &missing_variation,
@@ -876,4 +876,41 @@ test "outline fitting preserves complete symbol and restores shaping size on suc
 fn fitAllocation(allocator: std.mem.Allocator, set: *text.FontSet, id: u32) !void {
     var raster = try set.rasterizeGlyphFitted(allocator, 1, id, 9, 2);
     defer raster.deinit();
+}
+
+test "unsupported variants retain a supported base after exact fallback selection" {
+    const set = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.symbol_font},
+        .size = .{ .pixels = 16 },
+    });
+    defer set.deinit();
+    // An explicit variation in a later face outranks nominal primary coverage.
+    try std.testing.expectEqual(@as(?u8, 1), try set.faceFor(&.{ '0', 0xfe00 }));
+    for ([_]u32{ 0xfe0e, 0xfe0f, 0xe0100, 0xe01ef }) |selector| {
+        const sequence = [_]u32{ '0', selector };
+        try std.testing.expectEqual(@as(?u8, 0), try set.faceFor(&sequence));
+        var nominal = try shapeOwned(set, std.testing.allocator, .{
+            .codepoints = &.{'0'},
+            .clusters = &.{71},
+        });
+        defer nominal.deinit();
+        var variant = try shapeOwned(set, std.testing.allocator, .{
+            .codepoints = &sequence,
+            .clusters = &.{ 71, 71 },
+        });
+        defer variant.deinit();
+        try std.testing.expectEqual(@as(u8, 0), variant.face_index);
+        try std.testing.expect(variant.glyphs.len != 0);
+        try std.testing.expectEqual(nominal.glyphs[0].id, variant.glyphs[0].id);
+        var nominal_advance: i64 = 0;
+        for (nominal.glyphs) |glyph| nominal_advance += glyph.x_advance;
+        var variant_advance: i64 = 0;
+        for (variant.glyphs) |glyph| {
+            try std.testing.expectEqual(@as(u32, 71), glyph.cluster);
+            variant_advance += glyph.x_advance;
+        }
+        try std.testing.expectEqual(nominal_advance, variant_advance);
+    }
+    try std.testing.expectEqual(@as(?u8, null), try set.faceFor(&.{ 0x10ffff, 0xfe0f }));
 }

@@ -116,7 +116,7 @@ pub const FontSet = opaque {
         );
     }
 
-    /// Returns the first configured face covering one complete valid sequence.
+    /// Prefers exact whole-sequence variants, then nominal bases for unsupported selectors.
     pub fn faceFor(
         self: *FontSet,
         codepoints: []const u32,

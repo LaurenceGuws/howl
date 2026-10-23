@@ -367,7 +367,8 @@ pub const FontSet = struct {
     }
 
     /// Exclusively borrows the native faces to shape one validated sequence
-    /// with the first face covering every scalar. The returned run borrows the
+    /// with exact whole-sequence variants preferred over nominal base fallback.
+    /// The returned run borrows the
     /// initialized prefix of `glyph_storage`; insufficient storage leaves that
     /// destination unchanged.
     pub fn shape(
@@ -468,7 +469,7 @@ pub const FontSet = struct {
         };
     }
 
-    /// Returns the first configured face covering one complete valid sequence.
+    /// Prefers exact whole-sequence variants, then nominal bases for unsupported selectors.
     ///
     /// A null result identifies optional font coverage absence. Invalid Unicode
     /// remains an exact caller error and cannot be normalized as a missing glyph.
@@ -579,7 +580,16 @@ pub const FontSet = struct {
 
     fn selectFace(self: *FontSet, codepoints: []const u32) ?usize {
         for (self.faces, 0..) |face, index| {
-            if (faceSupportsSequence(face.hb, codepoints)) return index;
+            if (faceSupportsSequence(face.hb, codepoints, false)) return index;
+        }
+        // Prefer an explicitly supported whole sequence in any configured face.
+        // Only then let HarfBuzz hide unsupported selectors beside covered bases.
+        for (codepoints) |codepoint| {
+            if (!isVariationSelector(codepoint)) continue;
+            for (self.faces, 0..) |face, index| {
+                if (faceSupportsSequence(face.hb, codepoints, true)) return index;
+            }
+            return null;
         }
         return null;
     }
@@ -790,7 +800,7 @@ fn validatePath(path: []const u8) error{InvalidConfig}!void {
         return error.InvalidConfig;
 }
 
-fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32) bool {
+fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32, allow_nominal_variant: bool) bool {
     var index: usize = 0;
     while (index < codepoints.len) {
         const base = codepoints[index];
@@ -801,8 +811,10 @@ fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32) bool {
         else
             0;
         var glyph: c.hb_codepoint_t = 0;
-        if (c.hb_font_get_glyph(font, base, selector, &glyph) == 0 or glyph == 0)
-            return false;
+        if (c.hb_font_get_glyph(font, base, selector, &glyph) == 0 or glyph == 0) {
+            if (!allow_nominal_variant or selector == 0) return false;
+            if (c.hb_font_get_glyph(font, base, 0, &glyph) == 0 or glyph == 0) return false;
+        }
         index += if (selector == 0) 1 else 2;
     }
     return true;

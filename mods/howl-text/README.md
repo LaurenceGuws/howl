@@ -59,8 +59,13 @@ requirement of generated glyph production.
 
 The library currently uses the system FreeType and HarfBuzz libraries and libc.
 Fallback selection is intentionally simple: one complete input sequence is
-shaped with the first configured face that covers every scalar in that
-sequence. Rich script-itemization and per-span fallback are not hidden behind a
+shaped with the first configured face that covers the complete sequence,
+including explicit variation mappings. If no face covers all requested variants,
+a second ordered pass accepts nominal base glyphs for unsupported selectors.
+The original input and source clusters still reach HarfBuzz; selectors do not
+turn a supported base into a missing glyph. Missing bases remain errors.
+This follows [Unicode's unsupported-variation guidance](https://www.unicode.org/faq/vs.html).
+Rich script-itemization and per-span fallback are not hidden behind a
 pretend-generic abstraction; they can be added when a real consumer earns that
 requirement.
 
