@@ -6,6 +6,14 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Exact publication pixel sizing · 24 October
+
+[The Render API sizing correction](FRAME_PIXEL_SIZING.md) avoids reserving glyph
+uploads already present in exact backend residency and fixes a false native
+frame-limit rejection. It records cold-slot allocation/held-lease proofs,
+unchanged complete-frame output, private app guards and two rejected variants.
+This is an allocation/admission improvement, not a general CPU or RSS win.
+
 ## Current DP-1 race and calibration
 
 [DP1.md](DP1.md) is the current four-horse setup: physical 1920×1080, scale 1,

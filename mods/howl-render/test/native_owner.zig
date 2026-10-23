@@ -220,6 +220,50 @@ test "exact residency suppresses atlas and rgba while stale truth reuploads with
     try owner.release(a);
 }
 
+test "partial glyph residency admits only missing pixels within the native frame bound" {
+    const value = try terminal();
+    defer vt.owner.destroy(value);
+    var options = config();
+    const color_font = @import("test_fonts").colour_font;
+    const fallbacks = [_]c.hrc_bytes{.{ .data = color_font.ptr, .len = color_font.len }};
+    options.fonts[0].fallbacks = &fallbacks;
+    options.fonts[0].fallback_count = fallbacks.len;
+    const plane_bytes = @as(usize, options.atlas_width) * options.atlas_height;
+    options.frame_pixel_limit = plane_bytes * 4;
+    try feed(value, "\x1b[?25l\xf0\x9f\x98\x80");
+    const renderer = try setup(std.testing.allocator, value, &options);
+    defer destroy(renderer);
+    const a = try owner.open(renderer);
+    defer close(a);
+    const color = try capture(a, 0, &.{});
+    defer release(a);
+    try std.testing.expectEqual(@as(u32, 1), color.info.upload_count);
+    try std.testing.expectEqual(@as(u32, c.HRC_RGBA8), color.uploads[0].info.format);
+    try std.testing.expectEqual(plane_bytes * 4, color.uploads[0].pixel_len);
+    const held_digest = digest(color);
+    var storage: [8]c.hrc_residency = undefined;
+    const truth = resident(color, &storage);
+
+    try feed(value, "\x1b[1;4HA");
+    const b = try owner.open(renderer);
+    defer close(b);
+    {
+        const alpha = try capture(b, 0, truth);
+        defer release(b);
+        try std.testing.expectEqual(@as(u32, 1), alpha.info.upload_count);
+        try std.testing.expectEqual(@as(u32, c.HRC_ALPHA8), alpha.uploads[0].info.format);
+        try std.testing.expectEqual(plane_bytes, alpha.uploads[0].pixel_len);
+        try std.testing.expectEqual(held_digest, digest(try owner.read(a)));
+    }
+    // Losing both resources still requires five planes; never bypass the limit.
+    try std.testing.expectError(error.ResourceLimit, owner.capture(b, 0, &.{}));
+    try std.testing.expectError(error.NoFrame, owner.read(b));
+    const recovered = try capture(b, 0, truth);
+    defer release(b);
+    try std.testing.expectEqual(@as(u32, 1), recovered.info.upload_count);
+    try std.testing.expectEqual(held_digest, digest(try owner.read(a)));
+}
+
 test "capture allocation prefixes publish no partial frame and preserve held bytes" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, captureCampaign, .{});
 }

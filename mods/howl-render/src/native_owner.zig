@@ -392,7 +392,7 @@ pub fn capture(value: *Buffer, history: u32, backend: []const c.hrc_residency) E
             error.PixelLimit => {
                 if (retried_pixels) return err;
                 retried_pixels = true;
-                try ensurePixels(frame, try add(external_bytes, terminal.framePixelBytes(parent.renderer)), external_bytes);
+                try ensurePixels(frame, try add(external_bytes, try terminal.framePixelBytes(parent.renderer, prospective[0..prospective_count])), external_bytes);
                 continue;
             },
             else => return err,

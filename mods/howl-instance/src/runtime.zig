@@ -1098,7 +1098,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 const pixel_capacity = std.math.add(
                     usize,
                     external_pixel_count,
-                    terminal_render.framePixelBytes(self.renderer),
+                    try terminal_render.framePixelBytes(self.renderer, prospective[0..prospective_count]),
                 ) catch return error.ArithmeticOverflow;
                 const pixels = try writer.pixelStorage(pixel_capacity);
                 const uploads = writer.uploadStorage();
@@ -2963,6 +2963,76 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 try std.testing.expectEqual(geometry.columns, view.cols);
                 try std.testing.expectEqual(@as(u32, geometry.cell_size.width), pixels.width);
                 try std.testing.expectEqual(@as(u32, geometry.cell_size.height), pixels.height);
+            }
+
+            test "resident glyphs publish into a cold slot without allocating pixel scratch" {
+                var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+                const allocator = failing.allocator();
+                var canonical = try Terminal.init(std.testing.allocator, 2, 8);
+                defer canonical.deinit();
+                try std.testing.expect((try canonical.feed("A")).stateChanged());
+                const config = PresentationConfig{
+                    .text = .{ .private = .{ .regular = .{ .path = .{
+                        .primary = @import("test_fonts").primary_font,
+                        .size = .{ .pixels = 18 },
+                    } } } },
+                    .box_drawing = .{
+                        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+                    },
+                    .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+                    .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+                    .shaped_capacity = 128,
+                    .raster_bytes = 512 * 512,
+                    .command_capacity = 256,
+                };
+                const fonts = try TextStore.acquire(allocator, config);
+                const state = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
+                    fonts.release();
+                    return failure;
+                };
+                defer state.deinit(allocator);
+                const cell = state.cellSize();
+                try canonical.setCellPixelSize(cell.width, cell.height);
+                try state.publish(canonical.observation(), 0);
+                var held = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+                defer held.abandon();
+                try std.testing.expectEqual(@as(usize, 1), held.value.uploads.len);
+                try std.testing.expectEqual(@as(usize, 512 * 512), held.value.pixels.len);
+                const saved = try std.testing.allocator.dupe(u8, held.value.pixels);
+                defer std.testing.allocator.free(saved);
+                const upload = held.value.uploads[0];
+                const truth = [_]terminal_render.Residency{.{ .resource = upload.resource, .format = upload.format, .size = upload.size }};
+                try held.reportResidency(&truth);
+                // The held slot forces publication into a different, cold pixel buffer.
+                failing.fail_index = failing.alloc_index;
+                failing.resize_fail_index = failing.resize_index;
+                try state.publish(canonical.observation(), 0);
+                try std.testing.expectEqualSlices(u8, saved, held.value.pixels);
+                try held.release(&truth);
+                var cached = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+                defer cached.abandon();
+                try std.testing.expectEqual(@as(usize, 0), cached.value.uploads.len);
+                try std.testing.expectEqual(@as(usize, 0), cached.value.pixels.len);
+                try std.testing.expect(cached.value.commands.len != 0);
+                try cached.release(&.{});
+                // A truthful backend eviction still restores the complete pixel payload.
+                failing.fail_index = std.math.maxInt(usize);
+                failing.resize_fail_index = std.math.maxInt(usize);
+                try state.publish(canonical.observation(), 0);
+                var restored = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+                defer restored.abandon();
+                try std.testing.expectEqual(@as(usize, 1), restored.value.uploads.len);
+                try std.testing.expectEqualSlices(u8, saved, restored.value.pixels);
+                try std.testing.expect((try canonical.feed("\x1b_Ga=T,f=32,s=1,v=1,i=1,q=2;/wAA/w==\x1b\\")).stateChanged());
+                try state.publish(canonical.observation(), 0);
+                try std.testing.expectEqualSlices(u8, saved, restored.value.pixels);
+                restored.abandon();
+                var image = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+                defer image.abandon();
+                try std.testing.expectEqual(@as(usize, 2), image.value.uploads.len);
+                try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, image.value.pixels[0..4]);
+                try std.testing.expectEqualSlices(u8, saved, image.value.pixels[4..]);
             }
 
             test "cursor and content cuts agree with complete projection across native mutations and stalled leases" {

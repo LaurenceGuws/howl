@@ -79,7 +79,7 @@ pub const ExternalImageBinding = direct.ExternalImageBinding;
 pub const maximum_external_images = direct.maximum_external_images;
 /// Bounds both glyph planes and external image resources.
 pub const maximum_frame_resources = direct.maximum_frame_resources;
-/// Reports current renderer-owned upload scratch bytes.
+/// Reports exact renderer-owned upload bytes missing from backend residency.
 pub const framePixelBytes = direct.framePixelBytes;
 /// Uses the shared terminal Renderer owner.
 pub const Renderer = direct.Renderer;

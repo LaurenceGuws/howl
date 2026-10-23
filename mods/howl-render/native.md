@@ -32,6 +32,18 @@ Regular font input is required; other styles are optional and must have compatib
 
 The header owns numeric ceilings and statuses. Canonical child limits are checked at compilation. Frame buffers retain only native commands, fixed upload/removal arrays, pixels and metadata; the Renderer has one shared canonical command scratch lane. Storage grows lazily within admitted command/pixel budgets and reuses capacity after release.
 
+Pixel growth counts only uploads missing from the supplied exact residency,
+including independently resident alpha and colour glyph planes. A stale or lost
+resource still requires its complete pixels; this does not relax the configured
+frame limit or reduce retained buffers after their high-water allocation.
+
+Direct Zig callers use `try terminal.framePixelBytes(renderer, residency)` for
+exact renderer-owned upload scratch, then call `frame` with the same accepted
+Render state and residency. Host-owned image bytes remain separately accounted.
+The sizing query validates residency and requires an accepted frame; it retains
+no snapshot, lease or reservation. `&.{}` requests the complete visible glyph
+payload, not a maximum for future Render updates.
+
 The owner contains no Instance/Server dependency, codec, socket, process, timer, worker, queue, GPU, window, publication exchange or host scheduling policy. Direct local and existing schema paths do not import it.
 
 ## Maintained proofs

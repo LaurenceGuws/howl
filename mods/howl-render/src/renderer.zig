@@ -1043,12 +1043,23 @@ fn updateInnerOnce(
     impl.frame_ready = true;
 }
 
-/// Complete renderer-owned upload scratch needed for the accepted frame.
-/// Colour storage is included only after colour ink becomes visible.
-pub fn framePixelBytes(owner: *const Renderer) usize {
+/// Exact renderer-owned upload bytes missing from this backend residency.
+/// Excludes Host-owned images. The caller must use the same accepted Render
+/// state and residency for frame(); no borrow or resource reservation is retained.
+pub fn framePixelBytes(owner: *const Renderer, residency: []const frame_vocabulary.Residency) Error!usize {
     const impl = constRendererImpl(owner);
-    const alpha = if (impl.atlas_visible) glyph_cache.atlasView(impl.atlas).pixels.len else 0;
-    const color = if (impl.color_visible) glyph_cache.colorAtlasView(impl.atlas).?.pixels.len else 0;
+    if (!impl.frame_ready) return error.InvalidView;
+    try frame_vocabulary.validateResidencies(residency);
+    const atlas = glyph_cache.atlasView(impl.atlas);
+    var alpha = if (impl.atlas_visible) atlas.pixels.len else 0;
+    var color = if (impl.color_visible) glyph_cache.colorAtlasView(impl.atlas).?.pixels.len else 0;
+    // Use frame's exact retained-residency predicate, including format and extent.
+    // External images can be resident too, but never contribute glyph scratch.
+    for (residency) |value| {
+        if (!residencyRequired(impl, atlas, value)) continue;
+        if (impl.atlas_visible and value.resource.resource == impl.atlas_resource_id.?) alpha = 0;
+        if (impl.color_visible and value.resource.resource == impl.color_resource_id.?) color = 0;
+    }
     // Both planes came from one successfully allocated bounded atlas.
     return alpha + color;
 }

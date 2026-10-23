@@ -300,6 +300,7 @@ test "colour glyph frame retains intrinsic ink through cursor residency eviction
     defer vt.deinit();
     const owner = try RR.initPrivate(allocator, .{ .regular = font }, fontConfig(font));
     defer RR.deinit(owner);
+    try std.testing.expectError(error.InvalidView, RR.framePixelBytes(owner, &.{}));
     // zig-audit: acknowledge discard
     // reason: The resulting two atlas planes, cursor replay, exact residency and recovery are asserted below.
     _ = try vt.feed("M\xf0\x9f\x98\x80\x1b[2G");
@@ -343,6 +344,46 @@ test "colour glyph frame retains intrinsic ink through cursor residency eviction
         try std.testing.expectEqualDeep(content_rgba.?.rgba.resource, command.rgba.resource);
         try std.testing.expectEqualDeep(content_rgba.?.rgba.clip, command.rgba.clip);
     };
+    // Sizing and construction must agree for either independently missing plane.
+    for ([_][]const RR.Residency{ &.{}, residency[0..1], residency[1..2], &residency }) |truth| {
+        const needed = try RR.framePixelBytes(owner, truth);
+        const exact = try RR.frame(owner, truth, .{
+            .commands = &output.commands,
+            .pixels = output.pixels[0..needed],
+            .uploads = &output.uploads,
+            .removals = &output.removals,
+        });
+        try std.testing.expectEqual(needed, exact.pixels.len);
+        if (needed != 0) try std.testing.expectError(error.PixelLimit, RR.frame(owner, truth, .{
+            .commands = &output.commands,
+            .pixels = output.pixels[0 .. needed - 1],
+            .uploads = &output.uploads,
+            .removals = &output.removals,
+        }));
+    }
+    try std.testing.expectEqual(@as(usize, 0), try RR.framePixelBytes(owner, &residency));
+    for ([_]enum { generation, extent, format }{ .generation, .extent, .format }) |mutation| {
+        var stale = residency;
+        switch (mutation) {
+            .generation => stale[0].resource.generation = @fromBackingInt(@backingInt(stale[0].resource.generation) + 1),
+            .extent => stale[0].size.width += 1,
+            .format => stale[0].format = if (stale[0].format == .alpha8) .rgba8 else .alpha8,
+        }
+        const needed = try RR.framePixelBytes(owner, &stale);
+        const result = try RR.frame(owner, &stale, .{
+            .commands = &output.commands,
+            .pixels = output.pixels[0..needed],
+            .uploads = &output.uploads,
+            .removals = &output.removals,
+        });
+        try std.testing.expectEqual(@as(usize, 1), result.uploads.len);
+        try std.testing.expectEqual(needed, result.pixels.len);
+        try std.testing.expect(needed != 0);
+    }
+    try std.testing.expectError(error.InvalidResidency, RR.framePixelBytes(owner, &.{ residency[0], residency[0] }));
+    var invalid = residency;
+    invalid[0].resource.generation = @fromBackingInt(0);
+    try std.testing.expectError(error.InvalidResidency, RR.framePixelBytes(owner, &invalid));
     const cached = try RR.frame(owner, &residency, .{ .commands = &output.commands, .pixels = &.{}, .uploads = &.{}, .removals = &output.removals });
     try std.testing.expectEqual(@as(usize, 0), cached.uploads.len);
     @memset(output.pixels[0..16], 0xa5);
