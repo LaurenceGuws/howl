@@ -95,6 +95,7 @@ pub const AtlasConfig = struct {
 ///
 /// Exact scalar sequences are the cache key. Retained glyph clusters are relative
 /// to that sequence and are rebased to each immutable view during projection.
+/// Retention is optional: pressure recycles the cache, never restarts a frame.
 pub const ShapeCacheConfig = struct {
     entry_capacity: usize,
     scalar_capacity: usize,
@@ -104,8 +105,9 @@ pub const ShapeCacheConfig = struct {
 
 /// Opaque explicitly owned shaped-run cache.
 ///
-/// No returned frame borrows this storage. `resetShapeCache` may therefore forget
-/// retained runs without invalidating atlas generations or prior frame placements.
+/// No returned frame borrows this storage. Retention pressure and `resetShapeCache`
+/// may therefore forget runs without invalidating atlas generations or prior frame
+/// placements. A borrowed run lasts only until the next shape-cache operation.
 // zig-audit: acknowledge opaque_type
 // reason: The public handle intentionally hides the allocator-owned ShapeCacheImpl layout so callers cannot bypass bounded cache operations.
 pub const ShapeCache = opaque {};
@@ -150,12 +152,9 @@ pub const ShapeCacheInitError = std.mem.Allocator.Error || text.ShapeBufferInitE
     InvalidShapeCacheConfig,
 };
 
-/// Reports runtime shaping or bounded retained-shape capacity failures.
+/// Reports runtime shaping or caller scratch/sequence-limit failures.
 pub const ShapeCacheError = text.ShapeError || text.ShapeBufferInitError || error{
     ShapeSequenceLimit,
-    ShapeEntryFull,
-    ShapeScalarFull,
-    ShapeGlyphFull,
 };
 
 const AtlasKey = union(enum) {
@@ -515,7 +514,9 @@ fn shapeEntryRun(impl: *const ShapeCacheImpl, entry_index: usize) text.Run {
 }
 
 /// Resolves one exact scalar sequence through deterministic style fallback and
-/// retains the resulting shape for allocation-free reuse until cache reset.
+/// retains the resulting shape for allocation-free reuse while capacity permits.
+/// A miss recycles retained runs when needed; a run larger than glyph retention
+/// uses caller scratch. The returned run lasts until the next cache operation.
 /// Missing glyphs are retried as one U+FFFD replacement while preserving the
 /// original sequence as the cache identity.
 pub fn resolveShape(
@@ -553,8 +554,6 @@ pub fn resolveShape(
         return shapeEntryRun(impl, entry_index);
     }
 
-    if (impl.entry_count == impl.entries.len) return error.ShapeEntryFull;
-    if (sequence.len > impl.scalars.len - impl.scalar_count) return error.ShapeScalarFull;
     if (sequence.len > cluster_scratch.len) return error.ShapeSequenceLimit;
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index| cluster.* = @intCast(index);
     const shaped = fonts.shape(
@@ -573,8 +572,13 @@ pub fn resolveShape(
         },
         else => return failure,
     };
-    if (shaped.glyphs.len > impl.glyphs.len - impl.glyph_count)
-        return error.ShapeGlyphFull;
+    // Glyph runs are consumed before the next resolve; completed commands own
+    // their placements. Reclaiming shape knowledge cannot invalidate atlas ink.
+    if (shaped.glyphs.len > impl.glyphs.len) return shaped;
+    if (impl.entry_count == impl.entries.len or
+        sequence.len > impl.scalars.len - impl.scalar_count or
+        shaped.glyphs.len > impl.glyphs.len - impl.glyph_count)
+        resetShapeCache(cache);
 
     const scalar_offset = impl.scalar_count;
     const glyph_offset = impl.glyph_count;

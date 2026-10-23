@@ -735,7 +735,6 @@ pub fn updateSource(
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
     var atlas_retried = false;
-    var shape_retried = false;
     while (true) {
         updateInnerOnce(Source, owner, snapshot, image_bindings) catch |failure| switch (failure) {
             error.CommandLimit => {
@@ -746,12 +745,6 @@ pub fn updateSource(
                 if (atlas_retried) return failure;
                 atlas_retried = true;
                 try resetCaches(owner);
-                continue;
-            },
-            error.ShapeEntryFull, error.ShapeScalarFull, error.ShapeGlyphFull => {
-                if (shape_retried) return failure;
-                shape_retried = true;
-                resetStore(rendererImpl(owner).store);
                 continue;
             },
             else => return failure,
@@ -2040,9 +2033,63 @@ fn appendContentUnderline(
     }
 }
 
-fn fixedContent26_6(value: i64) Error!i32 {
-    return std.math.cast(i32, @divFloor(value, 64)) orelse
-        error.InvalidPresentationGeometry;
+fn contentGlyphDestination(
+    pen_x: i64,
+    pen_y: i64,
+    baseline: i64,
+    shaped: text.Glyph,
+    raster: glyph_cache.AtlasRaster,
+) Error!frame_vocabulary.Rect {
+    const x = std.math.add(i64, pen_x, shaped.x_offset) catch
+        return error.InvalidPresentationGeometry;
+    const y = std.math.sub(i64, pen_y, shaped.y_offset) catch
+        return error.InvalidPresentationGeometry;
+    // Integral bearings commute with floor. After division, x leaves six
+    // bits of headroom, so adding an i16 bearing cannot overflow.
+    const left = @divFloor(x, 64) + raster.left;
+    const top = std.math.sub(
+        i64,
+        std.math.add(i64, baseline, @divFloor(y, 64)) catch
+            return error.InvalidPresentationGeometry,
+        raster.top,
+    ) catch return error.InvalidPresentationGeometry;
+    return .{
+        .x = std.math.cast(i32, left) orelse return error.InvalidPresentationGeometry,
+        .y = std.math.cast(i32, top) orelse return error.InvalidPresentationGeometry,
+        .width = raster.width,
+        .height = raster.height,
+    };
+}
+
+test "glyph placement preserves fractional floors bearings and final coordinate limits" {
+    var shaped = std.mem.zeroes(text.Glyph);
+    var raster: glyph_cache.AtlasRaster = .{
+        .atlas_x = 0,
+        .atlas_y = 0,
+        .width = 3,
+        .height = 7,
+        .left = -1,
+        .top = 2,
+    };
+    shaped.x_offset = -32;
+    shaped.y_offset = 32;
+    try std.testing.expectEqualDeep(frame_vocabulary.Rect{ .x = 8, .y = 9, .width = 3, .height = 7 }, try contentGlyphDestination(671, 31, 12, shaped, raster));
+    shaped.x_offset = 0;
+    shaped.y_offset = 0;
+    raster.left = 0;
+    raster.top = 0;
+    try std.testing.expectEqualDeep(frame_vocabulary.Rect{ .x = -1, .y = 11, .width = 3, .height = 7 }, try contentGlyphDestination(-1, -1, 12, shaped, raster));
+    // A bearing can bring an otherwise out-of-range origin back into i32.
+    raster.left = -1;
+    const outside = (@as(i64, std.math.maxInt(i32)) + 1) * 64;
+    try std.testing.expectEqual(std.math.maxInt(i32), (try contentGlyphDestination(outside, 0, 0, shaped, raster)).x);
+    raster.left = 0;
+    try std.testing.expectError(error.InvalidPresentationGeometry, contentGlyphDestination(outside, 0, 0, shaped, raster));
+    shaped.x_offset = 1;
+    try std.testing.expectError(error.InvalidPresentationGeometry, contentGlyphDestination(std.math.maxInt(i64), 0, 0, shaped, raster));
+    shaped.x_offset = 0;
+    shaped.y_offset = 1;
+    try std.testing.expectError(error.InvalidPresentationGeometry, contentGlyphDestination(0, std.math.minInt(i64), 0, shaped, raster));
 }
 
 fn contentLineOffset(metrics: Metrics, cell_size: frame_vocabulary.Size) i64 {
@@ -2712,25 +2759,7 @@ fn buildContentCommands(
                 );
                 if (raster.width != 0 and raster.height != 0) {
                     if (raster.format == .rgba8) has_color = true else has_raster = true;
-                    var left = pen_x;
-                    left = std.math.add(i64, left, shaped.x_offset) catch
-                        return error.InvalidPresentationGeometry;
-                    left = std.math.add(i64, left, @as(i64, raster.left) * 64) catch
-                        return error.InvalidPresentationGeometry;
-                    var top = std.math.mul(i64, baseline_px, 64) catch
-                        return error.InvalidPresentationGeometry;
-                    top = std.math.add(i64, top, pen_y) catch
-                        return error.InvalidPresentationGeometry;
-                    top = std.math.sub(i64, top, shaped.y_offset) catch
-                        return error.InvalidPresentationGeometry;
-                    top = std.math.sub(i64, top, @as(i64, raster.top) * 64) catch
-                        return error.InvalidPresentationGeometry;
-                    const base_destination = frame_vocabulary.Rect{
-                        .x = try fixedContent26_6(left),
-                        .y = try fixedContent26_6(top),
-                        .width = raster.width,
-                        .height = raster.height,
-                    };
+                    const base_destination = try contentGlyphDestination(pen_x, pen_y, baseline_px, shaped, raster);
                     const sized_destination = if (plain_geometry)
                         base_destination
                     else

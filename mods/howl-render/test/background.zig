@@ -848,3 +848,65 @@ test "physical cursor stroke clamps to its cell and rejects zero or oversized co
         }
     }
 }
+
+test "shape retention pressure cannot reject a complete frame or change its pixels" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 12 },
+    });
+    defer font.deinit();
+    const metrics = font.metrics();
+    const base: RR.Config = .{
+        .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 1024, .glyph_capacity = 1024, .max_sequence_scalars = 24 },
+        .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+        .shaped_capacity = 32,
+        .raster_bytes = 512 * 512,
+        .command_capacity = 1024,
+    };
+    const expected = try allocator.create(Output);
+    defer allocator.destroy(expected);
+    const actual = try allocator.create(Output);
+    defer allocator.destroy(actual);
+    // Entry, scalar and glyph retention are independently constrained. The
+    // glyph budget cannot retain even one decomposed two-glyph cluster.
+    for ([_]RR.ShapeCacheConfig{
+        .{ .entry_capacity = 1, .scalar_capacity = 1024, .glyph_capacity = 1024, .max_sequence_scalars = 24 },
+        .{ .entry_capacity = 128, .scalar_capacity = 24, .glyph_capacity = 1024, .max_sequence_scalars = 24 },
+        .{ .entry_capacity = 128, .scalar_capacity = 1024, .glyph_capacity = 1, .max_sequence_scalars = 24 },
+    }) |bounds| {
+        var config = base;
+        config.shape_cache = bounds;
+        const roomy = try RR.initPrivate(allocator, .{ .regular = font }, base);
+        defer RR.deinit(roomy);
+        const limited = try RR.initPrivate(allocator, .{ .regular = font }, config);
+        defer RR.deinit(limited);
+        var vt: VT = undefined;
+        try VT.initWithHistoryInto(&vt, allocator, 3, 80, 0);
+        defer vt.deinit();
+        const inputs = [_][]const u8{
+            "\x1b[?25l\x1b[HABCxyz e\xcc\x81 a\xcc\x80 n\xcc\x83",
+            "\x1b[2;1H" ++ "a" ++ "\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81" ++ "b" ++ "\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80\xcc\x80",
+            "\x1b[H\x1b[31mZYXcba\x1b[3;1H" ++ "c" ++ "\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81\xcc\x81",
+            "\x1b[H\x1b[0mABCxyz e\xcc\x81 a\xcc\x80 n\xcc\x83",
+        };
+        for (inputs) |bytes| {
+            // zig-audit: acknowledge discard
+            // reason: Complete frames are the oracle for each canonical input transition.
+            _ = try vt.feed(bytes);
+            try RR.updateObservation(limited, vt.observation(), 0, &.{});
+            // Equal atlas lifetimes keep exact resource identities comparable.
+            try RR.updateObservation(roomy, vt.observation(), 0, &.{});
+            const left = try expected.frame(roomy);
+            const right = try actual.frame(limited);
+            try std.testing.expectEqualDeep(left.commands, right.commands);
+            try std.testing.expectEqualDeep(left.uploads, right.uploads);
+            try std.testing.expectEqualSlices(u8, left.pixels, right.pixels);
+            const usage = RR.usage(limited).shape;
+            try std.testing.expect(usage.entries <= bounds.entry_capacity);
+            try std.testing.expect(usage.scalars <= bounds.scalar_capacity);
+            try std.testing.expect(usage.glyphs <= bounds.glyph_capacity);
+        }
+    }
+}
