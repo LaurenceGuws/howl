@@ -64,7 +64,7 @@ pub const Fonts = struct {
     /// Borrows a matching text owner for the immediate construction/reconfigure
     /// call. Io must outlive the Instances; do not retain this config across collect.
     pub fn config(self: *Fonts, io: std.Io, pixels: u16) (instance.PresentationStoreInitError || error{PresentationStoreLimit})!instance.PresentationConfig {
-        const shape_cache: instance.render.terminal.ShapeCacheConfig = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 };
+        const shape_cache: instance.render.terminal.ShapeCacheConfig = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = instance.maximum_cell_scalars };
         for (self.stores) |slot| if (slot) |store| {
             if (store.pixels == pixels) return presentation(store.owner, shape_cache);
         };
@@ -176,4 +176,49 @@ test "saved font paths take precedence and remain owned after their input retire
         try std.testing.expectEqualStrings(original, path);
         try std.testing.expect(path.ptr != original.ptr);
     }
+}
+
+test "desktop presentation renders the full canonical cell scalar bound" {
+    const a = std.testing.allocator;
+    var fonts: Fonts = .{ .allocator = a };
+    defer fonts.deinit();
+    for ([_]usize{ 0, 4, 5 }) |index| fonts.paths[index] = try a.dupe(u8, @import("test_fonts").primary_font);
+    const config = try fonts.config(std.testing.io, 15);
+    var bytes: [512]u8 = undefined;
+    var output = std.Io.Writer.fixed(&bytes);
+    for ([_]usize{ 16, 17, instance.maximum_cell_scalars }, 1..) |count, row| {
+        try output.print("\x1b[{d};1Ha", .{row});
+        for (1..count) |_| try output.writeAll("\xcc\x81");
+    }
+    const command = try std.fmt.allocPrint(a, "printf '{s}\\033]0;READY\\007'; sleep 30", .{output.buffered()});
+    defer a.free(command);
+    const owner = try instance.initPresented(a, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 4,
+        .columns = 8,
+        .history_rows = 0,
+    }, config);
+    defer instance.deinit(owner);
+
+    var attempts: u16 = 0;
+    while (attempts < 2000) : (attempts += 1) {
+        const progress = try instance.service(owner, true, true, 0);
+        try std.testing.expect(!progress.stream_closed);
+        if (std.mem.eql(u8, instance.terminal(owner).title() orelse "", "READY")) break;
+        try std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 2000);
+    var uploads: [instance.render.terminal.maximum_frame_resources]instance.render.terminal.FrameResourceUpload = undefined;
+    var removals: [instance.render.terminal.maximum_frame_resources]instance.render.terminal.ResourceRef = undefined;
+    var commands: [256]instance.render.terminal.Command = undefined;
+    const pixels = try a.alloc(u8, config.raster_bytes);
+    defer a.free(pixels);
+    const frame = try instance.renderFrame(owner, &.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = pixels,
+    });
+    try std.testing.expect(frame.commands.len != 0);
 }
