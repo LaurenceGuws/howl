@@ -51,6 +51,16 @@ cohorts rather than described as untried follow-ups. Raw qualification, archived
 candidate source/ELFs, failed fixture attempts and every count remain in the
 Home workstream's performance/sparse-paint directory.
 
+## Physical Hyprland Fast race · 23 October
+
+[The quick DP-1 race](HYPRLAND_FAST.md) records 32 fresh eight-second trials on
+1920×1080/240 Hz Hyprland, all four terminals qualified at 384×83/5×13. Current
+LLVM Fast Howl has lowest rain CPU, second-lowest plain CPU, and trails Alacritty
+and Kitty on Unicode. Foot leads sparse CPU and anonymous memory. Active-window
+CPU analysis excludes warmup/drain; five Foot producer skips and an interrupted
+pre-timing launch remain explicit. This is a short physical-track observation,
+not actual displayed-frame or input-latency evidence.
+
 ## Whole-path timing and design · 22 October
 
 [The system timing review](SYSTEM_TIMING.md) corrects the compiler scope of the
