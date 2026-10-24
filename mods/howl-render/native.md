@@ -46,6 +46,24 @@ payload, not a maximum for future Render updates.
 
 The owner contains no Instance/Server dependency, codec, socket, process, timer, worker, queue, GPU, window, publication exchange or host scheduling policy. Direct local and existing schema paths do not import it.
 
+## Optional Zig cache growth
+
+Direct Zig callers may set `AtlasConfig.growth` and `ShapeCacheConfig.growth`.
+The existing capacities remain initial allocations; omitted growth keeps fixed
+bounds. Glyph planes share a fixed width and retain independent packing and
+height ceilings. `color_height` selects the lazy RGBA plane's initial height.
+Growth preserves every raster's texel coordinates and existing logical keys;
+borrowed cache pixels expire at mutation. Reset clears knowledge while retaining
+bounded high-water storage. Shape pressure beyond its ceilings still recycles.
+
+Render finalizes command resource extents after admission and publishes a full
+baseline when a plane height changes. Exact residency includes extent, and held
+frame leases retain their own pixels and commands. These optional Zig fields do
+not change the C configuration or ABI. Atlas bytes exclude publication buffers,
+text owners, backend conversion scratch and GPU textures; transient growth may
+hold old and replacement storage simultaneously. Allocation failure preserves
+previous cache records, but does not promise whole-update rollback.
+
 ## Maintained proofs
 
 Run `zig build check test -Doptimize=ReleaseSafe -j2` in this package. `test:owner` exercises injected allocation prefixes, source retirement, buffer lifetime, canonical command equivalence, exact/stale residency, held-frame independence, bounded capacity/retry and real backend-to-producer release handoff. `test:foreign` compiles and runs C11/C++17 against the child artifacts and installed headers, including copied font inputs and source closure. `test:static-embedding` runs the same C/C++ proof inside an embedder-owned shared library; the proof shim is not installed. The separate root consumer composes a C Instance source with Render without an upward production dependency. Complete default and ReleaseSafe root gates pass and include the structural isolation audit.

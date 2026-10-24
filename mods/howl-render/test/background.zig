@@ -1005,3 +1005,136 @@ test "shape retention pressure cannot reject a complete frame or change its pixe
         }
     }
 }
+
+test "height growth repairs reused glyph extents and publishes a complete baseline with immutable old pixels" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 12 },
+    });
+    defer font.deinit();
+    var cfg = fontConfig(font);
+    cfg.atlas = .{ .width = 16, .height = 1, .entry_capacity = 2, .growth = .{ .entry_limit = 32, .alpha_height_limit = 128, .color_height_limit = 128 } };
+    cfg.shape_cache = .{ .entry_capacity = 2, .scalar_capacity = 4, .glyph_capacity = 2, .max_sequence_scalars = 2, .growth = .{ .entry_limit = 32, .scalar_limit = 64, .glyph_limit = 32 } };
+    cfg.incremental_row_capacity = 3;
+    cfg.incremental_command_capacity = 32768;
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 3, 8, 0);
+    defer vt.deinit();
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+    defer RR.deinit(owner);
+    const first_output = try allocator.create(Output);
+    defer allocator.destroy(first_output);
+    const next_output = try allocator.create(Output);
+    defer allocator.destroy(next_output);
+    // zig-audit: acknowledge discard
+    // reason: Canonical observation revisions and retained frame bytes are asserted below.
+    _ = try vt.feed("\x1b[?25lA");
+    const first_sequence = vt.observation().contentSequence();
+    try RR.updateObservationRows(owner, vt.observation(), 0, .{ .base_revision = null, .rows = &.{ true, true, true } }, &.{});
+    const first = try first_output.frame(owner);
+    const held_pixels = try allocator.dupe(u8, first.pixels);
+    defer allocator.free(held_pixels);
+    const held_commands = try allocator.dupe(RR.Command, first.commands);
+    defer allocator.free(held_commands);
+    try std.testing.expect(RR.rowScene(owner) == null);
+    const first_size = first.uploads[0].size;
+    const resident = [_]RR.Residency{.{ .resource = first.uploads[0].resource, .format = .alpha8, .size = first_size }};
+    try RR.updateObservationRows(owner, vt.observation(), 0, .{
+        .base_revision = first_sequence,
+        .rows = &.{ false, false, false },
+    }, &.{});
+    try std.testing.expect(RR.rowScene(owner) != null);
+    const base = vt.observation().contentSequence();
+    // zig-audit: acknowledge discard
+    // reason: The new observation must advance provenance before the hinted projection.
+    _ = try vt.feed("\x1b[2;1HBCDEFGH");
+    try std.testing.expect(vt.observation().contentSequence() != base);
+    try RR.updateObservationRows(owner, vt.observation(), 0, .{
+        .base_revision = base,
+        .rows = &.{ false, true, false },
+    }, &.{});
+    try std.testing.expect(RR.rowScene(owner) == null);
+    const frame = try RR.frame(owner, &resident, .{
+        .commands = &next_output.commands,
+        .pixels = &next_output.pixels,
+        .uploads = &next_output.uploads,
+        .removals = &next_output.removals,
+    });
+    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+    const size = frame.uploads[0].size;
+    try std.testing.expect(size.height > first_size.height);
+    try std.testing.expectEqual(@as(usize, size.width) * size.height, try RR.framePixelBytes(owner, &resident));
+    const wrong_extent = [_]RR.Residency{.{ .resource = frame.uploads[0].resource, .format = .alpha8, .size = first_size }};
+    try std.testing.expectEqual(frame.pixels.len, try RR.framePixelBytes(owner, &wrong_extent));
+    var first_row_seen = false;
+    for (frame.commands) |command| if (command == .alpha_mask) {
+        try std.testing.expectEqualDeep(size, command.alpha_mask.resource.size);
+        first_row_seen = first_row_seen or command.alpha_mask.destination.y < cfg.cell_size.height;
+    };
+    try std.testing.expect(first_row_seen);
+    try std.testing.expectEqualSlices(u8, held_pixels, first.pixels);
+    try std.testing.expectEqualDeep(held_commands, first.commands);
+    try RR.resetCaches(owner);
+    try std.testing.expectEqualSlices(u8, held_pixels, first.pixels);
+    try std.testing.expectEqualDeep(held_commands, first.commands);
+}
+
+test "independent colour growth preserves alpha residency and held mixed frames" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .fallbacks = &.{@import("test_fonts").colour_font},
+        .size = .{ .pixels = 12 },
+    });
+    defer font.deinit();
+    var cfg = fontConfig(font);
+    cfg.atlas = .{ .width = 16, .height = 1, .color_height = 32, .entry_capacity = 2, .growth = .{ .entry_limit = 32, .alpha_height_limit = 128, .color_height_limit = 128 } };
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 3, 30, 0);
+    defer vt.deinit();
+    const owner = try RR.initPrivate(allocator, .{ .regular = font, .italic = font, .bold = font, .bold_italic = font }, cfg);
+    defer RR.deinit(owner);
+    const first_output = try allocator.create(Output);
+    defer allocator.destroy(first_output);
+    const next_output = try allocator.create(Output);
+    defer allocator.destroy(next_output);
+    // zig-audit: acknowledge discard
+    // reason: Exact mixed frame resources and bytes, not feed progress, are the observable contract here.
+    _ = try vt.feed("\x1b[?25lAB😀");
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const first = try first_output.frame(owner);
+    const held = try allocator.dupe(u8, first.pixels);
+    defer allocator.free(held);
+    try std.testing.expectEqual(@as(usize, 2), first.uploads.len);
+    var residency: [2]RR.Residency = undefined;
+    var alpha_size: RR.Size = undefined;
+    var color_size: RR.Size = undefined;
+    for (first.uploads, 0..) |upload, index| {
+        residency[index] = .{ .resource = upload.resource, .format = upload.format, .size = upload.size };
+        if (upload.format == .alpha8) alpha_size = upload.size else color_size = upload.size;
+    }
+    try std.testing.expect(alpha_size.height < color_size.height);
+    for (first.commands) |command| if (command == .rgba) {
+        try std.testing.expectEqualDeep(color_size, command.rgba.resource.size);
+    };
+    // zig-audit: acknowledge discard
+    // reason: Growth must republish colour alone while exact alpha residency remains valid.
+    _ = try vt.feed("\rAB😀\x1b[3m😀\x1b[1;23m😀\x1b[1;3m😀\x1b[0m");
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const frame = try RR.frame(owner, &residency, .{
+        .commands = &next_output.commands,
+        .pixels = &next_output.pixels,
+        .uploads = &next_output.uploads,
+        .removals = &next_output.removals,
+    });
+    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+    const upload = frame.uploads[0];
+    try std.testing.expectEqual(RR.ResourceFormat.rgba8, upload.format);
+    try std.testing.expect(upload.size.height > color_size.height);
+    for (frame.commands) |command| switch (command) {
+        .alpha_mask => |mask| try std.testing.expectEqualDeep(alpha_size, mask.resource.size),
+        .rgba => |image| try std.testing.expectEqualDeep(upload.size, image.resource.size),
+        else => {},
+    };
+    try std.testing.expectEqual(frame.pixels.len, try RR.framePixelBytes(owner, &residency));
+    try std.testing.expectEqualSlices(u8, held, first.pixels);
+}

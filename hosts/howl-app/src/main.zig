@@ -576,6 +576,7 @@ const App = struct {
         defer if (next_ui) |*owned| owned.deinit();
         if (paths_changed) {
             next_fonts = try font_owner.Fonts.discover(allocator, self.init.environ_map, candidate.value.font.paths());
+            next_fonts.?.atlas_height_limit = self.fonts.atlas_height_limit;
             next_ui = try font_owner.TextFonts.open(allocator, &next_fonts.?, 15 * self.scale);
         }
         const fonts = if (next_fonts) |*value| value else self.fonts;
@@ -2522,6 +2523,7 @@ pub fn main(initial: std.process.Init) !void {
     defer ui_fonts.deinit();
     const renderer = c.SDL_CreateRenderer(window, null) orelse return error.SDL;
     defer c.SDL_DestroyRenderer(renderer);
+    try fonts.configureTextureLimit(c.SDL_GetNumberProperty(c.SDL_GetRendererProperties(renderer), c.SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 0));
     if (!c.SDL_SetRenderVSync(renderer, 1) or !c.SDL_StartTextInput(window)) return error.SDL;
     const wake_event = c.SDL_RegisterEvents(1);
     if (wake_event == std.math.maxInt(u32)) return error.SDL;

@@ -6,6 +6,16 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Bounded glyph admission · 24 October
+
+[Bounded atlas admission](ATLAS_ADMISSION.md) lets the desktop retain the real
+4,096-glyph CJK view without larger eager per-pane atlases. Alpha and colour
+planes grow independently under host/device ceilings; resource extents and
+immutable publications stay coherent. Final common-workload guards are flat,
+including a direct app comparison that rejects repeated alpha-height writes.
+The report keeps every adverse trial, the ~32 ms cold first frame and full
+memory-accounting limits separate from warmed throughput.
+
 ## Ordinary wide-glyph geometry · 24 October · accepted tradeoff
 
 [The accepted wide-glyph optimization](WIDE_GEOMETRY_REVIEW.md) reduces measured
