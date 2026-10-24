@@ -16,6 +16,10 @@ void main() {
       var logs = 0;
       var leads = 0;
       final zooms = <TerminalZoomPreset>[];
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -39,7 +43,6 @@ void main() {
 
       for (final label in <String>[
         'Ctrl',
-        'Alt',
         'Esc',
         'Tab',
         '←',
@@ -47,24 +50,26 @@ void main() {
         '↑',
         '→',
         'Kbd',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+      await tester.tap(find.text('Ctrl'));
+      await tester.tap(find.text('Esc'));
+      await tester.tap(find.text('→'));
+      await tester.tap(find.text('Kbd'));
+      for (final label in <String>[
+        'Alt',
         '16px',
         'Lead',
         'Copy',
         'Paste',
         'Log',
       ]) {
-        expect(find.text(label), findsOneWidget);
+        await tester.tap(find.byTooltip('More terminal actions'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label));
+        await tester.pumpAndSettle();
       }
-      await tester.tap(find.text('Ctrl'));
-      await tester.tap(find.text('Alt'));
-      await tester.tap(find.text('Esc'));
-      await tester.tap(find.text('→'));
-      await tester.tap(find.text('Kbd'));
-      await tester.tap(find.text('16px'));
-      await tester.tap(find.text('Lead'));
-      await tester.tap(find.text('Copy'));
-      await tester.tap(find.text('Paste'));
-      await tester.tap(find.text('Log'));
       expect(modifiers, <int>[
         HowlInput.modifierControl,
         HowlInput.modifierAlt,
@@ -82,7 +87,7 @@ void main() {
           .widgetList<Semantics>(find.byType(Semantics))
           .where((widget) => widget.properties.toggled == true)
           .length;
-      expect(toggled, greaterThanOrEqualTo(3));
+      expect(toggled, greaterThanOrEqualTo(2));
     },
   );
 }

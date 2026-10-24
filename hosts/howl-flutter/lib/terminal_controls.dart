@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'howl_input.dart';
 import 'terminal_presentation.dart';
 
+enum _ExtraControl { alt, zoom, lead, copy, paste, log }
+
 /// Compact mobile terminal controls that software keyboards do not reliably
 /// expose. Modifiers are caller-owned one-shot latches; this widget only
 /// presents their current state and exact semantic key identities.
@@ -40,11 +42,10 @@ final class TerminalControlStrip extends StatelessWidget {
   Widget build(BuildContext context) => ColoredBox(
     color: const Color(0xff11161b),
     child: SizedBox(
-      height: 40,
+      height: 44,
       child: Row(
         children: <Widget>[
           _modifier('Ctrl', HowlInput.modifierControl),
-          _modifier('Alt', HowlInput.modifierAlt),
           _key('Esc', HowlInput.namedEscape),
           _key('Tab', HowlInput.namedTab),
           _key('←', HowlInput.namedArrowLeft),
@@ -52,16 +53,73 @@ final class TerminalControlStrip extends StatelessWidget {
           _key('↑', HowlInput.namedArrowUp),
           _key('→', HowlInput.namedArrowRight),
           _action('Kbd', onKeyboard, latched: keyboardRequestedVisible),
-          _action(
-            '${zoomPreset.presentation.fontPixels}px',
-            () => onZoom(zoomPreset.next),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(2),
+              child: PopupMenuButton<_ExtraControl>(
+                tooltip: 'More terminal actions',
+                onSelected: (control) {
+                  switch (control) {
+                    case _ExtraControl.alt:
+                      onModifier(HowlInput.modifierAlt);
+                    case _ExtraControl.zoom:
+                      onZoom(zoomPreset.next);
+                    case _ExtraControl.lead:
+                      onLead();
+                    case _ExtraControl.copy:
+                      onCopy();
+                    case _ExtraControl.paste:
+                      onPaste();
+                    case _ExtraControl.log:
+                      onLog();
+                  }
+                },
+                itemBuilder: (context) => <PopupMenuEntry<_ExtraControl>>[
+                  _menuItem(
+                    'Alt',
+                    _ExtraControl.alt,
+                    checked: modifierLatch & HowlInput.modifierAlt != 0,
+                  ),
+                  _menuItem(
+                    '${zoomPreset.presentation.fontPixels}px',
+                    _ExtraControl.zoom,
+                  ),
+                  _menuItem(
+                    'Lead',
+                    _ExtraControl.lead,
+                    checked: geometryLeader,
+                  ),
+                  _menuItem('Copy', _ExtraControl.copy),
+                  _menuItem('Paste', _ExtraControl.paste),
+                  _menuItem('Log', _ExtraControl.log),
+                ],
+                child: const Material(
+                  color: Color(0xff202a32),
+                  borderRadius: BorderRadius.all(Radius.circular(4)),
+                  child: _TerminalControlFace(label: '•••'),
+                ),
+              ),
+            ),
           ),
-          _action('Lead', onLead, latched: geometryLeader),
-          _action('Copy', onCopy),
-          _action('Paste', onPaste),
-          _action('Log', onLog),
         ],
       ),
+    ),
+  );
+
+  PopupMenuItem<_ExtraControl> _menuItem(
+    String label,
+    _ExtraControl action, {
+    bool checked = false,
+  }) => PopupMenuItem<_ExtraControl>(
+    value: action,
+    child: Row(
+      children: <Widget>[
+        SizedBox(
+          width: 28,
+          child: checked ? const Icon(Icons.check, size: 18) : null,
+        ),
+        Text(label),
+      ],
     ),
   );
 
