@@ -7,13 +7,13 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
+import 'package:howl_vt_native/native.dart' as vt_native;
 
 import 'instance_target.dart';
 import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'terminal_presentation.dart';
 import 'terminal_selection.dart';
-import 'package:howl_vt_native/native.dart' as vt_native;
 
 const int nativeSelectionOutputBytes = 1024 * 1024;
 const int nativeInteractionStateBytes = vt_native.interactionBytes;
@@ -326,7 +326,22 @@ Future<Object?> _awaitWorkerStartup({
   }
 
   final readySubscription = ready.listen(complete);
-  final errorSubscription = errors.listen((_) => complete(errorCode));
+  final errorSubscription = errors.listen((message) {
+    // Isolate errors arrive as [error, stack]. Preserve the bounded error
+    // itself: otherwise an AOT startup failure is indistinguishable from a
+    // transport or native-host failure at the terminal UI.
+    final detail = message is List && message.isNotEmpty
+        ? message.first
+        : message;
+    final summary = detail is String
+        ? detail.replaceAll(RegExp(r'[\r\n\t]+'), ' ').trim()
+        : '';
+    complete(
+      summary.isEmpty
+          ? errorCode
+          : '$errorCode:${summary.length > 240 ? summary.substring(0, 240) : summary}',
+    );
+  });
   final exitSubscription = exits.listen((_) => complete(exitCode));
   try {
     return await result.future;
