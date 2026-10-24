@@ -12,41 +12,7 @@ typedef HowlTerminalBuilder = Widget Function(
   BuildContext context,
   HowlInstanceTarget target,
   VoidCallback onStaleTarget,
-  ValueChanged<String?> onTitleChanged,
 );
-
-/// Client-side attachment label. Closing a tab never closes its Server Instance.
-final class _TerminalTab {
-  _TerminalTab(this.target);
-
-  final HowlInstanceTarget target;
-  String? customTitle;
-  String? reportedTitle;
-
-  String get label =>
-      customTitle ??
-      reportedTitle ??
-      (target.local ? 'Local' : 'Instance ${target.instanceId}');
-}
-
-String? _displayTitle(String? value) {
-  if (value == null) return null;
-  // OSC title bytes belong to the child program, not the host UI. Elide
-  // controls and bidi overrides before projecting them into a tab label.
-  final safe = String.fromCharCodes(
-    value.runes
-        .where(
-          (scalar) =>
-              scalar >= 0x20 &&
-              scalar != 0x7f &&
-              (scalar < 0x80 || scalar >= 0xa0) &&
-              (scalar < 0x202a || scalar > 0x202e) &&
-              (scalar < 0x2066 || scalar > 0x2069),
-        )
-        .take(128),
-  ).trim();
-  return safe.isEmpty ? null : safe;
-}
 
 /// Minimal app shell around the terminal canary.
 ///
@@ -84,7 +50,6 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   bool _followSavedServer = false;
   bool _initialized = false;
   int _navigation = 0;
-  final List<_TerminalTab> _tabs = <_TerminalTab>[];
 
   @override
   void initState() {
@@ -95,7 +60,6 @@ final class _HowlAppShellState extends State<HowlAppShell> {
         HowlServerConnections(SharedPreferencesHowlServerConnectionStore());
     _connections.addListener(_connectionsChanged);
     _activeInstance = widget.initialInstanceTarget;
-    if (_activeInstance case final target?) _tabFor(target);
     _activeServer =
         widget.initialServerEndpoint ??
         switch (_activeInstance) {
@@ -165,7 +129,6 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     }
     final endpoint = HowlEndpoint.parse(server.endpoint);
     setState(() {
-      _tabs.removeWhere((tab) => tab.target.local);
       _activeServer = endpoint;
       _activeInstance = null;
       _followSavedServer = true;
@@ -176,10 +139,6 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   void _openManaged(ManagedHowlInstanceTarget target) {
     _navigation++;
     setState(() {
-      // A Local terminal is owned by its visible Flutter widget. Leaving it
-      // destroys that Instance, so never retain a misleading Local tab.
-      _tabs.removeWhere((tab) => tab.target.local);
-      _tabFor(target);
       _activeServer = target.serverEndpoint;
       _activeInstance = target;
     });
@@ -189,7 +148,6 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     if (!widget.localEnabled) return;
     _navigation++;
     setState(() {
-      _tabFor(const LocalHowlInstanceTarget());
       _activeServer = null;
       _activeInstance = const LocalHowlInstanceTarget();
       _followSavedServer = false;
@@ -209,103 +167,9 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     if (target is! ManagedHowlInstanceTarget) return;
     _navigation++;
     setState(() {
-      _tabs.removeWhere(
-        (tab) => tab.target.diagnosticLabel == target.diagnosticLabel,
-      );
       _activeServer = target.serverEndpoint;
       _activeInstance = null;
     });
-  }
-
-  _TerminalTab _tabFor(HowlInstanceTarget target) {
-    for (final tab in _tabs) {
-      if (tab.target.diagnosticLabel == target.diagnosticLabel) return tab;
-    }
-    final tab = _TerminalTab(target);
-    _tabs.add(tab);
-    return tab;
-  }
-
-  void _reportedTitle(HowlInstanceTarget target, String? value) {
-    final index = _tabs.indexWhere(
-      (tab) => tab.target.diagnosticLabel == target.diagnosticLabel,
-    );
-    if (index < 0) return;
-    final safe = _displayTitle(value);
-    if (_tabs[index].reportedTitle == safe) return;
-    setState(() => _tabs[index].reportedTitle = safe);
-  }
-
-  void _selectTab(_TerminalTab tab) {
-    final target = tab.target;
-    if (target.diagnosticLabel == _activeInstance?.diagnosticLabel) return;
-    if (target is ManagedHowlInstanceTarget) {
-      _openManaged(target);
-    } else {
-      _openLocal();
-    }
-  }
-
-  void _closeTab() {
-    final active = _activeInstance;
-    if (active == null) return;
-    _navigation++;
-    setState(() {
-      final index = _tabs.indexWhere(
-        (tab) => tab.target.diagnosticLabel == active.diagnosticLabel,
-      );
-      if (index >= 0) _tabs.removeAt(index);
-      if (_tabs.isNotEmpty) {
-        final next = _tabs[index.clamp(0, _tabs.length - 1)].target;
-        _activeInstance = next;
-        _activeServer = next is ManagedHowlInstanceTarget
-            ? next.serverEndpoint
-            : null;
-      } else {
-        _activeInstance = null;
-        if (active is ManagedHowlInstanceTarget) {
-          _activeServer = active.serverEndpoint;
-        }
-      }
-    });
-  }
-
-  Future<void> _renameTab() async {
-    final active = _activeInstance;
-    if (active == null) return;
-    final tab = _tabFor(active);
-    var pendingName = tab.customTitle ?? '';
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename tab'),
-        content: TextFormField(
-          key: const Key('howl-tab-name'),
-          initialValue: pendingName,
-          autofocus: true,
-          maxLength: 128,
-          decoration: const InputDecoration(
-            hintText: 'Use terminal title',
-            helperText: 'Clear to follow the running program',
-          ),
-          onChanged: (value) => pendingName = value,
-          onFieldSubmitted: (value) => Navigator.of(context).pop(value),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const Key('howl-tab-save'),
-            onPressed: () => Navigator.of(context).pop(pendingName),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (name == null || !mounted || !_tabs.contains(tab)) return;
-    setState(() => tab.customTitle = _displayTitle(name));
   }
 
   void _openDrawer() => _scaffoldKey.currentState?.openDrawer();
@@ -319,12 +183,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     if (!_initialized) return const _ShellLoading();
     final instance = _activeInstance;
     if (instance != null) {
-      return widget.terminalBuilder(
-        context,
-        instance,
-        _staleTarget,
-        (title) => _reportedTitle(instance, title),
-      );
+      return widget.terminalBuilder(context, instance, _staleTarget);
     }
     final server = _activeServer;
     if (server != null) {
@@ -348,7 +207,9 @@ final class _HowlAppShellState extends State<HowlAppShell> {
 
     return Scaffold(
       key: _scaffoldKey,
-      drawerEnableOpenDragGesture: false,
+      // Keep the existing Server drawer reachable from a terminal without
+      // permanently reserving pixels or painting over terminal cells.
+      drawerEnableOpenDragGesture: true,
       drawer: _ServerDrawer(
         connections: _connections,
         activeServer: _activeServer,
@@ -358,149 +219,9 @@ final class _HowlAppShellState extends State<HowlAppShell> {
         onSelectServer: _selectServer,
         onBackToServer: _backToServer,
       ),
-      body: _activeInstance != null
-          ? Column(
-              children: <Widget>[
-                _terminalTabs(),
-                // The strip already consumes the top safe area. The terminal
-                // still owns keyboard and bottom insets, but must not spend
-                // the status-bar inset a second time.
-                Expanded(
-                  child: MediaQuery.removeViewPadding(
-                    context: context,
-                    removeTop: true,
-                    child: body,
-                  ),
-                ),
-              ],
-            )
-          : _activeServer != null
-          ? body
-          : Stack(
-              children: <Widget>[
-                Positioned.fill(child: body),
-                Positioned(
-                  left: 6,
-                  top: MediaQuery.paddingOf(context).top + 6,
-                  child: _ShellMenuButton(onPressed: _openDrawer),
-                ),
-              ],
-            ),
+      body: body,
     );
   }
-
-  Widget _terminalTabs() => SafeArea(
-    bottom: false,
-    child: ColoredBox(
-      color: const Color(0xff151b20),
-      child: SizedBox(
-        height: 42,
-        child: Row(
-          children: <Widget>[
-            IconButton(
-              key: const Key('howl-shell-menu'),
-              tooltip: 'Howl menu',
-              onPressed: _openDrawer,
-              icon: const Icon(Icons.menu, size: 19),
-            ),
-            Expanded(
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: _tabs
-                    .map((tab) {
-                      final selected =
-                          tab.target.diagnosticLabel ==
-                          _activeInstance?.diagnosticLabel;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 2,
-                          vertical: 5,
-                        ),
-                        child: TextButton(
-                          key: Key('howl-tab-${tab.target.diagnosticLabel}'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            backgroundColor: selected
-                                ? const Color(0xff34414b)
-                                : const Color(0xff202a32),
-                          ),
-                          onPressed: () => _selectTab(tab),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 140),
-                            child: Text(
-                              tab.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      );
-                    })
-                    .toList(growable: false),
-              ),
-            ),
-            if (_activeServer != null)
-              IconButton(
-                key: const Key('howl-tab-browse'),
-                tooltip: 'Browse Instances',
-                onPressed: _backToServer,
-                icon: const Icon(Icons.add, size: 19),
-              ),
-            PopupMenuButton<_TabAction>(
-              key: const Key('howl-tab-actions'),
-              tooltip: 'Tab options',
-              icon: const Icon(Icons.more_vert, size: 19),
-              onSelected: (action) {
-                switch (action) {
-                  case _TabAction.rename:
-                    unawaited(_renameTab());
-                  case _TabAction.close:
-                    _closeTab();
-                }
-              },
-              itemBuilder: (context) => const <PopupMenuEntry<_TabAction>>[
-                PopupMenuItem(
-                  value: _TabAction.rename,
-                  child: Text('Rename tab'),
-                ),
-                PopupMenuItem(
-                  value: _TabAction.close,
-                  child: Text('Close tab'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-enum _TabAction { rename, close }
-
-final class _ShellMenuButton extends StatelessWidget {
-  const _ShellMenuButton({required this.onPressed});
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: const Color(0xcc15181c),
-      borderRadius: BorderRadius.circular(7),
-      border: Border.all(color: const Color(0x552f353c)),
-    ),
-    child: SizedBox.square(
-      dimension: 36,
-      child: IconButton(
-        key: const Key('howl-shell-menu'),
-        tooltip: 'Howl menu',
-        padding: EdgeInsets.zero,
-        iconSize: 19,
-        onPressed: onPressed,
-        icon: const Icon(Icons.menu),
-      ),
-    ),
-  );
 }
 
 final class _ShellLoading extends StatelessWidget {

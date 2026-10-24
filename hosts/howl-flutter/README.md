@@ -16,15 +16,13 @@ app-private copied native-host frame
 Flutter resource lease + batched Canvas backend
 ```
 
-The mobile app shell keeps client-side tabs for selected Instances. A tab is an
-attachment choice, not a Server resource: closing it detaches the visible
-observer/control without terminating the canonical PTY/VT. The fixed tab strip
-occupies the top safe area instead of floating over terminal cells. Tab labels
-use an explicit client override when present, otherwise the child's retained
-OSC terminal title, otherwise the Instance identity. Clearing a rename returns
-to the live terminal title. The versioned private native host frame includes
-the bounded title bytes from the same coherent observation; neither Flutter
-nor the renderer reparses escape sequences.
+The mobile shell currently shows one terminal attachment at a time. Returning
+to the Server browser and opening another Instance replaces only the client
+attachment, never the canonical PTY/VT. The shell adds no tab row or floating
+menu button over terminal cells. The versioned private native host frame still
+includes bounded OSC title bytes from the coherent terminal observation for
+future mobile presentation; neither Flutter nor the renderer reparses escape
+sequences. No title override or client-side tab UI is presently exposed.
 
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
@@ -228,11 +226,12 @@ iOS remains a client only: it does not own a PTY, shell, or Unix userland. The n
 
 ## App shell and saved Server routes
 
-Flutter now has a deliberately small application shell around the terminal canary.
-Its default posture is still terminal-first: when the drawer is closed, the active
-terminal or Server browser receives the full body surface. One compact menu button
-opens the drawer; edge-drag drawer opening is disabled so platform back/navigation
-gestures, especially on iOS, keep their native meaning.
+Flutter has a deliberately small application shell around the terminal canary.
+Its default posture is terminal-first: the active terminal receives the full
+body surface, with its existing bottom touch-key strip and safe-area policy.
+The Server browser owns its ordinary toolbar menu; the route-less setup view
+offers an explicit Add Server action. From a terminal, a left-edge swipe opens
+the existing Server drawer without permanent top chrome or a floating button.
 
 The shell owns app navigation, desktop Local-vs-Server selection, and saved Server
 endpoints. It does not own a Server mirror, Session lifecycle, terminal grid,

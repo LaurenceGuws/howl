@@ -100,14 +100,12 @@ final class HowlApp extends StatelessWidget {
       home: HowlAppShell(
         initialServerEndpoint: endpoint,
         localEnabled: Platform.isLinux || Platform.isWindows,
-        terminalBuilder: (context, target, onStaleTarget, onTitleChanged) =>
-            HowlTerminal(
-              key: ValueKey<String>(target.diagnosticLabel),
-              target: target,
-              geometryLeader: geometryLeader,
-              onStaleTarget: onStaleTarget,
-              onTitleChanged: onTitleChanged,
-            ),
+        terminalBuilder: (context, target, onStaleTarget) => HowlTerminal(
+          key: ValueKey<String>(target.diagnosticLabel),
+          target: target,
+          geometryLeader: geometryLeader,
+          onStaleTarget: onStaleTarget,
+        ),
       ),
     );
   }
@@ -119,12 +117,10 @@ final class HowlTerminal extends StatefulWidget {
     required this.target,
     required this.geometryLeader,
     this.onStaleTarget,
-    this.onTitleChanged,
   });
   final HowlInstanceTarget target;
   final bool geometryLeader;
   final VoidCallback? onStaleTarget;
-  final ValueChanged<String?>? onTitleChanged;
 
   @override
   State<HowlTerminal> createState() => _HowlTerminalState();
@@ -145,8 +141,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
   late final VoidCallback _semanticsEnabledListener;
   late final Stopwatch _perfClock;
   int? _lastAdoptUs;
-  String? _lastReportedTitle;
-  bool _hasReportedTitle = false;
   final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
   late final TerminalSoftKeyboardOwner _softKeyboard;
@@ -587,11 +581,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
             );
           }
           _nativeLiveMetadata = packet.metadata;
-          if (!_hasReportedTitle || _lastReportedTitle != packet.title) {
-            _hasReportedTitle = true;
-            _lastReportedTitle = packet.title;
-            widget.onTitleChanged?.call(packet.title);
-          }
           _validateSelection(packet.metadata);
           _nativeLiveSemanticText = packet.semanticText;
           _nativeLiveSemanticTruncated = packet.semanticTruncated;
