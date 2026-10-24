@@ -13,8 +13,7 @@ test "$(zig version)" = "$(cat "$repo/.zigversion")"
 work=${HOWL_IOS_NATIVE_WORK:-$root/.work/ios-arm64}
 prefix="$work/prefix"
 sdk=$(xcrun --sdk iphoneos --show-sdk-path)
-cxx=$(xcrun --sdk iphoneos --find clang++)
-cxx_include=$(cd "$(dirname "$cxx")/../include/c++/v1" && pwd)
+cxx_include="$sdk/usr/include/c++/v1"
 test -f "$sdk/usr/include/string.h"
 test -f "$sdk/usr/include/inttypes.h"
 test -f "$cxx_include/vector"

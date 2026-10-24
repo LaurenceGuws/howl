@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'howl_endpoint.dart';
@@ -32,7 +34,8 @@ final class HowlServerBrowser extends StatefulWidget {
   State<HowlServerBrowser> createState() => _HowlServerBrowserState();
 }
 
-final class _HowlServerBrowserState extends State<HowlServerBrowser> {
+final class _HowlServerBrowserState extends State<HowlServerBrowser>
+    with WidgetsBindingObserver {
   HowlServerTree? _tree;
   Object? _failure;
   bool _loading = true;
@@ -43,7 +46,15 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refresh();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted && !_launching) {
+      unawaited(_refresh());
+    }
   }
 
   Future<void> _refresh() async {
@@ -89,6 +100,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     try {
       _request?.cancel();
     } catch (_) {}

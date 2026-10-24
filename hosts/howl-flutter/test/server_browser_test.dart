@@ -141,4 +141,33 @@ void main() {
     request.cancel();
     expect(cancels, 1);
   });
+
+  testWidgets('returning to the app refreshes its Server browser', (
+    tester,
+  ) async {
+    var requests = 0;
+    final tree = HowlServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"9",'
+      '"tree_revision":"1","sessions":[]}',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlServerBrowser(
+          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          fetchTree: (_) {
+            requests += 1;
+            return HowlServerTreeRequest.fromFuture(Future.value(tree));
+          },
+          onOpenTarget: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(requests, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+  });
 }
