@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../delete/howl_endpoint.dart';
+import '../server/endpoint.dart';
 import '../delete/instance_target.dart';
 import '../server/browser.dart';
 import '../server/connections.dart';
@@ -62,7 +62,7 @@ final class AppShell extends StatefulWidget {
   });
 
   final HowlTerminalBuilder terminalBuilder;
-  final HowlEndpoint? initialServerEndpoint;
+  final Endpoint? initialServerEndpoint;
   final HowlInstanceTarget? initialInstanceTarget;
   final ServerConnections? connections;
   final ServerTreeFetcher fetchTree;
@@ -75,7 +75,7 @@ final class _AppShellState extends State<AppShell> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ServerConnections _connections;
   late final bool _ownsConnections;
-  HowlEndpoint? _activeServer;
+  Endpoint? _activeServer;
   HowlInstanceTarget? _activeInstance;
   bool _followSavedServer = false;
   bool _initialized = false;
@@ -111,7 +111,7 @@ final class _AppShellState extends State<AppShell> {
     if (_activeServer == null && _activeInstance == null) {
       final selected = _connections.selectedEndpoint;
       if (selected != null) {
-        _activeServer = HowlEndpoint.parse(selected);
+        _activeServer = Endpoint.parse(selected);
         _followSavedServer = true;
       }
     }
@@ -133,7 +133,7 @@ final class _AppShellState extends State<AppShell> {
     }
 
     setState(() {
-      _activeServer = selected == null ? null : HowlEndpoint.parse(selected);
+      _activeServer = selected == null ? null : Endpoint.parse(selected);
       _activeInstance = null;
       if (selected == null) _followSavedServer = false;
     });
@@ -155,7 +155,7 @@ final class _AppShellState extends State<AppShell> {
         _connections.find(server.endpoint) == null) {
       return;
     }
-    final endpoint = HowlEndpoint.parse(server.endpoint);
+    final endpoint = Endpoint.parse(server.endpoint);
     setState(() {
       _activeServer = endpoint;
       _activeInstance = null;
@@ -530,7 +530,7 @@ final class _ServerDrawer extends StatelessWidget {
   });
 
   final ServerConnections connections;
-  final HowlEndpoint? activeServer;
+  final Endpoint? activeServer;
   final HowlInstanceTarget? activeInstance;
   final Future<void> Function(ServerConnection) onSelectServer;
   final VoidCallback onBackToServer;
@@ -750,7 +750,7 @@ final class _ServerEditorDialogState extends State<_ServerEditorDialog> {
       setState(() {
         _saving = false;
         _error = switch (failure) {
-          HowlEndpointException() => 'Invalid Howl endpoint',
+          EndpointException() => 'Invalid Howl endpoint',
           ArgumentError() => 'Name is required',
           StateError() => '$failure',
           _ => 'Could not save Server',

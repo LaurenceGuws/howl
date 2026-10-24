@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/app_shell/app_shell.dart';
-import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/delete/instance_target.dart';
 import 'package:howl_flutter/server/connections.dart';
 import 'package:howl_flutter/server/tree.dart';
@@ -38,7 +38,7 @@ void main() {
     tester,
   ) async {
     final target = HowlInstanceTarget(
-      serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+      serverEndpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
       serverId: '99',
       sessionId: '7',
       instanceId: '1',
@@ -73,7 +73,7 @@ void main() {
   testWidgets(
     'tabs follow VT titles, allow overrides, and close only attachments',
     (tester) async {
-      final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
+      final endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
       final first = HowlInstanceTarget(
         serverEndpoint: endpoint,
         serverId: '18446744073709551615',
@@ -252,7 +252,7 @@ void main() {
     'exact Instance launch stays terminal-first with shell navigation',
     (tester) async {
       final target = HowlInstanceTarget(
-        serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+        serverEndpoint: Endpoint.parse('tcp://127.0.0.1:43127'),
         serverId: '91',
         sessionId: '7',
         instanceId: '3',
@@ -363,7 +363,7 @@ void main() {
   testWidgets('two client tabs switch Instances without closing either', (
     tester,
   ) async {
-    final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
+    final endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
     final first = HowlInstanceTarget(
       serverEndpoint: endpoint,
       serverId: '99',
@@ -435,7 +435,7 @@ void main() {
     await connections.upsert(other);
     await connections.select(saved.endpoint);
 
-    final transient = HowlEndpoint.parse('tcp://127.0.0.1:43999');
+    final transient = Endpoint.parse('tcp://127.0.0.1:43999');
     final fetched = <String>[];
     await tester.pumpWidget(
       MaterialApp(
@@ -464,7 +464,7 @@ void main() {
   testWidgets('stale managed terminal returns to its Server browser', (
     tester,
   ) async {
-    final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
+    final endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
     final target = HowlInstanceTarget(
       serverEndpoint: endpoint,
       serverId: '91',
@@ -503,7 +503,7 @@ void main() {
     tester,
   ) async {
     final target = HowlInstanceTarget(
-      serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+      serverEndpoint: Endpoint.parse('tcp://127.0.0.1:43127'),
       serverId: '91',
       sessionId: '7',
       instanceId: '3',

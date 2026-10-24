@@ -1,22 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 
 void main() {
   test('launch endpoint accepts local Unix and explicit numeric IPv4 TCP', () {
+    expect(Endpoint.parse('/tmp/howl.sock').toString(), 'unix:/tmp/howl.sock');
     expect(
-      HowlEndpoint.parse('/tmp/howl.sock').toString(),
+      Endpoint.parse('unix:/tmp/howl.sock').toString(),
       'unix:/tmp/howl.sock',
     );
     expect(
-      HowlEndpoint.parse('unix:/tmp/howl.sock').toString(),
-      'unix:/tmp/howl.sock',
-    );
-    expect(
-      HowlEndpoint.parse('tcp://127.0.0.1:43127').toString(),
+      Endpoint.parse('tcp://127.0.0.1:43127').toString(),
       'tcp://127.0.0.1:43127',
     );
     expect(
-      HowlEndpoint.parse('tcp://100.96.0.2:43128').toString(),
+      Endpoint.parse('tcp://100.96.0.2:43128').toString(),
       'tcp://100.96.0.2:43128',
     );
   });
@@ -31,10 +28,7 @@ void main() {
       'tcp://127.0.0.1:43127/path',
       'http://127.0.0.1:43127',
     ]) {
-      expect(
-        () => HowlEndpoint.parse(value),
-        throwsA(isA<HowlEndpointException>()),
-      );
+      expect(() => Endpoint.parse(value), throwsA(isA<EndpointException>()));
     }
   });
 }

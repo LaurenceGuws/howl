@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/delete/instance_target.dart';
 import 'package:howl_flutter/server/browser.dart';
 import 'package:howl_flutter/server/launch.dart';
@@ -40,7 +40,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal:
               (endpoint, id, {sessionId, sessionName, required shell}) {
@@ -83,7 +83,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal: (_, _, {sessionId, sessionName, required shell}) {
             selectedSession = sessionId;
@@ -117,7 +117,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal: (_, _, {sessionId, sessionName, required shell}) =>
               ServerLaunchRequest.fromFuture(

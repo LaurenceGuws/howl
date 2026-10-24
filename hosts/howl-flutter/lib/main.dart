@@ -14,7 +14,7 @@ import 'delete/frame_perf.dart';
 import 'app_shell/platform_input.dart';
 import 'viewport/history.dart';
 import 'app_shell/held_key_repeat.dart';
-import 'delete/howl_endpoint.dart';
+import 'server/endpoint.dart';
 import 'delete/howl_input.dart';
 import 'app_shell/app_shell.dart';
 import 'delete/instance_target.dart';
@@ -57,11 +57,11 @@ Future<void> main(List<String> args) async {
       return;
     }
   }
-  HowlEndpoint? endpoint;
+  Endpoint? endpoint;
   if (serverEndpoint != null) {
     try {
-      endpoint = HowlEndpoint.parse(serverEndpoint);
-    } on HowlEndpointException catch (error) {
+      endpoint = Endpoint.parse(serverEndpoint);
+    } on EndpointException catch (error) {
       stderr.writeln('invalid Howl endpoint: ${error.code}');
       exitCode = 64;
       return;
@@ -88,7 +88,7 @@ final class HowlApp extends StatelessWidget {
     required this.geometryLeader,
   });
 
-  final HowlEndpoint? endpoint;
+  final Endpoint? endpoint;
   final bool geometryLeader;
 
   @override

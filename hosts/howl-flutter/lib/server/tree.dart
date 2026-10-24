@@ -6,7 +6,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-import '../delete/howl_endpoint.dart';
+import 'endpoint.dart';
 import '../delete/instance_target.dart';
 import '../delete/native_host.dart';
 
@@ -180,7 +180,7 @@ final class NativeServerTree {
   static const Duration responseTimeout = Duration(seconds: 15);
 
   static ServerTreeRequest request(
-    HowlEndpoint endpoint, {
+    Endpoint endpoint, {
     Duration timeout = responseTimeout,
   }) {
     if (timeout <= Duration.zero) {

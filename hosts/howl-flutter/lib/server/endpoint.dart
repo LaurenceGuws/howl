@@ -1,23 +1,23 @@
-final class HowlEndpointException implements Exception {
-  const HowlEndpointException(this.code);
+final class EndpointException implements Exception {
+  const EndpointException(this.code);
   final String code;
 
   @override
-  String toString() => 'HowlEndpointException($code)';
+  String toString() => 'EndpointException($code)';
 }
 
 /// Launch-time endpoint grammar only.
 ///
 /// Native Howl owns connection/framing. Flutter preserves this small parser
 /// because command-line / dart-define configuration is platform-host policy.
-final class HowlEndpoint {
-  const HowlEndpoint._({this.unixPath, this.tcpHost, this.tcpPort});
+final class Endpoint {
+  const Endpoint._({this.unixPath, this.tcpHost, this.tcpPort});
 
   final String? unixPath;
   final String? tcpHost;
   final int? tcpPort;
 
-  static HowlEndpoint parse(String text) {
+  static Endpoint parse(String text) {
     if (text.startsWith('tcp://')) {
       final uri = Uri.tryParse(text);
       _require(uri != null, 'endpoint_uri');
@@ -30,14 +30,14 @@ final class HowlEndpoint {
       );
       _require(uri.path.isEmpty, 'endpoint_path');
       _require(!uri.hasQuery && !uri.hasFragment, 'endpoint_suffix');
-      return HowlEndpoint._(tcpHost: uri.host, tcpPort: uri.port);
+      return Endpoint._(tcpHost: uri.host, tcpPort: uri.port);
     }
     _require(!text.contains('://'), 'endpoint_scheme');
     final path = text.startsWith('unix:')
         ? text.substring('unix:'.length)
         : text;
     _require(path.isNotEmpty, 'endpoint_path');
-    return HowlEndpoint._(unixPath: path);
+    return Endpoint._(unixPath: path);
   }
 
   @override
@@ -49,7 +49,7 @@ final class HowlEndpoint {
 }
 
 void _require(bool condition, String code) {
-  if (!condition) throw HowlEndpointException(code);
+  if (!condition) throw EndpointException(code);
 }
 
 bool _numericIpv4(String value) {

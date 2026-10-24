@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/delete/instance_target.dart';
 import 'package:howl_flutter/server/browser.dart';
 import 'package:howl_flutter/server/tree.dart';
@@ -21,7 +21,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           onOpenTarget: (target) => selected = target,
         ),
@@ -61,7 +61,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: ServerBrowser(
-            endpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
+            endpoint: Endpoint.parse('tcp://127.0.0.1:1'),
             fetchTree: (_) => ServerTreeRequest.fromFuture(
               calls++ == 0
                   ? Future.value(tree('91', 'OLD_OCCURRENCE'))
@@ -109,7 +109,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest(
             pending.future,
             onCancel: () {
@@ -152,7 +152,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) {
             requests += 1;
             return ServerTreeRequest.fromFuture(Future.value(tree));
@@ -181,7 +181,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           onOpenTarget: (_) {},
         ),
@@ -206,7 +206,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => throw StateError('native initialization failed'),
           onOpenTarget: (_) {},
         ),
@@ -227,7 +227,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) =>
               ServerTreeRequest(pending.future, onCancel: () => cancels += 1),
           onOpenTarget: (_) {},
@@ -253,7 +253,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
-          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest(
             pending.future,
             onCancel: () {

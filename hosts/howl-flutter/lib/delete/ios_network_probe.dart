@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-import 'howl_endpoint.dart';
+import '../server/endpoint.dart';
 
 /// Attended iOS-only lens for Apple's Local Network policy boundary.
 ///
@@ -17,7 +17,7 @@ final class IosNetworkProbe {
     'howl.flutter/ios_network_probe',
   );
 
-  Future<String?> probe(HowlEndpoint endpoint) async {
+  Future<String?> probe(Endpoint endpoint) async {
     if (!Platform.isIOS ||
         endpoint.tcpHost == null ||
         endpoint.tcpPort == null) {

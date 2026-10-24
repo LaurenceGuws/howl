@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/server/launch.dart';
 import 'package:howl_flutter/server/tree.dart';
 
@@ -10,7 +10,7 @@ void main() {
   test(
     'native Flutter binding launches against a live disposable Server',
     () async {
-      final endpoint = HowlEndpoint.parse(route!);
+      final endpoint = Endpoint.parse(route!);
       final before = await NativeServerTree.request(endpoint).future;
       expect(before.sessions, isEmpty);
 

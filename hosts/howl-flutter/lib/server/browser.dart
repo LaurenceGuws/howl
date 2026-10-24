@@ -2,13 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../delete/howl_endpoint.dart';
+import 'endpoint.dart';
 import '../delete/instance_target.dart';
 import '../delete/native_host.dart';
 import 'launch.dart';
 import 'tree.dart';
 
-typedef ServerTreeFetcher = ServerTreeRequest Function(HowlEndpoint endpoint);
+typedef ServerTreeFetcher = ServerTreeRequest Function(Endpoint endpoint);
 
 /// Thin app-side browser over Server lifecycle identity.
 ///
@@ -24,7 +24,7 @@ final class ServerBrowser extends StatefulWidget {
     this.launchTerminal = ServerLaunch.request,
   });
 
-  final HowlEndpoint endpoint;
+  final Endpoint endpoint;
   final ValueChanged<HowlInstanceTarget> onOpenTarget;
   final VoidCallback? onMenu;
 

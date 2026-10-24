@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/delete/instance_target.dart';
 import 'package:howl_flutter/server/tree.dart';
 
@@ -28,7 +28,7 @@ void main() {
       () async {
         final parsed = ServerTree.parse(tree(value, value));
         final target = HowlInstanceTarget(
-          serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
+          serverEndpoint: Endpoint.parse('tcp://127.0.0.1:1'),
           serverId: parsed.serverId,
           sessionId: parsed.sessions.single.id,
           instanceId: parsed.sessions.single.instances.single.id,
@@ -55,7 +55,7 @@ void main() {
       for (final pair in [(value, '1'), ('1', value)]) {
         expect(
           () => HowlInstanceTarget(
-            serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
+            serverEndpoint: Endpoint.parse('tcp://127.0.0.1:1'),
             serverId: '91',
             sessionId: pair.$1,
             instanceId: pair.$2,

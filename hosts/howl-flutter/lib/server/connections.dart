@@ -4,13 +4,13 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../delete/howl_endpoint.dart';
+import 'endpoint.dart';
 
 @immutable
 final class ServerConnection {
   ServerConnection({required String label, required String endpoint})
     : label = _normalizeLabel(label),
-      endpoint = HowlEndpoint.parse(endpoint).toString();
+      endpoint = Endpoint.parse(endpoint).toString();
 
   final String label;
   final String endpoint;
@@ -47,7 +47,7 @@ final class ServerConnection {
       );
     } on ArgumentError {
       throw const FormatException('invalid Server connection');
-    } on HowlEndpointException {
+    } on EndpointException {
       throw const FormatException('invalid Server endpoint');
     }
   }

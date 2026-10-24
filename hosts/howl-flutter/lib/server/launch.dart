@@ -6,7 +6,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-import '../delete/howl_endpoint.dart';
+import 'endpoint.dart';
 import '../delete/instance_target.dart';
 import '../delete/native_host.dart';
 import 'tree.dart';
@@ -70,7 +70,7 @@ final class ServerLaunchRequest {
 }
 
 typedef ServerLauncher = ServerLaunchRequest Function(
-  HowlEndpoint endpoint,
+  Endpoint endpoint,
   String serverId, {
   String? sessionId,
   String? sessionName,
@@ -83,7 +83,7 @@ final class ServerLaunch {
   static const Duration responseTimeout = Duration(seconds: 20);
 
   static ServerLaunchRequest request(
-    HowlEndpoint endpoint,
+    Endpoint endpoint,
     String serverId, {
     String? sessionId,
     String? sessionName,

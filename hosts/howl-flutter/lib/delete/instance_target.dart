@@ -1,4 +1,4 @@
-import 'howl_endpoint.dart';
+import '../server/endpoint.dart';
 
 /// One exact Server-owned Instance selected by a Flutter client.
 final class HowlInstanceTarget {
@@ -11,7 +11,7 @@ final class HowlInstanceTarget {
        sessionId = exactHowlIdentity(sessionId),
        instanceId = exactHowlIdentity(instanceId);
 
-  final HowlEndpoint serverEndpoint;
+  final Endpoint serverEndpoint;
   final String serverId;
   final String sessionId;
   final String instanceId;
