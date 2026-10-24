@@ -174,9 +174,9 @@ void main() {
   testWidgets('new Session suggests an unused mobile name', (tester) async {
     final tree = HowlServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"9",'
-          '"tree_revision":"1","sessions":['
-          '{"session_id":"1","name":"mobile","instances":[]},'
-          '{"session_id":"2","name":"mobile-3","instances":[]},'
+      '"tree_revision":"1","sessions":['
+      '{"session_id":"1","name":"mobile","instances":[]},'
+      '{"session_id":"2","name":"mobile-3","instances":[]},'
       '{"session_id":"3","name":"work","instances":[]}]}',
     );
     await tester.pumpWidget(
@@ -200,5 +200,81 @@ void main() {
       find.widgetWithText(TextField, 'Shell on Server'),
     );
     expect(shell.controller!.text, '/bin/bash');
+  });
+
+  testWidgets('synchronous native request failure never strands loading', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlServerBrowser(
+          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          fetchTree: (_) => throw StateError('native initialization failed'),
+          onOpenTarget: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Server unavailable'), findsOneWidget);
+    expect(find.textContaining('native initialization failed'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('unresponsive native request has a finite UI deadline', (
+    tester,
+  ) async {
+    final pending = Completer<HowlServerTree>();
+    var cancels = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlServerBrowser(
+          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          fetchTree: (_) => HowlServerTreeRequest(
+            pending.future,
+            onCancel: () => cancels += 1,
+          ),
+          onOpenTarget: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Connecting to Server'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 19));
+    await tester.pumpAndSettle();
+    expect(cancels, 1);
+    expect(find.text('Server unavailable'), findsOneWidget);
+    expect(find.textContaining('server_tree_timeout'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('operator can cancel an unresponsive Server connection', (
+    tester,
+  ) async {
+    final pending = Completer<HowlServerTree>();
+    var cancels = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlServerBrowser(
+          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          fetchTree: (_) => HowlServerTreeRequest(
+            pending.future,
+            onCancel: () {
+              cancels += 1;
+              pending.completeError(StateError('native canceled'));
+            },
+          ),
+          onOpenTarget: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(cancels, 1);
+    expect(find.text('Server unavailable'), findsOneWidget);
+    expect(find.textContaining('server_tree_canceled'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
 }

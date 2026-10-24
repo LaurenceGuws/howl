@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'howl_endpoint.dart';
 import 'instance_target.dart';
+import 'native_host.dart';
 import 'server_launch.dart';
 import 'server_tree.dart';
 
@@ -36,6 +37,9 @@ final class HowlServerBrowser extends StatefulWidget {
 
 final class _HowlServerBrowserState extends State<HowlServerBrowser>
     with WidgetsBindingObserver {
+  static const Duration _treeDeadline = Duration(seconds: 18);
+  static const Duration _launchDeadline = Duration(seconds: 23);
+
   HowlServerTree? _tree;
   Object? _failure;
   bool _loading = true;
@@ -59,6 +63,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
 
   Future<void> _refresh() async {
     final prior = _request;
+    _request = null;
     if (prior != null) {
       try {
         prior.cancel();
@@ -78,24 +83,59 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
         _failure = null;
       });
     }
-    final request = widget.fetchTree(widget.endpoint);
-    _request = request;
+    HowlServerTreeRequest? request;
     try {
-      final tree = await request.future;
+      request = widget.fetchTree(widget.endpoint);
+      _request = request;
+      final tree = await request.future.timeout(
+        _treeDeadline,
+        onTimeout: () {
+          request!.cancel();
+          throw const HowlServerTreeException(
+            'server_tree_timeout',
+            kind: NativeFailureKind.transport,
+          );
+        },
+      );
       if (!mounted || !identical(_request, request)) return;
       setState(() {
         _tree = tree;
         _loading = false;
       });
     } catch (error) {
-      if (!mounted || !identical(_request, request)) return;
+      if (!mounted || (request != null && !identical(_request, request))) {
+        return;
+      }
       setState(() {
         _failure = error;
         _loading = false;
       });
     } finally {
-      if (identical(_request, request)) _request = null;
+      if (request != null && identical(_request, request)) _request = null;
     }
+  }
+
+  void _cancelTreeRequest() {
+    final request = _request;
+    _request = null;
+    try {
+      request?.cancel();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _failure = error;
+        _loading = false;
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _failure = const HowlServerTreeException(
+        'server_tree_canceled',
+        kind: NativeFailureKind.canceled,
+      );
+      _loading = false;
+    });
   }
 
   @override
@@ -164,7 +204,16 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
     _launchRequest = request;
     setState(() => _launching = true);
     try {
-      final receipt = await request.future;
+      final receipt = await request.future.timeout(
+        _launchDeadline,
+        onTimeout: () {
+          request.cancel();
+          throw const HowlServerTreeException(
+            'server_launch_timeout',
+            kind: NativeFailureKind.transport,
+          );
+        },
+      );
       if (!mounted || !identical(_launchRequest, request)) return;
       if (receipt.serverId != tree.serverId) {
         throw const HowlServerTreeException('launch_server_identity');
@@ -254,6 +303,11 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Check the private network and Server endpoint.',
+                      textAlign: TextAlign.center,
+                    ),
                     const SizedBox(height: 16),
                     FilledButton(
                       onPressed: _refresh,
@@ -264,7 +318,24 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
               ),
             )
           : tree == null
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Text('Connecting to Server'),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.endpoint.toString(),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    onPressed: _cancelTreeRequest,
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            )
           : _buildTree(context, tree),
     );
   }
