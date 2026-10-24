@@ -6,6 +6,15 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Cold admission and retry scheduling · 24 October
+
+[The private cold-admission experiment](COLD_ADMISSION.md) cuts cold CJK worker
+turns from about41–50 ms to4.6–5.0 ms by interleaving admission with canonical
+service. Immediate retry reduces the first-projection penalty; repeated prefix
+work and an11 ms over-capacity turn remain. Pixels/progress proofs pass for the
+measured cases. Target replacement needs a stronger contract before promotion;
+no runtime budget or new daily build is installed from this round.
+
 ## Render memory and cold turns · 24 October
 
 [The allocation and service-turn accounting](RENDER_ACCOUNTING.md) locates a large
