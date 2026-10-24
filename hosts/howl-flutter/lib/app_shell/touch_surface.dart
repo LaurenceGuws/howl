@@ -7,8 +7,8 @@ import 'package:flutter/widgets.dart';
 /// does not also summon the platform text editor. Mouse/stylus input deliberately
 /// bypasses this recognizer and is translated separately into frozen semantic
 /// mouse input.
-final class TerminalTouchSurface extends StatelessWidget {
-  const TerminalTouchSurface({
+final class TouchSurface extends StatelessWidget {
+  const TouchSurface({
     super.key,
     required this.onTap,
     required this.onLongPressStart,

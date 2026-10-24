@@ -8,8 +8,8 @@ import 'package:flutter/services.dart';
 /// Android uses a character editor so Flutter's editable state can expose IME
 /// deletion as semantic terminal actions. The Android activity owns only the
 /// delayed native show/hide mechanics; visibility policy remains in Dart.
-final class TerminalPlatformInput {
-  const TerminalPlatformInput({this.platformOverride});
+final class PlatformInput {
+  const PlatformInput({this.platformOverride});
 
   final TargetPlatform? platformOverride;
 

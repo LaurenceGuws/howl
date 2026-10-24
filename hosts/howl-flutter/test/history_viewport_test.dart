@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/history_viewport.dart';
+import 'package:howl_flutter/viewport/history.dart';
 
 void main() {
   test('exact row scroll supports selection edge autoscroll', () {

@@ -6,15 +6,15 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-import 'howl_endpoint.dart';
-import 'instance_target.dart';
-import 'native_host.dart';
+import '../delete/howl_endpoint.dart';
+import '../delete/instance_target.dart';
+import '../delete/native_host.dart';
 
 const int _serverTreeOutputBytes = 64 * 1024;
 const int _serverTreeDiagnosticBytes = 256;
 
-final class HowlServerTreeException implements Exception {
-  const HowlServerTreeException(
+final class ServerTreeException implements Exception {
+  const ServerTreeException(
     this.code, {
     this.kind = NativeFailureKind.permanent,
   });
@@ -22,30 +22,30 @@ final class HowlServerTreeException implements Exception {
   final NativeFailureKind kind;
 
   @override
-  String toString() => 'HowlServerTreeException(${kind.name}:$code)';
+  String toString() => 'ServerTreeException(${kind.name}:$code)';
 }
 
-enum HowlServerInstanceState { running, exited }
+enum ServerInstanceState { running, exited }
 
-final class HowlServerInstance {
-  const HowlServerInstance({required this.id, required this.state});
+final class ServerInstance {
+  const ServerInstance({required this.id, required this.state});
   final String id;
-  final HowlServerInstanceState state;
+  final ServerInstanceState state;
 }
 
-final class HowlServerSession {
-  const HowlServerSession({
+final class ServerSession {
+  const ServerSession({
     required this.id,
     required this.name,
     required this.instances,
   });
   final String id;
   final String name;
-  final List<HowlServerInstance> instances;
+  final List<ServerInstance> instances;
 }
 
-final class HowlServerTree {
-  const HowlServerTree({
+final class ServerTree {
+  const ServerTree({
     required this.serverId,
     required this.treeRevision,
     required this.sessions,
@@ -53,71 +53,71 @@ final class HowlServerTree {
 
   final String serverId;
   final String treeRevision;
-  final List<HowlServerSession> sessions;
+  final List<ServerSession> sessions;
 
-  static HowlServerTree parse(String text) {
+  static ServerTree parse(String text) {
     final Object? decoded;
     try {
       decoded = jsonDecode(text);
     } on FormatException {
-      throw const HowlServerTreeException('json');
+      throw const ServerTreeException('json');
     }
     if (decoded is! Map<String, Object?> ||
         decoded['schema'] != 'howl.server.tree/v1') {
-      throw const HowlServerTreeException('schema');
+      throw const ServerTreeException('schema');
     }
     final serverId = _opaqueIdentity(decoded['server_id'], 'server_id');
     final revision = _opaqueIdentity(decoded['tree_revision'], 'tree_revision');
     final rawSessions = decoded['sessions'];
     if (rawSessions is! List<Object?>) {
-      throw const HowlServerTreeException('sessions');
+      throw const ServerTreeException('sessions');
     }
-    final sessions = <HowlServerSession>[];
+    final sessions = <ServerSession>[];
     var previousSessionId = BigInt.zero;
     for (final rawSession in rawSessions) {
       if (rawSession is! Map<String, Object?>) {
-        throw const HowlServerTreeException('session');
+        throw const ServerTreeException('session');
       }
       final id = _opaqueIdentity(rawSession['session_id'], 'session_id');
       if (BigInt.parse(id) <= previousSessionId) {
-        throw const HowlServerTreeException('session_order');
+        throw const ServerTreeException('session_order');
       }
       previousSessionId = BigInt.parse(id);
       final name = rawSession['name'];
       final rawInstances = rawSession['instances'];
       if (name is! String || name.isEmpty || rawInstances is! List<Object?>) {
-        throw const HowlServerTreeException('session_shape');
+        throw const ServerTreeException('session_shape');
       }
-      final instances = <HowlServerInstance>[];
+      final instances = <ServerInstance>[];
       var previousInstanceId = BigInt.zero;
       for (final rawInstance in rawInstances) {
         if (rawInstance is! Map<String, Object?>) {
-          throw const HowlServerTreeException('instance');
+          throw const ServerTreeException('instance');
         }
         final instanceId = _opaqueIdentity(
           rawInstance['instance_id'],
           'instance_id',
         );
         if (BigInt.parse(instanceId) <= previousInstanceId) {
-          throw const HowlServerTreeException('instance_order');
+          throw const ServerTreeException('instance_order');
         }
         previousInstanceId = BigInt.parse(instanceId);
         final state = switch (rawInstance['state']) {
-          'running' => HowlServerInstanceState.running,
-          'exited' => HowlServerInstanceState.exited,
-          _ => throw const HowlServerTreeException('instance_state'),
+          'running' => ServerInstanceState.running,
+          'exited' => ServerInstanceState.exited,
+          _ => throw const ServerTreeException('instance_state'),
         };
-        instances.add(HowlServerInstance(id: instanceId, state: state));
+        instances.add(ServerInstance(id: instanceId, state: state));
       }
       sessions.add(
-        HowlServerSession(
+        ServerSession(
           id: id,
           name: name,
           instances: List.unmodifiable(instances),
         ),
       );
     }
-    return HowlServerTree(
+    return ServerTree(
       serverId: serverId,
       treeRevision: revision,
       sessions: List.unmodifiable(sessions),
@@ -126,11 +126,11 @@ final class HowlServerTree {
 }
 
 String _opaqueIdentity(Object? value, String field) {
-  if (value is! String) throw HowlServerTreeException(field);
+  if (value is! String) throw ServerTreeException(field);
   try {
     return exactHowlIdentity(value);
   } on FormatException {
-    throw HowlServerTreeException(field);
+    throw ServerTreeException(field);
   }
 }
 
@@ -157,10 +157,10 @@ typedef _ServerTreeDart = int Function(
   ffi.Pointer<ffi.Size>,
 );
 
-final class HowlServerTreeRequest {
-  HowlServerTreeRequest(this.future, {this.onCancel});
+final class ServerTreeRequest {
+  ServerTreeRequest(this.future, {this.onCancel});
 
-  final Future<HowlServerTree> future;
+  final Future<ServerTree> future;
   final void Function()? onCancel;
   bool _canceled = false;
 
@@ -170,8 +170,8 @@ final class HowlServerTreeRequest {
     onCancel?.call();
   }
 
-  static HowlServerTreeRequest fromFuture(Future<HowlServerTree> future) =>
-      HowlServerTreeRequest(future);
+  static ServerTreeRequest fromFuture(Future<ServerTree> future) =>
+      ServerTreeRequest(future);
 }
 
 final class NativeServerTree {
@@ -179,7 +179,7 @@ final class NativeServerTree {
 
   static const Duration responseTimeout = Duration(seconds: 15);
 
-  static HowlServerTreeRequest request(
+  static ServerTreeRequest request(
     HowlEndpoint endpoint, {
     Duration timeout = responseTimeout,
   }) {
@@ -196,12 +196,12 @@ final class NativeServerTree {
       interrupt.cancel();
     });
     final future = worker
-        .then(HowlServerTree.parse)
+        .then(ServerTree.parse)
         .catchError((Object error, StackTrace stackTrace) {
           if (deadlineExpired &&
-              error is HowlServerTreeException &&
+              error is ServerTreeException &&
               error.kind == NativeFailureKind.canceled) {
-            throw const HowlServerTreeException(
+            throw const ServerTreeException(
               'server_tree_timeout',
               kind: NativeFailureKind.transport,
             );
@@ -212,7 +212,7 @@ final class NativeServerTree {
           deadline.cancel();
           interrupt.destroy();
         });
-    return HowlServerTreeRequest(
+    return ServerTreeRequest(
       future,
       onCancel: () {
         // Explicit owner cancellation wins if the response deadline has not
@@ -267,7 +267,7 @@ String _fetchJson(String endpoint, int interruptAddress) {
                 .decode(raw.sublist(1), allowMalformed: true)
                 .replaceAll(RegExp(r'[\r\n]+'), ' ')
                 .trim();
-      throw HowlServerTreeException(
+      throw ServerTreeException(
         message.isEmpty ? 'native_$code' : 'native_$code:$message',
         kind: kind,
       );

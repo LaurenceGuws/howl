@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/held_key_repeat.dart';
+import 'package:howl_flutter/app_shell/held_key_repeat.dart';
 
 void main() {
   test('held key repeats after delay and stops on matching release', () async {

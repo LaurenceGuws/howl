@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/server_connections.dart';
+import 'package:howl_flutter/server/connections.dart';
 
-final class _MemoryStore implements HowlServerConnectionStore {
+final class _MemoryStore implements ServerConnectionStore {
   _MemoryStore([this.value]);
 
   String? value;
@@ -16,16 +16,16 @@ final class _MemoryStore implements HowlServerConnectionStore {
 void main() {
   test('Server connections persist lifecycle and selected endpoint', () async {
     final store = _MemoryStore();
-    final connections = HowlServerConnections(store);
+    final connections = ServerConnections(store);
     await connections.initialize();
     expect(connections.servers, isEmpty);
     expect(connections.selectedEndpoint, isNull);
 
-    final home = HowlServerConnection(
+    final home = ServerConnection(
       label: 'Home',
       endpoint: 'tcp://127.0.0.1:43130',
     );
-    final lab = HowlServerConnection(
+    final lab = ServerConnection(
       label: 'Lab',
       endpoint: 'tcp://127.0.0.1:43131',
     );
@@ -39,7 +39,7 @@ void main() {
     await connections.select(home.endpoint);
     expect(connections.selectedEndpoint, home.endpoint);
 
-    final movedHome = HowlServerConnection(
+    final movedHome = ServerConnection(
       label: 'Home',
       endpoint: 'tcp://127.0.0.1:43132',
     );
@@ -47,7 +47,7 @@ void main() {
     expect(connections.selectedEndpoint, movedHome.endpoint);
     expect(connections.find(home.endpoint), isNull);
 
-    final reloaded = HowlServerConnections(store);
+    final reloaded = ServerConnections(store);
     await reloaded.initialize();
     expect(reloaded.selectedEndpoint, movedHome.endpoint);
     expect(reloaded.servers.length, 2);
@@ -60,19 +60,19 @@ void main() {
 
   test('Server connection model rejects duplicate and corrupt state', () async {
     final store = _MemoryStore();
-    final connections = HowlServerConnections(store);
+    final connections = ServerConnections(store);
     await connections.initialize();
     await connections.upsert(
-      HowlServerConnection(label: 'Home', endpoint: 'tcp://127.0.0.1:43130'),
+      ServerConnection(label: 'Home', endpoint: 'tcp://127.0.0.1:43130'),
     );
     await expectLater(
       connections.upsert(
-        HowlServerConnection(label: 'Other', endpoint: 'tcp://127.0.0.1:43130'),
+        ServerConnection(label: 'Other', endpoint: 'tcp://127.0.0.1:43130'),
       ),
       throwsStateError,
     );
 
-    final corrupt = HowlServerConnections(
+    final corrupt = ServerConnections(
       _MemoryStore(
         '{"schema":"howl.server-connections/v1","servers":['
         '{"label":"Home","endpoint":"tcp://127.0.0.1:43130"}],'

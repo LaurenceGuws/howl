@@ -6,13 +6,13 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-import 'howl_endpoint.dart';
-import 'instance_target.dart';
-import 'native_host.dart';
-import 'server_tree.dart';
+import '../delete/howl_endpoint.dart';
+import '../delete/instance_target.dart';
+import '../delete/native_host.dart';
+import 'tree.dart';
 
-final class HowlServerLaunchReceipt {
-  const HowlServerLaunchReceipt({
+final class ServerLaunchReceipt {
+  const ServerLaunchReceipt({
     required this.serverId,
     required this.sessionId,
     required this.instanceId,
@@ -22,29 +22,29 @@ final class HowlServerLaunchReceipt {
   final String sessionId;
   final String instanceId;
 
-  static HowlServerLaunchReceipt parse(String json) {
+  static ServerLaunchReceipt parse(String json) {
     final Object? value;
     try {
       value = jsonDecode(json);
     } on FormatException {
-      throw const HowlServerTreeException('launch_json');
+      throw const ServerTreeException('launch_json');
     }
     if (value is! Map<String, Object?> ||
         value['schema'] != 'howl.server.launch/v1') {
-      throw const HowlServerTreeException('launch_schema');
+      throw const ServerTreeException('launch_schema');
     }
     final receipt = value;
     String identity(String field) {
       final raw = receipt[field];
-      if (raw is! String) throw HowlServerTreeException('launch_$field');
+      if (raw is! String) throw ServerTreeException('launch_$field');
       try {
         return exactHowlIdentity(raw);
       } on FormatException {
-        throw HowlServerTreeException('launch_$field');
+        throw ServerTreeException('launch_$field');
       }
     }
 
-    return HowlServerLaunchReceipt(
+    return ServerLaunchReceipt(
       serverId: identity('server_id'),
       sessionId: identity('session_id'),
       instanceId: identity('instance_id'),
@@ -52,10 +52,10 @@ final class HowlServerLaunchReceipt {
   }
 }
 
-final class HowlServerLaunchRequest {
-  HowlServerLaunchRequest(this.future, {this.onCancel});
+final class ServerLaunchRequest {
+  ServerLaunchRequest(this.future, {this.onCancel});
 
-  final Future<HowlServerLaunchReceipt> future;
+  final Future<ServerLaunchReceipt> future;
   final void Function()? onCancel;
   bool _canceled = false;
 
@@ -65,12 +65,11 @@ final class HowlServerLaunchRequest {
     onCancel?.call();
   }
 
-  static HowlServerLaunchRequest fromFuture(
-    Future<HowlServerLaunchReceipt> future,
-  ) => HowlServerLaunchRequest(future);
+  static ServerLaunchRequest fromFuture(Future<ServerLaunchReceipt> future) =>
+      ServerLaunchRequest(future);
 }
 
-typedef HowlServerLauncher = HowlServerLaunchRequest Function(
+typedef ServerLauncher = ServerLaunchRequest Function(
   HowlEndpoint endpoint,
   String serverId, {
   String? sessionId,
@@ -78,12 +77,12 @@ typedef HowlServerLauncher = HowlServerLaunchRequest Function(
   required String shell,
 });
 
-final class NativeServerLaunch {
-  const NativeServerLaunch._();
+final class ServerLaunch {
+  const ServerLaunch._();
 
   static const Duration responseTimeout = Duration(seconds: 20);
 
-  static HowlServerLaunchRequest request(
+  static ServerLaunchRequest request(
     HowlEndpoint endpoint,
     String serverId, {
     String? sessionId,
@@ -119,12 +118,12 @@ final class NativeServerLaunch {
       interrupt.cancel();
     });
     final future = worker
-        .then(HowlServerLaunchReceipt.parse)
+        .then(ServerLaunchReceipt.parse)
         .catchError((Object error, StackTrace stackTrace) {
           if (deadlineExpired &&
-              error is HowlServerTreeException &&
+              error is ServerTreeException &&
               error.kind == NativeFailureKind.canceled) {
-            throw const HowlServerTreeException(
+            throw const ServerTreeException(
               'server_launch_timeout',
               kind: NativeFailureKind.transport,
             );
@@ -135,7 +134,7 @@ final class NativeServerLaunch {
           deadline.cancel();
           interrupt.destroy();
         });
-    return HowlServerLaunchRequest(
+    return ServerLaunchRequest(
       future,
       onCancel: () {
         deadline.cancel();
@@ -243,7 +242,7 @@ String _launch(
       final message = raw.length < 2
           ? 'native_$code'
           : utf8.decode(raw.sublist(1), allowMalformed: true).trim();
-      throw HowlServerTreeException('launch:$message', kind: kind);
+      throw ServerTreeException('launch:$message', kind: kind);
     }
     return utf8.decode(output.asTypedList(outputLength.value));
   } finally {

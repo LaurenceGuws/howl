@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 
-import 'terminal_fit.dart';
+import 'fit.dart';
 
 /// Centers one terminal surface while aligning its origin to physical pixels.
 ///
@@ -9,8 +9,8 @@ import 'terminal_fit.dart';
 /// half-physical-pixel phase after the native 3x glyph atlas is scaled back to
 /// logical coordinates. Nearest-neighbour terminal masks must not inherit that
 /// fractional layer translation.
-final class TerminalPixelAlignedCenter extends StatelessWidget {
-  const TerminalPixelAlignedCenter({
+final class TerminalPixelCenter extends StatelessWidget {
+  const TerminalPixelCenter({
     super.key,
     required this.devicePixelRatio,
     required this.child,

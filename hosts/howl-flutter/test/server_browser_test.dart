@@ -2,17 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_endpoint.dart';
-import 'package:howl_flutter/instance_target.dart';
-import 'package:howl_flutter/server_browser.dart';
-import 'package:howl_flutter/server_tree.dart';
+import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/browser.dart';
+import 'package:howl_flutter/server/tree.dart';
 
 void main() {
   testWidgets('browser shows Session lineage and only opens running Instance', (
     tester,
   ) async {
     ManagedHowlInstanceTarget? selected;
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615","tree_revision":"4","sessions":['
       '{"session_id":"7","name":"work","instances":['
       '{"instance_id":"1","state":"exited"},'
@@ -20,10 +20,9 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           onOpenTarget: (target) => selected = target,
         ),
       ),
@@ -51,19 +50,19 @@ void main() {
   testWidgets(
     'row selection pins its rendered Server incarnation between frames',
     (tester) async {
-      HowlServerTree tree(String serverId, String name) => HowlServerTree.parse(
+      ServerTree tree(String serverId, String name) => ServerTree.parse(
         '{"schema":"howl.server.tree/v1","server_id":"$serverId","tree_revision":"4","sessions":['
         '{"session_id":"7","name":"$name","instances":['
         '{"instance_id":"3","state":"running"}]}]}',
       );
-      final refresh = Completer<HowlServerTree>();
+      final refresh = Completer<ServerTree>();
       var calls = 0;
       ManagedHowlInstanceTarget? selected;
       await tester.pumpWidget(
         MaterialApp(
-          home: HowlServerBrowser(
+          home: ServerBrowser(
             endpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
-            fetchTree: (_) => HowlServerTreeRequest.fromFuture(
+            fetchTree: (_) => ServerTreeRequest.fromFuture(
               calls++ == 0
                   ? Future.value(tree('91', 'OLD_OCCURRENCE'))
                   : refresh.future,
@@ -105,13 +104,13 @@ void main() {
   testWidgets('disposing browser cancels its pending tree request once', (
     tester,
   ) async {
-    final pending = Completer<HowlServerTree>();
+    final pending = Completer<ServerTree>();
     var cancels = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) => HowlServerTreeRequest(
+          fetchTree: (_) => ServerTreeRequest(
             pending.future,
             onCancel: () {
               cancels += 1;
@@ -131,9 +130,9 @@ void main() {
   });
 
   test('tree request cancellation is idempotent', () async {
-    final completer = Completer<HowlServerTree>();
+    final completer = Completer<ServerTree>();
     var cancels = 0;
-    final request = HowlServerTreeRequest(
+    final request = ServerTreeRequest(
       completer.future,
       onCancel: () => cancels += 1,
     );
@@ -146,17 +145,17 @@ void main() {
     tester,
   ) async {
     var requests = 0;
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"9",'
       '"tree_revision":"1","sessions":[]}',
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) {
             requests += 1;
-            return HowlServerTreeRequest.fromFuture(Future.value(tree));
+            return ServerTreeRequest.fromFuture(Future.value(tree));
           },
           onOpenTarget: (_) {},
         ),
@@ -172,7 +171,7 @@ void main() {
   });
 
   testWidgets('new Session suggests an unused mobile name', (tester) async {
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"9",'
       '"tree_revision":"1","sessions":['
       '{"session_id":"1","name":"mobile","instances":[]},'
@@ -181,10 +180,9 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           onOpenTarget: (_) {},
         ),
       ),
@@ -207,7 +205,7 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => throw StateError('native initialization failed'),
           onOpenTarget: (_) {},
@@ -224,16 +222,14 @@ void main() {
   testWidgets('unresponsive native request has a finite UI deadline', (
     tester,
   ) async {
-    final pending = Completer<HowlServerTree>();
+    final pending = Completer<ServerTree>();
     var cancels = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) => HowlServerTreeRequest(
-            pending.future,
-            onCancel: () => cancels += 1,
-          ),
+          fetchTree: (_) =>
+              ServerTreeRequest(pending.future, onCancel: () => cancels += 1),
           onOpenTarget: (_) {},
         ),
       ),
@@ -252,13 +248,13 @@ void main() {
   testWidgets('operator can cancel an unresponsive Server connection', (
     tester,
   ) async {
-    final pending = Completer<HowlServerTree>();
+    final pending = Completer<ServerTree>();
     var cancels = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) => HowlServerTreeRequest(
+          fetchTree: (_) => ServerTreeRequest(
             pending.future,
             onCancel: () {
               cancels += 1;

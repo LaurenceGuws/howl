@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_endpoint.dart';
-import 'package:howl_flutter/instance_target.dart';
-import 'package:howl_flutter/server_tree.dart';
+import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/tree.dart';
 
 String tree(String session, String instance) => jsonEncode({
   'schema': 'howl.server.tree/v1',
@@ -26,7 +26,7 @@ void main() {
     test(
       'exact u64 $value survives tree target isolate and FFI bits',
       () async {
-        final parsed = HowlServerTree.parse(tree(value, value));
+        final parsed = ServerTree.parse(tree(value, value));
         final target = ManagedHowlInstanceTarget(
           serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
           serverId: parsed.serverId,
@@ -48,8 +48,8 @@ void main() {
     test('reject invalid Session and Instance identity "$value"', () {
       for (final text in [tree(value, '1'), tree('1', value)]) {
         expect(
-          () => HowlServerTree.parse(text),
-          throwsA(isA<HowlServerTreeException>()),
+          () => ServerTree.parse(text),
+          throwsA(isA<ServerTreeException>()),
         );
       }
       for (final pair in [(value, '1'), ('1', value)]) {

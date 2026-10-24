@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'howl_endpoint.dart';
-import 'instance_target.dart';
-import 'server_browser.dart';
-import 'server_connections.dart';
-import 'server_tree.dart';
+import '../delete/howl_endpoint.dart';
+import '../delete/instance_target.dart';
+import '../server/browser.dart';
+import '../server/connections.dart';
+import '../server/tree.dart';
 
 typedef HowlTerminalBuilder = Widget Function(
   BuildContext context,
@@ -53,8 +53,8 @@ String? _displayTitle(String? value) {
 /// The shell owns Local-vs-Server navigation, saved Server endpoints, and app
 /// navigation only. It deliberately owns no Server mirror, terminal grid,
 /// Session lifecycle, pane layout, or transport implementation.
-final class HowlAppShell extends StatefulWidget {
-  const HowlAppShell({
+final class AppShell extends StatefulWidget {
+  const AppShell({
     super.key,
     required this.terminalBuilder,
     this.initialServerEndpoint,
@@ -67,17 +67,17 @@ final class HowlAppShell extends StatefulWidget {
   final HowlTerminalBuilder terminalBuilder;
   final HowlEndpoint? initialServerEndpoint;
   final HowlInstanceTarget? initialInstanceTarget;
-  final HowlServerConnections? connections;
-  final HowlServerTreeFetcher fetchTree;
+  final ServerConnections? connections;
+  final ServerTreeFetcher fetchTree;
   final bool localEnabled;
 
   @override
-  State<HowlAppShell> createState() => _HowlAppShellState();
+  State<AppShell> createState() => _AppShellState();
 }
 
-final class _HowlAppShellState extends State<HowlAppShell> {
+final class _AppShellState extends State<AppShell> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  late final HowlServerConnections _connections;
+  late final ServerConnections _connections;
   late final bool _ownsConnections;
   HowlEndpoint? _activeServer;
   HowlInstanceTarget? _activeInstance;
@@ -92,7 +92,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     _ownsConnections = widget.connections == null;
     _connections =
         widget.connections ??
-        HowlServerConnections(SharedPreferencesHowlServerConnectionStore());
+        ServerConnections(SharedPreferencesServerConnectionStore());
     _connections.addListener(_connectionsChanged);
     _activeInstance = widget.initialInstanceTarget;
     if (_activeInstance case final target?) _tabFor(target);
@@ -147,7 +147,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     });
   }
 
-  Future<void> _selectServer(HowlServerConnection server) async {
+  Future<void> _selectServer(ServerConnection server) async {
     final navigation = ++_navigation;
     try {
       await _connections.select(server.endpoint);
@@ -328,7 +328,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     }
     final server = _activeServer;
     if (server != null) {
-      return HowlServerBrowser(
+      return ServerBrowser(
         key: ValueKey<String>('server:${server.toString()}'),
         endpoint: server,
         onMenu: _openDrawer,
@@ -586,12 +586,12 @@ final class _ServerDrawer extends StatelessWidget {
     required this.onBackToServer,
   });
 
-  final HowlServerConnections connections;
+  final ServerConnections connections;
   final HowlEndpoint? activeServer;
   final HowlInstanceTarget? activeInstance;
   final bool localEnabled;
   final VoidCallback onOpenLocal;
-  final Future<void> Function(HowlServerConnection) onSelectServer;
+  final Future<void> Function(ServerConnection) onSelectServer;
   final VoidCallback onBackToServer;
 
   @override
@@ -755,8 +755,8 @@ enum _ServerAction { edit, remove }
 
 Future<void> _editServer(
   BuildContext context,
-  HowlServerConnections connections, {
-  HowlServerConnection? existing,
+  ServerConnections connections, {
+  ServerConnection? existing,
 }) async {
   await showDialog<void>(
     context: context,
@@ -771,8 +771,8 @@ final class _ServerEditorDialog extends StatefulWidget {
     required this.existing,
   });
 
-  final HowlServerConnections connections;
-  final HowlServerConnection? existing;
+  final ServerConnections connections;
+  final ServerConnection? existing;
 
   @override
   State<_ServerEditorDialog> createState() => _ServerEditorDialogState();
@@ -807,7 +807,7 @@ final class _ServerEditorDialogState extends State<_ServerEditorDialog> {
       _error = null;
     });
     try {
-      final value = HowlServerConnection(
+      final value = ServerConnection(
         label: _label.text,
         endpoint: _endpoint.text.trim(),
       );
@@ -894,8 +894,8 @@ final class _ServerEditorDialogState extends State<_ServerEditorDialog> {
 
 Future<void> _removeServer(
   BuildContext context,
-  HowlServerConnections connections,
-  HowlServerConnection server,
+  ServerConnections connections,
+  ServerConnection server,
 ) async {
   final confirmed = await showDialog<bool>(
     context: context,

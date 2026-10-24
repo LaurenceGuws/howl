@@ -1,13 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/desktop_selection.dart';
-import 'package:howl_flutter/terminal_selection.dart';
+import 'package:howl_flutter/app_shell/desktop_selection.dart';
+import 'package:howl_flutter/term/selection.dart';
 
 void main() {
   const first = TerminalSelectionPoint(row: 10, column: 4);
   const second = TerminalSelectionPoint(row: 12, column: 7);
 
   test('desktop selection keeps only a moved primary drag', () {
-    final controller = DesktopSelectionController();
+    final controller = DesktopSelection();
     final initial = controller.start(
       pointer: 7,
       point: first,
@@ -37,7 +37,7 @@ void main() {
   });
 
   test('wrong pointer cannot mutate or finish the drag', () {
-    final controller = DesktopSelectionController()
+    final controller = DesktopSelection()
       ..start(pointer: 3, point: first, columns: 20, alternateScreen: false);
     expect(controller.update(4, second), isNull);
     expect(controller.finish(4).keep, isTrue);

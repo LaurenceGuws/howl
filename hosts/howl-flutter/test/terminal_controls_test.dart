@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_input.dart';
-import 'package:howl_flutter/terminal_controls.dart';
-import 'package:howl_flutter/terminal_presentation.dart';
+import 'package:howl_flutter/delete/howl_input.dart';
+import 'package:howl_flutter/term/controls.dart';
+import 'package:howl_flutter/term/presentation.dart';
 
 void main() {
   testWidgets(
@@ -23,7 +23,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: TerminalControlStrip(
+            body: TerminalControls(
               modifierLatch: HowlInput.modifierControl | HowlInput.modifierAlt,
               zoomPreset: TerminalZoomPreset.normal,
               geometryLeader: false,

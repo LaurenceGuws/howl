@@ -238,8 +238,8 @@ final class TerminalInputStager {
   }
 }
 
-final class TerminalTextInputClient with TextInputClient, DeltaTextInputClient {
-  TerminalTextInputClient({
+final class TerminalTextInput with TextInputClient, DeltaTextInputClient {
+  TerminalTextInput({
     required this.onCommit,
     required this.onEditKey,
     this.inputType = TextInputType.text,
@@ -292,16 +292,16 @@ final class TerminalTextInputClient with TextInputClient, DeltaTextInputClient {
     connection.setEditingState(_stager.value);
   }
 
-  Future<void> show(TerminalPlatformInput platformInput) async {
+  Future<void> show(PlatformInput platformInput) async {
     await setSoftKeyboardVisible(platformInput, true);
   }
 
-  Future<void> hide(TerminalPlatformInput platformInput) async {
+  Future<void> hide(PlatformInput platformInput) async {
     await setSoftKeyboardVisible(platformInput, false);
   }
 
   Future<void> setSoftKeyboardVisible(
-    TerminalPlatformInput platformInput,
+    PlatformInput platformInput,
     bool visible,
   ) async {
     if (!visible) {

@@ -1,10 +1,10 @@
-import 'terminal_selection.dart';
+import '../term/selection.dart';
 
 /// Small desktop-pointer state machine over the shared terminal selection model.
 ///
 /// Platform event routing and canonical mouse-mode policy stay in the app shell;
 /// this owner only remembers one local primary-drag selection.
-final class DesktopSelectionController {
+final class DesktopSelection {
   int? _pointer;
   TerminalSelectionPoint? _anchor;
   TerminalSelectionRange? _range;

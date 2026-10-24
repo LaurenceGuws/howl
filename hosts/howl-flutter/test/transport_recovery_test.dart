@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/native_host.dart';
-import 'package:howl_flutter/transport_recovery.dart';
+import 'package:howl_flutter/delete/native_host.dart';
+import 'package:howl_flutter/delete/transport_recovery.dart';
 
 void main() {
   test('transport retry cadence caps and resets after a healthy frame', () {

@@ -5,8 +5,8 @@ import 'package:flutter/widgets.dart';
 /// It deliberately does not depend on Material. Howl's terminal surface is a
 /// custom painter, so status text must carry its own presentation instead of
 /// falling through to MaterialApp's conspicuous missing-Material debug style.
-final class TerminalStatusText extends StatelessWidget {
-  const TerminalStatusText(this.text, {super.key});
+final class TerminalStatus extends StatelessWidget {
+  const TerminalStatus(this.text, {super.key});
 
   final String text;
 

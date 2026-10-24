@@ -5,12 +5,12 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 
-import 'native_canvas.dart';
-import 'terminal_fit.dart';
+import 'canvas.dart';
+import '../term/fit.dart';
 
 sealed class _PaintSegment {
   const _PaintSegment();
-  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images);
+  void paint(ui.Canvas canvas, Map<CanvasResourceKey, ui.Image> images);
 }
 
 final class _SolidSegment extends _PaintSegment {
@@ -19,7 +19,7 @@ final class _SolidSegment extends _PaintSegment {
   final ui.Color color;
 
   @override
-  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images) {
+  void paint(ui.Canvas canvas, Map<CanvasResourceKey, ui.Image> images) {
     canvas.drawRect(rect, ui.Paint()..color = color);
   }
 }
@@ -32,13 +32,13 @@ final class _AtlasSegment extends _PaintSegment {
     required this.colors,
   });
 
-  final NativeCanvasResourceKey resource;
+  final CanvasResourceKey resource;
   final Float32List transforms;
   final Float32List rects;
   final Int32List colors;
 
   @override
-  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images) {
+  void paint(ui.Canvas canvas, Map<CanvasResourceKey, ui.Image> images) {
     final image = images[resource];
     if (image == null) {
       throw StateError('missing native Canvas resource $resource');
@@ -66,13 +66,13 @@ final class _ScaledAlphaSegment extends _PaintSegment {
     required this.color,
   });
 
-  final NativeCanvasResourceKey resource;
+  final CanvasResourceKey resource;
   final ui.Rect source;
   final ui.Rect destination;
   final ui.Color color;
 
   @override
-  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images) {
+  void paint(ui.Canvas canvas, Map<CanvasResourceKey, ui.Image> images) {
     final image = images[resource];
     if (image == null) {
       throw StateError('missing native Canvas resource $resource');
@@ -96,13 +96,13 @@ final class _RgbaSegment extends _PaintSegment {
     required this.clip,
   });
 
-  final NativeCanvasResourceKey resource;
+  final CanvasResourceKey resource;
   final ui.Rect source;
   final ui.Rect destination;
   final ui.Rect clip;
 
   @override
-  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images) {
+  void paint(ui.Canvas canvas, Map<CanvasResourceKey, ui.Image> images) {
     final image = images[resource];
     if (image == null) {
       throw StateError('missing native Canvas resource $resource');
@@ -119,21 +119,21 @@ final class _RgbaSegment extends _PaintSegment {
   }
 }
 
-final class NativeCanvasPlan {
-  NativeCanvasPlan._(this._segments);
+final class CanvasPlan {
+  CanvasPlan._(this._segments);
   final List<_PaintSegment> _segments;
 
   int get segmentCountForTesting => _segments.length;
 
-  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images) {
+  void paint(ui.Canvas canvas, Map<CanvasResourceKey, ui.Image> images) {
     for (final segment in _segments) {
       segment.paint(canvas, images);
     }
   }
 }
 
-NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
-  final resources = List<NativeCanvasResource>.generate(
+CanvasPlan buildNativeCanvasPlan(CanvasFrame frame) {
+  final resources = List<CanvasResource>.generate(
     frame.resourceCount,
     frame.resource,
     growable: false,
@@ -171,7 +171,7 @@ NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
 
     final resourceIndex = frame.commandResourceIndex(index);
     if (resourceIndex < 0 || resourceIndex >= resources.length) {
-      throw const NativeCanvasException('paint_resource');
+      throw const CanvasException('paint_resource');
     }
     final resource = resources[resourceIndex];
 
@@ -226,14 +226,14 @@ NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
       index += 1;
       continue;
     }
-    throw const NativeCanvasException('paint_tag');
+    throw const CanvasException('paint_tag');
   }
-  return NativeCanvasPlan._(List.unmodifiable(segments));
+  return CanvasPlan._(List.unmodifiable(segments));
 }
 
 _AtlasSegment? _buildAtlasSegment(
-  NativeCanvasFrame frame,
-  NativeCanvasResourceKey resource,
+  CanvasFrame frame,
+  CanvasResourceKey resource,
   int start,
   int end,
 ) {
@@ -285,13 +285,13 @@ _AtlasSegment? _buildAtlasSegment(
   );
 }
 
-final class NativeCanvasClip {
-  const NativeCanvasClip(this.destination, this.source);
+final class CanvasClip {
+  const CanvasClip(this.destination, this.source);
   final ui.Rect destination;
   final ui.Rect source;
 }
 
-NativeCanvasClip? clipNativeCanvasSprite(
+CanvasClip? clipNativeCanvasSprite(
   ui.Rect destination,
   ui.Rect clip,
   ui.Rect source,
@@ -300,7 +300,7 @@ NativeCanvasClip? clipNativeCanvasSprite(
   if (visible.isEmpty) return null;
   final scaleX = source.width / destination.width;
   final scaleY = source.height / destination.height;
-  return NativeCanvasClip(
+  return CanvasClip(
     visible,
     ui.Rect.fromLTWH(
       source.left + (visible.left - destination.left) * scaleX,
@@ -314,36 +314,33 @@ NativeCanvasClip? clipNativeCanvasSprite(
 bool _sameExtent(ui.Rect left, ui.Rect right) =>
     left.width == right.width && left.height == right.height;
 
-final class NativeCanvasLease {
-  const NativeCanvasLease({
+final class CanvasLease {
+  const CanvasLease({
     required this.frame,
     required this.images,
     required this.plan,
   });
 
-  final NativeCanvasFrame frame;
-  final Map<NativeCanvasResourceKey, ui.Image> images;
-  final NativeCanvasPlan plan;
+  final CanvasFrame frame;
+  final Map<CanvasResourceKey, ui.Image> images;
+  final CanvasPlan plan;
 }
 
 /// One decoded external resource which is resident before its retry frame.
-final class NativeCanvasPreloadedResource {
-  const NativeCanvasPreloadedResource({
-    required this.resource,
-    required this.image,
-  });
+final class CanvasPreloadedResource {
+  const CanvasPreloadedResource({required this.resource, required this.image});
 
-  final NativeCanvasResource resource;
+  final CanvasResource resource;
   final ui.Image image;
 }
 
-final class NativeCanvasLeaseUpdate {
-  const NativeCanvasLeaseUpdate({
+final class CanvasLeaseUpdate {
+  const CanvasLeaseUpdate({
     required this.lease,
     required this.retired,
     required this.introduced,
   });
-  final NativeCanvasLease lease;
+  final CanvasLease lease;
 
   /// Images owned by the previous lease which become disposable after adoption.
   final List<ui.Image> retired;
@@ -352,16 +349,15 @@ final class NativeCanvasLeaseUpdate {
   final List<ui.Image> introduced;
 }
 
-Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
-  NativeCanvasLease? previous,
-  NativeCanvasFrame frame, {
-  Iterable<NativeCanvasPreloadedResource> preloaded = const [],
+Future<CanvasLeaseUpdate> prepareNativeCanvasFrame(
+  CanvasLease? previous,
+  CanvasFrame frame, {
+  Iterable<CanvasPreloadedResource> preloaded = const [],
 }) async {
-  final images = <NativeCanvasResourceKey, ui.Image>{...?previous?.images};
+  final images = <CanvasResourceKey, ui.Image>{...?previous?.images};
   final retired = <ui.Image>[];
   final introduced = <ui.Image>[];
-  final preloadByKey =
-      <NativeCanvasResourceKey, NativeCanvasPreloadedResource>{};
+  final preloadByKey = <CanvasResourceKey, CanvasPreloadedResource>{};
   final preloads = preloaded.toList(growable: false);
 
   void introduce(ui.Image image) {
@@ -376,7 +372,7 @@ Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
       for (final image in introduced) {
         image.dispose();
       }
-      throw const NativeCanvasException('external_upload_duplicate');
+      throw const CanvasException('external_upload_duplicate');
     }
     preloadByKey[preload.resource.key] = preload;
     introduce(preload.image);
@@ -394,7 +390,7 @@ Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
       if (removed != null) retired.add(removed);
     }
 
-    final resources = List<NativeCanvasResource>.generate(
+    final resources = List<CanvasResource>.generate(
       frame.resourceCount,
       frame.resource,
       growable: false,
@@ -412,7 +408,7 @@ Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
           (preload.resource.format != resource.format ||
               preload.resource.width != resource.width ||
               preload.resource.height != resource.height)) {
-        throw const NativeCanvasException('external_upload_metadata');
+        throw const CanvasException('external_upload_metadata');
       }
       if (resource.uploaded) {
         final old = images.remove(resource.key);
@@ -428,8 +424,8 @@ Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
       }
     }
 
-    return NativeCanvasLeaseUpdate(
-      lease: NativeCanvasLease(
+    return CanvasLeaseUpdate(
+      lease: CanvasLease(
         frame: frame,
         images: Map.unmodifiable(images),
         plan: buildNativeCanvasPlan(frame),
@@ -448,8 +444,8 @@ Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
 /// Transfer a prepared candidate only while its requesting lifetime still owns
 /// the result. The caller checks lifetime before any context-dependent validation.
 /// A thrown validation also abandons only newly introduced images.
-Future<NativeCanvasLeaseUpdate?> currentNativeCanvasCandidate(
-  Future<NativeCanvasLeaseUpdate> preparation,
+Future<CanvasLeaseUpdate?> currentNativeCanvasCandidate(
+  Future<CanvasLeaseUpdate> preparation,
   bool Function() isCurrent,
 ) async {
   final candidate = await preparation;
@@ -467,33 +463,33 @@ Future<NativeCanvasLeaseUpdate?> currentNativeCanvasCandidate(
 ///
 /// Images in `retired` still belong to `previous` until the candidate is
 /// actually installed, so abandoning a candidate must leave them untouched.
-void disposeNativeCanvasLeaseCandidate(NativeCanvasLeaseUpdate update) {
+void disposeNativeCanvasLeaseCandidate(CanvasLeaseUpdate update) {
   for (final image in update.introduced) {
     image.dispose();
   }
 }
 
 Future<ui.Image> _decodeResource(
-  NativeCanvasFrame frame,
-  NativeCanvasResource resource,
+  CanvasFrame frame,
+  CanvasResource resource,
 ) async {
   return _decodeResourceBytes(resource, frame.uploadBytes(resource));
 }
 
-Future<NativeCanvasPreloadedResource> prepareNativeCanvasExternalUpload(
-  NativeCanvasExternalUpload upload,
+Future<CanvasPreloadedResource> prepareNativeCanvasExternalUpload(
+  CanvasExternalUpload upload,
 ) async {
   if (upload.resource.uploaded || upload.resource.format != 1) {
-    throw const NativeCanvasException('external_upload_resource');
+    throw const CanvasException('external_upload_resource');
   }
-  return NativeCanvasPreloadedResource(
+  return CanvasPreloadedResource(
     resource: upload.resource,
     image: await _decodeResourceBytes(upload.resource, upload.pixels),
   );
 }
 
 void disposeNativeCanvasPreloadedResources(
-  Iterable<NativeCanvasPreloadedResource> resources,
+  Iterable<CanvasPreloadedResource> resources,
 ) {
   for (final resource in resources) {
     resource.image.dispose();
@@ -501,11 +497,11 @@ void disposeNativeCanvasPreloadedResources(
 }
 
 Future<ui.Image> _decodeResourceBytes(
-  NativeCanvasResource resource,
+  CanvasResource resource,
   Uint8List source,
 ) async {
   if (source.length < resource.stride * resource.height) {
-    throw const NativeCanvasException('upload_stride');
+    throw const CanvasException('upload_stride');
   }
   final rgba = Uint8List(resource.width * resource.height * 4);
   for (var y = 0; y < resource.height; y++) {
@@ -520,7 +516,7 @@ Future<ui.Image> _decodeResourceBytes(
       } else if (resource.format == 1) {
         final input = y * resource.stride + x * 4;
         if (input + 4 > source.length) {
-          throw const NativeCanvasException('rgba_upload');
+          throw const CanvasException('rgba_upload');
         }
         final alpha = source[input + 3];
         rgba[target] = (source[input] * alpha + 127) ~/ 255;
@@ -528,7 +524,7 @@ Future<ui.Image> _decodeResourceBytes(
         rgba[target + 2] = (source[input + 2] * alpha + 127) ~/ 255;
         rgba[target + 3] = alpha;
       } else {
-        throw const NativeCanvasException('resource_format');
+        throw const CanvasException('resource_format');
       }
     }
   }
@@ -543,15 +539,15 @@ Future<ui.Image> _decodeResourceBytes(
   return completer.future;
 }
 
-void disposeNativeCanvasLease(NativeCanvasLease? lease) {
+void disposeNativeCanvasLease(CanvasLease? lease) {
   if (lease == null) return;
   for (final image in lease.images.values) {
     image.dispose();
   }
 }
 
-final class NativeCanvasPainter extends CustomPainter {
-  const NativeCanvasPainter({
+final class CanvasSurface extends CustomPainter {
+  const CanvasSurface({
     required this.lease,
     required this.logicalWidth,
     required this.logicalHeight,
@@ -559,8 +555,8 @@ final class NativeCanvasPainter extends CustomPainter {
   }) : _leaseListenable = null,
        super();
 
-  NativeCanvasPainter.listenable({
-    required ValueListenable<NativeCanvasLease?> lease,
+  CanvasSurface.listenable({
+    required ValueListenable<CanvasLease?> lease,
     required this.logicalWidth,
     required this.logicalHeight,
     this.devicePixelRatio,
@@ -568,13 +564,13 @@ final class NativeCanvasPainter extends CustomPainter {
        _leaseListenable = lease,
        super(repaint: lease);
 
-  final NativeCanvasLease? lease;
-  final ValueListenable<NativeCanvasLease?>? _leaseListenable;
+  final CanvasLease? lease;
+  final ValueListenable<CanvasLease?>? _leaseListenable;
   final double logicalWidth;
   final double logicalHeight;
   final double? devicePixelRatio;
 
-  NativeCanvasLease? get _currentLease => _leaseListenable?.value ?? lease;
+  CanvasLease? get _currentLease => _leaseListenable?.value ?? lease;
 
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
@@ -605,7 +601,7 @@ final class NativeCanvasPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant NativeCanvasPainter oldDelegate) {
+  bool shouldRepaint(covariant CanvasSurface oldDelegate) {
     if (!identical(oldDelegate._leaseListenable, _leaseListenable)) return true;
     if (oldDelegate.logicalWidth != logicalWidth ||
         oldDelegate.logicalHeight != logicalHeight ||
@@ -622,21 +618,21 @@ final class NativeCanvasPainter extends CustomPainter {
   }
 }
 
-ui.Rect _destination(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(
+ui.Rect _destination(CanvasFrame frame, int index) => ui.Rect.fromLTWH(
   frame.commandDestinationX(index).toDouble(),
   frame.commandDestinationY(index).toDouble(),
   frame.commandDestinationWidth(index).toDouble(),
   frame.commandDestinationHeight(index).toDouble(),
 );
 
-ui.Rect _clip(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(
+ui.Rect _clip(CanvasFrame frame, int index) => ui.Rect.fromLTWH(
   frame.commandClipX(index).toDouble(),
   frame.commandClipY(index).toDouble(),
   frame.commandClipWidth(index).toDouble(),
   frame.commandClipHeight(index).toDouble(),
 );
 
-ui.Rect _source(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(
+ui.Rect _source(CanvasFrame frame, int index) => ui.Rect.fromLTWH(
   frame.commandSourceX(index).toDouble(),
   frame.commandSourceY(index).toDouble(),
   frame.commandSourceWidth(index).toDouble(),

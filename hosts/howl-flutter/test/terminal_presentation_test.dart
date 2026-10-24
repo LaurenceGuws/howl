@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_presentation.dart';
+import 'package:howl_flutter/term/presentation.dart';
 
 void main() {
   test('zoom presets carry exact native raster and cell identities', () {

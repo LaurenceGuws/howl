@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'terminal_selection.dart';
+import 'selection.dart';
 
 /// Native-feeling selection chrome over a terminal-owned stable cell range.
 ///

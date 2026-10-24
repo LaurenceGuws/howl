@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/visible_viewport.dart';
+import 'package:howl_flutter/viewport/visible.dart';
 
 void main() {
   testWidgets('terminal viewport excludes fully obscuring system insets', (
@@ -18,7 +18,7 @@ void main() {
               data: const MediaQueryData(
                 viewInsets: EdgeInsets.fromLTRB(10, 20, 30, 120),
               ),
-              child: TerminalVisibleViewport(
+              child: VisibleViewport(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     visible = constraints.biggest;
@@ -51,7 +51,7 @@ void main() {
                 viewPadding: EdgeInsets.fromLTRB(12, 48, 16, 24),
                 viewInsets: EdgeInsets.only(bottom: 120),
               ),
-              child: TerminalVisibleViewport(
+              child: VisibleViewport(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     visible = constraints.biggest;
@@ -81,7 +81,7 @@ void main() {
             height: 400,
             child: MediaQuery(
               data: const MediaQueryData(),
-              child: TerminalVisibleViewport(
+              child: VisibleViewport(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     visible = constraints.biggest;

@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_key_repeat.dart';
+import 'package:howl_flutter/term/key_repeat.dart';
 
 void main() {
   test('repeat drainer preserves exact batch count in order', () async {
     var ticks = 0;
-    final drainer = TerminalKeyRepeatDrainer(
+    final drainer = TerminalKeyRepeat(
       interval: Duration.zero,
       onTick: () async => ticks += 1,
     );
@@ -22,7 +22,7 @@ void main() {
     () async {
       var ticks = 0;
       final firstTick = Completer<void>();
-      final drainer = TerminalKeyRepeatDrainer(
+      final drainer = TerminalKeyRepeat(
         interval: Duration.zero,
         onTick: () async {
           ticks += 1;
@@ -43,7 +43,7 @@ void main() {
   test('repeat drainer is bounded and pending work can be cancelled', () async {
     var ticks = 0;
     final firstTick = Completer<void>();
-    final drainer = TerminalKeyRepeatDrainer(
+    final drainer = TerminalKeyRepeat(
       interval: Duration.zero,
       maximumPending: 4,
       onTick: () async {

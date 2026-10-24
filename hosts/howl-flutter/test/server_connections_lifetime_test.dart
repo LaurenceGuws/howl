@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/server_connections.dart';
+import 'package:howl_flutter/server/connections.dart';
 
-final class GatedStore implements HowlServerConnectionStore {
+final class GatedStore implements ServerConnectionStore {
   String? value;
   Completer<String?>? readGate;
   Completer<void>? writeGate;
@@ -28,14 +28,14 @@ final class GatedStore implements HowlServerConnectionStore {
 }
 
 void main() {
-  final a = HowlServerConnection(label: 'A', endpoint: 'tcp://127.0.0.1:41001');
-  final b = HowlServerConnection(label: 'B', endpoint: 'tcp://127.0.0.1:41002');
+  final a = ServerConnection(label: 'A', endpoint: 'tcp://127.0.0.1:41001');
+  final b = ServerConnection(label: 'B', endpoint: 'tcp://127.0.0.1:41002');
 
   test(
     'remove B then select B cannot restore B in memory or on disk',
     () async {
       final store = GatedStore();
-      final model = HowlServerConnections(store);
+      final model = ServerConnections(store);
       addTearDown(model.dispose);
       await model.initialize();
       await model.upsert(a);
@@ -50,7 +50,7 @@ void main() {
       await select;
       expect(model.servers.map((s) => s.endpoint), [a.endpoint]);
       expect(model.selectedEndpoint, isNull);
-      final reload = HowlServerConnections(store);
+      final reload = ServerConnections(store);
       addTearDown(reload.dispose);
       await reload.initialize();
       expect(reload.servers.map((s) => s.endpoint), [a.endpoint]);
@@ -60,7 +60,7 @@ void main() {
 
   test('overlapping upserts derive from committed predecessor', () async {
     final store = GatedStore()..writeGate = Completer<void>();
-    final model = HowlServerConnections(store);
+    final model = ServerConnections(store);
     addTearDown(model.dispose);
     await model.initialize();
     final first = model.upsert(a);
@@ -77,7 +77,7 @@ void main() {
     'failed write publishes nothing and does not poison transaction tail',
     () async {
       final store = GatedStore();
-      final model = HowlServerConnections(store);
+      final model = ServerConnections(store);
       addTearDown(model.dispose);
       await model.initialize();
       await model.upsert(a);
@@ -100,7 +100,7 @@ void main() {
     'duplicate initialization shares future and settles only once',
     () async {
       final store = GatedStore()..readGate = Completer<String?>();
-      final model = HowlServerConnections(store);
+      final model = ServerConnections(store);
       addTearDown(model.dispose);
       var notifications = 0;
       model.addListener(() => notifications++);
@@ -119,7 +119,7 @@ void main() {
 
   test('delayed read after disposal neither publishes nor notifies', () async {
     final store = GatedStore()..readGate = Completer<String?>();
-    final model = HowlServerConnections(store);
+    final model = ServerConnections(store);
     var notifications = 0;
     model.addListener(() => notifications++);
     final pending = model.initialize();
@@ -133,13 +133,13 @@ void main() {
     'read failure settles, preserves unread config, and explicitly recovers',
     () async {
       final store = GatedStore();
-      final original = HowlServerConnections(store);
+      final original = ServerConnections(store);
       await original.initialize();
       await original.upsert(a);
       original.dispose();
       final encoded = store.value;
       store.readFails = true;
-      final model = HowlServerConnections(store);
+      final model = ServerConnections(store);
       addTearDown(model.dispose);
       await model.initialize();
       expect(model.initialized, isTrue);
@@ -158,7 +158,7 @@ void main() {
 
   test('delayed write after disposal settles without notifier use', () async {
     final store = GatedStore()..writeGate = Completer<void>();
-    final model = HowlServerConnections(store);
+    final model = ServerConnections(store);
     await model.initialize();
     final pending = model.upsert(a);
     await Future<void>.delayed(Duration.zero);

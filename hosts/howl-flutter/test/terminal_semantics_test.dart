@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_semantics.dart';
+import 'package:howl_flutter/term/semantics.dart';
 
 void main() {
   testWidgets(
@@ -9,7 +9,7 @@ void main() {
       await tester.pumpWidget(
         const Directionality(
           textDirection: TextDirection.ltr,
-          child: TerminalSemanticSurface(
+          child: TerminalSemantics(
             value: 'one  two\nthree',
             truncated: false,
             child: SizedBox(width: 20, height: 20),
@@ -32,7 +32,7 @@ void main() {
     await tester.pumpWidget(
       const Directionality(
         textDirection: TextDirection.ltr,
-        child: TerminalSemanticSurface(
+        child: TerminalSemantics(
           value: 'bounded tail',
           truncated: true,
           child: SizedBox(width: 20, height: 20),

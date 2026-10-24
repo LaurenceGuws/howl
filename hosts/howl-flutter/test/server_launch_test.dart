@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_endpoint.dart';
-import 'package:howl_flutter/instance_target.dart';
-import 'package:howl_flutter/server_browser.dart';
-import 'package:howl_flutter/server_launch.dart';
-import 'package:howl_flutter/server_tree.dart';
+import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/browser.dart';
+import 'package:howl_flutter/server/launch.dart';
+import 'package:howl_flutter/server/tree.dart';
 
 void main() {
   const receipt =
@@ -14,15 +14,15 @@ void main() {
       '"session_id":"17","instance_id":"3"}';
 
   test('launch receipt preserves exact unsigned identities', () {
-    final result = HowlServerLaunchReceipt.parse(receipt);
+    final result = ServerLaunchReceipt.parse(receipt);
     expect(result.serverId, '18446744073709551615');
     expect(result.sessionId, '17');
     expect(result.instanceId, '3');
     expect(
-      () => HowlServerLaunchReceipt.parse(
+      () => ServerLaunchReceipt.parse(
         receipt.replaceFirst('18446744073709551615', '0'),
       ),
-      throwsA(isA<HowlServerTreeException>()),
+      throwsA(isA<ServerTreeException>()),
     );
   });
 
@@ -33,24 +33,23 @@ void main() {
     String? name;
     String? shellSeen;
     String? serverId;
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615",'
       '"tree_revision":"1","sessions":[]}',
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal:
               (endpoint, id, {sessionId, sessionName, required shell}) {
                 serverId = id;
                 name = sessionName;
                 shellSeen = shell;
                 expect(sessionId, isNull);
-                return HowlServerLaunchRequest.fromFuture(
-                  Future.value(HowlServerLaunchReceipt.parse(receipt)),
+                return ServerLaunchRequest.fromFuture(
+                  Future.value(ServerLaunchReceipt.parse(receipt)),
                 );
               },
           onOpenTarget: (target) => selected = target,
@@ -73,24 +72,23 @@ void main() {
   testWidgets('new Instance keeps the selected Session and Server identity', (
     tester,
   ) async {
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615",'
       '"tree_revision":"2","sessions":['
       '{"session_id":"17","name":"work","instances":[]}]}',
     );
     String? selectedSession;
-    final pending = Completer<HowlServerLaunchReceipt>();
+    final pending = Completer<ServerLaunchReceipt>();
     ManagedHowlInstanceTarget? selected;
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal: (_, _, {sessionId, sessionName, required shell}) {
             selectedSession = sessionId;
             expect(sessionName, isNull);
-            return HowlServerLaunchRequest.fromFuture(pending.future);
+            return ServerLaunchRequest.fromFuture(pending.future);
           },
           onOpenTarget: (target) => selected = target,
         ),
@@ -103,7 +101,7 @@ void main() {
     await tester.pump();
     expect(selectedSession, '17');
     expect(find.text('Launching...'), findsOneWidget);
-    pending.complete(HowlServerLaunchReceipt.parse(receipt));
+    pending.complete(ServerLaunchReceipt.parse(receipt));
     await tester.pumpAndSettle();
     expect(selected?.sessionId, '17');
   });
@@ -111,20 +109,19 @@ void main() {
   testWidgets('a mismatched Server launch receipt cannot open a terminal', (
     tester,
   ) async {
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"9",'
       '"tree_revision":"1","sessions":[]}',
     );
     ManagedHowlInstanceTarget? selected;
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlServerBrowser(
+        home: ServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal: (_, _, {sessionId, sessionName, required shell}) =>
-              HowlServerLaunchRequest.fromFuture(
-                Future.value(HowlServerLaunchReceipt.parse(receipt)),
+              ServerLaunchRequest.fromFuture(
+                Future.value(ServerLaunchReceipt.parse(receipt)),
               ),
           onOpenTarget: (target) => selected = target,
         ),

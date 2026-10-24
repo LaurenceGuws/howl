@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/frame_perf.dart';
+import 'package:howl_flutter/delete/frame_perf.dart';
 
 void main() {
   test('frame perf summaries stay bounded and percentile ordered', () {

@@ -2,8 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
 
-import 'howl_input.dart';
-import 'terminal_fit.dart';
+import '../delete/howl_input.dart';
+import '../term/fit.dart';
 
 final class TerminalPointerLocation {
   const TerminalPointerLocation({
@@ -56,7 +56,7 @@ final class TerminalPointerGeometry {
   }
 }
 
-final class TerminalPointerAdapter {
+final class PointerInput {
   final Map<int, _PointerState> _states = <int, _PointerState>{};
 
   void clear() => _states.clear();

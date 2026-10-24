@@ -2,8 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/pointer_input.dart';
-import 'package:howl_flutter/howl_input.dart';
+import 'package:howl_flutter/app_shell/pointer_input.dart';
+import 'package:howl_flutter/delete/howl_input.dart';
 
 void main() {
   const geometry = TerminalPointerGeometry(
@@ -48,7 +48,7 @@ void main() {
   });
 
   test('mouse press drag and release preserve canonical held-button mask', () {
-    final adapter = TerminalPointerAdapter();
+    final adapter = PointerInput();
     final press = adapter.translate(
       const PointerDownEvent(
         pointer: 7,
@@ -99,7 +99,7 @@ void main() {
   });
 
   test('mouse hover emits an unheld semantic move', () {
-    final adapter = TerminalPointerAdapter();
+    final adapter = PointerInput();
     final hover = adapter.translate(
       const PointerHoverEvent(
         pointer: 8,
@@ -119,7 +119,7 @@ void main() {
   });
 
   test('stylus semantic operations map without device-specific invention', () {
-    final adapter = TerminalPointerAdapter();
+    final adapter = PointerInput();
     final inputs = adapter.translate(
       const PointerDownEvent(
         pointer: 9,
@@ -140,7 +140,7 @@ void main() {
   test(
     'touch and unsupported side buttons stay local while wheel is explicit',
     () {
-      final adapter = TerminalPointerAdapter();
+      final adapter = PointerInput();
       expect(
         adapter.translate(
           const PointerDownEvent(
@@ -186,7 +186,7 @@ void main() {
   );
 
   test('cancel releases every represented button at last valid location', () {
-    final adapter = TerminalPointerAdapter();
+    final adapter = PointerInput();
     adapter.translate(
       const PointerDownEvent(
         pointer: 4,

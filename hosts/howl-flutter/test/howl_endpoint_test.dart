@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_endpoint.dart';
+import 'package:howl_flutter/delete/howl_endpoint.dart';
 
 void main() {
   test('launch endpoint accepts local Unix and explicit numeric IPv4 TCP', () {

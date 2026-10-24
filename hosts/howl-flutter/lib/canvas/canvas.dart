@@ -1,22 +1,22 @@
 import 'dart:typed_data';
 
-final class NativeCanvasException implements Exception {
-  const NativeCanvasException(this.code);
+final class CanvasException implements Exception {
+  const CanvasException(this.code);
   final String code;
 
   @override
-  String toString() => 'NativeCanvasException($code)';
+  String toString() => 'CanvasException($code)';
 }
 
-final class NativeCanvasResourceKey {
-  const NativeCanvasResourceKey(this.resource, this.generation);
+final class CanvasResourceKey {
+  const CanvasResourceKey(this.resource, this.generation);
 
   final int resource;
   final int generation;
 
   @override
   bool operator ==(Object other) =>
-      other is NativeCanvasResourceKey &&
+      other is CanvasResourceKey &&
       resource == other.resource &&
       generation == other.generation;
 
@@ -27,8 +27,8 @@ final class NativeCanvasResourceKey {
   String toString() => '$resource:$generation';
 }
 
-final class NativeCanvasResource {
-  const NativeCanvasResource({
+final class CanvasResource {
+  const CanvasResource({
     required this.key,
     required this.format,
     required this.width,
@@ -38,7 +38,7 @@ final class NativeCanvasResource {
     required this.uploadLength,
   });
 
-  final NativeCanvasResourceKey key;
+  final CanvasResourceKey key;
   final int format;
   final int width;
   final int height;
@@ -54,13 +54,10 @@ final class NativeCanvasResource {
 /// The resource metadata must match the later Canvas frame exactly. Pixels are
 /// raw source bytes and are decoded into the same residency cache as ordinary
 /// in-frame uploads before the frame is retried.
-final class NativeCanvasExternalUpload {
-  const NativeCanvasExternalUpload({
-    required this.resource,
-    required this.pixels,
-  });
+final class CanvasExternalUpload {
+  const CanvasExternalUpload({required this.resource, required this.pixels});
 
-  final NativeCanvasResource resource;
+  final CanvasResource resource;
   final Uint8List pixels;
 }
 
@@ -69,8 +66,8 @@ final class NativeCanvasExternalUpload {
 /// This is an app-private, version-locked packet. It is deliberately not a
 /// public Howl ABI and exposes no terminal cells, styles, fonts, or cursor
 /// policy to Flutter.
-final class NativeCanvasFrame {
-  NativeCanvasFrame._({
+final class CanvasFrame {
+  CanvasFrame._({
     required Uint8List bytes,
     required this.surfaceWidth,
     required this.surfaceHeight,
@@ -106,26 +103,26 @@ final class NativeCanvasFrame {
   final int _commandOffset;
   final int _pixelOffset;
 
-  static NativeCanvasFrame parse(Uint8List bytes) {
+  static CanvasFrame parse(Uint8List bytes) {
     if (bytes.length < globalHeaderBytes + frameHeaderBytes) {
-      throw const NativeCanvasException('frame_truncated');
+      throw const CanvasException('frame_truncated');
     }
     final data = ByteData.sublistView(bytes);
     if (bytes[0] != 0x48 ||
         bytes[1] != 0x43 ||
         bytes[2] != 0x52 ||
         bytes[3] != 0x31) {
-      throw const NativeCanvasException('magic');
+      throw const CanvasException('magic');
     }
     if (data.getUint16(4, Endian.little) != 2 ||
         data.getUint16(6, Endian.little) != globalHeaderBytes ||
         data.getUint32(12, Endian.little) != 0) {
-      throw const NativeCanvasException('version');
+      throw const CanvasException('version');
     }
     final width = data.getUint16(8, Endian.little);
     final height = data.getUint16(10, Endian.little);
     if (width == 0 || height == 0) {
-      throw const NativeCanvasException('surface');
+      throw const CanvasException('surface');
     }
 
     const offset = globalHeaderBytes;
@@ -140,13 +137,13 @@ final class NativeCanvasFrame {
     final removalBytes = data.getUint32(offset + 36, Endian.little);
     final commandBytes = data.getUint32(offset + 40, Endian.little);
     if (recordBytes < frameHeaderBytes || flags != 1 || revision == 0) {
-      throw const NativeCanvasException('frame_bounds');
+      throw const CanvasException('frame_bounds');
     }
     if (resourceCount > 255 ||
         resourceBytes != resourceCount * resourceRecordBytes ||
         removalBytes != removalCount * removalRecordBytes ||
         commandBytes != commandCount * commandRecordBytes) {
-      throw const NativeCanvasException('section_sizes');
+      throw const CanvasException('section_sizes');
     }
     final resourceOffset = offset + frameHeaderBytes;
     final removalOffset = resourceOffset + resourceBytes;
@@ -154,10 +151,10 @@ final class NativeCanvasFrame {
     final pixelOffset = commandOffset + commandBytes;
     if (pixelOffset + pixelCount != offset + recordBytes ||
         offset + recordBytes != bytes.length) {
-      throw const NativeCanvasException('section_layout');
+      throw const CanvasException('section_layout');
     }
 
-    final frame = NativeCanvasFrame._(
+    final frame = CanvasFrame._(
       bytes: bytes,
       surfaceWidth: width,
       surfaceHeight: height,
@@ -175,13 +172,13 @@ final class NativeCanvasFrame {
     return frame;
   }
 
-  NativeCanvasResource resource(int index) {
+  CanvasResource resource(int index) {
     if (index < 0 || index >= resourceCount) {
-      throw const NativeCanvasException('resource_index');
+      throw const CanvasException('resource_index');
     }
     final offset = _resourceOffset + index * resourceRecordBytes;
-    return NativeCanvasResource(
-      key: NativeCanvasResourceKey(
+    return CanvasResource(
+      key: CanvasResourceKey(
         _data.getUint64(offset, Endian.little),
         _data.getUint64(offset + 8, Endian.little),
       ),
@@ -194,12 +191,12 @@ final class NativeCanvasFrame {
     );
   }
 
-  NativeCanvasResourceKey removal(int index) {
+  CanvasResourceKey removal(int index) {
     if (index < 0 || index >= removalCount) {
-      throw const NativeCanvasException('removal_index');
+      throw const CanvasException('removal_index');
     }
     final offset = _removalOffset + index * removalRecordBytes;
-    return NativeCanvasResourceKey(
+    return CanvasResourceKey(
       _data.getUint64(offset, Endian.little),
       _data.getUint64(offset + 8, Endian.little),
     );
@@ -221,7 +218,7 @@ final class NativeCanvasFrame {
   int commandSourceWidth(int index) => _u16(index, 36);
   int commandSourceHeight(int index) => _u16(index, 38);
 
-  Uint8List uploadBytes(NativeCanvasResource resource) {
+  Uint8List uploadBytes(CanvasResource resource) {
     if (!resource.uploaded) return Uint8List(0);
     return Uint8List.sublistView(
       _bytes,
@@ -231,7 +228,7 @@ final class NativeCanvasFrame {
   }
 
   void _validate() {
-    final resources = <NativeCanvasResource>[];
+    final resources = <CanvasResource>[];
     for (var i = 0; i < resourceCount; i++) {
       final value = resource(i);
       if (value.key.resource == 0 ||
@@ -239,42 +236,42 @@ final class NativeCanvasFrame {
           value.width == 0 ||
           value.height == 0 ||
           (value.format != 0 && value.format != 1)) {
-        throw const NativeCanvasException('resource_bounds');
+        throw const CanvasException('resource_bounds');
       }
       final offset = _resourceOffset + i * resourceRecordBytes;
       if (_data.getUint8(offset + 17) != 0 ||
           _data.getUint16(offset + 22, Endian.little) != 0 ||
           _data.getUint32(offset + 36, Endian.little) != 0) {
-        throw const NativeCanvasException('resource_reserved');
+        throw const CanvasException('resource_reserved');
       }
       if (value.uploaded) {
         if (value.stride == 0 ||
             value.uploadOffset + value.uploadLength > pixelCount) {
-          throw const NativeCanvasException('resource_upload');
+          throw const CanvasException('resource_upload');
         }
       } else if (value.stride != 0 ||
           value.uploadOffset != 0 ||
           value.uploadLength != 0) {
-        throw const NativeCanvasException('resource_sparse');
+        throw const CanvasException('resource_sparse');
       }
       resources.add(value);
     }
     for (var i = 0; i < removalCount; i++) {
       final key = removal(i);
       if (key.resource == 0 || key.generation == 0) {
-        throw const NativeCanvasException('removal_identity');
+        throw const CanvasException('removal_identity');
       }
     }
     for (var i = 0; i < commandCount; i++) {
       final tag = commandTag(i);
       final resourceIndex = commandResourceIndex(i);
-      if (tag > 2) throw const NativeCanvasException('command_tag');
+      if (tag > 2) throw const CanvasException('command_tag');
       if (commandDestinationWidth(i) == 0 || commandDestinationHeight(i) == 0) {
-        throw const NativeCanvasException('draw_geometry');
+        throw const CanvasException('draw_geometry');
       }
       if (tag == 0) {
         if (resourceIndex != 0xff) {
-          throw const NativeCanvasException('solid_command');
+          throw const CanvasException('solid_command');
         }
         continue;
       }
@@ -283,19 +280,19 @@ final class NativeCanvasFrame {
           commandClipHeight(i) == 0 ||
           commandSourceWidth(i) == 0 ||
           commandSourceHeight(i) == 0) {
-        throw const NativeCanvasException('draw_geometry');
+        throw const CanvasException('draw_geometry');
       }
       final resource = resources[resourceIndex];
       if (commandSourceX(i) + commandSourceWidth(i) > resource.width ||
           commandSourceY(i) + commandSourceHeight(i) > resource.height) {
-        throw const NativeCanvasException('source_bounds');
+        throw const CanvasException('source_bounds');
       }
     }
   }
 
   int _commandOffsetFor(int index) {
     if (index < 0 || index >= commandCount) {
-      throw const NativeCanvasException('command_index');
+      throw const CanvasException('command_index');
     }
     return _commandOffset + index * commandRecordBytes;
   }

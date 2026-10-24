@@ -10,10 +10,10 @@ import 'package:flutter/services.dart';
 import 'package:howl_vt_native/native.dart' as vt_native;
 
 import 'instance_target.dart';
-import 'native_canvas.dart';
-import 'native_canvas_surface.dart';
-import 'terminal_presentation.dart';
-import 'terminal_selection.dart';
+import '../canvas/canvas.dart';
+import '../canvas/surface.dart';
+import '../term/presentation.dart';
+import '../term/selection.dart';
 
 const int nativeSelectionOutputBytes = 1024 * 1024;
 const int nativeInteractionStateBytes = vt_native.interactionBytes;
@@ -102,7 +102,7 @@ final class NativeHostFrame {
   });
 
   final NativeHostMetadata metadata;
-  final NativeCanvasFrame canvas;
+  final CanvasFrame canvas;
   final String semanticText;
   final bool semanticTruncated;
   final String? title;
@@ -119,7 +119,7 @@ final class NativeHostFrameObservation extends NativeHostObservation {
 
 final class NativeHostImageRefillObservation extends NativeHostObservation {
   const NativeHostImageRefillObservation(this.upload);
-  final NativeCanvasExternalUpload upload;
+  final CanvasExternalUpload upload;
 }
 
 final class NativeHostImageSupersededObservation extends NativeHostObservation {
@@ -130,7 +130,7 @@ NativeHostFrame parseNativeHostPacket(
   Uint8List bytes,
   TerminalPresentation expectedPresentation,
 ) {
-  if (bytes.length < _hostHeaderBytes + NativeCanvasFrame.globalHeaderBytes) {
+  if (bytes.length < _hostHeaderBytes + CanvasFrame.globalHeaderBytes) {
     throw const NativeHostException('packet_truncated');
   }
   if (bytes[0] != 0x48 ||
@@ -204,7 +204,7 @@ NativeHostFrame parseNativeHostPacket(
     canvasOffset,
     canvasOffset + canvasLength,
   );
-  final frame = NativeCanvasFrame.parse(canvasBytes);
+  final frame = CanvasFrame.parse(canvasBytes);
   if (frame.surfaceWidth != metadata.columns * expectedPresentation.cellWidth ||
       frame.surfaceHeight != metadata.rows * expectedPresentation.lineHeight) {
     throw const NativeHostException('packet_canvas');
@@ -230,7 +230,7 @@ NativeHostFrame parseNativeHostPacket(
   );
 }
 
-NativeCanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
+CanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
   if (bytes.length < _nativeHostImageRefillHeaderBytes ||
       bytes.length > _nativeHostMaximumImageRefillBytes) {
     throw const NativeHostException('image_refill_bounds');
@@ -274,9 +274,9 @@ NativeCanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
       data.getUint16(42, Endian.little) != 0) {
     throw const NativeHostException('image_refill_layout');
   }
-  return NativeCanvasExternalUpload(
-    resource: NativeCanvasResource(
-      key: NativeCanvasResourceKey(resource, generation),
+  return CanvasExternalUpload(
+    resource: CanvasResource(
+      key: CanvasResourceKey(resource, generation),
       format: format,
       width: width,
       height: height,
@@ -289,10 +289,10 @@ NativeCanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
 }
 
 Uint8List encodeNativeHostResidency(
-  NativeCanvasLease? lease, {
-  Iterable<NativeCanvasPreloadedResource> preloaded = const [],
+  CanvasLease? lease, {
+  Iterable<CanvasPreloadedResource> preloaded = const [],
 }) {
-  final resources = <int, NativeCanvasResource>{};
+  final resources = <int, CanvasResource>{};
   for (final value in preloaded) {
     final logical = value.resource.key.resource;
     final prior = resources[logical];
@@ -1107,8 +1107,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       .lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
         'howl_native_host_output_minimum_bytes',
       )();
-  if (outputMinimumBytes <
-          _hostHeaderBytes + NativeCanvasFrame.globalHeaderBytes ||
+  if (outputMinimumBytes < _hostHeaderBytes + CanvasFrame.globalHeaderBytes ||
       outputMinimumBytes > _nativeHostMaximumOutputBytes) {
     ready.send('worker_output_bound');
     commands.close();

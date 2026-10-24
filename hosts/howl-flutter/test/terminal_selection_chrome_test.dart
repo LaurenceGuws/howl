@@ -1,8 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_selection.dart';
-import 'package:howl_flutter/terminal_selection_chrome.dart';
+import 'package:howl_flutter/term/selection.dart';
+import 'package:howl_flutter/term/selection_chrome.dart';
 
 void main() {
   testWidgets('floating toolbar returns after a selection handle drag', (

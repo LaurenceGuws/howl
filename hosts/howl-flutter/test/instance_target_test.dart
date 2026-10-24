@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_endpoint.dart';
-import 'package:howl_flutter/instance_target.dart';
+import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/delete/instance_target.dart';
 
 void main() {
   test(

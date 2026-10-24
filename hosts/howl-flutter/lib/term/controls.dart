@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 
-import 'howl_input.dart';
-import 'terminal_presentation.dart';
+import '../delete/howl_input.dart';
+import 'presentation.dart';
 
 enum _ExtraControl { alt, zoom, lead, copy, paste, log }
 
 /// Compact mobile terminal controls that software keyboards do not reliably
 /// expose. Modifiers are caller-owned one-shot latches; this widget only
 /// presents their current state and exact semantic key identities.
-final class TerminalControlStrip extends StatelessWidget {
-  const TerminalControlStrip({
+final class TerminalControls extends StatelessWidget {
+  const TerminalControls({
     super.key,
     required this.modifierLatch,
     required this.zoomPreset,

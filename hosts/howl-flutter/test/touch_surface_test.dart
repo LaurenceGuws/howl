@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/touch_surface.dart';
+import 'package:howl_flutter/app_shell/touch_surface.dart';
 
 void main() {
   testWidgets('touch tap and vertical drag stay semantically distinct', (
@@ -18,7 +18,7 @@ void main() {
         child: SizedBox(
           width: 300,
           height: 300,
-          child: TerminalTouchSurface(
+          child: TouchSurface(
             onTap: () => taps += 1,
             onLongPressStart: (_) => longPresses += 1,
             onVerticalDragStart: (_) => starts += 1,

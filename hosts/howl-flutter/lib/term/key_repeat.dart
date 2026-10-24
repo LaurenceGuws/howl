@@ -7,8 +7,8 @@ import 'dart:async';
 /// document mutations. The terminal should not inherit that visual batching:
 /// callers may translate one mutation into N semantic keys and drain them at a
 /// stable cadence. The drainer owns no key identity or platform policy.
-final class TerminalKeyRepeatDrainer {
-  TerminalKeyRepeatDrainer({
+final class TerminalKeyRepeat {
+  TerminalKeyRepeat({
     required this.onTick,
     this.interval = const Duration(milliseconds: 30),
     this.maximumPending = 4096,

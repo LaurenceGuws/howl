@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/diagnostics.dart';
+import 'package:howl_flutter/delete/diagnostics.dart';
 
 void main() {
   test('diagnostics are bounded, single-line, and copy-ready', () {

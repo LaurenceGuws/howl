@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
-import 'terminal_fit.dart';
+import 'fit.dart';
 
 final class TerminalSelectionPoint {
   const TerminalSelectionPoint({required this.row, required this.column});

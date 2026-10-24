@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/howl_input.dart';
+import 'package:howl_flutter/delete/howl_input.dart';
 import 'package:howl_flutter/main.dart';
 
 void main() {

@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/platform_input.dart';
-import 'package:howl_flutter/text_input.dart';
+import 'package:howl_flutter/app_shell/platform_input.dart';
+import 'package:howl_flutter/app_shell/text_input.dart';
 
 TextEditingValue guardedValue(
   String text, {
@@ -191,7 +191,7 @@ void main() {
     tester,
   ) async {
     for (final platform in TargetPlatform.values) {
-      final client = TerminalTextInputClient(
+      final client = TerminalTextInput(
         platformOverride: platform,
         onCommit: (_) => fail('Configuration must not commit text'),
         onEditKey: (_, _) => fail('Configuration must not emit keys'),
@@ -210,7 +210,7 @@ void main() {
     'Linux delta input consumes queued commits once without prefix heuristics',
     (tester) async {
       final committed = <String>[];
-      final client = TerminalTextInputClient(
+      final client = TerminalTextInput(
         platformOverride: TargetPlatform.linux,
         onCommit: committed.add,
         onEditKey: (_, _) => fail('Unexpected semantic edit key'),
@@ -491,7 +491,7 @@ void main() {
     (tester) async {
       final committed = <String>[];
       final editKeys = <TerminalEditKey>[];
-      final client = TerminalTextInputClient(
+      final client = TerminalTextInput(
         onCommit: committed.add,
         onEditKey: (key, count) {
           editKeys.addAll(List<TerminalEditKey>.filled(count, key));
@@ -506,11 +506,11 @@ void main() {
       );
       expect(tester.testTextInput.isVisible, isFalse);
       await client.show(
-        const TerminalPlatformInput(platformOverride: TargetPlatform.linux),
+        const PlatformInput(platformOverride: TargetPlatform.linux),
       );
       expect(tester.testTextInput.isVisible, isTrue);
       await client.hide(
-        const TerminalPlatformInput(platformOverride: TargetPlatform.linux),
+        const PlatformInput(platformOverride: TargetPlatform.linux),
       );
       expect(tester.testTextInput.isVisible, isFalse);
       expect(client.attached, isTrue);
@@ -542,7 +542,7 @@ void main() {
     tester,
   ) async {
     final committed = <String>[];
-    final client = TerminalTextInputClient(
+    final client = TerminalTextInput(
       platformOverride: TargetPlatform.iOS,
       backspaceRunway: 64,
       newlineActionFallback: false,
@@ -581,7 +581,7 @@ void main() {
 
   testWidgets('editor action newline becomes semantic Enter', (tester) async {
     final editKeys = <TerminalEditKey>[];
-    final client = TerminalTextInputClient(
+    final client = TerminalTextInput(
       onCommit: (_) {},
       onEditKey: (key, count) {
         editKeys.addAll(List<TerminalEditKey>.filled(count, key));
@@ -612,12 +612,12 @@ void main() {
         );
       });
 
-      const platformInput = TerminalPlatformInput(
+      const platformInput = PlatformInput(
         platformOverride: TargetPlatform.android,
       );
       expect(platformInput.inputType, TextInputType.visiblePassword);
 
-      final client = TerminalTextInputClient(
+      final client = TerminalTextInput(
         platformOverride: TargetPlatform.android,
         inputType: platformInput.inputType,
         onCommit: (_) {},
@@ -647,7 +647,7 @@ void main() {
 
   test('newline action fallback can be disabled', () {
     var enters = 0;
-    final client = TerminalTextInputClient(
+    final client = TerminalTextInput(
       newlineActionFallback: false,
       onCommit: (_) {},
       onEditKey: (key, count) {

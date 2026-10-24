@@ -1,18 +1,18 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/platform_input.dart';
+import 'package:howl_flutter/app_shell/platform_input.dart';
 
 void main() {
   test(
     'iOS keeps a software backspace runway while Android stays single-guard',
     () {
       expect(
-        const TerminalPlatformInput(platformOverride: TargetPlatform.iOS)
+        const PlatformInput(platformOverride: TargetPlatform.iOS)
             .backspaceRunway,
         64,
       );
       expect(
-        const TerminalPlatformInput(platformOverride: TargetPlatform.android)
+        const PlatformInput(platformOverride: TargetPlatform.android)
             .backspaceRunway,
         1,
       );
@@ -21,12 +21,12 @@ void main() {
 
   test('iOS editing value owns newline action', () {
     expect(
-      const TerminalPlatformInput(platformOverride: TargetPlatform.iOS)
+      const PlatformInput(platformOverride: TargetPlatform.iOS)
           .newlineActionFallback,
       isFalse,
     );
     expect(
-      const TerminalPlatformInput(platformOverride: TargetPlatform.android)
+      const PlatformInput(platformOverride: TargetPlatform.android)
           .newlineActionFallback,
       isTrue,
     );

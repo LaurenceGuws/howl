@@ -4,16 +4,16 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/native_canvas.dart';
-import 'package:howl_flutter/native_canvas_surface.dart';
-import 'package:howl_flutter/native_host.dart';
-import 'package:howl_flutter/terminal_presentation.dart';
+import 'package:howl_flutter/canvas/canvas.dart';
+import 'package:howl_flutter/canvas/surface.dart';
+import 'package:howl_flutter/delete/native_host.dart';
+import 'package:howl_flutter/term/presentation.dart';
 
 Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
-  const global = NativeCanvasFrame.globalHeaderBytes;
-  const frame = NativeCanvasFrame.frameHeaderBytes;
-  const resource = NativeCanvasFrame.resourceRecordBytes;
-  const commands = 3 * NativeCanvasFrame.commandRecordBytes;
+  const global = CanvasFrame.globalHeaderBytes;
+  const frame = CanvasFrame.frameHeaderBytes;
+  const resource = CanvasFrame.resourceRecordBytes;
+  const commands = 3 * CanvasFrame.commandRecordBytes;
   const pixels = 1;
   final recordBytes = frame + resource + commands + pixels;
   final bytes = Uint8List(global + recordBytes);
@@ -59,7 +59,7 @@ Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
   data.setUint32(at + 4, 0xff090b0e, Endian.little);
   rect(at + 8, 0, 0, surfaceWidth, surfaceHeight);
   rect(at + 20, 0, 0, surfaceWidth, surfaceHeight);
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
 
   data.setUint8(at, 1);
   data.setUint8(at + 1, 0);
@@ -70,14 +70,14 @@ Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
   data.setUint16(at + 34, 0, Endian.little);
   data.setUint16(at + 36, 1, Endian.little);
   data.setUint16(at + 38, 1, Endian.little);
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
 
   data.setUint8(at, 0);
   data.setUint8(at + 1, 0xff);
   data.setUint32(at + 4, 0xffff0000, Endian.little);
   rect(at + 8, 4, 5, 1, 1);
   rect(at + 20, 4, 5, 1, 1);
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
   bytes[at] = 0xff;
   return bytes;
 }
@@ -89,9 +89,9 @@ Uint8List _scaledOneFrameCanvas(int scale) {
   );
   final data = ByteData.sublistView(bytes);
   var at =
-      NativeCanvasFrame.globalHeaderBytes +
-      NativeCanvasFrame.frameHeaderBytes +
-      NativeCanvasFrame.resourceRecordBytes;
+      CanvasFrame.globalHeaderBytes +
+      CanvasFrame.frameHeaderBytes +
+      CanvasFrame.resourceRecordBytes;
 
   void rect(int offset, int x, int y, int width, int height) {
     data.setInt32(offset, x, Endian.little);
@@ -100,10 +100,10 @@ Uint8List _scaledOneFrameCanvas(int scale) {
     data.setUint16(offset + 10, height, Endian.little);
   }
 
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
   rect(at + 8, 2 * scale, 3 * scale, scale, scale);
   rect(at + 20, 2 * scale, 3 * scale, scale, scale);
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
   rect(at + 8, 4 * scale, 5 * scale, scale, scale);
   rect(at + 20, 4 * scale, 5 * scale, scale, scale);
   return bytes;
@@ -113,9 +113,9 @@ Uint8List _batchedAlphaCanvas() {
   final bytes = _oneFrameCanvas();
   final data = ByteData.sublistView(bytes);
   var at =
-      NativeCanvasFrame.globalHeaderBytes +
-      NativeCanvasFrame.frameHeaderBytes +
-      NativeCanvasFrame.resourceRecordBytes;
+      CanvasFrame.globalHeaderBytes +
+      CanvasFrame.frameHeaderBytes +
+      CanvasFrame.resourceRecordBytes;
 
   void rect(int offset, int x, int y, int width, int height) {
     data.setInt32(offset, x, Endian.little);
@@ -134,7 +134,7 @@ Uint8List _batchedAlphaCanvas() {
     data.setUint16(at + 34, 0, Endian.little);
     data.setUint16(at + 36, 1, Endian.little);
     data.setUint16(at + 38, 1, Endian.little);
-    at += NativeCanvasFrame.commandRecordBytes;
+    at += CanvasFrame.commandRecordBytes;
   }
   return bytes;
 }
@@ -143,9 +143,9 @@ Uint8List _coalescedSolidCanvas() {
   final bytes = _oneFrameCanvas();
   final data = ByteData.sublistView(bytes);
   var at =
-      NativeCanvasFrame.globalHeaderBytes +
-      NativeCanvasFrame.frameHeaderBytes +
-      NativeCanvasFrame.resourceRecordBytes;
+      CanvasFrame.globalHeaderBytes +
+      CanvasFrame.frameHeaderBytes +
+      CanvasFrame.resourceRecordBytes;
 
   void rect(int offset, int x, int y, int width, int height) {
     data.setInt32(offset, x, Endian.little);
@@ -154,12 +154,12 @@ Uint8List _coalescedSolidCanvas() {
     data.setUint16(offset + 10, height, Endian.little);
   }
 
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
   data.setUint8(at, 0);
   data.setUint8(at + 1, 0xff);
   data.setUint32(at + 4, 0xffff0000, Endian.little);
   rect(at + 8, 0, 0, 1, 1);
-  at += NativeCanvasFrame.commandRecordBytes;
+  at += CanvasFrame.commandRecordBytes;
   data.setUint8(at, 0);
   data.setUint32(at + 4, 0xffff0000, Endian.little);
   rect(at + 8, 1, 0, 1, 1);
@@ -268,10 +268,10 @@ Uint8List _imageRefillPacket({
 }
 
 Uint8List _externalRgbaCanvas() {
-  const global = NativeCanvasFrame.globalHeaderBytes;
-  const frame = NativeCanvasFrame.frameHeaderBytes;
-  const resource = NativeCanvasFrame.resourceRecordBytes;
-  const command = NativeCanvasFrame.commandRecordBytes;
+  const global = CanvasFrame.globalHeaderBytes;
+  const frame = CanvasFrame.frameHeaderBytes;
+  const resource = CanvasFrame.resourceRecordBytes;
+  const command = CanvasFrame.commandRecordBytes;
   const recordBytes = frame + resource + command;
   final bytes = Uint8List(global + recordBytes);
   final data = ByteData.sublistView(bytes);
@@ -326,7 +326,7 @@ void main() {
       final newBytes = _oneFrameCanvas()..last = 0xc0;
       final previous = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(oldBytes),
+        CanvasFrame.parse(oldBytes),
       );
       // Same logical namespace counters and extents, different glyph coverage.
       final oldResidency = encodeNativeHostResidency(previous.lease);
@@ -335,7 +335,7 @@ void main() {
       expect(replacementResidency, isEmpty);
       final replacement = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(newBytes),
+        CanvasFrame.parse(newBytes),
       );
       try {
         expect(
@@ -366,13 +366,13 @@ void main() {
       () async {
         final previous = await prepareNativeCanvasFrame(
           null,
-          NativeCanvasFrame.parse(_oneFrameCanvas()),
+          CanvasFrame.parse(_oneFrameCanvas()),
         );
         final candidate = await prepareNativeCanvasFrame(
           previous.lease,
-          NativeCanvasFrame.parse(_oneFrameCanvas()),
+          CanvasFrame.parse(_oneFrameCanvas()),
         );
-        final gate = Completer<NativeCanvasLeaseUpdate>();
+        final gate = Completer<CanvasLeaseUpdate>();
         var current = true;
         var disposals = 0;
         final introduced = candidate.introduced.single;
@@ -431,17 +431,17 @@ void main() {
     final bytes = _oneFrameCanvas();
     final data = ByteData.sublistView(bytes);
     final alphaCommand =
-        NativeCanvasFrame.globalHeaderBytes +
-        NativeCanvasFrame.frameHeaderBytes +
-        NativeCanvasFrame.resourceRecordBytes +
-        NativeCanvasFrame.commandRecordBytes;
+        CanvasFrame.globalHeaderBytes +
+        CanvasFrame.frameHeaderBytes +
+        CanvasFrame.resourceRecordBytes +
+        CanvasFrame.commandRecordBytes;
     // Canvas wire colors are little-endian RGBA bytes. Opaque red therefore
     // appears as 0xff0000ff when read as one u32.
     data.setUint32(alphaCommand + 4, 0xff0000ff, Endian.little);
 
     final update = await prepareNativeCanvasFrame(
       null,
-      NativeCanvasFrame.parse(bytes),
+      CanvasFrame.parse(bytes),
     );
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
@@ -472,19 +472,19 @@ void main() {
       final bytes = _scaledOneFrameCanvas(2);
       final data = ByteData.sublistView(bytes);
       final alphaCommand =
-          NativeCanvasFrame.globalHeaderBytes +
-          NativeCanvasFrame.frameHeaderBytes +
-          NativeCanvasFrame.resourceRecordBytes +
-          NativeCanvasFrame.commandRecordBytes;
+          CanvasFrame.globalHeaderBytes +
+          CanvasFrame.frameHeaderBytes +
+          CanvasFrame.resourceRecordBytes +
+          CanvasFrame.commandRecordBytes;
       data.setUint32(alphaCommand + 4, 0xff0000ff, Endian.little);
 
       final update = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(bytes),
+        CanvasFrame.parse(bytes),
       );
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
-      NativeCanvasPainter(
+      CanvasSurface(
         lease: update.lease,
         logicalWidth: 10,
         logicalHeight: 20,
@@ -511,7 +511,7 @@ void main() {
   );
 
   test('one-frame Canvas packet preserves resource and batch order', () {
-    final frame = NativeCanvasFrame.parse(_oneFrameCanvas());
+    final frame = CanvasFrame.parse(_oneFrameCanvas());
     expect(frame.surfaceWidth, 10);
     expect(frame.surfaceHeight, 20);
     expect(frame.commandCount, 3);
@@ -521,13 +521,13 @@ void main() {
   });
 
   test('consecutive alpha commands become one typed atlas batch', () {
-    final frame = NativeCanvasFrame.parse(_batchedAlphaCanvas());
+    final frame = CanvasFrame.parse(_batchedAlphaCanvas());
     final plan = buildNativeCanvasPlan(frame);
     expect(plan.segmentCountForTesting, 1);
   });
 
   test('adjacent same-color solids coalesce horizontally', () {
-    final frame = NativeCanvasFrame.parse(_coalescedSolidCanvas());
+    final frame = CanvasFrame.parse(_coalescedSolidCanvas());
     final plan = buildNativeCanvasPlan(frame);
     expect(plan.segmentCountForTesting, 2);
   });
@@ -580,7 +580,7 @@ void main() {
 
   test('native host external refill becomes exact Canvas residency', () async {
     final upload = parseNativeHostImageRefill(_imageRefillPacket());
-    expect(upload.resource.key, const NativeCanvasResourceKey(7, 11));
+    expect(upload.resource.key, const CanvasResourceKey(7, 11));
     expect(upload.resource.format, 1);
     expect(upload.resource.width, 2);
     expect(upload.resource.height, 2);
@@ -590,7 +590,7 @@ void main() {
     final preload = await prepareNativeCanvasExternalUpload(upload);
     final beforeFrame = encodeNativeHostResidency(
       null,
-      preloaded: <NativeCanvasPreloadedResource>[preload],
+      preloaded: <CanvasPreloadedResource>[preload],
     );
     final residency = ByteData.sublistView(beforeFrame);
     expect(beforeFrame.length, 24);
@@ -600,11 +600,11 @@ void main() {
     expect(residency.getUint16(18, Endian.little), 2);
     expect(residency.getUint16(20, Endian.little), 2);
 
-    final frame = NativeCanvasFrame.parse(_externalRgbaCanvas());
+    final frame = CanvasFrame.parse(_externalRgbaCanvas());
     final prepared = await prepareNativeCanvasFrame(
       null,
       frame,
-      preloaded: <NativeCanvasPreloadedResource>[preload],
+      preloaded: <CanvasPreloadedResource>[preload],
     );
     try {
       expect(prepared.lease.images.containsKey(upload.resource.key), isTrue);
@@ -632,12 +632,12 @@ void main() {
       );
       final prepared = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(_externalRgbaCanvas()),
-        preloaded: <NativeCanvasPreloadedResource>[preload],
+        CanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <CanvasPreloadedResource>[preload],
       );
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
-      NativeCanvasPainter(
+      CanvasSurface(
         lease: prepared.lease,
         logicalWidth: 20,
         logicalHeight: 20,
@@ -673,8 +673,8 @@ void main() {
       );
       final previous = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(_externalRgbaCanvas()),
-        preloaded: <NativeCanvasPreloadedResource>[previousPreload],
+        CanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <CanvasPreloadedResource>[previousPreload],
       );
 
       final newerPacket = _imageRefillPacket();
@@ -687,16 +687,14 @@ void main() {
       try {
         final encoded = encodeNativeHostResidency(
           previous.lease,
-          preloaded: <NativeCanvasPreloadedResource>[newer],
+          preloaded: <CanvasPreloadedResource>[newer],
         );
         expect(encoded.length, 24);
         final data = ByteData.sublistView(encoded);
         expect(data.getUint64(0, Endian.little), 7);
         expect(data.getUint64(8, Endian.little), 12);
       } finally {
-        disposeNativeCanvasPreloadedResources(<NativeCanvasPreloadedResource>[
-          newer,
-        ]);
+        disposeNativeCanvasPreloadedResources(<CanvasPreloadedResource>[newer]);
         disposeNativeCanvasLease(previous.lease);
         for (final image in previous.retired) {
           image.dispose();
@@ -710,7 +708,7 @@ void main() {
     () async {
       final previous = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(_oneFrameCanvas()),
+        CanvasFrame.parse(_oneFrameCanvas()),
       );
       final previousImage = previous.lease.images.values.single;
       final preload = await prepareNativeCanvasExternalUpload(
@@ -718,8 +716,8 @@ void main() {
       );
       final candidate = await prepareNativeCanvasFrame(
         previous.lease,
-        NativeCanvasFrame.parse(_externalRgbaCanvas()),
-        preloaded: <NativeCanvasPreloadedResource>[preload],
+        CanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <CanvasPreloadedResource>[preload],
       );
       try {
         expect(candidate.retired, contains(same(previousImage)));
@@ -740,20 +738,20 @@ void main() {
       );
       final previous = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(_externalRgbaCanvas()),
-        preloaded: <NativeCanvasPreloadedResource>[preload],
+        CanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <CanvasPreloadedResource>[preload],
       );
       try {
         await expectLater(
           prepareNativeCanvasFrame(
             null,
-            NativeCanvasFrame.parse(_externalRgbaCanvas()),
+            CanvasFrame.parse(_externalRgbaCanvas()),
           ),
           throwsA(isA<StateError>()),
         );
         final inFlight = await prepareNativeCanvasFrame(
           previous.lease,
-          NativeCanvasFrame.parse(_externalRgbaCanvas()),
+          CanvasFrame.parse(_externalRgbaCanvas()),
         );
         expect(
           inFlight.lease.images.values.single,
@@ -817,10 +815,7 @@ void main() {
 
   test('Canvas and native-host parsers reject corrupt identity/layout', () {
     final badCanvas = _oneFrameCanvas()..[0] = 0;
-    expect(
-      () => NativeCanvasFrame.parse(badCanvas),
-      throwsA(isA<NativeCanvasException>()),
-    );
+    expect(() => CanvasFrame.parse(badCanvas), throwsA(isA<CanvasException>()));
     final badHost = _hostPacket()..[0] = 0;
     expect(
       () => parseNativeHostPacket(
@@ -871,17 +866,17 @@ void main() {
       final firstBytes = _oneFrameCanvas();
       final secondBytes = _oneFrameCanvas();
       ByteData.sublistView(secondBytes)
-          .setUint64(NativeCanvasFrame.globalHeaderBytes + 8, 3, Endian.little);
+          .setUint64(CanvasFrame.globalHeaderBytes + 8, 3, Endian.little);
       final first = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(firstBytes),
+        CanvasFrame.parse(firstBytes),
       );
       final second = await prepareNativeCanvasFrame(
         null,
-        NativeCanvasFrame.parse(secondBytes),
+        CanvasFrame.parse(secondBytes),
       );
-      final lease = ValueNotifier<NativeCanvasLease?>(first.lease);
-      final painter = NativeCanvasPainter.listenable(
+      final lease = ValueNotifier<CanvasLease?>(first.lease);
+      final painter = CanvasSurface.listenable(
         lease: lease,
         logicalWidth: 10,
         logicalHeight: 20,

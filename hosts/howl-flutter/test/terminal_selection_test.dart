@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_selection.dart';
+import 'package:howl_flutter/term/selection.dart';
 
 void main() {
   const live = TerminalSelectionViewport(

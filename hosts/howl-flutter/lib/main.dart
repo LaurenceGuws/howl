@@ -8,33 +8,33 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
-import 'desktop_selection.dart';
-import 'diagnostics.dart';
-import 'frame_perf.dart';
-import 'platform_input.dart';
-import 'history_viewport.dart';
-import 'held_key_repeat.dart';
-import 'howl_endpoint.dart';
-import 'howl_input.dart';
-import 'app_shell.dart';
-import 'instance_target.dart';
-import 'ios_network_probe.dart';
-import 'launch_config.dart';
-import 'native_canvas_surface.dart';
-import 'native_host.dart';
-import 'pointer_input.dart';
-import 'text_input.dart';
-import 'terminal_status.dart';
-import 'terminal_controls.dart';
-import 'terminal_key_repeat.dart';
-import 'terminal_pixel_center.dart';
-import 'terminal_presentation.dart';
-import 'terminal_selection.dart';
-import 'terminal_selection_chrome.dart';
-import 'terminal_semantics.dart';
-import 'touch_surface.dart';
-import 'transport_recovery.dart';
-import 'visible_viewport.dart';
+import 'app_shell/desktop_selection.dart';
+import 'delete/diagnostics.dart';
+import 'delete/frame_perf.dart';
+import 'app_shell/platform_input.dart';
+import 'viewport/history.dart';
+import 'app_shell/held_key_repeat.dart';
+import 'delete/howl_endpoint.dart';
+import 'delete/howl_input.dart';
+import 'app_shell/app_shell.dart';
+import 'delete/instance_target.dart';
+import 'delete/ios_network_probe.dart';
+import 'delete/launch_config.dart';
+import 'canvas/surface.dart';
+import 'delete/native_host.dart';
+import 'app_shell/pointer_input.dart';
+import 'app_shell/text_input.dart';
+import 'term/status.dart';
+import 'term/controls.dart';
+import 'term/key_repeat.dart';
+import 'term/pixel_center.dart';
+import 'term/presentation.dart';
+import 'term/selection.dart';
+import 'term/selection_chrome.dart';
+import 'term/semantics.dart';
+import 'app_shell/touch_surface.dart';
+import 'delete/transport_recovery.dart';
+import 'viewport/visible.dart';
 
 const int _nativeImageSnapshotSupersessionLimit = 8;
 
@@ -97,7 +97,7 @@ final class HowlApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Howl',
       theme: ThemeData.dark(useMaterial3: false),
-      home: HowlAppShell(
+      home: AppShell(
         initialServerEndpoint: endpoint,
         localEnabled: Platform.isLinux || Platform.isWindows,
         terminalBuilder: (context, target, onStaleTarget, onTitleChanged) =>
@@ -139,8 +139,8 @@ final class _HowlTerminalState extends State<HowlTerminal>
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final HowlDiagnostics _diagnostics = HowlDiagnostics();
   final TerminalFramePerf _framePerf = TerminalFramePerf();
-  final ValueNotifier<NativeCanvasLease?> _livePaintLease =
-      ValueNotifier<NativeCanvasLease?>(null);
+  final ValueNotifier<CanvasLease?> _livePaintLease =
+      ValueNotifier<CanvasLease?>(null);
   late final TimingsCallback _frameTimingsCallback;
   late final VoidCallback _semanticsEnabledListener;
   late final Stopwatch _perfClock;
@@ -148,11 +148,11 @@ final class _HowlTerminalState extends State<HowlTerminal>
   String? _lastReportedTitle;
   bool _hasReportedTitle = false;
   final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
-  final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
+  final PlatformInput _platformInput = const PlatformInput();
   late final TerminalSoftKeyboardOwner _softKeyboard;
-  final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
+  final PointerInput _pointerInput = PointerInput();
   final HistoryViewport _history = HistoryViewport();
-  late final TerminalTextInputClient _textInput;
+  late final TerminalTextInput _textInput;
   NativeHostObserver? _nativeObserver;
   NativeHostObserver? _nativeHistoryObserver;
   NativeHostControl? _nativeControl;
@@ -165,8 +165,8 @@ final class _HowlTerminalState extends State<HowlTerminal>
   String _nativeHistorySemanticText = '';
   bool _nativeLiveSemanticTruncated = false;
   bool _nativeHistorySemanticTruncated = false;
-  NativeCanvasLease? _nativeLiveLease;
-  NativeCanvasLease? _nativeHistoryLease;
+  CanvasLease? _nativeLiveLease;
+  CanvasLease? _nativeHistoryLease;
   Object? _failure;
   bool _reconnecting = false;
   bool _stopping = false;
@@ -194,14 +194,13 @@ final class _HowlTerminalState extends State<HowlTerminal>
   bool _presentationRestartPending = false;
   Size? _terminalViewportSize;
   TerminalSelectionRange? _selection;
-  final DesktopSelectionController _desktopSelection =
-      DesktopSelectionController();
+  final DesktopSelection _desktopSelection = DesktopSelection();
   bool _selectionUsesTouchChrome = false;
   int? _pointerDecisionPointer;
   Future<void> _controlTail = Future<void>.value();
   int _controlQueueDepth = 0;
   static const int _maximumControlQueueDepth = 64;
-  late final TerminalKeyRepeatDrainer _softwareBackspaceRepeat;
+  late final TerminalKeyRepeat _softwareBackspaceRepeat;
   late final HeldKeyRepeat _iosPhysicalArrowRepeat;
 
   @override
@@ -239,7 +238,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
         modifiers: modifiers,
       ),
     );
-    _softwareBackspaceRepeat = TerminalKeyRepeatDrainer(
+    _softwareBackspaceRepeat = TerminalKeyRepeat(
       interval: const Duration(milliseconds: 25),
       onTick: () => _queueControl(
         (control) => control.namedKey(
@@ -249,7 +248,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
         ),
       ),
     );
-    _textInput = TerminalTextInputClient(
+    _textInput = TerminalTextInput(
       inputType: _platformInput.inputType,
       backspaceRunway: _platformInput.backspaceRunway,
       newlineActionFallback: _platformInput.newlineActionFallback,
@@ -543,7 +542,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
         late final NativeHostFrame packet;
         final prepareClock = Stopwatch()..start();
         var preloadsTransferred = false;
-        final NativeCanvasLeaseUpdate? prepared;
+        final CanvasLeaseUpdate? prepared;
         try {
           if (abandoned()) break;
           if (presentationChanged()) throw const _PresentationRestart();
@@ -684,16 +683,16 @@ final class _HowlTerminalState extends State<HowlTerminal>
     ]);
   }
 
-  Future<({Uint8List bytes, List<NativeCanvasPreloadedResource> preloaded})>
+  Future<({Uint8List bytes, List<CanvasPreloadedResource> preloaded})>
   _observeNativeFrame({
     required NativeHostObserver observer,
     required int afterRevision,
     required int historyOffset,
-    required NativeCanvasLease? lease,
+    required CanvasLease? lease,
     int? transportGeneration,
     Future<NativeHostObservation>? prefetched,
   }) async {
-    final preloaded = <int, NativeCanvasPreloadedResource>{};
+    final preloaded = <int, CanvasPreloadedResource>{};
     var supersessions = 0;
     try {
       while (true) {
@@ -1641,7 +1640,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           return;
         }
-        final NativeCanvasLeaseUpdate prepared;
+        final CanvasLeaseUpdate prepared;
         prepared = await prepareNativeCanvasFrame(
           _nativeHistoryLease,
           packet.canvas,
@@ -1835,7 +1834,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
     }
   }
 
-  Future<void> _disposeLeaseAfterFrame(NativeCanvasLease lease) async {
+  Future<void> _disposeLeaseAfterFrame(CanvasLease lease) async {
     await WidgetsBinding.instance.endOfFrame;
     disposeNativeCanvasLease(lease);
   }
@@ -2012,7 +2011,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
       content = ColoredBox(
         color: const Color(0xff090b0e),
         child: Center(
-          child: TerminalStatusText(
+          child: TerminalStatus(
             '${_reconnecting ? 'Howl reconnecting…' : 'Howl attach failed'}\n$failure',
           ),
         ),
@@ -2021,12 +2020,12 @@ final class _HowlTerminalState extends State<HowlTerminal>
       if (nativeMetadata == null || nativeLease == null) {
         content = const ColoredBox(
           color: Color(0xff090b0e),
-          child: Center(child: TerminalStatusText('attaching to native Howl…')),
+          child: Center(child: TerminalStatus('attaching to native Howl…')),
         );
       } else {
         content = ColoredBox(
           color: const Color(0xff090b0e),
-          child: TerminalPixelAlignedCenter(
+          child: TerminalPixelCenter(
             devicePixelRatio: View.of(context).devicePixelRatio,
             child: RepaintBoundary(
               child: CustomPaint(
@@ -2035,13 +2034,13 @@ final class _HowlTerminalState extends State<HowlTerminal>
                   nativeMetadata.rows * _lineHeight,
                 ),
                 painter: !_history.active
-                    ? NativeCanvasPainter.listenable(
+                    ? CanvasSurface.listenable(
                         lease: _livePaintLease,
                         logicalWidth: nativeMetadata.columns * _cellWidth,
                         logicalHeight: nativeMetadata.rows * _lineHeight,
                         devicePixelRatio: View.of(context).devicePixelRatio,
                       )
-                    : NativeCanvasPainter(
+                    : CanvasSurface(
                         lease: nativeLease,
                         logicalWidth: nativeMetadata.columns * _cellWidth,
                         logicalHeight: nativeMetadata.rows * _lineHeight,
@@ -2053,20 +2052,20 @@ final class _HowlTerminalState extends State<HowlTerminal>
         );
       }
     }
-    return TerminalVisibleViewport(
+    return VisibleViewport(
       child: Column(
         children: <Widget>[
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
                 _proposeGeometry(constraints.biggest);
-                return TerminalSemanticSurface(
+                return TerminalSemantics(
                   value: semanticText,
                   truncated: semanticTruncated,
                   child: Stack(
                     children: <Widget>[
                       Positioned.fill(
-                        child: TerminalTouchSurface(
+                        child: TouchSurface(
                           onTap: _onTerminalTap,
                           onLongPressStart: (details) =>
                               _startSelection(details, constraints.biggest),
@@ -2141,7 +2140,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
               },
             ),
           ),
-          TerminalControlStrip(
+          TerminalControls(
             modifierLatch: _modifierLatch,
             zoomPreset: _zoomPreset,
             geometryLeader: _geometryLeader,

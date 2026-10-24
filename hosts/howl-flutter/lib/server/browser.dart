@@ -2,51 +2,49 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'howl_endpoint.dart';
-import 'instance_target.dart';
-import 'native_host.dart';
-import 'server_launch.dart';
-import 'server_tree.dart';
+import '../delete/howl_endpoint.dart';
+import '../delete/instance_target.dart';
+import '../delete/native_host.dart';
+import 'launch.dart';
+import 'tree.dart';
 
-typedef HowlServerTreeFetcher = HowlServerTreeRequest Function(
-  HowlEndpoint endpoint,
-);
+typedef ServerTreeFetcher = ServerTreeRequest Function(HowlEndpoint endpoint);
 
 /// Thin app-side browser over Server lifecycle identity.
 ///
 /// This widget owns presentation only. It does not mirror Server state beyond one
 /// fetched tree and does not interpret terminal geometry or layout.
-final class HowlServerBrowser extends StatefulWidget {
-  const HowlServerBrowser({
+final class ServerBrowser extends StatefulWidget {
+  const ServerBrowser({
     super.key,
     required this.endpoint,
     required this.onOpenTarget,
     this.onMenu,
     this.fetchTree = NativeServerTree.request,
-    this.launchTerminal = NativeServerLaunch.request,
+    this.launchTerminal = ServerLaunch.request,
   });
 
   final HowlEndpoint endpoint;
   final ValueChanged<ManagedHowlInstanceTarget> onOpenTarget;
   final VoidCallback? onMenu;
 
-  final HowlServerTreeFetcher fetchTree;
-  final HowlServerLauncher launchTerminal;
+  final ServerTreeFetcher fetchTree;
+  final ServerLauncher launchTerminal;
 
   @override
-  State<HowlServerBrowser> createState() => _HowlServerBrowserState();
+  State<ServerBrowser> createState() => _ServerBrowserState();
 }
 
-final class _HowlServerBrowserState extends State<HowlServerBrowser>
+final class _ServerBrowserState extends State<ServerBrowser>
     with WidgetsBindingObserver {
   static const Duration _treeDeadline = Duration(seconds: 18);
   static const Duration _launchDeadline = Duration(seconds: 23);
 
-  HowlServerTree? _tree;
+  ServerTree? _tree;
   Object? _failure;
   bool _loading = true;
-  HowlServerTreeRequest? _request;
-  HowlServerLaunchRequest? _launchRequest;
+  ServerTreeRequest? _request;
+  ServerLaunchRequest? _launchRequest;
   bool _launching = false;
 
   @override
@@ -85,7 +83,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
         _failure = null;
       });
     }
-    HowlServerTreeRequest? request;
+    ServerTreeRequest? request;
     try {
       request = widget.fetchTree(widget.endpoint);
       _request = request;
@@ -93,7 +91,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
         _treeDeadline,
         onTimeout: () {
           request!.cancel();
-          throw const HowlServerTreeException(
+          throw const ServerTreeException(
             'server_tree_timeout',
             kind: NativeFailureKind.transport,
           );
@@ -132,7 +130,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
     }
     if (!mounted) return;
     setState(() {
-      _failure = const HowlServerTreeException(
+      _failure = const ServerTreeException(
         'server_tree_canceled',
         kind: NativeFailureKind.canceled,
       );
@@ -152,7 +150,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
     super.dispose();
   }
 
-  Future<void> _promptLaunch([HowlServerSession? session]) async {
+  Future<void> _promptLaunch([ServerSession? session]) async {
     final tree = _tree;
     if (tree == null || _launching) return;
     var suggestedName = 'mobile';
@@ -184,13 +182,13 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
   }
 
   Future<void> _launch(
-    HowlServerTree tree, {
+    ServerTree tree, {
     String? sessionId,
     String? sessionName,
     required String shell,
   }) async {
     if (_launching) return;
-    final HowlServerLaunchRequest request;
+    final ServerLaunchRequest request;
     try {
       request = widget.launchTerminal(
         widget.endpoint,
@@ -210,7 +208,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
         _launchDeadline,
         onTimeout: () {
           request.cancel();
-          throw const HowlServerTreeException(
+          throw const ServerTreeException(
             'server_launch_timeout',
             kind: NativeFailureKind.transport,
           );
@@ -218,7 +216,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
       );
       if (!mounted || !identical(_launchRequest, request)) return;
       if (receipt.serverId != tree.serverId) {
-        throw const HowlServerTreeException('launch_server_identity');
+        throw const ServerTreeException('launch_server_identity');
       }
       widget.onOpenTarget(
         ManagedHowlInstanceTarget(
@@ -249,12 +247,8 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
     );
   }
 
-  void _open(
-    String serverId,
-    HowlServerSession session,
-    HowlServerInstance instance,
-  ) {
-    if (instance.state != HowlServerInstanceState.running) return;
+  void _open(String serverId, ServerSession session, ServerInstance instance) {
+    if (instance.state != ServerInstanceState.running) return;
     final target = ManagedHowlInstanceTarget(
       serverEndpoint: widget.endpoint,
       serverId: serverId,
@@ -349,7 +343,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
     );
   }
 
-  Widget _buildTree(BuildContext context, HowlServerTree tree) {
+  Widget _buildTree(BuildContext context, ServerTree tree) {
     if (tree.sessions.isEmpty) {
       return Center(
         child: Column(
@@ -393,9 +387,9 @@ final class _SessionSection extends StatelessWidget {
     required this.onNewTerminal,
   });
 
-  final HowlServerSession session;
+  final ServerSession session;
   final VoidCallback? onNewTerminal;
-  final void Function(HowlServerSession, HowlServerInstance) onOpen;
+  final void Function(ServerSession, ServerInstance) onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -439,11 +433,11 @@ final class _SessionSection extends StatelessWidget {
                   dense: true,
                   title: Text('Instance ${instance.id}'),
                   subtitle: Text(instance.state.name),
-                  enabled: instance.state == HowlServerInstanceState.running,
-                  trailing: instance.state == HowlServerInstanceState.running
+                  enabled: instance.state == ServerInstanceState.running,
+                  trailing: instance.state == ServerInstanceState.running
                       ? const Icon(Icons.chevron_right)
                       : null,
-                  onTap: instance.state == HowlServerInstanceState.running
+                  onTap: instance.state == ServerInstanceState.running
                       ? () => onOpen(session, instance)
                       : null,
                 ),
@@ -464,7 +458,7 @@ final class _LaunchDetails {
 final class _LaunchDialog extends StatefulWidget {
   const _LaunchDialog({required this.session, required this.suggestedName});
 
-  final HowlServerSession? session;
+  final ServerSession? session;
   final String suggestedName;
 
   @override

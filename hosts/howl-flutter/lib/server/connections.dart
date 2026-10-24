@@ -4,11 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'howl_endpoint.dart';
+import '../delete/howl_endpoint.dart';
 
 @immutable
-final class HowlServerConnection {
-  HowlServerConnection({required String label, required String endpoint})
+final class ServerConnection {
+  ServerConnection({required String label, required String endpoint})
     : label = _normalizeLabel(label),
       endpoint = HowlEndpoint.parse(endpoint).toString();
 
@@ -28,7 +28,7 @@ final class HowlServerConnection {
     'endpoint': endpoint,
   };
 
-  static HowlServerConnection fromJson(Object? raw) {
+  static ServerConnection fromJson(Object? raw) {
     if (raw is! Map) {
       throw const FormatException('Server connection must be object');
     }
@@ -41,7 +41,7 @@ final class HowlServerConnection {
       throw const FormatException('invalid Server connection');
     }
     try {
-      return HowlServerConnection(
+      return ServerConnection(
         label: value['label']! as String,
         endpoint: value['endpoint']! as String,
       );
@@ -53,16 +53,15 @@ final class HowlServerConnection {
   }
 }
 
-abstract interface class HowlServerConnectionStore {
+abstract interface class ServerConnectionStore {
   Future<String?> read();
   Future<void> write(String encoded);
 }
 
-final class SharedPreferencesHowlServerConnectionStore
-    implements HowlServerConnectionStore {
-  SharedPreferencesHowlServerConnectionStore({
-    SharedPreferencesAsync? preferences,
-  }) : _preferences = preferences ?? SharedPreferencesAsync();
+final class SharedPreferencesServerConnectionStore
+    implements ServerConnectionStore {
+  SharedPreferencesServerConnectionStore({SharedPreferencesAsync? preferences})
+    : _preferences = preferences ?? SharedPreferencesAsync();
 
   static const String key = 'howl_flutter.server_connections.v1';
   final SharedPreferencesAsync _preferences;
@@ -74,14 +73,14 @@ final class SharedPreferencesHowlServerConnectionStore
   Future<void> write(String encoded) => _preferences.setString(key, encoded);
 }
 
-final class HowlServerConnections extends ChangeNotifier {
-  HowlServerConnections(this._store);
+final class ServerConnections extends ChangeNotifier {
+  ServerConnections(this._store);
 
   static const int maximumServers = 16;
   static const int maximumEncodedBytes = 16 * 1024;
 
-  final HowlServerConnectionStore _store;
-  List<HowlServerConnection> _servers = const <HowlServerConnection>[];
+  final ServerConnectionStore _store;
+  List<ServerConnection> _servers = const <ServerConnection>[];
   String? _selectedEndpoint;
   String? _loadError;
   bool _initialized = false;
@@ -91,12 +90,12 @@ final class HowlServerConnections extends ChangeNotifier {
   Future<void> _transactions = Future<void>.value();
 
   bool get initialized => _initialized;
-  UnmodifiableListView<HowlServerConnection> get servers =>
-      UnmodifiableListView<HowlServerConnection>(_servers);
+  UnmodifiableListView<ServerConnection> get servers =>
+      UnmodifiableListView<ServerConnection>(_servers);
   String? get selectedEndpoint => _selectedEndpoint;
   String? get loadError => _loadError;
 
-  HowlServerConnection? find(String endpoint) {
+  ServerConnection? find(String endpoint) {
     for (final server in _servers) {
       if (server.endpoint == endpoint) return server;
     }
@@ -153,40 +152,38 @@ final class HowlServerConnections extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> upsert(
-    HowlServerConnection server, {
-    String? replacingEndpoint,
-  }) => _transaction(() async {
-    _requireInitialized();
-    final next = List<HowlServerConnection>.of(_servers);
-    var index = replacingEndpoint == null
-        ? -1
-        : next.indexWhere((value) => value.endpoint == replacingEndpoint);
-    final duplicate = next.indexWhere(
-      (value) => value.endpoint == server.endpoint,
-    );
-    if (duplicate >= 0 && duplicate != index) {
-      throw StateError('Server endpoint already configured');
-    }
-    if (index < 0) {
-      if (next.length >= maximumServers) {
-        throw StateError('Server limit reached');
-      }
-      next.add(server);
-    } else {
-      next[index] = server;
-    }
-    next.sort(_compareServers);
-    var selected = _selectedEndpoint;
-    if (replacingEndpoint != null && selected == replacingEndpoint) {
-      selected = server.endpoint;
-    }
-    await _persist(servers: next, selectedEndpoint: selected);
-    _servers = List.unmodifiable(next);
-    _selectedEndpoint = selected;
-    _loadError = null;
-    _publish();
-  });
+  Future<void> upsert(ServerConnection server, {String? replacingEndpoint}) =>
+      _transaction(() async {
+        _requireInitialized();
+        final next = List<ServerConnection>.of(_servers);
+        var index = replacingEndpoint == null
+            ? -1
+            : next.indexWhere((value) => value.endpoint == replacingEndpoint);
+        final duplicate = next.indexWhere(
+          (value) => value.endpoint == server.endpoint,
+        );
+        if (duplicate >= 0 && duplicate != index) {
+          throw StateError('Server endpoint already configured');
+        }
+        if (index < 0) {
+          if (next.length >= maximumServers) {
+            throw StateError('Server limit reached');
+          }
+          next.add(server);
+        } else {
+          next[index] = server;
+        }
+        next.sort(_compareServers);
+        var selected = _selectedEndpoint;
+        if (replacingEndpoint != null && selected == replacingEndpoint) {
+          selected = server.endpoint;
+        }
+        await _persist(servers: next, selectedEndpoint: selected);
+        _servers = List.unmodifiable(next);
+        _selectedEndpoint = selected;
+        _loadError = null;
+        _publish();
+      });
 
   Future<void> remove(String endpoint) => _transaction(() async {
     _requireInitialized();
@@ -233,7 +230,7 @@ final class HowlServerConnections extends ChangeNotifier {
     }
     final servers =
         (value['servers']! as List)
-            .map(HowlServerConnection.fromJson)
+            .map(ServerConnection.fromJson)
             .toList(growable: false)
           ..sort(_compareServers);
     if (servers.length > maximumServers) {
@@ -256,7 +253,7 @@ final class HowlServerConnections extends ChangeNotifier {
   static const Object _selectionUnchanged = Object();
 
   Future<void> _persist({
-    List<HowlServerConnection>? servers,
+    List<ServerConnection>? servers,
     Object? selectedEndpoint = _selectionUnchanged,
   }) async {
     final next = servers ?? _servers;
@@ -281,10 +278,7 @@ final class HowlServerConnections extends ChangeNotifier {
     }
   }
 
-  static int _compareServers(
-    HowlServerConnection left,
-    HowlServerConnection right,
-  ) {
+  static int _compareServers(ServerConnection left, ServerConnection right) {
     final label = left.label.toLowerCase().compareTo(right.label.toLowerCase());
     return label != 0 ? label : left.endpoint.compareTo(right.endpoint);
   }

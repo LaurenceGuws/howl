@@ -4,8 +4,8 @@ import 'package:flutter/widgets.dart';
 ///
 /// Text is supplied by the app-private native host from `howl-client.view`;
 /// this widget does not parse terminal bytes or reconstruct terminal state.
-final class TerminalSemanticSurface extends StatelessWidget {
-  const TerminalSemanticSurface({
+final class TerminalSemantics extends StatelessWidget {
+  const TerminalSemantics({
     super.key,
     required this.value,
     required this.truncated,

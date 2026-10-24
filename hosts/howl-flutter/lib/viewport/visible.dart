@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
-final class TerminalVisibleViewport extends StatelessWidget {
-  const TerminalVisibleViewport({super.key, required this.child});
+final class VisibleViewport extends StatelessWidget {
+  const VisibleViewport({super.key, required this.child});
 
   final Widget child;
 

@@ -2,9 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/instance_target.dart';
-import 'package:howl_flutter/native_host.dart';
-import 'package:howl_flutter/terminal_presentation.dart';
+import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/delete/native_host.dart';
+import 'package:howl_flutter/term/presentation.dart';
 
 // Opt in against a private candidate library; normal tests never open an
 // installed library or construct a child merely because one is present.

@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/app_shell.dart';
-import 'package:howl_flutter/howl_endpoint.dart';
-import 'package:howl_flutter/instance_target.dart';
-import 'package:howl_flutter/server_connections.dart';
-import 'package:howl_flutter/server_tree.dart';
+import 'package:howl_flutter/app_shell/app_shell.dart';
+import 'package:howl_flutter/delete/howl_endpoint.dart';
+import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/connections.dart';
+import 'package:howl_flutter/server/tree.dart';
 
-final class _MemoryStore implements HowlServerConnectionStore {
+final class _MemoryStore implements ServerConnectionStore {
   String? value;
 
   @override
@@ -16,7 +16,7 @@ final class _MemoryStore implements HowlServerConnectionStore {
   Future<void> write(String encoded) async => value = encoded;
 }
 
-final class _ThrowingReadStore implements HowlServerConnectionStore {
+final class _ThrowingReadStore implements ServerConnectionStore {
   @override
   Future<String?> read() async => throw StateError('read failed');
 
@@ -25,7 +25,7 @@ final class _ThrowingReadStore implements HowlServerConnectionStore {
       throw StateError('write forbidden');
 }
 
-HowlServerTree _tree() => HowlServerTree.parse(
+ServerTree _tree() => ServerTree.parse(
   '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615",'
   '"tree_revision":"4","sessions":['
   '{"session_id":"7","name":"work","instances":['
@@ -47,13 +47,13 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
-        data: const MediaQueryData(
-          padding: EdgeInsets.only(top: 48),
-          viewPadding: EdgeInsets.only(top: 48),
-        ),
-          child: HowlAppShell(
+          data: const MediaQueryData(
+            padding: EdgeInsets.only(top: 48),
+            viewPadding: EdgeInsets.only(top: 48),
+          ),
+          child: AppShell(
             initialInstanceTarget: target,
-            connections: HowlServerConnections(_MemoryStore()),
+            connections: ServerConnections(_MemoryStore()),
             terminalBuilder: (_, _, _, _) => Builder(
               builder: (context) {
                 terminalTopInset = MediaQuery.viewPaddingOf(context).top;
@@ -84,11 +84,11 @@ void main() {
       final selected = <String>[];
       await tester.pumpWidget(
         MaterialApp(
-          home: HowlAppShell(
-            connections: HowlServerConnections(_MemoryStore()),
+          home: AppShell(
+            connections: ServerConnections(_MemoryStore()),
             initialInstanceTarget: first,
             fetchTree: (_) =>
-                HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+                ServerTreeRequest.fromFuture(Future.value(_tree())),
             terminalBuilder: (_, target, _, onTitleChanged) {
               reported[target.instanceId] = onTitleChanged;
               selected.add(target.instanceId);
@@ -148,11 +148,11 @@ void main() {
   testWidgets(
     'desktop shell opens one Local target without inventing a Server route',
     (tester) async {
-      final connections = HowlServerConnections(_MemoryStore());
+      final connections = ServerConnections(_MemoryStore());
       final builtTargets = <HowlInstanceTarget>[];
       await tester.pumpWidget(
         MaterialApp(
-          home: HowlAppShell(
+          home: AppShell(
             localEnabled: true,
             connections: connections,
             terminalBuilder: (_, target, _, _) {
@@ -190,15 +190,15 @@ void main() {
   testWidgets(
     'route-less shell uses button-only drawer and opens managed Instance',
     (tester) async {
-      final connections = HowlServerConnections(_MemoryStore());
+      final connections = ServerConnections(_MemoryStore());
       final builtTargets = <HowlInstanceTarget>[];
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(useMaterial3: false),
-          home: HowlAppShell(
+          home: AppShell(
             connections: connections,
             fetchTree: (_) =>
-                HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+                ServerTreeRequest.fromFuture(Future.value(_tree())),
             terminalBuilder: (context, target, _, _) {
               builtTargets.add(target);
               return Text(
@@ -266,9 +266,9 @@ void main() {
     'saved selected Server becomes startup surface without launch route',
     (tester) async {
       final store = _MemoryStore();
-      final connections = HowlServerConnections(store);
+      final connections = ServerConnections(store);
       await connections.initialize();
-      final server = HowlServerConnection(
+      final server = ServerConnection(
         label: 'Home',
         endpoint: 'tcp://127.0.0.1:43130',
       );
@@ -277,10 +277,10 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: HowlAppShell(
+          home: AppShell(
             connections: connections,
             fetchTree: (_) =>
-                HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+                ServerTreeRequest.fromFuture(Future.value(_tree())),
             terminalBuilder: (_, target, _, _) => const SizedBox.shrink(),
           ),
         ),
@@ -301,8 +301,8 @@ void main() {
       );
       await tester.pumpWidget(
         MaterialApp(
-          home: HowlAppShell(
-            connections: HowlServerConnections(_MemoryStore()),
+          home: AppShell(
+            connections: ServerConnections(_MemoryStore()),
             initialInstanceTarget: target,
             terminalBuilder: (_, value, _, _) =>
                 Text(value.endpointText, key: const Key('selected-terminal')),
@@ -319,9 +319,9 @@ void main() {
     'editing selected saved Server follows the replacement endpoint',
     (tester) async {
       final store = _MemoryStore();
-      final connections = HowlServerConnections(store);
+      final connections = ServerConnections(store);
       await connections.initialize();
-      final oldServer = HowlServerConnection(
+      final oldServer = ServerConnection(
         label: 'Home',
         endpoint: 'tcp://127.0.0.1:43130',
       );
@@ -331,11 +331,11 @@ void main() {
       final fetched = <String>[];
       await tester.pumpWidget(
         MaterialApp(
-          home: HowlAppShell(
+          home: AppShell(
             connections: connections,
             fetchTree: (endpoint) {
               fetched.add(endpoint.toString());
-              return HowlServerTreeRequest.fromFuture(Future.value(_tree()));
+              return ServerTreeRequest.fromFuture(Future.value(_tree()));
             },
             terminalBuilder: (_, _, _, _) => const SizedBox.shrink(),
           ),
@@ -344,7 +344,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(fetched.last, oldServer.endpoint);
 
-      final moved = HowlServerConnection(
+      final moved = ServerConnection(
         label: 'Home',
         endpoint: 'tcp://127.0.0.1:43132',
       );
@@ -361,9 +361,9 @@ void main() {
     tester,
   ) async {
     final store = _MemoryStore();
-    final connections = HowlServerConnections(store);
+    final connections = ServerConnections(store);
     await connections.initialize();
-    final server = HowlServerConnection(
+    final server = ServerConnection(
       label: 'Home',
       endpoint: 'tcp://127.0.0.1:43130',
     );
@@ -372,10 +372,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlAppShell(
+        home: AppShell(
           connections: connections,
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(_tree())),
           terminalBuilder: (_, target, _, _) => Text(
             'terminal ${target.sessionId}/${target.instanceId}',
             key: const Key('managed-terminal-under-removal'),
@@ -413,7 +412,7 @@ void main() {
       sessionId: '7',
       instanceId: '1',
     );
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"99",'
       '"tree_revision":"3","sessions":['
       '{"session_id":"7","name":"work","instances":['
@@ -423,11 +422,10 @@ void main() {
     final visited = <String>[];
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlAppShell(
-          connections: HowlServerConnections(_MemoryStore()),
+        home: AppShell(
+          connections: ServerConnections(_MemoryStore()),
           initialInstanceTarget: first,
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           terminalBuilder: (_, target, _, _) {
             visited.add(target.instanceId);
             return Text('active ${target.instanceId}');
@@ -465,13 +463,13 @@ void main() {
     tester,
   ) async {
     final store = _MemoryStore();
-    final connections = HowlServerConnections(store);
+    final connections = ServerConnections(store);
     await connections.initialize();
-    final saved = HowlServerConnection(
+    final saved = ServerConnection(
       label: 'Saved',
       endpoint: 'tcp://127.0.0.1:43130',
     );
-    final other = HowlServerConnection(
+    final other = ServerConnection(
       label: 'Other',
       endpoint: 'tcp://127.0.0.1:43131',
     );
@@ -483,12 +481,12 @@ void main() {
     final fetched = <String>[];
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlAppShell(
+        home: AppShell(
           connections: connections,
           initialServerEndpoint: transient,
           fetchTree: (endpoint) {
             fetched.add(endpoint.toString());
-            return HowlServerTreeRequest.fromFuture(Future.value(_tree()));
+            return ServerTreeRequest.fromFuture(Future.value(_tree()));
           },
           terminalBuilder: (_, _, _, _) => const SizedBox.shrink(),
         ),
@@ -518,11 +516,10 @@ void main() {
     VoidCallback? stale;
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlAppShell(
-          connections: HowlServerConnections(_MemoryStore()),
+        home: AppShell(
+          connections: ServerConnections(_MemoryStore()),
           initialInstanceTarget: target,
-          fetchTree: (_) =>
-              HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(_tree())),
           terminalBuilder: (_, value, onStaleTarget, _) {
             stale = onStaleTarget;
             return Text(
@@ -553,10 +550,10 @@ void main() {
       sessionId: '7',
       instanceId: '3',
     );
-    final connections = HowlServerConnections(_ThrowingReadStore());
+    final connections = ServerConnections(_ThrowingReadStore());
     await tester.pumpWidget(
       MaterialApp(
-        home: HowlAppShell(
+        home: AppShell(
           connections: connections,
           initialInstanceTarget: target,
           terminalBuilder: (_, value, _, _) => Text(

@@ -1,7 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_fit.dart';
+import 'package:howl_flutter/term/fit.dart';
 
 void main() {
   test('center remains exact when no physical pixel scale is supplied', () {

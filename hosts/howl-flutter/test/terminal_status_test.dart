@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_status.dart';
+import 'package:howl_flutter/term/status.dart';
 
 void main() {
   testWidgets('status text is self-styled and clamps extreme host scaling', (
@@ -11,7 +11,7 @@ void main() {
         data: MediaQueryData(textScaler: TextScaler.linear(4)),
         child: Directionality(
           textDirection: TextDirection.ltr,
-          child: TerminalStatusText('Howl status'),
+          child: TerminalStatus('Howl status'),
         ),
       ),
     );

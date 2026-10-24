@@ -1,11 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/server_tree.dart';
+import 'package:howl_flutter/server/tree.dart';
 
 void main() {
   test(
     'tree parser preserves full unsigned Server identity as opaque text',
     () {
-      final tree = HowlServerTree.parse(
+      final tree = ServerTree.parse(
         '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615",'
         '"tree_revision":"9223372036854775808","sessions":[]}',
       );
@@ -15,7 +15,7 @@ void main() {
   );
 
   test('tree parser preserves Session and Instance lifecycle hierarchy', () {
-    final tree = HowlServerTree.parse(
+    final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"99","tree_revision":"7","sessions":['
       '{"session_id":"2","name":"work","instances":['
       '{"instance_id":"1","state":"exited"},'
@@ -29,26 +29,26 @@ void main() {
     expect(tree.sessions.first.instances.length, 2);
     expect(
       tree.sessions.first.instances.last.state,
-      HowlServerInstanceState.running,
+      ServerInstanceState.running,
     );
     expect(tree.sessions.last.instances, isEmpty);
   });
 
   test('tree parser rejects ambiguous ordering and states', () {
     expect(
-      () => HowlServerTree.parse(
+      () => ServerTree.parse(
         '{"schema":"howl.server.tree/v1","server_id":"1","tree_revision":"1","sessions":['
         '{"session_id":"2","name":"a","instances":[]},'
         '{"session_id":"2","name":"b","instances":[]}]}',
       ),
-      throwsA(isA<HowlServerTreeException>()),
+      throwsA(isA<ServerTreeException>()),
     );
     expect(
-      () => HowlServerTree.parse(
+      () => ServerTree.parse(
         '{"schema":"howl.server.tree/v1","server_id":"1","tree_revision":"1","sessions":['
         '{"session_id":"2","name":"a","instances":[{"instance_id":"1","state":"mystery"}]}]}',
       ),
-      throwsA(isA<HowlServerTreeException>()),
+      throwsA(isA<ServerTreeException>()),
     );
   });
 }
