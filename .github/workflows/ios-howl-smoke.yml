@@ -18,9 +18,6 @@ jobs:
         with:
           version: '0.17.0'
 
-      - name: Install native iPhoneOS build tools
-        run: brew install meson ninja pkg-config
-
       - name: Build app-private native Howl host for iPhoneOS
         run: hosts/howl-flutter/native/build-ios.sh
 

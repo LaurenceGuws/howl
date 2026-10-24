@@ -9,9 +9,6 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 
 test "$(zig version)" = "$(cat "$repo/.zigversion")"
-"$root/build-deps-ios.sh"
-work=${HOWL_IOS_NATIVE_WORK:-$root/.work/ios-arm64}
-prefix="$work/prefix"
 sdk=$(xcrun --sdk iphoneos --show-sdk-path)
 cxx_include="$sdk/usr/include/c++/v1"
 test -f "$sdk/usr/include/string.h"
@@ -34,19 +31,16 @@ rm -rf "$root/zig-out" "$root/.zig-cache"
     -freference-trace=50 \
     --sysroot "$sdk" \
     -Dtarget=aarch64-ios.15.0 \
-    -Doptimize=ReleaseFast \
-    -Drepo="$repo" \
-    -Dfreetype-include="$prefix/include/freetype2" \
-    -Dharfbuzz-include="$prefix/include" \
-    -Dapple-sdk="$sdk"
+    -Doptimize=ReleaseFast
 )
 object="$root/zig-out/howl_flutter_native_host.o"
 test -f "$object"
 file "$object"
 xcrun lipo -info "$object"
 
-xcrun libtool -static -o "$dest/libhowl_ios_native.a" \
-  "$object" "$prefix/lib/libharfbuzz.a" "$prefix/lib/libfreetype.a"
+# Instance-owned Render carries its target-built text dependencies already.
+# Appending the older Meson archives here duplicates every FT/HB symbol.
+xcrun libtool -static -o "$dest/libhowl_ios_native.a" "$object"
 file "$dest/libhowl_ios_native.a"
 xcrun lipo -info "$dest/libhowl_ios_native.a"
 nm -gU "$dest/libhowl_ios_native.a" >"$dest/symbols.txt"
