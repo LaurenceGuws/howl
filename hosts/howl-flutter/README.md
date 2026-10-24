@@ -313,6 +313,24 @@ visible but cannot be opened. Selecting a running Instance creates one
 `ManagedHowlInstanceTarget`, after which the existing terminal observer/control path
 is reused unchanged.
 
+The Server browser can also launch a terminal directly from iOS/Android. The
+explicit native `server_client` control request first validates the selected
+Server incarnation, then creates an Instance in an existing Session or creates
+a named Session followed by its first Instance. A failed first Instance launch
+attempts to close only that newly created Session; a failed cleanup is reported
+instead of hidden. The returned Server/Session/Instance IDs remain exact decimal
+strings, and a successful launch opens that one terminal attachment immediately.
+Session names follow Server's 1–64-byte ASCII identifier grammar. The initial
+40×24 geometry is only a launch value: a geometry-leading client subsequently
+submits the normal explicit resize for its actual viewport. No Server geometry
+or terminal state is mirrored in Dart.
+
+For touch use, the primary 44-point control strip retains Ctrl, Esc, Tab,
+arrows and keyboard visibility. Alt, raster size, geometry leadership, Copy,
+Paste and diagnostics are in its accessible overflow menu, giving the commonly
+used controls usable widths on an iPhone instead of squeezing fourteen buttons
+across one narrow row.
+
 Server identifiers and tree revisions remain opaque decimal strings in Dart so full
 unsigned 64-bit identity survives the language boundary. Session/Instance ids are
 used only as exact routing identities. Pane/split layout and visible surface

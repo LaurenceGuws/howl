@@ -13,6 +13,16 @@ test "$(zig version)" = "$(cat "$repo/.zigversion")"
 work=${HOWL_IOS_NATIVE_WORK:-$root/.work/ios-arm64}
 prefix="$work/prefix"
 sdk=$(xcrun --sdk iphoneos --show-sdk-path)
+cxx=$(xcrun --sdk iphoneos --find clang++)
+cxx_include=$(cd "$(dirname "$cxx")/../include/c++/v1" && pwd)
+test -f "$sdk/usr/include/string.h"
+test -f "$sdk/usr/include/inttypes.h"
+test -f "$cxx_include/vector"
+# Zig's target-built bundled FreeType/HarfBuzz use Clang directly; they need
+# the iPhoneOS libc and Xcode libc++ headers, not Homebrew/macOS host headers.
+export SDKROOT="$sdk"
+export C_INCLUDE_PATH="$sdk/usr/include${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
+export CPLUS_INCLUDE_PATH="$sdk/usr/include:$cxx_include${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
 dest="$repo/hosts/howl-flutter/ios/NativeHost"
 # Every platform builds the text module from this same Howl checkout.
 test -f "$repo/mods/howl-text/src/text.zig"

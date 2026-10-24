@@ -169,7 +169,7 @@ experimental:
     maintained native graphical client canary with a deliberately small app shell.
     The shell may start route-less, persists only explicit labelled Server endpoints
     plus the selected saved Server, and exposes them through a button-opened drawer
-    whose edge-drag gesture is disabled. Server mode performs one validated native tree query, presents Session labels + Instance
+    whose edge-drag gesture is disabled. Server mode performs validated native tree queries and explicit incarnation-guarded Session/Instance creation through server-client, presents Session labels + Instance
     lineage, and on running-Instance selection attaches exact Session+Instance
     identity and client ID in one ready response, with no second handshake or proxy. Dart
     keeps no authoritative Server mirror; terminal presentation/input/viewport/
