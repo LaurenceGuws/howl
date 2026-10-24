@@ -1,39 +1,8 @@
 import 'howl_endpoint.dart';
 
-enum HowlInstanceRoute { managed, local }
-
-/// Selects an exact Server occurrence or a direct in-process Local Instance.
-sealed class HowlInstanceTarget {
-  const HowlInstanceTarget();
-
-  HowlInstanceRoute get route;
-  HowlEndpoint? get transportEndpoint;
-  String get endpointText => transportEndpoint?.toString() ?? '';
-  bool get managed => route == HowlInstanceRoute.managed;
-  bool get local => route == HowlInstanceRoute.local;
-  int get nativeRoute => switch (route) {
-    HowlInstanceRoute.managed => 1,
-    HowlInstanceRoute.local => 2,
-  };
-  String get serverId => '0';
-
-  // Convert exact decimal identities only at the private Uint64 FFI seam.
-  int get nativeServerId => BigInt.parse(serverId).toSigned(64).toInt();
-  int get nativeSessionId => BigInt.parse(sessionId).toSigned(64).toInt();
-  int get nativeInstanceId => BigInt.parse(instanceId).toSigned(64).toInt();
-
-  String get sessionId => '0';
-  String get instanceId => '0';
-
-  String get diagnosticLabel => switch (route) {
-    HowlInstanceRoute.managed =>
-      'server=$endpointText incarnation=$serverId session=$sessionId instance=$instanceId',
-    HowlInstanceRoute.local => 'local instance',
-  };
-}
-
-final class ManagedHowlInstanceTarget extends HowlInstanceTarget {
-  ManagedHowlInstanceTarget({
+/// One exact Server-owned Instance selected by a Flutter client.
+final class HowlInstanceTarget {
+  HowlInstanceTarget({
     required this.serverEndpoint,
     required String serverId,
     required String sessionId,
@@ -43,31 +12,19 @@ final class ManagedHowlInstanceTarget extends HowlInstanceTarget {
        instanceId = exactHowlIdentity(instanceId);
 
   final HowlEndpoint serverEndpoint;
-
-  @override
   final String serverId;
-
-  @override
   final String sessionId;
-
-  @override
   final String instanceId;
 
-  @override
-  HowlEndpoint get transportEndpoint => serverEndpoint;
+  String get endpointText => serverEndpoint.toString();
 
-  @override
-  HowlInstanceRoute get route => HowlInstanceRoute.managed;
-}
+  // Convert exact decimal identities only at the private Uint64 FFI seam.
+  int get nativeServerId => BigInt.parse(serverId).toSigned(64).toInt();
+  int get nativeSessionId => BigInt.parse(sessionId).toSigned(64).toInt();
+  int get nativeInstanceId => BigInt.parse(instanceId).toSigned(64).toInt();
 
-final class LocalHowlInstanceTarget extends HowlInstanceTarget {
-  const LocalHowlInstanceTarget();
-
-  @override
-  HowlInstanceRoute get route => HowlInstanceRoute.local;
-
-  @override
-  HowlEndpoint? get transportEndpoint => null;
+  String get diagnosticLabel =>
+      'server=$endpointText incarnation=$serverId session=$sessionId instance=$instanceId';
 }
 
 /// Nonzero native u64 identity, retained canonically as decimal text in Dart.

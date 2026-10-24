@@ -23,7 +23,7 @@ composition:
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
   - every Instance owns exactly one canonical terminal geometry; Server and Session own no rows, columns, cell-pixel lattice, pane, split, or surface layout
   - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
-  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints; on Linux/Windows its Local route may also own one in-process Instance through its private direct Instance worker, with semantic commands and copied observations; Android/iOS remain client-only
+  - the maintained Flutter mobile shell owns lightweight app navigation and explicit persisted Server endpoints, and interacts only with Server-owned Instances on every platform; desktop Flutter remains useful for client development and testing, while local desktop Instance composition belongs to the SDL hosts
   - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
 
 experimental:

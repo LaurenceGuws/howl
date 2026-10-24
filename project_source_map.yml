@@ -173,13 +173,11 @@ experimental:
     lineage, and on running-Instance selection attaches exact Session+Instance
     identity and client ID in one ready response, with no second handshake or proxy. Dart
     keeps no authoritative Server mirror; terminal presentation/input/viewport/
-    history/selection/native-size UX remains Instance-only after handoff. On Linux
-    and Windows the Local route owns one in-process Instance through its private
-    direct desktop worker. Semantic mutations and synchronous const observation
-    projections use Instance directly; only copied frame/text/image packets reach
-    Dart. Private command packing consumes exact Instance-forwarded Render native
-    projection while retaining its 40-byte record and frame-local resource table.
-    Local creates no Server terminal service, handshake or stream. Android and iOS remain client-only. Flutter owns
+    history/selection/native-size UX remains Instance-only after handoff. Every
+    Flutter platform (including desktop development hosts) is Server-client-only.
+    Native client observation and semantic controls copy frame/text/image packets
+    into Dart, retaining the 40-byte Render command record and frame-local resource
+    table. SDL desktop hosts own direct local Instance composition. Flutter owns
     no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,

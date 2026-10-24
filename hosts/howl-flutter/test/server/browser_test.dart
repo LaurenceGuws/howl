@@ -11,7 +11,7 @@ void main() {
   testWidgets('browser shows Session lineage and only opens running Instance', (
     tester,
   ) async {
-    ManagedHowlInstanceTarget? selected;
+    HowlInstanceTarget? selected;
     final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615","tree_revision":"4","sessions":['
       '{"session_id":"7","name":"work","instances":['
@@ -57,7 +57,7 @@ void main() {
       );
       final refresh = Completer<ServerTree>();
       var calls = 0;
-      ManagedHowlInstanceTarget? selected;
+      HowlInstanceTarget? selected;
       await tester.pumpWidget(
         MaterialApp(
           home: ServerBrowser(

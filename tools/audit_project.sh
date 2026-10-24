@@ -80,32 +80,30 @@ while IFS=: read -r file line _; do
     status=1
 done < <(grep -RnE "$empty_lifecycle_pattern" mods/howl-vt/src --include='*.zig' || true)
 
-# The Dart/native FFI surface has one common mobile-safe contract plus a
-# desktop-only Local ownership extension. Every declaration must exist as a
-# Zig export; only the common contract is retained through final iOS linking.
+# The Dart/native FFI surface has one Server-client contract across platforms.
+# Every declaration must exist as a Zig export and be retained through iOS linking.
 ffi_contract=hosts/howl-flutter/native/ffi-symbols.txt
-ffi_desktop_contract=hosts/howl-flutter/native/ffi-symbols-desktop.txt
-for contract in "$ffi_contract" "$ffi_desktop_contract"; do
-    if grep -Evq '^[a-z][a-z0-9_]*$' "$contract"; then
-        printf '%s: invalid FFI symbol name\n' "$contract"
-        status=1
-    fi
-    if [[ -n "$(sort "$contract" | uniq -d)" ]]; then
-        printf '%s: duplicate FFI symbol\n' "$contract"
-        status=1
-    fi
-    while IFS= read -r symbol; do
-        [[ -n "$symbol" ]] || continue
-        if ! grep -Fq "pub export fn $symbol(" hosts/howl-flutter/native/host.zig; then
-            printf '%s: declared FFI symbol has no Zig export: %s\n' "$contract" "$symbol"
-            status=1
-        fi
-    done < "$contract"
-done
-if [[ -n "$(comm -12 <(sort "$ffi_contract") <(sort "$ffi_desktop_contract"))" ]]; then
-    printf 'Flutter FFI common/desktop contracts overlap\n'
+if grep -Evq '^[a-z][a-z0-9_]*$' "$ffi_contract"; then
+    printf '%s: invalid FFI symbol name\n' "$ffi_contract"
     status=1
 fi
+if [[ -n "$(sort "$ffi_contract" | uniq -d)" ]]; then
+    printf '%s: duplicate FFI symbol\n' "$ffi_contract"
+    status=1
+fi
+while IFS= read -r symbol; do
+    [[ -n "$symbol" ]] || continue
+    if ! grep -Fq "pub export fn $symbol(" hosts/howl-flutter/native/host.zig; then
+        printf '%s: declared FFI symbol has no Zig export: %s\n' "$ffi_contract" "$symbol"
+        status=1
+    fi
+done < "$ffi_contract"
+while IFS= read -r symbol; do
+    if ! grep -Fxq "$symbol" "$ffi_contract"; then
+        printf 'Flutter FFI native export is outside contract: %s\n' "$symbol"
+        status=1
+    fi
+done < <(sed -nE 's/^pub export fn (howl_native_[a-z0-9_]+)\(.*/\1/p' hosts/howl-flutter/native/host.zig)
 while IFS= read -r symbol; do
     [[ -n "$symbol" ]] || continue
     for config in hosts/howl-flutter/ios/Flutter/Debug.xcconfig hosts/howl-flutter/ios/Flutter/Release.xcconfig; do
@@ -118,7 +116,7 @@ done < "$ffi_contract"
 
 while IFS= read -r literal; do
     symbol=${literal:1:${#literal}-2}
-    if ! grep -Fxq "$symbol" "$ffi_contract" && ! grep -Fxq "$symbol" "$ffi_desktop_contract"; then
+    if ! grep -Fxq "$symbol" "$ffi_contract"; then
         printf 'hosts/howl-flutter/lib: Dart FFI lookup is outside contract: %s\n' "$symbol"
         status=1
     fi
@@ -328,18 +326,6 @@ for path in files:
     if re.search(r'@import\(\s*"(?:howl_instance|howl_instance_headless|howl_pty|howl_vt|server|server_model|server_runtime|server_service|server_terminal_service)"', path.read_text()):
         raise SystemExit(f"{path}: Server client imports canonical process or service ownership")
 PYCLIENT
-
-# Flutter's desktop worker cannot regain an internal client/service/wire route.
-python3 - <<'PYLOCAL' || status=1
-from pathlib import Path
-import re
-
-path = Path("hosts/howl-flutter/native/local.zig")
-imports = re.findall(r'@import\(\s*"([^"]+)"', path.read_text())
-for name in imports:
-    if name not in ("std", "builtin", "howl_instance"):
-        raise SystemExit(f"{path}: Local worker imports noncanonical owner {name}")
-PYLOCAL
 
 # Every tracked Zig build root must be reachable through package declarations.
 # The external consumer intentionally depends inward on the distribution root;

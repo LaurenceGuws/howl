@@ -12,7 +12,6 @@
         "build.zig",
         "build.zig.zon",
         "host.zig",
-        "local.zig",
         "native.h",
     },
 }

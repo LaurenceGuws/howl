@@ -7,15 +7,12 @@ void main() {
     'managed target preserves exact Server Session and Instance identity',
     () {
       final endpoint = HowlEndpoint.parse('unix:/tmp/howl-server.sock');
-      final target = ManagedHowlInstanceTarget(
+      final target = HowlInstanceTarget(
         serverEndpoint: endpoint,
         serverId: '91',
         sessionId: '7',
         instanceId: '3',
       );
-      expect(target.route, HowlInstanceRoute.managed);
-      expect(target.managed, isTrue);
-      expect(target.local, isFalse);
       expect(target.endpointText, 'unix:/tmp/howl-server.sock');
       expect(target.serverId, '91');
       expect(target.nativeServerId, 91);
@@ -25,29 +22,14 @@ void main() {
     },
   );
 
-  test('local target carries no transport endpoint or remote identity', () {
-    const target = LocalHowlInstanceTarget();
-    expect(target.route, HowlInstanceRoute.local);
-    expect(target.managed, isFalse);
-    expect(target.local, isTrue);
-    expect(target.transportEndpoint, isNull);
-    expect(target.endpointText, isEmpty);
-    expect(target.serverId, '0');
-    expect(target.nativeServerId, 0);
-    expect(target.sessionId, '0');
-    expect(target.instanceId, '0');
-    expect(target.diagnosticLabel, 'local instance');
-  });
-
   test('Server incarnation retains all u64 bits and rejects out of range', () {
     final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:1');
-    ManagedHowlInstanceTarget target(String server) =>
-        ManagedHowlInstanceTarget(
-          serverEndpoint: endpoint,
-          serverId: server,
-          sessionId: '1',
-          instanceId: '1',
-        );
+    HowlInstanceTarget target(String server) => HowlInstanceTarget(
+      serverEndpoint: endpoint,
+      serverId: server,
+      sessionId: '1',
+      instanceId: '1',
+    );
     expect(target('9223372036854775808').nativeServerId, -9223372036854775808);
     expect(target('18446744073709551615').nativeServerId, -1);
     for (final invalid in ['0', '-1', '18446744073709551616']) {

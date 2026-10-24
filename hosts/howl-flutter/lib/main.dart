@@ -99,7 +99,6 @@ final class HowlApp extends StatelessWidget {
       theme: ThemeData.dark(useMaterial3: false),
       home: AppShell(
         initialServerEndpoint: endpoint,
-        localEnabled: Platform.isLinux || Platform.isWindows,
         terminalBuilder: (context, target, onStaleTarget, onTitleChanged) =>
             HowlTerminal(
               key: ValueKey<String>(target.diagnosticLabel),
@@ -158,7 +157,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
   NativeHostControl? _nativeControl;
   NativeInterruptScope? _nativeInterrupt;
   NativeInterruptScope? _nativeHistoryInterrupt;
-  NativeLocalInstance? _nativeLocalInstance;
   NativeHostMetadata? _nativeLiveMetadata;
   NativeHostMetadata? _nativeHistoryMetadata;
   String _nativeLiveSemanticText = '';
@@ -206,7 +204,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
   @override
   void initState() {
     super.initState();
-    _geometryLeader = widget.geometryLeader || widget.target.local;
+    _geometryLeader = widget.geometryLeader;
     _softKeyboard = TerminalSoftKeyboardOwner();
     _perfClock = Stopwatch()..start();
     _frameTimingsCallback = (timings) {
@@ -323,109 +321,83 @@ final class _HowlTerminalState extends State<HowlTerminal>
   Future<void> _observe() => _observeNative();
 
   Future<void> _observeNative() async {
-    try {
-      if (widget.target.local) {
-        if (_stopping) return;
-        try {
-          _nativeLocalInstance = NativeLocalInstance.create();
-        } catch (error) {
-          if (!_stopping && mounted) _reportFailure(error);
+    while (!_stopping) {
+      final generation = ++_transportGeneration;
+      _lastAdoptUs = null;
+      // A new native Host owns a new Canvas namespace, even when its first
+      // resource/generation numbers collide with the previous Host's atlas.
+      final oldLive = _nativeLiveLease;
+      setState(() {
+        _nativeLiveLease = null;
+        _livePaintLease.value = null;
+        _nativeLiveMetadata = null;
+        _nativeLiveSemanticText = '';
+        _nativeLiveSemanticTruncated = false;
+      });
+      if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
+      var attached = false;
+      NativeInterruptScope? interrupt;
+      _diagnostics.record('Transport', 'generation=$generation start');
+      try {
+        interrupt = NativeInterruptScope.create();
+        _nativeInterrupt = interrupt;
+        await _observeNativeLifetime(
+          generation,
+          interrupt,
+          () => attached = true,
+        );
+        return;
+      } catch (error) {
+        if (_stopping || !mounted) return;
+        _diagnostics.record(
+          'Transport',
+          'generation=$generation failure attached=$attached error=$error',
+        );
+        _dropTransport(generation);
+        if (error is NativeHostException &&
+            error.kind == NativeFailureKind.stale &&
+            widget.onStaleTarget != null) {
+          _diagnostics.record('Transport', 'stale target; returning to Server');
+          widget.onStaleTarget!();
           return;
         }
-        _diagnostics.record('Local', 'owned Instance created');
-      }
-      while (!_stopping) {
-        final generation = ++_transportGeneration;
-        _lastAdoptUs = null;
-        // A new native Host owns a new Canvas namespace, even when its first
-        // resource/generation numbers collide with the previous Host's atlas.
-        final oldLive = _nativeLiveLease;
-        setState(() {
-          _nativeLiveLease = null;
-          _livePaintLease.value = null;
-          _nativeLiveMetadata = null;
-          _nativeLiveSemanticText = '';
-          _nativeLiveSemanticTruncated = false;
-        });
-        if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
-        var attached = false;
-        NativeInterruptScope? interrupt;
-        _diagnostics.record('Transport', 'generation=$generation start');
-        try {
-          interrupt = NativeInterruptScope.create();
-          _nativeInterrupt = interrupt;
-          await _observeNativeLifetime(
-            generation,
-            interrupt,
-            () => attached = true,
-          );
-          return;
-        } catch (error) {
-          if (_stopping || !mounted) return;
-          _diagnostics.record(
-            'Transport',
-            'generation=$generation failure attached=$attached error=$error',
-          );
-          _dropTransport(generation);
-          if (error is NativeHostException &&
-              error.kind == NativeFailureKind.stale &&
-              widget.onStaleTarget != null) {
-            _diagnostics.record(
-              'Transport',
-              'stale target; returning to Server',
-            );
-            widget.onStaleTarget!();
-            return;
-          }
-          final presentationRestart =
-              error is _PresentationRestart ||
-              (error is NativeHostException &&
-                  error.kind == NativeFailureKind.canceled &&
-                  _presentationRestartPending);
-          if (presentationRestart) {
-            _diagnostics.record('Transport', 'presentation restart');
-            _transportRecovery.succeeded();
-            _proposedRows = 0;
-            _proposedColumns = 0;
-            setState(() {
-              _failure = null;
-              _reconnecting = false;
-            });
-            continue;
-          }
-          if (!retriableTransportFailure(error, attached: attached)) {
-            _reportFailure(error);
-            return;
-          }
-          _leaveHistory();
+        final presentationRestart =
+            error is _PresentationRestart ||
+            (error is NativeHostException &&
+                error.kind == NativeFailureKind.canceled &&
+                _presentationRestartPending);
+        if (presentationRestart) {
+          _diagnostics.record('Transport', 'presentation restart');
+          _transportRecovery.succeeded();
           _proposedRows = 0;
           _proposedColumns = 0;
-          final delay = _transportRecovery.failed();
-          _diagnostics.record(
-            'Transport',
-            'retry in ${delay.inMilliseconds}ms failures=${_transportRecovery.failures}',
-          );
           setState(() {
-            _failure = error;
-            _reconnecting = true;
+            _failure = null;
+            _reconnecting = false;
           });
-          await Future<void>.delayed(delay);
-        } finally {
-          if (interrupt != null) {
-            if (identical(_nativeInterrupt, interrupt)) _nativeInterrupt = null;
-            interrupt.destroy();
-          }
+          continue;
         }
-      }
-    } finally {
-      final localInstance = _nativeLocalInstance;
-      _nativeLocalInstance = null;
-      if (localInstance != null) {
-        try {
-          await localInstance.close();
-          _diagnostics.record('Local', 'owned Instance destroyed');
-        } catch (error) {
-          _diagnostics.record('Local', 'destroy failed: $error');
+        if (!retriableTransportFailure(error, attached: attached)) {
+          _reportFailure(error);
+          return;
+        }
+        _leaveHistory();
+        _proposedRows = 0;
+        _proposedColumns = 0;
+        final delay = _transportRecovery.failed();
+        _diagnostics.record(
+          'Transport',
+          'retry in ${delay.inMilliseconds}ms failures=${_transportRecovery.failures}',
+        );
+        setState(() {
+          _failure = error;
+          _reconnecting = true;
+        });
+        await Future<void>.delayed(delay);
+      } finally {
+        if (interrupt != null) {
+          if (identical(_nativeInterrupt, interrupt)) _nativeInterrupt = null;
+          interrupt.destroy();
         }
       }
     }
@@ -454,7 +426,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
       control = await NativeHostControl.create(
         target: widget.target,
         interrupt: interrupt,
-        localInstanceAddress: _nativeLocalInstance?.address ?? 0,
       );
       if (abandoned()) return;
       _diagnostics.record('Control', 'attached generation=$generation');
@@ -467,13 +438,10 @@ final class _HowlTerminalState extends State<HowlTerminal>
         target: widget.target,
         presentation: nativePresentation,
         interrupt: interrupt,
-        localInstanceAddress: _nativeLocalInstance?.address ?? 0,
-        // Keep cheap local row-delta reuse on Unix. TCP uses packed complete
+        // Keep cheap row-delta reuse for Unix endpoints. TCP uses packed complete
         // text_v1 carriage; native delta prearming is part
         // of that alternative policy, not Dart's display overlap below.
-        useLiveDeltas:
-            widget.target.local ||
-            widget.target.transportEndpoint?.unixPath != null,
+        useLiveDeltas: widget.target.serverEndpoint.unixPath != null,
       );
       if (abandoned()) return;
       _diagnostics.record(
@@ -626,7 +594,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
           }
           // TCP receive can overlap display pacing. Unix retains its existing
           // display-boundary coalescing instead of importing network policy.
-          if (widget.target.transportEndpoint?.tcpPort != null) {
+          if (widget.target.serverEndpoint.tcpPort != null) {
             prefetched = Future<NativeHostObservation>.sync(
               () => observer!.observe(
                 afterRevision: revision,
@@ -998,10 +966,9 @@ final class _HowlTerminalState extends State<HowlTerminal>
   }
 
   Future<void> _copyDiagnostics() async {
-    final transportEndpoint = widget.target.transportEndpoint;
-    final networkProbe = transportEndpoint == null
-        ? null
-        : await _iosNetworkProbe.probe(transportEndpoint);
+    final networkProbe = await _iosNetworkProbe.probe(
+      widget.target.serverEndpoint,
+    );
     if (networkProbe != null) {
       _diagnostics.record('iOS Network', networkProbe);
     }
@@ -1588,7 +1555,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
               target: widget.target,
               presentation: nativePresentation,
               interrupt: interrupt,
-              localInstanceAddress: _nativeLocalInstance?.address ?? 0,
             );
           } catch (_) {
             if (identical(_nativeHistoryInterrupt, interrupt)) {

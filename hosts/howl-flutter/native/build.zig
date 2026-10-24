@@ -38,13 +38,6 @@ pub fn build(b: *std.Build) void {
         b.dependency("howl_instance", .{ .target = target, .optimize = optimize, .bundled_render_text = true })
     else
         b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
-    const local = b.createModule(.{
-        .root_source_file = b.path("local.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    local.addImport("howl_instance", instance.module("howl_instance"));
-
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),
         .target = target,
@@ -52,12 +45,9 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .pic = true,
     });
-    root.addImport("local_owner", local);
     root.addImport("howl_instance", instance.module("howl_instance"));
     root.addImport("howl_vt_native", instance.module("howl_vt_native"));
-    root.addImport("howl_instance_native", instance.module("howl_instance_native"));
     root.addImport("howl_render_native", instance.module("howl_render_native"));
-    root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
     root.addImport("server_client", client);
     root.addImport("server_client_native", client_dependency.module("server_client_native"));
     root.addImport("server_client_render", terminal);
@@ -79,12 +69,6 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
-    const local_tests = b.addTest(.{
-        .name = "howl_flutter_direct_local_tests",
-        .root_module = local,
-        .use_llvm = false,
-        .use_lld = false,
-    });
     const check = b.step("check", "Compile the Flutter native host and all its proofs");
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
@@ -93,8 +77,6 @@ pub fn build(b: *std.Build) void {
     check.dependOn(audit);
     check.dependOn(&object.step);
     check.dependOn(&tests.step);
-    check.dependOn(&local_tests.step);
     const test_step = b.step("test", "Run native host presentation-lattice proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
-    test_step.dependOn(&b.addRunArtifact(local_tests).step);
 }

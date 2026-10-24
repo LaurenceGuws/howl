@@ -27,7 +27,7 @@ void main() {
       'exact u64 $value survives tree target isolate and FFI bits',
       () async {
         final parsed = ServerTree.parse(tree(value, value));
-        final target = ManagedHowlInstanceTarget(
+        final target = HowlInstanceTarget(
           serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
           serverId: parsed.serverId,
           sessionId: parsed.sessions.single.id,
@@ -54,7 +54,7 @@ void main() {
       }
       for (final pair in [(value, '1'), ('1', value)]) {
         expect(
-          () => ManagedHowlInstanceTarget(
+          () => HowlInstanceTarget(
             serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
             serverId: '91',
             sessionId: pair.$1,

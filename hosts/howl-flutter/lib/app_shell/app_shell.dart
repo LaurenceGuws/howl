@@ -24,9 +24,7 @@ final class _TerminalTab {
   String? reportedTitle;
 
   String get label =>
-      customTitle ??
-      reportedTitle ??
-      (target.local ? 'Local' : 'Instance ${target.instanceId}');
+      customTitle ?? reportedTitle ?? 'Instance ${target.instanceId}';
 }
 
 String? _displayTitle(String? value) {
@@ -50,8 +48,8 @@ String? _displayTitle(String? value) {
 
 /// Minimal app shell around the terminal canary.
 ///
-/// The shell owns Local-vs-Server navigation, saved Server endpoints, and app
-/// navigation only. It deliberately owns no Server mirror, terminal grid,
+/// The shell owns saved Server endpoints and app navigation only.
+/// It deliberately owns no Server mirror, terminal grid,
 /// Session lifecycle, pane layout, or transport implementation.
 final class AppShell extends StatefulWidget {
   const AppShell({
@@ -61,7 +59,6 @@ final class AppShell extends StatefulWidget {
     this.initialInstanceTarget,
     this.connections,
     this.fetchTree = NativeServerTree.request,
-    this.localEnabled = false,
   });
 
   final HowlTerminalBuilder terminalBuilder;
@@ -69,7 +66,6 @@ final class AppShell extends StatefulWidget {
   final HowlInstanceTarget? initialInstanceTarget;
   final ServerConnections? connections;
   final ServerTreeFetcher fetchTree;
-  final bool localEnabled;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -97,11 +93,7 @@ final class _AppShellState extends State<AppShell> {
     _activeInstance = widget.initialInstanceTarget;
     if (_activeInstance case final target?) _tabFor(target);
     _activeServer =
-        widget.initialServerEndpoint ??
-        switch (_activeInstance) {
-          ManagedHowlInstanceTarget target => target.serverEndpoint,
-          _ => null,
-        };
+        widget.initialServerEndpoint ?? _activeInstance?.serverEndpoint;
     _initialized = _activeServer != null || _activeInstance != null;
     unawaited(_initialize());
   }
@@ -165,7 +157,6 @@ final class _AppShellState extends State<AppShell> {
     }
     final endpoint = HowlEndpoint.parse(server.endpoint);
     setState(() {
-      _tabs.removeWhere((tab) => tab.target.local);
       _activeServer = endpoint;
       _activeInstance = null;
       _followSavedServer = true;
@@ -173,28 +164,13 @@ final class _AppShellState extends State<AppShell> {
     _closeDrawer();
   }
 
-  void _openManaged(ManagedHowlInstanceTarget target) {
+  void _openTarget(HowlInstanceTarget target) {
     _navigation++;
     setState(() {
-      // A Local terminal is owned by its visible Flutter widget. Leaving it
-      // destroys that Instance, so never retain a misleading Local tab.
-      _tabs.removeWhere((tab) => tab.target.local);
       _tabFor(target);
       _activeServer = target.serverEndpoint;
       _activeInstance = target;
     });
-  }
-
-  void _openLocal() {
-    if (!widget.localEnabled) return;
-    _navigation++;
-    setState(() {
-      _tabFor(const LocalHowlInstanceTarget());
-      _activeServer = null;
-      _activeInstance = const LocalHowlInstanceTarget();
-      _followSavedServer = false;
-    });
-    _closeDrawer();
   }
 
   void _backToServer() {
@@ -206,7 +182,7 @@ final class _AppShellState extends State<AppShell> {
 
   void _staleTarget() {
     final target = _activeInstance;
-    if (target is! ManagedHowlInstanceTarget) return;
+    if (target == null) return;
     _navigation++;
     setState(() {
       _tabs.removeWhere(
@@ -239,11 +215,7 @@ final class _AppShellState extends State<AppShell> {
   void _selectTab(_TerminalTab tab) {
     final target = tab.target;
     if (target.diagnosticLabel == _activeInstance?.diagnosticLabel) return;
-    if (target is ManagedHowlInstanceTarget) {
-      _openManaged(target);
-    } else {
-      _openLocal();
-    }
+    _openTarget(target);
   }
 
   void _closeTab() {
@@ -258,14 +230,10 @@ final class _AppShellState extends State<AppShell> {
       if (_tabs.isNotEmpty) {
         final next = _tabs[index.clamp(0, _tabs.length - 1)].target;
         _activeInstance = next;
-        _activeServer = next is ManagedHowlInstanceTarget
-            ? next.serverEndpoint
-            : null;
+        _activeServer = next.serverEndpoint;
       } else {
         _activeInstance = null;
-        if (active is ManagedHowlInstanceTarget) {
-          _activeServer = active.serverEndpoint;
-        }
+        _activeServer = active.serverEndpoint;
       }
     });
   }
@@ -333,13 +301,10 @@ final class _AppShellState extends State<AppShell> {
         endpoint: server,
         onMenu: _openDrawer,
         fetchTree: widget.fetchTree,
-        onOpenTarget: _openManaged,
+        onOpenTarget: _openTarget,
       );
     }
-    return _EmptyShell(
-      onConfigure: _openDrawer,
-      onOpenLocal: widget.localEnabled ? _openLocal : null,
-    );
+    return _EmptyShell(onConfigure: _openDrawer);
   }
 
   @override
@@ -353,8 +318,6 @@ final class _AppShellState extends State<AppShell> {
         connections: _connections,
         activeServer: _activeServer,
         activeInstance: _activeInstance,
-        localEnabled: widget.localEnabled,
-        onOpenLocal: _openLocal,
         onSelectServer: _selectServer,
         onBackToServer: _backToServer,
       ),
@@ -519,9 +482,8 @@ final class _ShellLoading extends StatelessWidget {
 }
 
 final class _EmptyShell extends StatelessWidget {
-  const _EmptyShell({required this.onConfigure, this.onOpenLocal});
+  const _EmptyShell({required this.onConfigure});
   final VoidCallback onConfigure;
-  final VoidCallback? onOpenLocal;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -535,39 +497,22 @@ final class _EmptyShell extends StatelessWidget {
             const Icon(Icons.terminal, size: 30),
             const SizedBox(height: 12),
             Text(
-              onOpenLocal == null ? 'No Server configured' : 'Open Howl',
+              'No Server configured',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
-              onOpenLocal == null
-                  ? 'Add a Howl Server endpoint to browse its Sessions and Instances.'
-                  : 'Open a shell on this device, or connect to a Howl Server.',
+              'Add a Howl Server endpoint to browse its Sessions and Instances.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
-            if (onOpenLocal case final openLocal?) ...<Widget>[
-              FilledButton.icon(
-                key: const Key('howl-shell-local'),
-                onPressed: openLocal,
-                icon: const Icon(Icons.terminal, size: 18),
-                label: const Text('Local shell'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                key: const Key('howl-shell-configure'),
-                onPressed: onConfigure,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add Server'),
-              ),
-            ] else
-              FilledButton.icon(
-                key: const Key('howl-shell-configure'),
-                onPressed: onConfigure,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add Server'),
-              ),
+            FilledButton.icon(
+              key: const Key('howl-shell-configure'),
+              onPressed: onConfigure,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add Server'),
+            ),
           ],
         ),
       ),
@@ -580,8 +525,6 @@ final class _ServerDrawer extends StatelessWidget {
     required this.connections,
     required this.activeServer,
     required this.activeInstance,
-    required this.localEnabled,
-    required this.onOpenLocal,
     required this.onSelectServer,
     required this.onBackToServer,
   });
@@ -589,8 +532,6 @@ final class _ServerDrawer extends StatelessWidget {
   final ServerConnections connections;
   final HowlEndpoint? activeServer;
   final HowlInstanceTarget? activeInstance;
-  final bool localEnabled;
-  final VoidCallback onOpenLocal;
   final Future<void> Function(ServerConnection) onSelectServer;
   final VoidCallback onBackToServer;
 
@@ -624,7 +565,7 @@ final class _ServerDrawer extends StatelessWidget {
               ),
             ),
             if (activeInstance
-                case final ManagedHowlInstanceTarget target?) ...<Widget>[
+                case final HowlInstanceTarget target?) ...<Widget>[
               ListTile(
                 key: const Key('howl-shell-back-server'),
                 dense: true,
@@ -634,18 +575,6 @@ final class _ServerDrawer extends StatelessWidget {
                   'Session ${target.sessionId} · Instance ${target.instanceId}',
                 ),
                 onTap: onBackToServer,
-              ),
-              const Divider(height: 1),
-            ],
-            if (localEnabled) ...<Widget>[
-              ListTile(
-                key: const Key('howl-shell-local-drawer'),
-                dense: true,
-                selected: activeInstance is LocalHowlInstanceTarget,
-                leading: const Icon(Icons.terminal, size: 19),
-                title: const Text('Local shell'),
-                subtitle: const Text('This device'),
-                onTap: onOpenLocal,
               ),
               const Divider(height: 1),
             ],

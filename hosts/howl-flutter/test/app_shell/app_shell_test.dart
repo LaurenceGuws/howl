@@ -37,7 +37,7 @@ void main() {
   testWidgets('terminal tab strip consumes the top safe area exactly once', (
     tester,
   ) async {
-    final target = ManagedHowlInstanceTarget(
+    final target = HowlInstanceTarget(
       serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
       serverId: '99',
       sessionId: '7',
@@ -74,7 +74,7 @@ void main() {
     'tabs follow VT titles, allow overrides, and close only attachments',
     (tester) async {
       final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
-      final first = ManagedHowlInstanceTarget(
+      final first = HowlInstanceTarget(
         serverEndpoint: endpoint,
         serverId: '18446744073709551615',
         sessionId: '7',
@@ -146,48 +146,6 @@ void main() {
   );
 
   testWidgets(
-    'desktop shell opens one Local target without inventing a Server route',
-    (tester) async {
-      final connections = ServerConnections(_MemoryStore());
-      final builtTargets = <HowlInstanceTarget>[];
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(
-            localEnabled: true,
-            connections: connections,
-            terminalBuilder: (_, target, _, _) {
-              builtTargets.add(target);
-              return Text(
-                target.diagnosticLabel,
-                key: const Key('local-terminal'),
-              );
-            },
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Open Howl'), findsOneWidget);
-      expect(find.byKey(const Key('howl-shell-local')), findsOneWidget);
-      expect(connections.selectedEndpoint, isNull);
-
-      await tester.tap(find.byKey(const Key('howl-shell-local')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('local-terminal')), findsOneWidget);
-      expect(find.text('local instance'), findsOneWidget);
-      expect(builtTargets.single, isA<LocalHowlInstanceTarget>());
-      expect(connections.selectedEndpoint, isNull);
-
-      await tester.tap(find.byKey(const Key('howl-shell-menu')));
-      await tester.pumpAndSettle();
-      final localTile = tester.widget<ListTile>(
-        find.byKey(const Key('howl-shell-local-drawer')),
-      );
-      expect(localTile.selected, isTrue);
-    },
-  );
-
-  testWidgets(
     'route-less shell uses button-only drawer and opens managed Instance',
     (tester) async {
       final connections = ServerConnections(_MemoryStore());
@@ -250,7 +208,7 @@ void main() {
       expect(find.byKey(const Key('fake-terminal')), findsOneWidget);
       expect(find.text('terminal 7/2'), findsOneWidget);
       expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
-      expect(builtTargets.single, isA<ManagedHowlInstanceTarget>());
+      expect(builtTargets.single, isA<HowlInstanceTarget>());
 
       await tester.tap(find.byKey(const Key('howl-shell-menu')));
       await tester.pumpAndSettle();
@@ -293,7 +251,7 @@ void main() {
   testWidgets(
     'exact Instance launch stays terminal-first with shell navigation',
     (tester) async {
-      final target = ManagedHowlInstanceTarget(
+      final target = HowlInstanceTarget(
         serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43127'),
         serverId: '91',
         sessionId: '7',
@@ -406,7 +364,7 @@ void main() {
     tester,
   ) async {
     final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
-    final first = ManagedHowlInstanceTarget(
+    final first = HowlInstanceTarget(
       serverEndpoint: endpoint,
       serverId: '99',
       sessionId: '7',
@@ -507,7 +465,7 @@ void main() {
     tester,
   ) async {
     final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
-    final target = ManagedHowlInstanceTarget(
+    final target = HowlInstanceTarget(
       serverEndpoint: endpoint,
       serverId: '91',
       sessionId: '7',
@@ -544,7 +502,7 @@ void main() {
   testWidgets('explicit launch route is visible while saved-route read fails', (
     tester,
   ) async {
-    final target = ManagedHowlInstanceTarget(
+    final target = HowlInstanceTarget(
       serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43127'),
       serverId: '91',
       sessionId: '7',

@@ -29,7 +29,7 @@ void main() {
   testWidgets('empty Server can create and open its first terminal', (
     tester,
   ) async {
-    ManagedHowlInstanceTarget? selected;
+    HowlInstanceTarget? selected;
     String? name;
     String? shellSeen;
     String? serverId;
@@ -79,7 +79,7 @@ void main() {
     );
     String? selectedSession;
     final pending = Completer<ServerLaunchReceipt>();
-    ManagedHowlInstanceTarget? selected;
+    HowlInstanceTarget? selected;
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
@@ -113,7 +113,7 @@ void main() {
       '{"schema":"howl.server.tree/v1","server_id":"9",'
       '"tree_revision":"1","sessions":[]}',
     );
-    ManagedHowlInstanceTarget? selected;
+    HowlInstanceTarget? selected;
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(

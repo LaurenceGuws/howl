@@ -25,7 +25,7 @@ final class ServerBrowser extends StatefulWidget {
   });
 
   final HowlEndpoint endpoint;
-  final ValueChanged<ManagedHowlInstanceTarget> onOpenTarget;
+  final ValueChanged<HowlInstanceTarget> onOpenTarget;
   final VoidCallback? onMenu;
 
   final ServerTreeFetcher fetchTree;
@@ -219,7 +219,7 @@ final class _ServerBrowserState extends State<ServerBrowser>
         throw const ServerTreeException('launch_server_identity');
       }
       widget.onOpenTarget(
-        ManagedHowlInstanceTarget(
+        HowlInstanceTarget(
           serverEndpoint: widget.endpoint,
           serverId: receipt.serverId,
           sessionId: receipt.sessionId,
@@ -249,7 +249,7 @@ final class _ServerBrowserState extends State<ServerBrowser>
 
   void _open(String serverId, ServerSession session, ServerInstance instance) {
     if (instance.state != ServerInstanceState.running) return;
-    final target = ManagedHowlInstanceTarget(
+    final target = HowlInstanceTarget(
       serverEndpoint: widget.endpoint,
       serverId: serverId,
       sessionId: session.id,
