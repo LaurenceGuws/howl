@@ -17,7 +17,7 @@ import 'app_shell/held_key_repeat.dart';
 import 'server/endpoint.dart';
 import 'delete/howl_input.dart';
 import 'app_shell/app_shell.dart';
-import 'delete/instance_target.dart';
+import 'server/attachment.dart';
 import 'delete/ios_network_probe.dart';
 import 'delete/launch_config.dart';
 import 'canvas/surface.dart';
@@ -99,13 +99,13 @@ final class HowlApp extends StatelessWidget {
       theme: ThemeData.dark(useMaterial3: false),
       home: AppShell(
         initialServerEndpoint: endpoint,
-        terminalBuilder: (context, target, onStaleTarget, onTitleChanged) =>
+        terminalBuilder: (context, target, onStaleTarget, onBrowseInstances) =>
             HowlTerminal(
               key: ValueKey<String>(target.diagnosticLabel),
               target: target,
               geometryLeader: geometryLeader,
               onStaleTarget: onStaleTarget,
-              onTitleChanged: onTitleChanged,
+              onBrowseInstances: onBrowseInstances,
             ),
       ),
     );
@@ -117,13 +117,13 @@ final class HowlTerminal extends StatefulWidget {
     super.key,
     required this.target,
     required this.geometryLeader,
+    required this.onBrowseInstances,
     this.onStaleTarget,
-    this.onTitleChanged,
   });
-  final HowlInstanceTarget target;
+  final Attachment target;
   final bool geometryLeader;
   final VoidCallback? onStaleTarget;
-  final ValueChanged<String?>? onTitleChanged;
+  final VoidCallback onBrowseInstances;
 
   @override
   State<HowlTerminal> createState() => _HowlTerminalState();
@@ -144,8 +144,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
   late final VoidCallback _semanticsEnabledListener;
   late final Stopwatch _perfClock;
   int? _lastAdoptUs;
-  String? _lastReportedTitle;
-  bool _hasReportedTitle = false;
   final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
   final PlatformInput _platformInput = const PlatformInput();
   late final TerminalSoftKeyboardOwner _softKeyboard;
@@ -554,11 +552,6 @@ final class _HowlTerminalState extends State<HowlTerminal>
             );
           }
           _nativeLiveMetadata = packet.metadata;
-          if (!_hasReportedTitle || _lastReportedTitle != packet.title) {
-            _hasReportedTitle = true;
-            _lastReportedTitle = packet.title;
-            widget.onTitleChanged?.call(packet.title);
-          }
           _validateSelection(packet.metadata);
           _nativeLiveSemanticText = packet.semanticText;
           _nativeLiveSemanticTruncated = packet.semanticTruncated;
@@ -2119,6 +2112,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
             onLog: () => unawaited(_copyDiagnostics()),
+            onBrowseInstances: widget.onBrowseInstances,
           ),
         ],
       ),

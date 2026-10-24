@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/app_shell/app_shell.dart';
-import 'package:howl_flutter/server/endpoint.dart';
-import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/attachment.dart';
 import 'package:howl_flutter/server/connections.dart';
+import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/server/tree.dart';
 
 final class _MemoryStore implements ServerConnectionStore {
@@ -25,25 +25,41 @@ final class _ThrowingReadStore implements ServerConnectionStore {
       throw StateError('write forbidden');
 }
 
-ServerTree _tree() => ServerTree.parse(
-  '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615",'
-  '"tree_revision":"4","sessions":['
-  '{"session_id":"7","name":"work","instances":['
-  '{"instance_id":"1","state":"exited"},'
-  '{"instance_id":"2","state":"running"}]}]}',
-);
+final Endpoint _endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
+
+ServerTree _tree({bool bothRunning = false}) {
+  final firstState = bothRunning ? 'running' : 'exited';
+  return ServerTree.parse(
+    '{"schema":"howl.server.tree/v1","server_id":"91",'
+    '"tree_revision":"4","sessions":['
+    '{"session_id":"7","name":"work","instances":['
+    '{"instance_id":"1","state":"$firstState"},'
+    '{"instance_id":"2","state":"running"}]}]}',
+  );
+}
+
+Future<ServerConnections> _savedServer(_MemoryStore store) async {
+  final connections = ServerConnections(store);
+  await connections.initialize();
+  await connections.upsert(
+    ServerConnection(label: 'Home', endpoint: _endpoint.toString()),
+  );
+  await connections.select(_endpoint.toString());
+  return connections;
+}
+
+Future<void> _selectWork(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('howl-shell-menu')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('howl-session-7')));
+  await tester.pumpAndSettle();
+}
 
 void main() {
-  testWidgets('terminal tab strip consumes the top safe area exactly once', (
+  testWidgets('terminal has no Flutter tab strip or double-spent safe area', (
     tester,
   ) async {
-    final target = HowlInstanceTarget(
-      serverEndpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
-      serverId: '99',
-      sessionId: '7',
-      instanceId: '1',
-    );
-    double? terminalTopInset;
+    double? topInset;
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
@@ -52,115 +68,46 @@ void main() {
             viewPadding: EdgeInsets.only(top: 48),
           ),
           child: AppShell(
-            initialInstanceTarget: target,
             connections: ServerConnections(_MemoryStore()),
-            terminalBuilder: (_, _, _, _) => Builder(
-              builder: (context) {
-                terminalTopInset = MediaQuery.viewPaddingOf(context).top;
-                return const Text('terminal');
-              },
+            initialAttachment: Attachment(
+              serverEndpoint: _endpoint,
+              serverId: '91',
+              sessionId: '7',
+              instanceId: '2',
             ),
+            terminalBuilder: (context, _, _, _) {
+              topInset = MediaQuery.viewPaddingOf(context).top;
+              return const Text('terminal');
+            },
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(terminalTopInset, 0);
-    final menu = tester.getTopLeft(find.byKey(const Key('howl-shell-menu')));
-    expect(menu.dy, greaterThanOrEqualTo(48));
+    expect(topInset, 48);
+    expect(find.text('terminal'), findsOneWidget);
+    expect(find.byKey(const Key('howl-tab-actions')), findsNothing);
+    expect(find.byKey(const Key('howl-tab-browse')), findsNothing);
   });
 
   testWidgets(
-    'tabs follow VT titles, allow overrides, and close only attachments',
-    (tester) async {
-      final endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
-      final first = HowlInstanceTarget(
-        serverEndpoint: endpoint,
-        serverId: '18446744073709551615',
-        sessionId: '7',
-        instanceId: '2',
-      );
-      final reported = <String, ValueChanged<String?>>{};
-      final selected = <String>[];
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(
-            connections: ServerConnections(_MemoryStore()),
-            initialInstanceTarget: first,
-            fetchTree: (_) =>
-                ServerTreeRequest.fromFuture(Future.value(_tree())),
-            terminalBuilder: (_, target, _, onTitleChanged) {
-              reported[target.instanceId] = onTitleChanged;
-              selected.add(target.instanceId);
-              return const SizedBox(key: Key('fake-terminal'));
-            },
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Instance 2'), findsOneWidget);
-
-      reported['2']!('rain \u001b[31m\u202ex');
-      await tester.pump();
-      expect(find.text('rain [31mx'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('howl-tab-actions')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Rename tab'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const Key('howl-tab-name')), 'My TUI');
-      await tester.tap(find.byKey(const Key('howl-tab-save')));
-      await tester.pumpAndSettle();
-      reported['2']!('a new program');
-      await tester.pump();
-      expect(find.text('My TUI'), findsOneWidget);
-      expect(find.text('a new program'), findsNothing);
-
-      await tester.tap(find.byKey(const Key('howl-tab-browse')));
-      await tester.pumpAndSettle();
-      expect(find.text('work'), findsOneWidget);
-      await tester.tap(find.text('Instance 1'));
-      await tester.pump();
-      expect(find.byKey(const Key('fake-terminal')), findsNothing);
-      await tester.tap(find.text('Instance 2'));
-      await tester.pumpAndSettle();
-      expect(selected.last, '2');
-      expect(find.text('My TUI'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('howl-tab-actions')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Rename tab'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const Key('howl-tab-name')), '');
-      await tester.tap(find.byKey(const Key('howl-tab-save')));
-      await tester.pumpAndSettle();
-      expect(find.text('a new program'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('howl-tab-actions')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Close tab'));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('fake-terminal')), findsNothing);
-      expect(find.text('work'), findsOneWidget);
-      expect(find.text('Instance 2'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'route-less shell uses button-only drawer and opens managed Instance',
+    'Settings selects Server, drawer selects Session, chips open Instance',
     (tester) async {
       final connections = ServerConnections(_MemoryStore());
-      final builtTargets = <HowlInstanceTarget>[];
+      VoidCallback? browseInstances;
+      var fetches = 0;
       await tester.pumpWidget(
         MaterialApp(
-          theme: ThemeData.dark(useMaterial3: false),
           home: AppShell(
             connections: connections,
-            fetchTree: (_) =>
-                ServerTreeRequest.fromFuture(Future.value(_tree())),
-            terminalBuilder: (context, target, _, _) {
-              builtTargets.add(target);
+            fetchTree: (_) {
+              fetches++;
+              return ServerTreeRequest.fromFuture(Future.value(_tree()));
+            },
+            terminalBuilder: (_, attachment, _, browse) {
+              browseInstances = browse;
               return Text(
-                'terminal ${target.sessionId}/${target.instanceId}',
+                'terminal ${attachment.instanceId}',
                 key: const Key('fake-terminal'),
               );
             },
@@ -168,15 +115,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-
       expect(find.text('No Server configured'), findsOneWidget);
-      expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
-      final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
-      expect(scaffold.drawerEnableOpenDragGesture, isFalse);
 
       await tester.tap(find.byKey(const Key('howl-shell-configure')));
       await tester.pumpAndSettle();
-      expect(find.text('Connections'), findsOneWidget);
+      expect(find.text('Server Settings'), findsOneWidget);
       await tester.tap(find.byKey(const Key('howl-shell-add-server')));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -185,263 +128,134 @@ void main() {
       );
       await tester.enterText(
         find.byKey(const Key('howl-server-endpoint')),
-        'tcp://127.0.0.1:43130',
+        _endpoint.toString(),
       );
       await tester.tap(find.byKey(const Key('howl-server-save')));
       await tester.pumpAndSettle();
       expect(connections.servers.single.label, 'Home');
-
       await tester.tap(
-        find.byKey(const Key('howl-shell-server-tcp://127.0.0.1:43130')),
+        find.byKey(Key('howl-shell-server-${_endpoint.toString()}')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('work'), findsOneWidget);
+      expect(find.text('Choose a Session'), findsOneWidget);
+
+      await _selectWork(tester);
       expect(find.text('Instance 1'), findsOneWidget);
       expect(find.text('Instance 2'), findsOneWidget);
-
-      await tester.tap(find.text('Instance 1'));
-      await tester.pump();
+      expect(find.text('exited'), findsOneWidget);
+      expect(
+        tester
+            .widget<ActionChip>(find.byKey(const Key('howl-instance-7-1')))
+            .onPressed,
+        isNull,
+      );
       expect(find.byKey(const Key('fake-terminal')), findsNothing);
+      await tester.tap(find.byKey(const Key('howl-instance-7-2')));
+      await tester.pumpAndSettle();
+      expect(find.text('terminal 2'), findsOneWidget);
+      expect(find.byKey(const Key('howl-tab-actions')), findsNothing);
+      expect(browseInstances, isNotNull);
 
-      await tester.tap(find.text('Instance 2'));
+      browseInstances!();
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('fake-terminal')), findsOneWidget);
-      expect(find.text('terminal 7/2'), findsOneWidget);
-      expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
-      expect(builtTargets.single, isA<HowlInstanceTarget>());
-
-      await tester.tap(find.byKey(const Key('howl-shell-menu')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('howl-shell-back-server')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('howl-shell-back-server')));
-      await tester.pumpAndSettle();
-      expect(find.text('work'), findsOneWidget);
       expect(find.byKey(const Key('fake-terminal')), findsNothing);
+      expect(find.text('Instance 2'), findsOneWidget);
+      expect(fetches, greaterThanOrEqualTo(2));
     },
   );
 
-  testWidgets(
-    'saved selected Server becomes startup surface without launch route',
-    (tester) async {
-      final store = _MemoryStore();
-      final connections = ServerConnections(store);
-      await connections.initialize();
-      final server = ServerConnection(
-        label: 'Home',
-        endpoint: 'tcp://127.0.0.1:43130',
-      );
-      await connections.upsert(server);
-      await connections.select(server.endpoint);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(
-            connections: connections,
-            fetchTree: (_) =>
-                ServerTreeRequest.fromFuture(Future.value(_tree())),
-            terminalBuilder: (_, target, _, _) => const SizedBox.shrink(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('work'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'exact Instance launch stays terminal-first with shell navigation',
-    (tester) async {
-      final target = HowlInstanceTarget(
-        serverEndpoint: Endpoint.parse('tcp://127.0.0.1:43127'),
-        serverId: '91',
-        sessionId: '7',
-        instanceId: '3',
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(
-            connections: ServerConnections(_MemoryStore()),
-            initialInstanceTarget: target,
-            terminalBuilder: (_, value, _, _) =>
-                Text(value.endpointText, key: const Key('selected-terminal')),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('selected-terminal')), findsOneWidget);
-      expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'editing selected saved Server follows the replacement endpoint',
-    (tester) async {
-      final store = _MemoryStore();
-      final connections = ServerConnections(store);
-      await connections.initialize();
-      final oldServer = ServerConnection(
-        label: 'Home',
-        endpoint: 'tcp://127.0.0.1:43130',
-      );
-      await connections.upsert(oldServer);
-      await connections.select(oldServer.endpoint);
-
-      final fetched = <String>[];
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(
-            connections: connections,
-            fetchTree: (endpoint) {
-              fetched.add(endpoint.toString());
-              return ServerTreeRequest.fromFuture(Future.value(_tree()));
-            },
-            terminalBuilder: (_, _, _, _) => const SizedBox.shrink(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(fetched.last, oldServer.endpoint);
-
-      final moved = ServerConnection(
-        label: 'Home',
-        endpoint: 'tcp://127.0.0.1:43132',
-      );
-      await connections.upsert(moved, replacingEndpoint: oldServer.endpoint);
-      await tester.pumpAndSettle();
-
-      expect(connections.selectedEndpoint, moved.endpoint);
-      expect(fetched.last, moved.endpoint);
-      expect(find.text('work'), findsOneWidget);
-    },
-  );
-
-  testWidgets('removing selected saved Server ejects managed terminal', (
+  testWidgets('Instance switching uses fresh Server chips, not local tabs', (
     tester,
   ) async {
-    final store = _MemoryStore();
-    final connections = ServerConnections(store);
-    await connections.initialize();
-    final server = ServerConnection(
-      label: 'Home',
-      endpoint: 'tcp://127.0.0.1:43130',
-    );
-    await connections.upsert(server);
-    await connections.select(server.endpoint);
-
+    final connections = await _savedServer(_MemoryStore());
+    VoidCallback? browse;
+    final opened = <String>[];
     await tester.pumpWidget(
       MaterialApp(
         home: AppShell(
           connections: connections,
-          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(_tree())),
-          terminalBuilder: (_, target, _, _) => Text(
-            'terminal ${target.sessionId}/${target.instanceId}',
-            key: const Key('managed-terminal-under-removal'),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(
+            Future.value(_tree(bothRunning: true)),
           ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Instance 2'));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('managed-terminal-under-removal')),
-      findsOneWidget,
-    );
-
-    await connections.remove(server.endpoint);
-    await tester.pumpAndSettle();
-
-    expect(connections.selectedEndpoint, isNull);
-    expect(
-      find.byKey(const Key('managed-terminal-under-removal')),
-      findsNothing,
-    );
-    expect(find.text('No Server configured'), findsOneWidget);
-    expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
-  });
-
-  testWidgets('two client tabs switch Instances without closing either', (
-    tester,
-  ) async {
-    final endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
-    final first = HowlInstanceTarget(
-      serverEndpoint: endpoint,
-      serverId: '99',
-      sessionId: '7',
-      instanceId: '1',
-    );
-    final tree = ServerTree.parse(
-      '{"schema":"howl.server.tree/v1","server_id":"99",'
-      '"tree_revision":"3","sessions":['
-      '{"session_id":"7","name":"work","instances":['
-      '{"instance_id":"1","state":"running"},'
-      '{"instance_id":"2","state":"running"}]}]}',
-    );
-    final visited = <String>[];
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AppShell(
-          connections: ServerConnections(_MemoryStore()),
-          initialInstanceTarget: first,
-          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
-          terminalBuilder: (_, target, _, _) {
-            visited.add(target.instanceId);
-            return Text('active ${target.instanceId}');
+          terminalBuilder: (_, attachment, _, back) {
+            opened.add(attachment.instanceId);
+            browse = back;
+            return Text('active ${attachment.instanceId}');
           },
         ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('howl-tab-browse')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Instance 2'));
-    await tester.pumpAndSettle();
-    expect(find.text('active 2'), findsOneWidget);
-    expect(find.text('Instance 1'), findsOneWidget);
-    expect(find.text('Instance 2'), findsOneWidget);
-
-    await tester.tap(find.byKey(Key('howl-tab-${first.diagnosticLabel}')));
+    await _selectWork(tester);
+    await tester.tap(find.byKey(const Key('howl-instance-7-1')));
     await tester.pumpAndSettle();
     expect(find.text('active 1'), findsOneWidget);
-    expect(visited.last, '1');
-
-    await tester.tap(find.byKey(const Key('howl-tab-actions')));
+    browse!();
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Close tab'));
+    await tester.tap(find.byKey(const Key('howl-instance-7-2')));
     await tester.pumpAndSettle();
     expect(find.text('active 2'), findsOneWidget);
-    expect(visited.last, '2');
-    await tester.tap(find.byKey(const Key('howl-tab-browse')));
-    await tester.pumpAndSettle();
-    expect(find.text('Instance 1'), findsOneWidget);
-    expect(find.text('Instance 2'), findsOneWidget);
+    expect(opened, containsAllInOrder(<String>['1', '2']));
+    expect(find.byKey(const Key('howl-tab-actions')), findsNothing);
   });
 
-  testWidgets('transient Server launch ignores saved selection mutations', (
+  testWidgets(
+    'relaunch refreshes Server, not a saved Session or Instance tab',
+    (tester) async {
+      final store = _MemoryStore();
+      final initialConnections = await _savedServer(store);
+      var requests = 0;
+      ServerTreeRequest fetch(Endpoint _) {
+        requests++;
+        return ServerTreeRequest.fromFuture(Future.value(_tree()));
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const ValueKey('first-launch'),
+          home: AppShell(
+            connections: initialConnections,
+            fetchTree: fetch,
+            terminalBuilder: (_, attachment, _, _) =>
+                Text('active ${attachment.instanceId}'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _selectWork(tester);
+      await tester.tap(find.byKey(const Key('howl-instance-7-2')));
+      await tester.pumpAndSettle();
+      expect(find.text('active 2'), findsOneWidget);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const ValueKey('second-launch'),
+          home: AppShell(
+            connections: ServerConnections(store),
+            fetchTree: fetch,
+            terminalBuilder: (_, attachment, _, _) =>
+                Text('active ${attachment.instanceId}'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(requests, 2);
+      expect(find.text('Choose a Session'), findsOneWidget);
+      expect(find.text('active 2'), findsNothing);
+      await _selectWork(tester);
+      expect(find.text('Instance 2'), findsOneWidget);
+    },
+  );
+
+  testWidgets('editing the selected Server follows its replacement endpoint', (
     tester,
   ) async {
-    final store = _MemoryStore();
-    final connections = ServerConnections(store);
-    await connections.initialize();
-    final saved = ServerConnection(
-      label: 'Saved',
-      endpoint: 'tcp://127.0.0.1:43130',
-    );
-    final other = ServerConnection(
-      label: 'Other',
-      endpoint: 'tcp://127.0.0.1:43131',
-    );
-    await connections.upsert(saved);
-    await connections.upsert(other);
-    await connections.select(saved.endpoint);
-
-    final transient = Endpoint.parse('tcp://127.0.0.1:43999');
+    final connections = await _savedServer(_MemoryStore());
     final fetched = <String>[];
     await tester.pumpWidget(
       MaterialApp(
         home: AppShell(
           connections: connections,
-          initialServerEndpoint: transient,
           fetchTree: (endpoint) {
             fetched.add(endpoint.toString());
             return ServerTreeRequest.fromFuture(Future.value(_tree()));
@@ -451,82 +265,105 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(fetched.last, transient.toString());
-
-    await connections.select(other.endpoint);
+    final replacement = ServerConnection(
+      label: 'Home',
+      endpoint: 'tcp://127.0.0.1:43132',
+    );
+    await connections.upsert(
+      replacement,
+      replacingEndpoint: _endpoint.toString(),
+    );
     await tester.pumpAndSettle();
-
-    expect(connections.selectedEndpoint, other.endpoint);
-    expect(fetched.last, transient.toString());
-    expect(find.text('work'), findsOneWidget);
+    expect(connections.selectedEndpoint, replacement.endpoint);
+    expect(fetched.last, replacement.endpoint);
+    expect(find.text('Choose a Session'), findsOneWidget);
   });
 
-  testWidgets('stale managed terminal returns to its Server browser', (
+  testWidgets('removing selected Server detaches its visible Instance', (
     tester,
   ) async {
-    final endpoint = Endpoint.parse('tcp://127.0.0.1:43130');
-    final target = HowlInstanceTarget(
-      serverEndpoint: endpoint,
-      serverId: '91',
-      sessionId: '7',
-      instanceId: '2',
-    );
-    VoidCallback? stale;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AppShell(
-          connections: ServerConnections(_MemoryStore()),
-          initialInstanceTarget: target,
-          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(_tree())),
-          terminalBuilder: (_, value, onStaleTarget, _) {
-            stale = onStaleTarget;
-            return Text(
-              'terminal ${value.sessionId}/${value.instanceId}',
-              key: const Key('stale-terminal'),
-            );
-          },
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('stale-terminal')), findsOneWidget);
-    expect(stale, isNotNull);
-
-    stale!();
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('stale-terminal')), findsNothing);
-    expect(find.text('work'), findsOneWidget);
-    expect(find.text('Instance 2'), findsOneWidget);
-  });
-
-  testWidgets('explicit launch route is visible while saved-route read fails', (
-    tester,
-  ) async {
-    final target = HowlInstanceTarget(
-      serverEndpoint: Endpoint.parse('tcp://127.0.0.1:43127'),
-      serverId: '91',
-      sessionId: '7',
-      instanceId: '3',
-    );
-    final connections = ServerConnections(_ThrowingReadStore());
+    final connections = await _savedServer(_MemoryStore());
     await tester.pumpWidget(
       MaterialApp(
         home: AppShell(
           connections: connections,
-          initialInstanceTarget: target,
-          terminalBuilder: (_, value, _, _) => Text(
-            value.endpointText,
-            key: const Key('explicit-terminal-read-failure'),
+          fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(_tree())),
+          terminalBuilder: (_, attachment, _, _) => Text(
+            'active ${attachment.instanceId}',
+            key: const Key('terminal-under-removal'),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('explicit-terminal-read-failure')),
-      findsOneWidget,
+    await _selectWork(tester);
+    await tester.tap(find.byKey(const Key('howl-instance-7-2')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('terminal-under-removal')), findsOneWidget);
+    await connections.remove(_endpoint.toString());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('terminal-under-removal')), findsNothing);
+    expect(find.text('No Server configured'), findsOneWidget);
+  });
+
+  testWidgets('stale attachment returns to freshly fetched Server state', (
+    tester,
+  ) async {
+    VoidCallback? stale;
+    var requests = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(
+          connections: ServerConnections(_MemoryStore()),
+          initialAttachment: Attachment(
+            serverEndpoint: _endpoint,
+            serverId: '91',
+            sessionId: '7',
+            instanceId: '2',
+          ),
+          fetchTree: (_) {
+            requests++;
+            return ServerTreeRequest.fromFuture(Future.value(_tree()));
+          },
+          terminalBuilder: (_, attachment, onStale, _) {
+            stale = onStale;
+            return Text('active ${attachment.instanceId}');
+          },
+        ),
+      ),
     );
-    expect(connections.initialized, isTrue);
+    await tester.pumpAndSettle();
+    expect(find.text('active 2'), findsOneWidget);
+    stale!();
+    await tester.pumpAndSettle();
+    expect(requests, 1);
+    expect(find.text('active 2'), findsNothing);
+    expect(find.text('Instance 2'), findsOneWidget);
+  });
+
+  testWidgets('explicit attachment survives a failed saved Server read', (
+    tester,
+  ) async {
+    final connections = ServerConnections(_ThrowingReadStore());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(
+          connections: connections,
+          initialAttachment: Attachment(
+            serverEndpoint: _endpoint,
+            serverId: '91',
+            sessionId: '7',
+            instanceId: '2',
+          ),
+          terminalBuilder: (_, attachment, _, _) => Text(
+            attachment.endpointText,
+            key: const Key('explicit-terminal'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('explicit-terminal')), findsOneWidget);
     expect(connections.loadError, isNotNull);
   });
 }

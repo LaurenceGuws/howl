@@ -167,12 +167,17 @@ experimental:
     discovery, generic multi-source compositor, or stable mobile ABI.
   howl-flutter: >-
     maintained native graphical client canary with a deliberately small app shell.
-    The shell may start route-less, persists only explicit labelled Server endpoints
-    plus the selected saved Server, and exposes them through a button-opened drawer
-    whose edge-drag gesture is disabled. Server mode performs validated native tree queries and explicit incarnation-guarded Session/Instance creation through server-client, presents Session labels + Instance
-    lineage, and on running-Instance selection attaches exact Session+Instance
-    identity and client ID in one ready response, with no second handshake or proxy. Dart
-    keeps no authoritative Server mirror; terminal presentation/input/viewport/
+    The shell may start route-less and persists only labelled Server endpoints
+    plus the selected saved Server, configured on a settings page. Its
+    button-opened drawer selects Sessions; a second page presents the selected
+    Session's Instance chips, including exited lineage and explicit creation.
+    Edge-drag drawer opening is disabled. Server mode performs validated native
+    tree queries and incarnation-guarded Session/Instance creation through
+    server-client; opening a running Instance attaches exact Session+Instance
+    identity and client ID in one ready response, with no second handshake or
+    proxy. The existing terminal controls return to the picker without any
+    client-owned tab strip or durable Session/Instance navigation. Relaunch
+    refreshes Server state. Dart keeps no authoritative Server mirror; terminal presentation/input/viewport/
     history/selection/native-size UX remains Instance-only after handoff. Every
     Flutter platform (including desktop development hosts) is Server-client-only.
     Native client observation and semantic controls copy frame/text/image packets

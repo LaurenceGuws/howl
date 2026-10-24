@@ -16,15 +16,15 @@ app-private copied native-host frame
 Flutter resource lease + batched Canvas backend
 ```
 
-The mobile app shell keeps client-side tabs for selected Instances. A tab is an
-attachment choice, not a Server resource: closing it detaches the visible
-observer/control without terminating the canonical PTY/VT. The fixed tab strip
-occupies the top safe area instead of floating over terminal cells. Tab labels
-use an explicit client override when present, otherwise the child's retained
-OSC terminal title, otherwise the Instance identity. Clearing a rename returns
-to the live terminal title. The versioned private native host frame includes
-the bounded title bytes from the same coherent observation; neither Flutter
-nor the renderer reparses escape sequences.
+The mobile app shell persists only Server endpoint settings. It fetches Sessions
+and their Instances from Server and offers Session selection in the drawer,
+followed by Instance chips on the browser page. Selecting a running Instance
+attaches its visible observer/control without owning or terminating the canonical
+PTY/VT. The existing terminal control strip returns to the Instance picker;
+there is no client-side tab model or permanent tab strip. Closing and relaunching
+Flutter rediscovers the Server tree rather than restoring client-owned Session
+or Instance state. The private native host frame includes bounded terminal title
+bytes from the coherent observation; Flutter does not reparse escape sequences.
 
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
@@ -251,10 +251,11 @@ howl_flutter --server ENDPOINT  transient Server browser
 ```
 
 Selecting a Server performs the existing validated one-shot native tree query.
-Selecting a running Instance turns the body into the unchanged terminal canary via
-`HowlInstanceTarget`. The drawer remains available on top of that terminal and
-provides a simple Back to Server action. Exited Instances remain lifecycle history in
-the browser and are not openable.
+The drawer chooses a Session; the browser displays the Instances in that Session.
+Selecting a running Instance turns the body into the unchanged terminal canary
+via the narrow `Attachment` identity in `server/attachment.dart`. The terminal's
+existing overflow controls include an Instances action that returns to the
+browser. Exited Instances remain lifecycle history and cannot be opened.
 
 ## Ownership notes
 
@@ -283,10 +284,10 @@ This deletion makes no new Windows runtime or mobile-device qualification claim.
 The Dart Server surface is deliberately thin. `NativeServerTree.fetch` performs one
 validated native `server-client` query and returns a typed read-only tree. Flutter
 does not parse `server_protocol` bytes or retain a second authoritative Server model.
-The browser shows Session labels and retained Instance lineage; exited Instances stay
-visible but cannot be opened. Selecting a running Instance creates one
-`HowlInstanceTarget`, after which the existing terminal observer/control path
-is reused unchanged.
+The drawer shows Session labels, and the selected Session's browser shows retained
+Instance lineage; exited Instances stay visible but cannot be opened. Selecting a
+running Instance creates one `Attachment`, after which the existing terminal
+observer/control path is reused unchanged.
 
 The Server browser can also launch a terminal directly from iOS/Android. The
 explicit native `server_client` control request first validates the selected

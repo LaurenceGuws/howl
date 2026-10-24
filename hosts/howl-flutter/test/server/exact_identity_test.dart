@@ -3,7 +3,7 @@ import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/server/endpoint.dart';
-import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/attachment.dart';
 import 'package:howl_flutter/server/tree.dart';
 
 String tree(String session, String instance) => jsonEncode({
@@ -27,7 +27,7 @@ void main() {
       'exact u64 $value survives tree target isolate and FFI bits',
       () async {
         final parsed = ServerTree.parse(tree(value, value));
-        final target = HowlInstanceTarget(
+        final target = Attachment(
           serverEndpoint: Endpoint.parse('tcp://127.0.0.1:1'),
           serverId: parsed.serverId,
           sessionId: parsed.sessions.single.id,
@@ -54,7 +54,7 @@ void main() {
       }
       for (final pair in [(value, '1'), ('1', value)]) {
         expect(
-          () => HowlInstanceTarget(
+          () => Attachment(
             serverEndpoint: Endpoint.parse('tcp://127.0.0.1:1'),
             serverId: '91',
             sessionId: pair.$1,

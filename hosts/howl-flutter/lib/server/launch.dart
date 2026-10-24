@@ -7,7 +7,7 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 
 import 'endpoint.dart';
-import '../delete/instance_target.dart';
+import 'identity.dart';
 import '../delete/native_host.dart';
 import 'tree.dart';
 
@@ -38,7 +38,7 @@ final class ServerLaunchReceipt {
       final raw = receipt[field];
       if (raw is! String) throw ServerTreeException('launch_$field');
       try {
-        return exactHowlIdentity(raw);
+        return exactIdentity(raw);
       } on FormatException {
         throw ServerTreeException('launch_$field');
       }

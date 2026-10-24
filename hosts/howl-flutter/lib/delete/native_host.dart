@@ -9,7 +9,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import 'package:howl_vt_native/native.dart' as vt_native;
 
-import 'instance_target.dart';
+import '../server/attachment.dart';
 import '../canvas/canvas.dart';
 import '../canvas/surface.dart';
 import '../term/presentation.dart';
@@ -398,7 +398,7 @@ final class NativeHostObserver {
   /// one prearmed delta request. False uses packed complete text_v1 snapshots.
   /// Dart's display overlap is independent of this native policy.
   static Future<NativeHostObserver> createPlatform({
-    required HowlInstanceTarget target,
+    required Attachment target,
     required TerminalPresentation presentation,
     required NativeInterruptScope interrupt,
     bool useLiveDeltas = false,
@@ -428,7 +428,7 @@ final class NativeHostObserver {
   }
 
   static Future<NativeHostObserver> create({
-    required HowlInstanceTarget target,
+    required Attachment target,
     required String primaryFontPath,
     required String fallbackFontPath,
     required String secondaryFallbackFontPath,
@@ -1136,7 +1136,7 @@ final class NativeHostControl {
   Future<void>? _closeFuture;
 
   static Future<NativeHostControl> create({
-    required HowlInstanceTarget target,
+    required Attachment target,
     required NativeInterruptScope interrupt,
   }) async {
     if (interrupt.canceled) {

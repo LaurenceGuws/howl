@@ -7,7 +7,7 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 
 import 'endpoint.dart';
-import '../delete/instance_target.dart';
+import 'identity.dart';
 import '../delete/native_host.dart';
 
 const int _serverTreeOutputBytes = 64 * 1024;
@@ -128,7 +128,7 @@ final class ServerTree {
 String _opaqueIdentity(Object? value, String field) {
   if (value is! String) throw ServerTreeException(field);
   try {
-    return exactHowlIdentity(value);
+    return exactIdentity(value);
   } on FormatException {
     throw ServerTreeException(field);
   }

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/server/endpoint.dart';
-import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/attachment.dart';
 import 'package:howl_flutter/server/browser.dart';
 import 'package:howl_flutter/server/launch.dart';
 import 'package:howl_flutter/server/tree.dart';
@@ -29,7 +29,7 @@ void main() {
   testWidgets('empty Server can create and open its first terminal', (
     tester,
   ) async {
-    HowlInstanceTarget? selected;
+    Attachment? selected;
     String? name;
     String? shellSeen;
     String? serverId;
@@ -52,7 +52,7 @@ void main() {
                   Future.value(ServerLaunchReceipt.parse(receipt)),
                 );
               },
-          onOpenTarget: (target) => selected = target,
+          onOpenInstance: (target) => selected = target,
         ),
       ),
     );
@@ -79,23 +79,24 @@ void main() {
     );
     String? selectedSession;
     final pending = Completer<ServerLaunchReceipt>();
-    HowlInstanceTarget? selected;
+    Attachment? selected;
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
           endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
+          selectedSessionId: '17',
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           launchTerminal: (_, _, {sessionId, sessionName, required shell}) {
             selectedSession = sessionId;
             expect(sessionName, isNull);
             return ServerLaunchRequest.fromFuture(pending.future);
           },
-          onOpenTarget: (target) => selected = target,
+          onOpenInstance: (target) => selected = target,
         ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('New terminal in work'));
+    await tester.tap(find.text('New Instance'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Launch'));
     await tester.pump();
@@ -113,7 +114,7 @@ void main() {
       '{"schema":"howl.server.tree/v1","server_id":"9",'
       '"tree_revision":"1","sessions":[]}',
     );
-    HowlInstanceTarget? selected;
+    Attachment? selected;
     await tester.pumpWidget(
       MaterialApp(
         home: ServerBrowser(
@@ -123,7 +124,7 @@ void main() {
               ServerLaunchRequest.fromFuture(
                 Future.value(ServerLaunchReceipt.parse(receipt)),
               ),
-          onOpenTarget: (target) => selected = target,
+          onOpenInstance: (target) => selected = target,
         ),
       ),
     );

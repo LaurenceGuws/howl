@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'endpoint.dart';
-import '../delete/instance_target.dart';
+import 'attachment.dart';
 import '../delete/native_host.dart';
 import 'launch.dart';
 import 'tree.dart';
@@ -18,14 +18,18 @@ final class ServerBrowser extends StatefulWidget {
   const ServerBrowser({
     super.key,
     required this.endpoint,
-    required this.onOpenTarget,
+    required this.onOpenInstance,
+    this.selectedSessionId,
+    this.onTreeChanged,
     this.onMenu,
     this.fetchTree = NativeServerTree.request,
     this.launchTerminal = ServerLaunch.request,
   });
 
   final Endpoint endpoint;
-  final ValueChanged<HowlInstanceTarget> onOpenTarget;
+  final ValueChanged<Attachment> onOpenInstance;
+  final String? selectedSessionId;
+  final ValueChanged<ServerTree>? onTreeChanged;
   final VoidCallback? onMenu;
 
   final ServerTreeFetcher fetchTree;
@@ -102,6 +106,7 @@ final class _ServerBrowserState extends State<ServerBrowser>
         _tree = tree;
         _loading = false;
       });
+      widget.onTreeChanged?.call(tree);
     } catch (error) {
       if (!mounted || (request != null && !identical(_request, request))) {
         return;
@@ -218,8 +223,8 @@ final class _ServerBrowserState extends State<ServerBrowser>
       if (receipt.serverId != tree.serverId) {
         throw const ServerTreeException('launch_server_identity');
       }
-      widget.onOpenTarget(
-        HowlInstanceTarget(
+      widget.onOpenInstance(
+        Attachment(
           serverEndpoint: widget.endpoint,
           serverId: receipt.serverId,
           sessionId: receipt.sessionId,
@@ -249,13 +254,13 @@ final class _ServerBrowserState extends State<ServerBrowser>
 
   void _open(String serverId, ServerSession session, ServerInstance instance) {
     if (instance.state != ServerInstanceState.running) return;
-    final target = HowlInstanceTarget(
+    final target = Attachment(
       serverEndpoint: widget.endpoint,
       serverId: serverId,
       sessionId: session.id,
       instanceId: instance.id,
     );
-    widget.onOpenTarget(target);
+    widget.onOpenInstance(target);
   }
 
   @override
@@ -274,7 +279,17 @@ final class _ServerBrowserState extends State<ServerBrowser>
                 icon: const Icon(Icons.menu, size: 19),
               ),
         leadingWidth: 48,
-        title: const Text('Howl Server'),
+        title: Text(
+          tree == null
+              ? 'Sessions'
+              : tree.sessions
+                        .where(
+                          (session) => session.id == widget.selectedSessionId,
+                        )
+                        .map((session) => session.name)
+                        .firstOrNull ??
+                    'Sessions',
+        ),
         toolbarHeight: 44,
         actions: <Widget>[
           if (_launching)
@@ -360,28 +375,36 @@ final class _ServerBrowserState extends State<ServerBrowser>
         ),
       );
     }
+    final selected = tree.sessions
+        .where((session) => session.id == widget.selectedSessionId)
+        .firstOrNull;
+    if (selected == null) {
+      return Center(
+        child: TextButton.icon(
+          onPressed: widget.onMenu,
+          icon: const Icon(Icons.menu),
+          label: const Text('Choose a Session'),
+        ),
+      );
+    }
     return RefreshIndicator(
       onRefresh: _refresh,
-      child: ListView.builder(
+      child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: tree.sessions.length,
-        itemBuilder: (context, index) {
-          final session = tree.sessions[index];
-          return _SessionSection(
-            session: session,
-            onNewTerminal: _launching ? null : () => _promptLaunch(session),
-            onOpen: (session, instance) =>
-                _open(tree.serverId, session, instance),
-          );
-        },
+        children: <Widget>[
+          _InstanceSelection(
+            session: selected,
+            onNewTerminal: _launching ? null : () => _promptLaunch(selected),
+            onOpen: (instance) => _open(tree.serverId, selected, instance),
+          ),
+        ],
       ),
     );
   }
 }
 
-final class _SessionSection extends StatelessWidget {
-  const _SessionSection({
+final class _InstanceSelection extends StatelessWidget {
+  const _InstanceSelection({
     required this.session,
     required this.onOpen,
     required this.onNewTerminal,
@@ -389,60 +412,62 @@ final class _SessionSection extends StatelessWidget {
 
   final ServerSession session;
   final VoidCallback? onNewTerminal;
-  final void Function(ServerSession, ServerInstance) onOpen;
+  final ValueChanged<ServerInstance> onOpen;
 
   @override
   Widget build(BuildContext context) {
     final instances = session.instances;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border.all(color: Theme.of(context).dividerColor),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 2, 6, 2),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      session.name,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'New terminal in ${session.name}',
-                    onPressed: onNewTerminal,
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-            ),
-            if (instances.isEmpty)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(14, 0, 14, 12),
-                child: Text('No Instances'),
-              )
-            else
-              for (final instance in instances)
-                ListTile(
-                  dense: true,
-                  title: Text('Instance ${instance.id}'),
-                  subtitle: Text(instance.state.name),
-                  enabled: instance.state == ServerInstanceState.running,
-                  trailing: instance.state == ServerInstanceState.running
-                      ? const Icon(Icons.chevron_right)
-                      : null,
-                  onTap: instance.state == ServerInstanceState.running
-                      ? () => onOpen(session, instance)
-                      : null,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Instances',
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-          ],
-        ),
+              ),
+              TextButton.icon(
+                onPressed: onNewTerminal,
+                icon: const Icon(Icons.add),
+                label: const Text('New Instance'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (instances.isEmpty)
+            const Text('No Instances')
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final instance in instances)
+                  ActionChip(
+                    key: Key('howl-instance-${session.id}-${instance.id}'),
+                    avatar: Icon(
+                      instance.state == ServerInstanceState.running
+                          ? Icons.terminal
+                          : Icons.stop_circle_outlined,
+                      size: 17,
+                    ),
+                    label: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text('Instance ${instance.id}'),
+                        Text(instance.state.name),
+                      ],
+                    ),
+                    onPressed: instance.state == ServerInstanceState.running
+                        ? () => onOpen(instance)
+                        : null,
+                  ),
+              ],
+            ),
+        ],
       ),
     );
   }

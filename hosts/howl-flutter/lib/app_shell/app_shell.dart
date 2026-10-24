@@ -3,67 +3,36 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../server/endpoint.dart';
-import '../delete/instance_target.dart';
+import '../server/attachment.dart';
 import '../server/browser.dart';
 import '../server/connections.dart';
 import '../server/tree.dart';
 
 typedef HowlTerminalBuilder = Widget Function(
   BuildContext context,
-  HowlInstanceTarget target,
+  Attachment target,
   VoidCallback onStaleTarget,
-  ValueChanged<String?> onTitleChanged,
+  VoidCallback onBrowseInstances,
 );
-
-/// Client-side attachment label. Closing a tab never closes its Server Instance.
-final class _TerminalTab {
-  _TerminalTab(this.target);
-
-  final HowlInstanceTarget target;
-  String? customTitle;
-  String? reportedTitle;
-
-  String get label =>
-      customTitle ?? reportedTitle ?? 'Instance ${target.instanceId}';
-}
-
-String? _displayTitle(String? value) {
-  if (value == null) return null;
-  // OSC title bytes belong to the child program, not the host UI. Elide
-  // controls and bidi overrides before projecting them into a tab label.
-  final safe = String.fromCharCodes(
-    value.runes
-        .where(
-          (scalar) =>
-              scalar >= 0x20 &&
-              scalar != 0x7f &&
-              (scalar < 0x80 || scalar >= 0xa0) &&
-              (scalar < 0x202a || scalar > 0x202e) &&
-              (scalar < 0x2066 || scalar > 0x2069),
-        )
-        .take(128),
-  ).trim();
-  return safe.isEmpty ? null : safe;
-}
 
 /// Minimal app shell around the terminal canary.
 ///
-/// The shell owns saved Server endpoints and app navigation only.
-/// It deliberately owns no Server mirror, terminal grid,
-/// Session lifecycle, pane layout, or transport implementation.
+/// The shell owns saved Server endpoints and navigation only.
+/// Sessions and Instances come from the fetched Server tree; an open terminal
+/// is just one transient attachment to a Server-owned Instance.
 final class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
     required this.terminalBuilder,
     this.initialServerEndpoint,
-    this.initialInstanceTarget,
+    this.initialAttachment,
     this.connections,
     this.fetchTree = NativeServerTree.request,
   });
 
   final HowlTerminalBuilder terminalBuilder;
   final Endpoint? initialServerEndpoint;
-  final HowlInstanceTarget? initialInstanceTarget;
+  final Attachment? initialAttachment;
   final ServerConnections? connections;
   final ServerTreeFetcher fetchTree;
 
@@ -76,11 +45,12 @@ final class _AppShellState extends State<AppShell> {
   late final ServerConnections _connections;
   late final bool _ownsConnections;
   Endpoint? _activeServer;
-  HowlInstanceTarget? _activeInstance;
+  Attachment? _attachment;
+  ServerTree? _tree;
+  String? _selectedSessionId;
   bool _followSavedServer = false;
   bool _initialized = false;
   int _navigation = 0;
-  final List<_TerminalTab> _tabs = <_TerminalTab>[];
 
   @override
   void initState() {
@@ -90,11 +60,10 @@ final class _AppShellState extends State<AppShell> {
         widget.connections ??
         ServerConnections(SharedPreferencesServerConnectionStore());
     _connections.addListener(_connectionsChanged);
-    _activeInstance = widget.initialInstanceTarget;
-    if (_activeInstance case final target?) _tabFor(target);
-    _activeServer =
-        widget.initialServerEndpoint ?? _activeInstance?.serverEndpoint;
-    _initialized = _activeServer != null || _activeInstance != null;
+    _attachment = widget.initialAttachment;
+    _selectedSessionId = _attachment?.sessionId;
+    _activeServer = widget.initialServerEndpoint ?? _attachment?.serverEndpoint;
+    _initialized = _activeServer != null || _attachment != null;
     unawaited(_initialize());
   }
 
@@ -108,7 +77,7 @@ final class _AppShellState extends State<AppShell> {
   Future<void> _initialize() async {
     await _connections.initialize();
     if (!mounted) return;
-    if (_activeServer == null && _activeInstance == null) {
+    if (_activeServer == null && _attachment == null) {
       final selected = _connections.selectedEndpoint;
       if (selected != null) {
         _activeServer = Endpoint.parse(selected);
@@ -134,7 +103,9 @@ final class _AppShellState extends State<AppShell> {
 
     setState(() {
       _activeServer = selected == null ? null : Endpoint.parse(selected);
-      _activeInstance = null;
+      _attachment = null;
+      _tree = null;
+      _selectedSessionId = null;
       if (selected == null) _followSavedServer = false;
     });
   }
@@ -158,122 +129,75 @@ final class _AppShellState extends State<AppShell> {
     final endpoint = Endpoint.parse(server.endpoint);
     setState(() {
       _activeServer = endpoint;
-      _activeInstance = null;
+      _attachment = null;
+      _tree = null;
+      _selectedSessionId = null;
       _followSavedServer = true;
     });
     _closeDrawer();
   }
 
-  void _openTarget(HowlInstanceTarget target) {
+  void _openInstance(Attachment target) {
     _navigation++;
     setState(() {
-      _tabFor(target);
       _activeServer = target.serverEndpoint;
-      _activeInstance = target;
+      _attachment = target;
+      _selectedSessionId = target.sessionId;
     });
   }
 
-  void _backToServer() {
+  void _backToInstances() {
     _navigation++;
-    if (_activeServer == null) return;
-    setState(() => _activeInstance = null);
+    if (_attachment == null) return;
+    setState(() {
+      _attachment = null;
+      _tree = null;
+    });
     _closeDrawer();
   }
 
   void _staleTarget() {
-    final target = _activeInstance;
+    final target = _attachment;
     if (target == null) return;
     _navigation++;
     setState(() {
-      _tabs.removeWhere(
-        (tab) => tab.target.diagnosticLabel == target.diagnosticLabel,
-      );
       _activeServer = target.serverEndpoint;
-      _activeInstance = null;
+      _attachment = null;
+      _tree = null;
     });
   }
 
-  _TerminalTab _tabFor(HowlInstanceTarget target) {
-    for (final tab in _tabs) {
-      if (tab.target.diagnosticLabel == target.diagnosticLabel) return tab;
-    }
-    final tab = _TerminalTab(target);
-    _tabs.add(tab);
-    return tab;
-  }
-
-  void _reportedTitle(HowlInstanceTarget target, String? value) {
-    final index = _tabs.indexWhere(
-      (tab) => tab.target.diagnosticLabel == target.diagnosticLabel,
-    );
-    if (index < 0) return;
-    final safe = _displayTitle(value);
-    if (_tabs[index].reportedTitle == safe) return;
-    setState(() => _tabs[index].reportedTitle = safe);
-  }
-
-  void _selectTab(_TerminalTab tab) {
-    final target = tab.target;
-    if (target.diagnosticLabel == _activeInstance?.diagnosticLabel) return;
-    _openTarget(target);
-  }
-
-  void _closeTab() {
-    final active = _activeInstance;
-    if (active == null) return;
+  void _selectSession(String sessionId) {
     _navigation++;
     setState(() {
-      final index = _tabs.indexWhere(
-        (tab) => tab.target.diagnosticLabel == active.diagnosticLabel,
-      );
-      if (index >= 0) _tabs.removeAt(index);
-      if (_tabs.isNotEmpty) {
-        final next = _tabs[index.clamp(0, _tabs.length - 1)].target;
-        _activeInstance = next;
-        _activeServer = next.serverEndpoint;
-      } else {
-        _activeInstance = null;
-        _activeServer = active.serverEndpoint;
+      _selectedSessionId = sessionId;
+      _attachment = null;
+    });
+    _closeDrawer();
+  }
+
+  void _treeChanged(Endpoint endpoint, ServerTree tree) {
+    if (!mounted || endpoint.toString() != _activeServer?.toString()) return;
+    setState(() {
+      _tree = tree;
+      if (_selectedSessionId != null &&
+          !tree.sessions.any((session) => session.id == _selectedSessionId)) {
+        _selectedSessionId = null;
       }
     });
   }
 
-  Future<void> _renameTab() async {
-    final active = _activeInstance;
-    if (active == null) return;
-    final tab = _tabFor(active);
-    var pendingName = tab.customTitle ?? '';
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename tab'),
-        content: TextFormField(
-          key: const Key('howl-tab-name'),
-          initialValue: pendingName,
-          autofocus: true,
-          maxLength: 128,
-          decoration: const InputDecoration(
-            hintText: 'Use terminal title',
-            helperText: 'Clear to follow the running program',
-          ),
-          onChanged: (value) => pendingName = value,
-          onFieldSubmitted: (value) => Navigator.of(context).pop(value),
+  void _openSettings() {
+    _closeDrawer();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ServerSettingsPage(
+          connections: _connections,
+          activeServer: _activeServer,
+          onSelectServer: _selectServer,
         ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const Key('howl-tab-save'),
-            onPressed: () => Navigator.of(context).pop(pendingName),
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
-    if (name == null || !mounted || !_tabs.contains(tab)) return;
-    setState(() => tab.customTitle = _displayTitle(name));
   }
 
   void _openDrawer() => _scaffoldKey.currentState?.openDrawer();
@@ -285,13 +209,13 @@ final class _AppShellState extends State<AppShell> {
 
   Widget _buildBody(BuildContext context) {
     if (!_initialized) return const _ShellLoading();
-    final instance = _activeInstance;
+    final instance = _attachment;
     if (instance != null) {
       return widget.terminalBuilder(
         context,
         instance,
         _staleTarget,
-        (title) => _reportedTitle(instance, title),
+        _backToInstances,
       );
     }
     final server = _activeServer;
@@ -301,10 +225,12 @@ final class _AppShellState extends State<AppShell> {
         endpoint: server,
         onMenu: _openDrawer,
         fetchTree: widget.fetchTree,
-        onOpenTarget: _openTarget,
+        onOpenInstance: _openInstance,
+        selectedSessionId: _selectedSessionId,
+        onTreeChanged: (tree) => _treeChanged(server, tree),
       );
     }
-    return _EmptyShell(onConfigure: _openDrawer);
+    return _EmptyShell(onConfigure: _openSettings);
   }
 
   @override
@@ -314,29 +240,15 @@ final class _AppShellState extends State<AppShell> {
     return Scaffold(
       key: _scaffoldKey,
       drawerEnableOpenDragGesture: false,
-      drawer: _ServerDrawer(
-        connections: _connections,
+      drawer: _SessionDrawer(
         activeServer: _activeServer,
-        activeInstance: _activeInstance,
-        onSelectServer: _selectServer,
-        onBackToServer: _backToServer,
+        tree: _tree,
+        selectedSessionId: _selectedSessionId,
+        onSelectSession: _selectSession,
+        onSettings: _openSettings,
       ),
-      body: _activeInstance != null
-          ? Column(
-              children: <Widget>[
-                _terminalTabs(),
-                // The strip already consumes the top safe area. The terminal
-                // still owns keyboard and bottom insets, but must not spend
-                // the status-bar inset a second time.
-                Expanded(
-                  child: MediaQuery.removeViewPadding(
-                    context: context,
-                    removeTop: true,
-                    child: body,
-                  ),
-                ),
-              ],
-            )
+      body: _attachment != null
+          ? body
           : _activeServer != null
           ? body
           : Stack(
@@ -351,95 +263,7 @@ final class _AppShellState extends State<AppShell> {
             ),
     );
   }
-
-  Widget _terminalTabs() => SafeArea(
-    bottom: false,
-    child: ColoredBox(
-      color: const Color(0xff151b20),
-      child: SizedBox(
-        height: 42,
-        child: Row(
-          children: <Widget>[
-            IconButton(
-              key: const Key('howl-shell-menu'),
-              tooltip: 'Howl menu',
-              onPressed: _openDrawer,
-              icon: const Icon(Icons.menu, size: 19),
-            ),
-            Expanded(
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: _tabs
-                    .map((tab) {
-                      final selected =
-                          tab.target.diagnosticLabel ==
-                          _activeInstance?.diagnosticLabel;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 2,
-                          vertical: 5,
-                        ),
-                        child: TextButton(
-                          key: Key('howl-tab-${tab.target.diagnosticLabel}'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            backgroundColor: selected
-                                ? const Color(0xff34414b)
-                                : const Color(0xff202a32),
-                          ),
-                          onPressed: () => _selectTab(tab),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 140),
-                            child: Text(
-                              tab.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      );
-                    })
-                    .toList(growable: false),
-              ),
-            ),
-            if (_activeServer != null)
-              IconButton(
-                key: const Key('howl-tab-browse'),
-                tooltip: 'Browse Instances',
-                onPressed: _backToServer,
-                icon: const Icon(Icons.add, size: 19),
-              ),
-            PopupMenuButton<_TabAction>(
-              key: const Key('howl-tab-actions'),
-              tooltip: 'Tab options',
-              icon: const Icon(Icons.more_vert, size: 19),
-              onSelected: (action) {
-                switch (action) {
-                  case _TabAction.rename:
-                    unawaited(_renameTab());
-                  case _TabAction.close:
-                    _closeTab();
-                }
-              },
-              itemBuilder: (context) => const <PopupMenuEntry<_TabAction>>[
-                PopupMenuItem(
-                  value: _TabAction.rename,
-                  child: Text('Rename tab'),
-                ),
-                PopupMenuItem(
-                  value: _TabAction.close,
-                  child: Text('Close tab'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
-
-enum _TabAction { rename, close }
 
 final class _ShellMenuButton extends StatelessWidget {
   const _ShellMenuButton({required this.onPressed});
@@ -520,164 +344,197 @@ final class _EmptyShell extends StatelessWidget {
   );
 }
 
-final class _ServerDrawer extends StatelessWidget {
-  const _ServerDrawer({
+final class _SessionDrawer extends StatelessWidget {
+  const _SessionDrawer({
+    required this.activeServer,
+    required this.tree,
+    required this.selectedSessionId,
+    required this.onSelectSession,
+    required this.onSettings,
+  });
+
+  final Endpoint? activeServer;
+  final ServerTree? tree;
+  final String? selectedSessionId;
+  final ValueChanged<String> onSelectSession;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) => Drawer(
+    width: 320,
+    child: SafeArea(
+      child: Column(
+        children: <Widget>[
+          ListTile(
+            leading: const Icon(Icons.terminal),
+            title: const Text('Sessions'),
+            trailing: IconButton(
+              tooltip: 'Close',
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: activeServer == null
+                ? const Center(child: Text('Select a Server in Settings'))
+                : tree == null
+                ? const Center(child: Text('Fetching Sessions'))
+                : tree!.sessions.isEmpty
+                ? const Center(child: Text('No Sessions yet'))
+                : ListView(
+                    children: <Widget>[
+                      for (final session in tree!.sessions)
+                        ListTile(
+                          key: Key('howl-session-${session.id}'),
+                          title: Text(session.name),
+                          subtitle: Text(
+                            '${session.instances.length} Instances',
+                          ),
+                          selected: session.id == selectedSessionId,
+                          onTap: () => onSelectSession(session.id),
+                        ),
+                    ],
+                  ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            key: const Key('howl-shell-settings'),
+            leading: const Icon(Icons.settings),
+            title: const Text('Settings'),
+            onTap: onSettings,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+final class _ServerSettingsPage extends StatelessWidget {
+  const _ServerSettingsPage({
     required this.connections,
     required this.activeServer,
-    required this.activeInstance,
     required this.onSelectServer,
-    required this.onBackToServer,
   });
 
   final ServerConnections connections;
   final Endpoint? activeServer;
-  final HowlInstanceTarget? activeInstance;
   final Future<void> Function(ServerConnection) onSelectServer;
-  final VoidCallback onBackToServer;
 
   @override
-  Widget build(BuildContext context) {
-    final servers = connections.servers;
-    return Drawer(
-      width: 320,
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-              child: Row(
-                children: <Widget>[
-                  const Icon(Icons.terminal, size: 19),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Howl',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    icon: const Icon(Icons.close, size: 19),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            if (activeInstance
-                case final HowlInstanceTarget target?) ...<Widget>[
-              ListTile(
-                key: const Key('howl-shell-back-server'),
-                dense: true,
-                leading: const Icon(Icons.arrow_back, size: 19),
-                title: const Text('Back to Server'),
-                subtitle: Text(
-                  'Session ${target.sessionId} · Instance ${target.instanceId}',
-                ),
-                onTap: onBackToServer,
-              ),
-              const Divider(height: 1),
-            ],
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      'Connections',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ),
-                  IconButton(
-                    key: const Key('howl-shell-add-server'),
-                    tooltip: 'Add Server',
-                    onPressed: () => _editServer(context, connections),
-                    icon: const Icon(Icons.add, size: 20),
-                  ),
-                ],
-              ),
-            ),
-            if (connections.loadError case final error?)
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: connections,
+    builder: (context, _) {
+      final servers = connections.servers;
+      return Scaffold(
+        appBar: AppBar(title: const Text('Server Settings')),
+        body: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Text(
-                  error,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        'Connections',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('howl-shell-add-server'),
+                      tooltip: 'Add Server',
+                      onPressed: () => _editServer(context, connections),
+                      icon: const Icon(Icons.add, size: 20),
+                    ),
+                  ],
                 ),
               ),
-            if (connections.loadError != null)
-              TextButton(
-                onPressed: () => connections.retryLoad(),
-                child: const Text('Retry loading saved Servers'),
-              ),
-            Expanded(
-              child: servers.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text(
-                          'No saved Servers',
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      itemCount: servers.length,
-                      itemBuilder: (context, index) {
-                        final server = servers[index];
-                        final selected =
-                            activeServer?.toString() == server.endpoint;
-                        return ListTile(
-                          key: Key('howl-shell-server-${server.endpoint}'),
-                          dense: true,
-                          selected: selected,
-                          leading: Icon(
-                            selected ? Icons.dns : Icons.dns_outlined,
-                            size: 19,
-                          ),
-                          title: Text(server.label),
-                          subtitle: Text(
-                            server.endpoint,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          onTap: () => onSelectServer(server),
-                          trailing: PopupMenuButton<_ServerAction>(
-                            tooltip: 'Server options',
-                            onSelected: (action) {
-                              switch (action) {
-                                case _ServerAction.edit:
-                                  _editServer(
-                                    context,
-                                    connections,
-                                    existing: server,
-                                  );
-                                case _ServerAction.remove:
-                                  _removeServer(context, connections, server);
-                              }
-                            },
-                            itemBuilder: (context) =>
-                                const <PopupMenuEntry<_ServerAction>>[
-                                  PopupMenuItem(
-                                    value: _ServerAction.edit,
-                                    child: Text('Edit'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: _ServerAction.remove,
-                                    child: Text('Remove'),
-                                  ),
-                                ],
-                          ),
-                        );
-                      },
+              if (connections.loadError case final error?)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Text(
+                    error,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
                     ),
-            ),
-          ],
+                  ),
+                ),
+              if (connections.loadError != null)
+                TextButton(
+                  onPressed: () => connections.retryLoad(),
+                  child: const Text('Retry loading saved Servers'),
+                ),
+              Expanded(
+                child: servers.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'No saved Servers',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        itemCount: servers.length,
+                        itemBuilder: (context, index) {
+                          final server = servers[index];
+                          final selected =
+                              activeServer?.toString() == server.endpoint;
+                          return ListTile(
+                            key: Key('howl-shell-server-${server.endpoint}'),
+                            dense: true,
+                            selected: selected,
+                            leading: Icon(
+                              selected ? Icons.dns : Icons.dns_outlined,
+                              size: 19,
+                            ),
+                            title: Text(server.label),
+                            subtitle: Text(
+                              server.endpoint,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => onSelectServer(server),
+                            trailing: PopupMenuButton<_ServerAction>(
+                              tooltip: 'Server options',
+                              onSelected: (action) {
+                                switch (action) {
+                                  case _ServerAction.edit:
+                                    _editServer(
+                                      context,
+                                      connections,
+                                      existing: server,
+                                    );
+                                  case _ServerAction.remove:
+                                    _removeServer(context, connections, server);
+                                }
+                              },
+                              itemBuilder: (context) =>
+                                  const <PopupMenuEntry<_ServerAction>>[
+                                    PopupMenuItem(
+                                      value: _ServerAction.edit,
+                                      child: Text('Edit'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: _ServerAction.remove,
+                                      child: Text('Remove'),
+                                    ),
+                                  ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 }
 
 enum _ServerAction { edit, remove }

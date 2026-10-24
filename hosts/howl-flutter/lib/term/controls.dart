@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../delete/howl_input.dart';
 import 'presentation.dart';
 
-enum _ExtraControl { alt, zoom, lead, copy, paste, log }
+enum _ExtraControl { instances, alt, zoom, lead, copy, paste, log }
 
 /// Compact mobile terminal controls that software keyboards do not reliably
 /// expose. Modifiers are caller-owned one-shot latches; this widget only
@@ -23,6 +23,7 @@ final class TerminalControls extends StatelessWidget {
     required this.onCopy,
     required this.onPaste,
     required this.onLog,
+    required this.onBrowseInstances,
   });
 
   final int modifierLatch;
@@ -37,6 +38,7 @@ final class TerminalControls extends StatelessWidget {
   final VoidCallback onCopy;
   final VoidCallback onPaste;
   final VoidCallback onLog;
+  final VoidCallback onBrowseInstances;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -60,6 +62,8 @@ final class TerminalControls extends StatelessWidget {
                 tooltip: 'More terminal actions',
                 onSelected: (control) {
                   switch (control) {
+                    case _ExtraControl.instances:
+                      onBrowseInstances();
                     case _ExtraControl.alt:
                       onModifier(HowlInput.modifierAlt);
                     case _ExtraControl.zoom:
@@ -75,6 +79,7 @@ final class TerminalControls extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => <PopupMenuEntry<_ExtraControl>>[
+                  _menuItem('Instances', _ExtraControl.instances),
                   _menuItem(
                     'Alt',
                     _ExtraControl.alt,

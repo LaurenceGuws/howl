@@ -1,13 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/server/endpoint.dart';
-import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/attachment.dart';
 
 void main() {
   test(
     'managed target preserves exact Server Session and Instance identity',
     () {
       final endpoint = Endpoint.parse('unix:/tmp/howl-server.sock');
-      final target = HowlInstanceTarget(
+      final target = Attachment(
         serverEndpoint: endpoint,
         serverId: '91',
         sessionId: '7',
@@ -24,7 +24,7 @@ void main() {
 
   test('Server incarnation retains all u64 bits and rejects out of range', () {
     final endpoint = Endpoint.parse('tcp://127.0.0.1:1');
-    HowlInstanceTarget target(String server) => HowlInstanceTarget(
+    Attachment target(String server) => Attachment(
       serverEndpoint: endpoint,
       serverId: server,
       sessionId: '1',

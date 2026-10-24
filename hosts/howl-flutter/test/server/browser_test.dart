@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/server/endpoint.dart';
-import 'package:howl_flutter/delete/instance_target.dart';
+import 'package:howl_flutter/server/attachment.dart';
 import 'package:howl_flutter/server/browser.dart';
 import 'package:howl_flutter/server/tree.dart';
 
@@ -11,7 +11,7 @@ void main() {
   testWidgets('browser shows Session lineage and only opens running Instance', (
     tester,
   ) async {
-    HowlInstanceTarget? selected;
+    Attachment? selected;
     final tree = ServerTree.parse(
       '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615","tree_revision":"4","sessions":['
       '{"session_id":"7","name":"work","instances":['
@@ -22,23 +22,29 @@ void main() {
       MaterialApp(
         home: ServerBrowser(
           endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
+          selectedSessionId: '7',
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
-          onOpenTarget: (target) => selected = target,
+          onOpenInstance: (target) => selected = target,
         ),
       ),
     );
     await tester.pumpAndSettle();
     expect(find.text('work'), findsOneWidget);
+    expect(find.text('Instances'), findsOneWidget);
     expect(find.text('Instance 1'), findsOneWidget);
     expect(find.text('exited'), findsOneWidget);
     expect(find.text('Instance 2'), findsOneWidget);
     expect(find.text('running'), findsOneWidget);
 
-    await tester.tap(find.text('Instance 1'));
-    await tester.pump();
+    expect(
+      tester
+          .widget<ActionChip>(find.byKey(const Key('howl-instance-7-1')))
+          .onPressed,
+      isNull,
+    );
     expect(selected, isNull);
 
-    await tester.tap(find.text('Instance 2'));
+    await tester.tap(find.byKey(const Key('howl-instance-7-2')));
     await tester.pumpAndSettle();
     expect(selected, isNotNull);
     expect(selected!.serverId, '18446744073709551615');
@@ -57,17 +63,18 @@ void main() {
       );
       final refresh = Completer<ServerTree>();
       var calls = 0;
-      HowlInstanceTarget? selected;
+      Attachment? selected;
       await tester.pumpWidget(
         MaterialApp(
           home: ServerBrowser(
             endpoint: Endpoint.parse('tcp://127.0.0.1:1'),
+            selectedSessionId: '7',
             fetchTree: (_) => ServerTreeRequest.fromFuture(
               calls++ == 0
                   ? Future.value(tree('91', 'OLD_OCCURRENCE'))
                   : refresh.future,
             ),
-            onOpenTarget: (target) => selected = target,
+            onOpenInstance: (target) => selected = target,
           ),
         ),
       );
@@ -82,7 +89,7 @@ void main() {
       await tester.idle();
       expect(find.text('OLD_OCCURRENCE'), findsOneWidget);
       expect(find.text('NEW_OCCURRENCE'), findsNothing);
-      await tester.tap(find.text('Instance 3'));
+      await tester.tap(find.byKey(const Key('howl-instance-7-3')));
       expect(selected, isNotNull);
       expect(selected!.serverId, '91');
       expect(selected!.sessionId, '7');
@@ -92,7 +99,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('OLD_OCCURRENCE'), findsNothing);
       expect(find.text('NEW_OCCURRENCE'), findsOneWidget);
-      await tester.tap(find.text('Instance 3'));
+      await tester.tap(find.byKey(const Key('howl-instance-7-3')));
       expect(selected, isNotNull);
       expect(selected!.serverId, '92');
       expect(selected!.sessionId, '7');
@@ -119,7 +126,7 @@ void main() {
               }
             },
           ),
-          onOpenTarget: (_) {},
+          onOpenInstance: (_) {},
         ),
       ),
     );
@@ -157,7 +164,7 @@ void main() {
             requests += 1;
             return ServerTreeRequest.fromFuture(Future.value(tree));
           },
-          onOpenTarget: (_) {},
+          onOpenInstance: (_) {},
         ),
       ),
     );
@@ -183,7 +190,7 @@ void main() {
         home: ServerBrowser(
           endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
-          onOpenTarget: (_) {},
+          onOpenInstance: (_) {},
         ),
       ),
     );
@@ -208,7 +215,7 @@ void main() {
         home: ServerBrowser(
           endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) => throw StateError('native initialization failed'),
-          onOpenTarget: (_) {},
+          onOpenInstance: (_) {},
         ),
       ),
     );
@@ -230,7 +237,7 @@ void main() {
           endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) =>
               ServerTreeRequest(pending.future, onCancel: () => cancels += 1),
-          onOpenTarget: (_) {},
+          onOpenInstance: (_) {},
         ),
       ),
     );
@@ -261,7 +268,7 @@ void main() {
               pending.completeError(StateError('native canceled'));
             },
           ),
-          onOpenTarget: (_) {},
+          onOpenInstance: (_) {},
         ),
       ),
     );
