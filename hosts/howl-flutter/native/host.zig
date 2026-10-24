@@ -14,6 +14,14 @@ const transported_render = @import("server_client_render");
 const text = native_instance.text;
 const limits = native_instance.render.limits;
 
+// Zig 0.17's default panic path uses std.Io.Threaded.processReplace, which
+// cannot compile for iOS. The embedded client must fail closed on an invariant
+// violation without importing desktop process machinery.
+pub const panic = if (builtin.os.tag == .ios)
+    std.debug.no_panic
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
 const host_header_bytes: usize = 64;
 const global_header_bytes: usize = 16;
 const frame_header_bytes: usize = 48;
