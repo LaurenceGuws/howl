@@ -150,7 +150,10 @@ pub const Canvas = struct {
             var pixels: []const u8 = source;
             var stride = upload.stride;
             if (upload.format == .alpha8) {
-                try self.converted.resize(self.allocator, width * height * 4);
+                // Each upload replaces the whole scratch image; geometric slack buys no reuse.
+                const bytes = width * height * 4;
+                try self.converted.ensureTotalCapacityPrecise(self.allocator, bytes);
+                self.converted.items.len = bytes;
                 for (0..height) |y| for (0..width) |x| {
                     const at = (y * width + x) * 4;
                     self.converted.items[at..][0..4].* = .{ 255, 255, 255, source[y * upload.stride + x] };
@@ -513,6 +516,10 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     defer c.SDL_DestroySurface(surface);
     const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
     defer c.SDL_DestroyRenderer(renderer);
+    // One RGBA copy of this fixed alpha plane must fit without geometric slack.
+    const conversion = try std.testing.allocator.alloc(u8, 256 * 256 * 4);
+    defer std.testing.allocator.free(conversion);
+    var exact = std.heap.FixedBufferAllocator.init(conversion);
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
     var backend = Canvas.init(failing.allocator());
     defer backend.deinit();
@@ -539,7 +546,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     }
     if (attempts == 5000) return error.Timeout;
     backend.deinit();
-    backend = Canvas.init(std.testing.allocator);
+    backend = Canvas.init(exact.allocator());
     stage = "font reconfiguration";
     const configured = try owner.reconfigure(presentation, null);
     try std.testing.expect(configured.cell_size.width > 0);
@@ -550,6 +557,8 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     }
     stage = "fresh backend generation";
     const accepted = backend.frame() orelse return error.MissingFrame;
+    try std.testing.expectEqual(conversion.len, backend.converted.items.len);
+    try std.testing.expectEqual(conversion.len, backend.converted.capacity);
     accepted_generation = accepted.presentation_generation;
     try std.testing.expect(accepted.presentation_generation > 1);
     const geometry = try std.testing.allocator.create(Geometry);

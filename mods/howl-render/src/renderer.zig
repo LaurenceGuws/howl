@@ -843,6 +843,8 @@ fn updateInnerOnce(
         impl.incremental_candidate_rows[0..rows]
     else
         null;
+    const alpha_height_before = glyph_cache.atlasSize(impl.atlas).height;
+    const color_height_before = glyph_cache.colorAtlasSize(impl.atlas).height;
     const projection = try buildContentCommands(
         Source,
         snapshot,
@@ -877,6 +879,8 @@ fn updateInnerOnce(
         next_resource_generation += 1;
     }
     const color = glyph_cache.colorAtlasView(impl.atlas);
+    const alpha_extent_changed = alpha_height_before != atlas.height;
+    const color_extent_changed = color_height_before != glyph_cache.colorAtlasSize(impl.atlas).height;
     const color_entries = glyph_cache.colorAtlasEntryCount(impl.atlas);
     const publish_color = projection.has_color and (impl.color_resource_generation == 0 or
         color.?.generation != impl.published_color_generation or color_entries != impl.published_color_entries);
@@ -906,15 +910,21 @@ fn updateInnerOnce(
         next_resource_high_water += 1;
         next_color_resource_id = frame_vocabulary.ResourceId.init(next_resource_high_water) catch return error.ResourceIdentityOverflow;
     }
-    if (projection.has_color) bindColorResource(
-        impl.commands[0..command_count],
-        contentResource(next_color_resource_id.?, next_color_generation),
-    );
     const atlas_resource = if (projection.has_raster) contentResource(
         next_atlas_resource_id orelse return error.InvalidPresentationGeometry,
         next_resource_generation,
     ) else null;
-    if (atlas_resource) |value| bindContentResource(impl.commands[0..command_count], value);
+    const color_resource = if (projection.has_color)
+        contentResource(next_color_resource_id.?, next_color_generation)
+    else
+        null;
+    if (atlas_resource != null or color_resource != null) bindGlyphResources(
+        impl.commands[0..command_count],
+        atlas_resource,
+        color_resource,
+        glyph_cache.colorAtlasSize(impl.atlas).height,
+    );
+    if (alpha_extent_changed) repairAlphaExtent(impl.commands[0..command_count], atlas.height);
 
     const graphics = Source.graphics(snapshot);
     if (Source.graphicsPlacementCount(graphics) > impl.placement_order.len)
@@ -990,7 +1000,8 @@ fn updateInnerOnce(
     const next_revision = impl.revision + 1;
 
     const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
-    const incremental_eligible = incremental_enabled and projection.incremental_eligible and !projection.has_color;
+    const incremental_eligible = incremental_enabled and projection.incremental_eligible and !projection.has_color and
+        !alpha_extent_changed and !color_extent_changed;
 
     const unchanged_content = projection.incremental_plan != null and !publish_atlas and !publish_color and
         @call(.never_inline, contentCommandsUnchanged, .{ impl, projection, command_count, surface });
@@ -2919,16 +2930,31 @@ fn fitColorGlyph(ink: frame_vocabulary.Rect, cell: frame_vocabulary.Rect) frame_
     return .{ .x = cell.x + @as(i32, @intCast((width - w) / 2)), .y = cell.y + @as(i32, @intCast((cell.height - h) / 2)), .width = w, .height = h };
 }
 
-fn bindColorResource(commands: []frame_vocabulary.Input, resource: frame_vocabulary.ResourceRef) void {
+// Projection owns texel coordinates; final binding supplies the current plane
+// extents after every admission, including growth after earlier glyph emission.
+fn bindGlyphResources(
+    commands: []frame_vocabulary.Input,
+    alpha: ?frame_vocabulary.ResourceRef,
+    color: ?frame_vocabulary.ResourceRef,
+    color_height: u16,
+) void {
     for (commands) |*command| switch (command.*) {
-        .rgba => command.rgba.resource.resource = resource,
+        .alpha_mask => {
+            command.alpha_mask.resource.resource = alpha.?;
+        },
+        .rgba => {
+            command.rgba.resource.resource = color.?;
+            command.rgba.resource.size.height = color_height;
+        },
         else => {},
     };
 }
 
-fn bindContentResource(commands: []frame_vocabulary.Input, resource: frame_vocabulary.ResourceRef) void {
+// Stable projections already carry the alpha extent. Only a growth event can
+// leave earlier/reused commands with the old height.
+fn repairAlphaExtent(commands: []frame_vocabulary.Input, height: u16) void {
     for (commands) |*command| switch (command.*) {
-        .alpha_mask => command.alpha_mask.resource.resource = resource,
+        .alpha_mask => command.alpha_mask.resource.size.height = height,
         else => {},
     };
 }

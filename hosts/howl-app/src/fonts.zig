@@ -8,6 +8,7 @@ const instance = @import("howl_instance");
 pub const Fonts = struct {
     allocator: std.mem.Allocator,
     paths: [7][]const u8 = @splat(""),
+    atlas_height_limit: u16 = 4096,
     // At most 8 tabs × 8 panes, plus one staged replacement size.
     stores: [65]?struct { pixels: u16, owner: *instance.PresentationStore } = @splat(null),
 
@@ -61,12 +62,25 @@ pub const Fonts = struct {
         };
     }
 
+    /// Clamps the retained atlas policy to this SDL renderer's physical texture bound.
+    /// SDL reports zero when it has no maximum; the host still caps growth.
+    pub fn configureTextureLimit(self: *Fonts, maximum: i64) error{RendererTextureLimit}!void {
+        if (maximum < 0 or (maximum != 0 and maximum < 512)) return error.RendererTextureLimit;
+        self.atlas_height_limit = @intCast(if (maximum == 0) 4096 else @min(maximum, 4096));
+    }
+
     /// Borrows a matching text owner for the immediate construction/reconfigure
     /// call. Io must outlive the Instances; do not retain this config across collect.
     pub fn config(self: *Fonts, io: std.Io, pixels: u16) (instance.PresentationStoreInitError || error{PresentationStoreLimit})!instance.PresentationConfig {
-        const shape_cache: instance.render.terminal.ShapeCacheConfig = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = instance.maximum_cell_scalars };
+        const shape_cache: instance.render.terminal.ShapeCacheConfig = .{
+            .entry_capacity = 256,
+            .scalar_capacity = 512,
+            .glyph_capacity = 512,
+            .max_sequence_scalars = instance.maximum_cell_scalars,
+            .growth = .{ .entry_limit = 8192, .scalar_limit = 32768, .glyph_limit = 16384 },
+        };
         for (self.stores) |slot| if (slot) |store| {
-            if (store.pixels == pixels) return presentation(store.owner, shape_cache);
+            if (store.pixels == pixels) return presentation(store.owner, shape_cache, self.atlas_height_limit);
         };
         self.collect();
         const fallbacks = self.paths[4..@as(usize, if (self.paths[6].len == 0) 6 else 7)];
@@ -78,17 +92,23 @@ pub const Fonts = struct {
                 .bold_italic = if (self.paths[3].len == 0) null else .{ .path = .{ .primary = self.paths[3], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
             }, .{ .shape_cache = shape_cache, .shaped_capacity = 32, .raster_bytes = 512 * 512 });
             slot.* = .{ .pixels = pixels, .owner = owner };
-            return presentation(owner, shape_cache);
+            return presentation(owner, shape_cache, self.atlas_height_limit);
         };
         return error.PresentationStoreLimit;
     }
 
-    fn presentation(owner: *instance.PresentationStore, shape_cache: instance.render.terminal.ShapeCacheConfig) instance.PresentationConfig {
+    fn presentation(owner: *instance.PresentationStore, shape_cache: instance.render.terminal.ShapeCacheConfig, height_limit: u16) instance.PresentationConfig {
         return .{
             .text = .{ .shared = owner },
             .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
             .shape_cache = shape_cache,
-            .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+            .atlas = .{
+                .width = 512,
+                .height = 512,
+                .color_height = 128,
+                .entry_capacity = 256,
+                .growth = .{ .entry_limit = 8192, .alpha_height_limit = height_limit, .color_height_limit = @min(1024, height_limit) },
+            },
             .shaped_capacity = 32,
             .raster_bytes = 512 * 512,
             .command_capacity = 4 * 1024,
@@ -221,4 +241,19 @@ test "desktop presentation renders the full canonical cell scalar bound" {
         .pixels = pixels,
     });
     try std.testing.expect(frame.commands.len != 0);
+}
+
+test "desktop atlas ceilings respect the actual renderer and retain a finite unknown-limit policy" {
+    var fonts: Fonts = .{ .allocator = std.testing.allocator };
+    try fonts.configureTextureLimit(0);
+    try std.testing.expectEqual(@as(u16, 4096), fonts.atlas_height_limit);
+    try fonts.configureTextureLimit(16384);
+    try std.testing.expectEqual(@as(u16, 4096), fonts.atlas_height_limit);
+    try fonts.configureTextureLimit(1024);
+    try std.testing.expectEqual(@as(u16, 1024), fonts.atlas_height_limit);
+    try fonts.configureTextureLimit(512);
+    try std.testing.expectEqual(@as(u16, 512), fonts.atlas_height_limit);
+    try std.testing.expectError(error.RendererTextureLimit, fonts.configureTextureLimit(511));
+    try std.testing.expectError(error.RendererTextureLimit, fonts.configureTextureLimit(-1));
+    try std.testing.expectEqual(@as(u16, 512), fonts.atlas_height_limit);
 }

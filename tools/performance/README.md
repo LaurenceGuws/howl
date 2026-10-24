@@ -6,6 +6,35 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Cold admission and retry scheduling · 24 October
+
+[The private cold-admission experiment](COLD_ADMISSION.md) cuts cold CJK worker
+turns from about41–50 ms to4.6–5.0 ms by interleaving admission with canonical
+service. Immediate retry reduces the first-projection penalty; repeated prefix
+work and an11 ms over-capacity turn remain. Pixels/progress proofs pass for the
+measured cases. Target replacement needs a stronger contract before promotion;
+no runtime budget or new daily build is installed from this round.
+
+## Render memory and cold turns · 24 October
+
+[The allocation and service-turn accounting](RENDER_ACCOUNTING.md) locates a large
+idle footprint at SDL renderer construction, before the terminal exists, and
+cold CJK cost in raster misses. It keeps requested capacity, resident pages and
+native allocator accounting distinct. Canvas now reserves exact alpha-conversion
+storage; a real bounded-buffer recovery proof fails before the fix and passes
+after it. Ordinary guards and five native image pairs pass. No general RSS/CPU
+win, new worker, pacer or backend change is claimed.
+
+## Bounded glyph admission · 24 October
+
+[Bounded atlas admission](ATLAS_ADMISSION.md) lets the desktop retain the real
+4,096-glyph CJK view without larger eager per-pane atlases. Alpha and colour
+planes grow independently under host/device ceilings; resource extents and
+immutable publications stay coherent. Final common-workload guards are flat,
+including a direct app comparison that rejects repeated alpha-height writes.
+The report keeps every adverse trial, the ~32 ms cold first frame and full
+memory-accounting limits separate from warmed throughput.
+
 ## Ordinary wide-glyph geometry · 24 October · accepted tradeoff
 
 [The accepted wide-glyph optimization](WIDE_GEOMETRY_REVIEW.md) reduces measured

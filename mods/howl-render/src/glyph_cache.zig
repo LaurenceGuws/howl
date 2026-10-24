@@ -1,4 +1,4 @@
-//! Private bounded text-shape and alpha-atlas caches for terminal presentation.
+//! Private bounded text-shape and independently packed glyph-plane caches for terminal presentation.
 //!
 //! This module consumes only howl-text. It owns no terminal/client semantics,
 //! renderer resources, host topology, or backend state.
@@ -87,8 +87,19 @@ pub const AtlasConfig = struct {
     width: u16,
     height: u16,
     entry_capacity: usize,
-    /// Empty alpha pixels left after each packed raster on both shelf axes.
+    /// Empty pixels left after each packed raster on both shelf axes.
     gap: u16 = 1,
+    /// Initial lazy colour-plane height. Width is shared; packing is independent.
+    color_height: ?u16 = null,
+    /// Optional retained ceilings. Existing pixels never relocate during growth.
+    growth: ?Growth = null,
+
+    /// Maximum retained records and independently owned plane heights.
+    pub const Growth = struct {
+        entry_limit: usize,
+        alpha_height_limit: u16,
+        color_height_limit: u16,
+    };
 };
 
 /// Caller-selected retained-shaping bounds for one fixed howl-text face family.
@@ -101,6 +112,15 @@ pub const ShapeCacheConfig = struct {
     scalar_capacity: usize,
     glyph_capacity: usize,
     max_sequence_scalars: u32,
+    /// Optional retained ceilings; pressure beyond them still recycles knowledge.
+    growth: ?Growth = null,
+
+    /// Maximum retained shaping records; exceeding them keeps the recycle path.
+    pub const Growth = struct {
+        entry_limit: usize,
+        scalar_limit: usize,
+        glyph_limit: usize,
+    };
 };
 
 /// Opaque explicitly owned shaped-run cache.
@@ -320,6 +340,7 @@ const ShapeCacheImpl = struct {
     scalar_count: usize = 0,
     glyph_count: usize = 0,
     lookup: EntryIndex = .{},
+    bounds: ShapeCacheConfig.Growth = .{ .entry_limit = 0, .scalar_limit = 0, .glyph_limit = 0 },
 };
 
 // A raster lookup may additionally retain the placement of one shaped glyph.
@@ -331,20 +352,29 @@ const AsciiAtlasEntry = struct {
     state: enum { missing, raster, placed } = .missing,
 };
 
+const AtlasPacking = struct {
+    next_x: usize = 0,
+    shelf_y: usize = 0,
+    shelf_height: usize = 0,
+};
+
+const AtlasPlane = struct {
+    pixels: ?[]u8 = null,
+    height: u16,
+    packing: AtlasPacking = .{},
+};
+
 const AtlasImpl = struct {
     allocator: std.mem.Allocator,
     fonts: FontFaces,
     box_drawing: generated.BoxDrawingConfig,
     entries: []AtlasEntry,
-    pixels: []u8,
-    color_pixels: ?[]u8 = null,
+    alpha: AtlasPlane,
+    color: AtlasPlane,
     color_entries: usize = 0,
     config: AtlasConfig,
     ascii_entries: [font_variant_count][printable_ascii_count]AsciiAtlasEntry = @splat(@splat(.{})),
     entry_count: usize = 0,
-    next_x: usize = 0,
-    shelf_y: usize = 0,
-    shelf_height: usize = 0,
     generation: u64 = 1,
     lookup: EntryIndex = .{},
 };
@@ -368,7 +398,7 @@ pub const AtlasRaster = struct {
     format: text.RasterFormat = .alpha8,
 };
 
-/// Reports the fixed pixel extent of one atlas owner.
+/// Reports one current plane extent; growth never changes its width.
 pub const AtlasSize = struct {
     width: u16,
     height: u16,
@@ -388,6 +418,20 @@ pub fn initShapeCache(
         config.max_sequence_scalars > text.max_codepoints or
         @as(usize, config.max_sequence_scalars) > config.scalar_capacity)
         return error.InvalidShapeCacheConfig;
+    const bounds = config.growth orelse ShapeCacheConfig.Growth{
+        .entry_limit = config.entry_capacity,
+        .scalar_limit = config.scalar_capacity,
+        .glyph_limit = config.glyph_capacity,
+    };
+    if (bounds.entry_limit < config.entry_capacity or bounds.entry_limit > std.math.maxInt(u32) or
+        bounds.scalar_limit < config.scalar_capacity or bounds.glyph_limit < config.glyph_capacity)
+        return error.InvalidShapeCacheConfig;
+    const entry_bytes = std.math.mul(usize, bounds.entry_limit, @sizeOf(ShapeEntry)) catch return error.InvalidShapeCacheConfig;
+    const scalar_bytes = std.math.mul(usize, bounds.scalar_limit, @sizeOf(u32)) catch return error.InvalidShapeCacheConfig;
+    const glyph_bytes = std.math.mul(usize, bounds.glyph_limit, @sizeOf(text.Glyph)) catch return error.InvalidShapeCacheConfig;
+    const retained_bytes = std.math.add(usize, entry_bytes, scalar_bytes) catch return error.InvalidShapeCacheConfig;
+    const maximum_bytes = std.math.add(usize, retained_bytes, glyph_bytes) catch return error.InvalidShapeCacheConfig;
+    std.debug.assert(maximum_bytes != 0);
 
     const impl = try allocator.create(ShapeCacheImpl);
     errdefer allocator.destroy(impl);
@@ -407,6 +451,7 @@ pub fn initShapeCache(
         .scalars = scalars,
         .glyphs = glyphs,
         .max_sequence_scalars = config.max_sequence_scalars,
+        .bounds = bounds,
     };
     // zig-audit: acknowledge ptr_cast
     // reason: ShapeCache is the opaque handle for this exact allocator-owned ShapeCacheImpl allocation and preserves its address.
@@ -462,11 +507,27 @@ pub fn initAtlas(
 ) AtlasInitError!*Atlas {
     if (config.width == 0 or config.height == 0 or config.entry_capacity == 0 or config.entry_capacity > std.math.maxInt(u32))
         return error.InvalidAtlasConfig;
-    const pixel_count = std.math.mul(
-        usize,
-        @as(usize, config.width),
-        @as(usize, config.height),
-    ) catch return error.InvalidAtlasConfig;
+    const color_height = config.color_height orelse config.height;
+    const bounds = config.growth orelse AtlasConfig.Growth{
+        .entry_limit = config.entry_capacity,
+        .alpha_height_limit = config.height,
+        .color_height_limit = color_height,
+    };
+    if (color_height == 0 or bounds.entry_limit < config.entry_capacity or
+        bounds.entry_limit > std.math.maxInt(u32) or
+        bounds.alpha_height_limit < config.height or bounds.color_height_limit < color_height)
+        return error.InvalidAtlasConfig;
+    const alpha_bound = std.math.mul(usize, @as(usize, config.width), bounds.alpha_height_limit) catch
+        return error.InvalidAtlasConfig;
+    const color_area = std.math.mul(usize, @as(usize, config.width), bounds.color_height_limit) catch
+        return error.InvalidAtlasConfig;
+    const color_bound = std.math.mul(usize, color_area, 4) catch return error.InvalidAtlasConfig;
+    // framePixelBytes sums independently resident planes without overflow.
+    const combined_bound = std.math.add(usize, alpha_bound, color_bound) catch return error.InvalidAtlasConfig;
+    const entry_bound = std.math.mul(usize, bounds.entry_limit, @sizeOf(AtlasEntry)) catch return error.InvalidAtlasConfig;
+    const retained_bound = std.math.add(usize, combined_bound, entry_bound) catch return error.InvalidAtlasConfig;
+    std.debug.assert(retained_bound >= alpha_bound);
+    const pixel_count = @as(usize, config.width) * config.height;
 
     const impl = try allocator.create(AtlasImpl);
     errdefer allocator.destroy(impl);
@@ -480,7 +541,8 @@ pub fn initAtlas(
         .fonts = fonts,
         .box_drawing = box_drawing,
         .entries = entries,
-        .pixels = pixels,
+        .alpha = .{ .pixels = pixels, .height = config.height },
+        .color = .{ .height = color_height },
         .config = config,
     };
     // zig-audit: acknowledge ptr_cast
@@ -493,8 +555,8 @@ pub fn deinitAtlas(atlas: *Atlas) void {
     const impl = atlasImpl(atlas);
     const allocator = impl.allocator;
     const entries = impl.entries;
-    const pixels = impl.pixels;
-    const color_pixels = impl.color_pixels;
+    const pixels = impl.alpha.pixels.?;
+    const color_pixels = impl.color.pixels;
     impl.lookup.deinit(allocator);
     impl.* = undefined;
     allocator.free(pixels);
@@ -512,11 +574,10 @@ pub fn resetAtlas(atlas: *Atlas) error{GenerationOverflow}!void {
     impl.lookup.clear();
     impl.color_entries = 0;
     impl.ascii_entries = @splat(@splat(.{}));
-    impl.next_x = 0;
-    impl.shelf_y = 0;
-    impl.shelf_height = 0;
-    @memset(impl.pixels, 0);
-    if (impl.color_pixels) |value| @memset(value, 0);
+    impl.alpha.packing = .{};
+    impl.color.packing = .{};
+    @memset(impl.alpha.pixels.?, 0);
+    if (impl.color.pixels) |value| @memset(value, 0);
 }
 
 /// Borrows the complete alpha image and private reset epoch until atlas mutation.
@@ -525,8 +586,8 @@ pub fn atlasView(atlas: *const Atlas) AtlasView {
     return .{
         .generation = impl.generation,
         .width = impl.config.width,
-        .height = impl.config.height,
-        .pixels = impl.pixels,
+        .height = impl.alpha.height,
+        .pixels = impl.alpha.pixels.?,
     };
 }
 
@@ -541,10 +602,10 @@ pub fn alphaAtlasEntryCount(atlas: *const Atlas) usize {
     return impl.entry_count - impl.color_entries;
 }
 
-/// Borrows the lazily allocated straight-RGBA plane, sharing the atlas packing.
+/// Borrows the independently packed lazy straight-RGBA plane.
 pub fn colorAtlasView(atlas: *const Atlas) ?AtlasView {
     const impl = constAtlasImpl(atlas);
-    return .{ .generation = impl.generation, .width = impl.config.width, .height = impl.config.height, .pixels = impl.color_pixels orelse return null };
+    return .{ .generation = impl.generation, .width = impl.config.width, .height = impl.color.height, .pixels = impl.color.pixels orelse return null };
 }
 
 /// Counts colour entries independently so alpha misses do not republish colour.
@@ -567,10 +628,16 @@ pub fn maximumSequenceScalars(shape_cache: *const ShapeCache) u32 {
     return constShapeCacheImpl(shape_cache).max_sequence_scalars;
 }
 
-/// Returns the fixed atlas pixel extent.
+/// Returns the current alpha extent.
 pub fn atlasSize(atlas: *const Atlas) AtlasSize {
     const impl = constAtlasImpl(atlas);
-    return .{ .width = impl.config.width, .height = impl.config.height };
+    return .{ .width = impl.config.width, .height = impl.alpha.height };
+}
+
+/// Returns the current colour extent, including before its first allocation.
+pub fn colorAtlasSize(atlas: *const Atlas) AtlasSize {
+    const impl = constAtlasImpl(atlas);
+    return .{ .width = impl.config.width, .height = impl.color.height };
 }
 
 /// Shapes one bounded row of operators without retaining it in ShapeCache.
@@ -687,11 +754,14 @@ fn shapeAndRetain(
     };
     // Glyph runs are consumed before the next resolve; completed commands own
     // their placements. Reclaiming shape knowledge cannot invalidate atlas ink.
-    if (shaped.glyphs.len > impl.glyphs.len) return shaped;
+    if (shaped.glyphs.len > impl.bounds.glyph_limit) return shaped;
     if (impl.entry_count == impl.entries.len or
         sequence.len > impl.scalars.len - impl.scalar_count or
         shaped.glyphs.len > impl.glyphs.len - impl.glyph_count)
-        resetShapeCache(cache);
+    {
+        if (!try growShapeStorage(impl, sequence.len, shaped.glyphs.len))
+            resetShapeCache(cache);
+    }
 
     try impl.lookup.ensureInsert(impl.allocator, impl.entries[0..impl.entry_count]);
 
@@ -715,6 +785,48 @@ fn shapeAndRetain(
     impl.lookup.add(shapeIndexHash(hash, resolved_variant), entry_index);
     if (ascii_index) |index| impl.ascii_entries[variant_index][index] = @intCast(entry_index + 1);
     return shapeEntryRun(impl, entry_index);
+}
+
+fn growShapeStorage(impl: *ShapeCacheImpl, scalar_count: usize, glyph_count: usize) std.mem.Allocator.Error!bool {
+    const entries = std.math.add(usize, impl.entry_count, 1) catch return false;
+    const scalars = std.math.add(usize, impl.scalar_count, scalar_count) catch return false;
+    const glyphs = std.math.add(usize, impl.glyph_count, glyph_count) catch return false;
+    if (entries > impl.bounds.entry_limit or scalars > impl.bounds.scalar_limit or glyphs > impl.bounds.glyph_limit)
+        return false;
+    const entry_capacity = growthCapacity(impl.entries.len, entries, impl.bounds.entry_limit);
+    const scalar_capacity = growthCapacity(impl.scalars.len, scalars, impl.bounds.scalar_limit);
+    const glyph_capacity = growthCapacity(impl.glyphs.len, glyphs, impl.bounds.glyph_limit);
+    var next_entries: ?[]ShapeEntry = null;
+    errdefer if (next_entries) |value| impl.allocator.free(value);
+    var next_scalars: ?[]u32 = null;
+    errdefer if (next_scalars) |value| impl.allocator.free(value);
+    var next_glyphs: ?[]text.Glyph = null;
+    errdefer if (next_glyphs) |value| impl.allocator.free(value);
+    if (entry_capacity != impl.entries.len) {
+        next_entries = try impl.allocator.alloc(ShapeEntry, entry_capacity);
+        @memcpy(next_entries.?[0..impl.entry_count], impl.entries[0..impl.entry_count]);
+    }
+    if (scalar_capacity != impl.scalars.len) {
+        next_scalars = try impl.allocator.alloc(u32, scalar_capacity);
+        @memcpy(next_scalars.?[0..impl.scalar_count], impl.scalars[0..impl.scalar_count]);
+    }
+    if (glyph_capacity != impl.glyphs.len) {
+        next_glyphs = try impl.allocator.alloc(text.Glyph, glyph_capacity);
+        @memcpy(next_glyphs.?[0..impl.glyph_count], impl.glyphs[0..impl.glyph_count]);
+    }
+    if (next_entries) |value| {
+        impl.allocator.free(impl.entries);
+        impl.entries = value;
+    }
+    if (next_scalars) |value| {
+        impl.allocator.free(impl.scalars);
+        impl.scalars = value;
+    }
+    if (next_glyphs) |value| {
+        impl.allocator.free(impl.glyphs);
+        impl.glyphs = value;
+    }
+    return true;
 }
 
 fn shapeEntryMatches(impl: *const ShapeCacheImpl, index: usize, variant: FontVariant, sequence: []const u32, hash: u64) bool {
@@ -743,7 +855,7 @@ fn findShapeIndex(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: [
     return null;
 }
 
-/// Resolves one native font glyph into the fixed alpha atlas, rasterizing into
+/// Resolves one native font glyph into its bounded raster-format plane, rasterizing into
 /// caller scratch only on cache miss. `ascii_index` is an optional dense lookup
 /// hint derived from the source scalar and never changes atlas identity.
 pub fn resolveFontAtlas(
@@ -1066,7 +1178,7 @@ test "atlas lookup matches generic key equality and first match across all varia
     };
     var entries: [2]AtlasEntry = undefined;
     // Lookup borrows only entries/count: no font or raster owner is invoked.
-    var impl = AtlasImpl{ .allocator = std.testing.allocator, .fonts = undefined, .box_drawing = undefined, .entries = &entries, .pixels = &.{}, .config = .{ .width = 1, .height = 1, .entry_capacity = 2 } };
+    var impl = AtlasImpl{ .allocator = std.testing.allocator, .fonts = undefined, .box_drawing = undefined, .entries = &entries, .alpha = .{ .pixels = &.{}, .height = 1 }, .color = .{ .height = 1 }, .config = .{ .width = 1, .height = 1, .entry_capacity = 2 } };
     var slots: [8]u32 = @splat(0);
     for ([_]bool{ false, true }) |indexed| {
         impl.lookup.slots = if (indexed) &slots else &.{};
@@ -1118,41 +1230,75 @@ fn cacheRaster(
     pixels: []const u8,
     format: text.RasterFormat,
 ) AtlasError!AtlasRaster {
-    if (impl.entry_count == impl.entries.len) return error.CacheFull;
+    const entry_limit = if (impl.config.growth) |value| value.entry_limit else impl.entries.len;
+    if (impl.entry_count == entry_limit) return error.CacheFull;
     const channels: usize = if (format == .rgba8) 4 else 1;
     const expected = std.math.mul(usize, @as(usize, width) * height, channels) catch
         return error.RasterExtentMismatch;
     if (pixels.len != expected) return error.RasterExtentMismatch;
-
-    const pack = try planAtlas(impl, width, height);
+    const plane = if (format == .rgba8) &impl.color else &impl.alpha;
+    const height_limit = if (impl.config.growth) |value|
+        (if (format == .rgba8) value.color_height_limit else value.alpha_height_limit)
+    else
+        plane.height;
+    var next_height = plane.height;
+    const pack = while (true) {
+        const planned = planAtlas(impl.config.width, next_height, impl.config.gap, plane.packing, width, height) catch |failure| {
+            if (width > impl.config.width or next_height == height_limit) return failure;
+            next_height = @intCast(growthCapacity(next_height, @as(usize, next_height) + 1, height_limit));
+            continue;
+        };
+        break planned;
+    };
+    const next_capacity = growthCapacity(impl.entries.len, impl.entry_count + 1, entry_limit);
     try impl.lookup.ensureInsert(impl.allocator, impl.entries[0..impl.entry_count]);
-    if (format == .rgba8 and impl.color_pixels == null) {
-        const total = std.math.mul(usize, impl.pixels.len, 5) catch return error.RasterTooLarge;
-        const bytes = total - impl.pixels.len;
-        const plane = try impl.allocator.alloc(u8, bytes);
-        @memset(plane, 0);
-        impl.color_pixels = plane;
+
+    var replacement_entries: ?[]AtlasEntry = null;
+    errdefer if (replacement_entries) |value| impl.allocator.free(value);
+    if (next_capacity != impl.entries.len) {
+        replacement_entries = try impl.allocator.alloc(AtlasEntry, next_capacity);
+        @memcpy(replacement_entries.?[0..impl.entry_count], impl.entries[0..impl.entry_count]);
     }
-    const plane = if (format == .rgba8) impl.color_pixels.? else impl.pixels;
+    var replacement_pixels: ?[]u8 = null;
+    errdefer if (replacement_pixels) |value| impl.allocator.free(value);
+    if (plane.pixels == null or next_height != plane.height) {
+        const bytes = @as(usize, impl.config.width) * next_height * channels;
+        replacement_pixels = try impl.allocator.alloc(u8, bytes);
+        @memset(replacement_pixels.?, 0);
+        if (plane.pixels) |prior| @memcpy(replacement_pixels.?[0..prior.len], prior);
+    }
+    // Nothing fallible follows admission. Old logical keys and ink survive
+    // every allocation failure; growing a plane never moves a raster.
+    if (replacement_entries) |value| {
+        impl.allocator.free(impl.entries);
+        impl.entries = value;
+    }
+    if (replacement_pixels) |value| {
+        if (plane.pixels) |prior| impl.allocator.free(prior);
+        plane.pixels = value;
+        plane.height = next_height;
+    }
+    const plane_pixels = plane.pixels.?;
     if (width != 0 and height != 0) {
         const pixel_width = @as(usize, width);
         const pixel_height = @as(usize, height);
         const atlas_width = @as(usize, impl.config.width);
-        const atlas_height = @as(usize, impl.config.height);
         std.debug.assert(pack.x + pixel_width <= atlas_width);
-        std.debug.assert(pack.y + pixel_height <= atlas_height);
+        std.debug.assert(pack.y + pixel_height <= plane.height);
         for (0..pixel_height) |row| {
             const source_start = row * pixel_width * channels;
             const destination = ((pack.y + row) * atlas_width + pack.x) * channels;
             @memcpy(
-                plane[destination .. destination + pixel_width * channels],
+                plane_pixels[destination .. destination + pixel_width * channels],
                 pixels[source_start .. source_start + pixel_width * channels],
             );
         }
     }
-    impl.next_x = pack.next_x;
-    impl.shelf_y = pack.shelf_y;
-    impl.shelf_height = pack.shelf_height;
+    plane.packing = .{
+        .next_x = pack.next_x,
+        .shelf_y = pack.shelf_y,
+        .shelf_height = pack.shelf_height,
+    };
     const entry = AtlasEntry{
         .key = atlasIdentity(key),
         .atlas_x = @intCast(pack.x),
@@ -1186,27 +1332,33 @@ fn fontVariantIndex(variant: FontVariant) usize {
     return @backingInt(variant);
 }
 
-fn planAtlas(impl: *const AtlasImpl, width: u16, height: u16) AtlasError!AtlasPack {
+fn growthCapacity(current: usize, needed: usize, limit: usize) usize {
+    std.debug.assert(current != 0 and current <= limit and needed <= limit);
+    if (needed <= current) return current;
+    return @min(limit, @max(needed, std.math.mul(usize, current, 2) catch limit));
+}
+
+fn planAtlas(plane_width: u16, plane_height: u16, plane_gap: u16, packing: AtlasPacking, width: u16, height: u16) AtlasError!AtlasPack {
     if (width == 0 or height == 0) {
         return .{
             .x = 0,
             .y = 0,
-            .next_x = impl.next_x,
-            .shelf_y = impl.shelf_y,
-            .shelf_height = impl.shelf_height,
+            .next_x = packing.next_x,
+            .shelf_y = packing.shelf_y,
+            .shelf_height = packing.shelf_height,
         };
     }
-    const atlas_width = @as(usize, impl.config.width);
-    const atlas_height = @as(usize, impl.config.height);
+    const atlas_width = @as(usize, plane_width);
+    const atlas_height = @as(usize, plane_height);
     const glyph_width = @as(usize, width);
     const glyph_height = @as(usize, height);
-    const gap = @as(usize, impl.config.gap);
+    const gap = @as(usize, plane_gap);
     if (glyph_width > atlas_width or glyph_height > atlas_height)
         return error.GlyphTooLarge;
 
-    var x = impl.next_x;
-    var y = impl.shelf_y;
-    var shelf_height = impl.shelf_height;
+    var x = packing.next_x;
+    var y = packing.shelf_y;
+    var shelf_height = packing.shelf_height;
     const row_end = std.math.add(usize, x, glyph_width) catch return error.AtlasFull;
     if (x != 0 and row_end > atlas_width) {
         x = 0;
@@ -1328,7 +1480,7 @@ fn atlasIndexAllocationProof(allocator: std.mem.Allocator) !void {
         const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = @intCast(index) } };
         try std.testing.expectEqual(@as(?usize, index), findAtlasIndex(impl, key));
         const entry = impl.entries[index];
-        const plane = if (index == 65) impl.color_pixels.? else impl.pixels;
+        const plane = if (index == 65) impl.color.pixels.? else impl.alpha.pixels.?;
         const stride: usize = if (index == 65) 4 else 1;
         const at = (@as(usize, entry.atlas_y) * impl.config.width + entry.atlas_x) * stride;
         try std.testing.expectEqualSlices(u8, pixels[0..stride], plane[at..][0..stride]);
@@ -1364,4 +1516,214 @@ test "entry capacity must fit nonzero u32 index records" {
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
     }, .{ .width = 1, .height = 1, .entry_capacity = std.math.maxInt(usize) }));
+}
+
+fn expectAdmittedRasters(impl: *const AtlasImpl, count: usize) !void {
+    try std.testing.expectEqual(count, impl.entry_count);
+    for (0..count) |index| {
+        const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = @intCast(index) } };
+        try std.testing.expectEqual(@as(?usize, index), findAtlasIndex(impl, key));
+        const entry = impl.entries[index];
+        const color = index % 5 == 4;
+        try std.testing.expectEqual(if (color) text.RasterFormat.rgba8 else .alpha8, entry.format);
+        const plane = if (color) impl.color else impl.alpha;
+        const channels: usize = if (color) 4 else 1;
+        const pixels = plane.pixels.?;
+        for (0..2) |row| for (0..2) |column| {
+            const at = ((@as(usize, entry.atlas_y) + row) * impl.config.width + entry.atlas_x + column) * channels;
+            for (0..channels) |channel| {
+                const expected: u8 = if (color and channel == 3) 255 else @intCast(index + 1);
+                try std.testing.expectEqual(expected, pixels[at + channel]);
+            }
+        };
+    }
+}
+
+fn atlasGrowthAllocationProof(allocator: std.mem.Allocator) !void {
+    const owner = try initAtlas(allocator, .{ .regular = undefined }, .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, .{
+        .width = 8,
+        .height = 2,
+        .color_height = 1,
+        .entry_capacity = 2,
+        .gap = 0,
+        .growth = .{ .entry_limit = 130, .alpha_height_limit = 64, .color_height_limit = 16 },
+    });
+    defer deinitAtlas(owner);
+    const impl = atlasImpl(owner);
+    for (0..130) |index| {
+        const color = index % 5 == 4;
+        var pixels: [16]u8 = @splat(@intCast(index + 1));
+        if (color) for (0..4) |pixel| {
+            pixels[pixel * 4 + 3] = 255;
+        };
+        const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = @intCast(index) } };
+        const placed = cacheRaster(impl, key, 2, 2, -1, 2, pixels[0..if (color) @as(usize, 16) else 4], if (color) .rgba8 else .alpha8) catch |failure| {
+            // Every previously admitted key/texel remains usable after any failed
+            // entry, index, lazy-colour or height allocation.
+            try expectAdmittedRasters(impl, index);
+            return failure;
+        };
+        try std.testing.expectEqual(@as(i16, -1), placed.left);
+        if (index == 3) {
+            try std.testing.expectEqual(@as(u16, 2), impl.alpha.height);
+            try std.testing.expect(impl.color.pixels == null);
+        }
+        if (index == 4) {
+            try std.testing.expectEqual(@as(u16, 2), impl.alpha.height);
+            try std.testing.expectEqual(@as(u16, 2), impl.color.height);
+            try std.testing.expectEqual(@as(u16, 0), placed.atlas_x);
+            try std.testing.expectEqual(@as(u16, 0), placed.atlas_y);
+        }
+    }
+    try expectAdmittedRasters(impl, 130);
+    try std.testing.expectEqual(@as(usize, 130), impl.entries.len);
+    try std.testing.expectEqual(@as(u16, 64), impl.alpha.height);
+    try std.testing.expectEqual(@as(u16, 16), impl.color.height);
+    const overflow = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 999 } };
+    try std.testing.expectError(error.CacheFull, cacheRaster(impl, overflow, 1, 1, 0, 0, &.{255}, .alpha8));
+    const alpha_bytes = impl.alpha.pixels.?.len;
+    const color_bytes = impl.color.pixels.?.len;
+    const before = impl.generation;
+    try resetAtlas(owner);
+    try std.testing.expectEqual(before + 1, impl.generation);
+    try std.testing.expectEqual(alpha_bytes, impl.alpha.pixels.?.len);
+    try std.testing.expectEqual(color_bytes, impl.color.pixels.?.len);
+    for (impl.alpha.pixels.?) |value| try std.testing.expectEqual(@as(u8, 0), value);
+    for (impl.color.pixels.?) |value| try std.testing.expectEqual(@as(u8, 0), value);
+    const raster = try cacheRaster(impl, overflow, 1, 1, 0, 0, &.{255}, .alpha8);
+    try std.testing.expectEqual(@as(u16, 0), raster.atlas_x);
+    try std.testing.expectEqual(@as(u16, 0), raster.atlas_y);
+}
+
+test "atlas admission grows planes independently within ceilings and survives every allocation failure" {
+    try atlasGrowthAllocationProof(std.testing.allocator);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, atlasGrowthAllocationProof, .{});
+}
+
+fn expectRetainedShapes(impl: *const ShapeCacheImpl, count: usize) !void {
+    try std.testing.expectEqual(count, impl.entry_count);
+    try std.testing.expectEqual(count * 2, impl.scalar_count);
+    try std.testing.expectEqual(count, impl.glyph_count);
+    for (0..count) |index| {
+        const sequence = [_]u32{ @intCast(index + 0x100), @intCast(index + 0x200) };
+        try std.testing.expectEqual(@as(?usize, index), findShapeIndex(impl, .regular, &sequence, index));
+        const run = shapeEntryRun(impl, index);
+        try std.testing.expectEqual(@as(u32, @intCast(index + 3)), run.glyphs[0].id);
+    }
+}
+
+fn shapeGrowthAllocationProof(allocator: std.mem.Allocator) !void {
+    const entries = try allocator.alloc(ShapeEntry, 2);
+    const scalars = allocator.alloc(u32, 4) catch |failure| {
+        allocator.free(entries);
+        return failure;
+    };
+    const glyphs = allocator.alloc(text.Glyph, 2) catch |failure| {
+        allocator.free(scalars);
+        allocator.free(entries);
+        return failure;
+    };
+    var impl: ShapeCacheImpl = .{
+        .allocator = allocator,
+        .fonts = undefined,
+        .shape = undefined,
+        .entries = entries,
+        .scalars = scalars,
+        .glyphs = glyphs,
+        .max_sequence_scalars = 2,
+        .bounds = .{ .entry_limit = 130, .scalar_limit = 260, .glyph_limit = 130 },
+    };
+    defer {
+        impl.lookup.deinit(allocator);
+        allocator.free(impl.glyphs);
+        allocator.free(impl.scalars);
+        allocator.free(impl.entries);
+    }
+    for (0..130) |index| {
+        const grown = growShapeStorage(&impl, 2, 1) catch |failure| {
+            try expectRetainedShapes(&impl, index);
+            return failure;
+        };
+        try std.testing.expect(grown);
+        impl.lookup.ensureInsert(allocator, impl.entries[0..impl.entry_count]) catch |failure| {
+            try expectRetainedShapes(&impl, index);
+            return failure;
+        };
+        impl.scalars[index * 2 ..][0..2].* = .{ @intCast(index + 0x100), @intCast(index + 0x200) };
+        impl.glyphs[index] = std.mem.zeroes(text.Glyph);
+        impl.glyphs[index].id = @intCast(index + 3);
+        impl.entries[index] = .{ .hash = index, .variant = .regular, .scalar_offset = index * 2, .scalar_count = 2, .glyph_offset = index, .glyph_count = 1, .face_index = 0 };
+        impl.entry_count += 1;
+        impl.scalar_count += 2;
+        impl.glyph_count += 1;
+        impl.lookup.add(shapeIndexHash(index, .regular), index);
+    }
+    try expectRetainedShapes(&impl, 130);
+    try std.testing.expect(!try growShapeStorage(&impl, 2, 1));
+    try expectRetainedShapes(&impl, 130);
+}
+
+test "shape storage growth preserves keys and glyphs atomically through all allocation failures" {
+    try shapeGrowthAllocationProof(std.testing.allocator);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, shapeGrowthAllocationProof, .{});
+}
+
+test "growth configuration rejects descending limits and zero lazy colour extent" {
+    const a = std.testing.allocator;
+    const fonts: FontFaces = .{ .regular = undefined };
+    const box: generated.BoxDrawingConfig = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } };
+    try std.testing.expectError(error.InvalidAtlasConfig, initAtlas(a, fonts, box, .{
+        .width = 8,
+        .height = 8,
+        .entry_capacity = 2,
+        .color_height = 0,
+    }));
+    try std.testing.expectError(error.InvalidAtlasConfig, initAtlas(a, fonts, box, .{
+        .width = 8,
+        .height = 8,
+        .entry_capacity = 2,
+        .growth = .{ .entry_limit = 1, .alpha_height_limit = 16, .color_height_limit = 16 },
+    }));
+    try std.testing.expectError(error.InvalidAtlasConfig, initAtlas(a, fonts, box, .{
+        .width = 8,
+        .height = 8,
+        .entry_capacity = 2,
+        .growth = .{ .entry_limit = 4, .alpha_height_limit = 7, .color_height_limit = 16 },
+    }));
+    try std.testing.expectError(error.InvalidShapeCacheConfig, initShapeCache(a, fonts, .{
+        .entry_capacity = 2,
+        .scalar_capacity = 4,
+        .glyph_capacity = 2,
+        .max_sequence_scalars = 2,
+        .growth = .{ .entry_limit = 4, .scalar_limit = 3, .glyph_limit = 4 },
+    }));
+}
+
+test "atlas height ceiling rejects impossible ink without discarding admitted pixels" {
+    const owner = try initAtlas(std.testing.allocator, .{ .regular = undefined }, .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, .{ .width = 8, .height = 2, .entry_capacity = 2, .gap = 0, .growth = .{ .entry_limit = 8, .alpha_height_limit = 4, .color_height_limit = 4 } });
+    defer deinitAtlas(owner);
+    const impl = atlasImpl(owner);
+    const pixels: [16]u8 = @splat(77);
+    for (0..2) |index| {
+        const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = @intCast(index) } };
+        // zig-audit: acknowledge discard
+        // reason: The complete retained plane and failure bounds are asserted below.
+        _ = try cacheRaster(impl, key, 8, 2, 0, 0, &pixels, .alpha8);
+    }
+    try std.testing.expectEqual(@as(u16, 4), impl.alpha.height);
+    const key = AtlasKey{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 99 } };
+    try std.testing.expectError(error.AtlasFull, cacheRaster(impl, key, 8, 2, 0, 0, &pixels, .alpha8));
+    const too_wide: [9]u8 = @splat(11);
+    try std.testing.expectError(error.GlyphTooLarge, cacheRaster(impl, key, 9, 1, 0, 0, &too_wide, .alpha8));
+    try std.testing.expectEqual(@as(usize, 2), impl.entry_count);
+    try std.testing.expectEqual(@as(u16, 4), impl.alpha.height);
+    for (impl.alpha.pixels.?) |value| try std.testing.expectEqual(@as(u8, 77), value);
+    try std.testing.expect(impl.color.pixels == null);
+    try std.testing.expect(findAtlasIndex(impl, key) == null);
 }
