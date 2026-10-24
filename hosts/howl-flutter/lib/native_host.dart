@@ -1057,14 +1057,16 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
-  final createManaged = dylib
-      .lookupFunction<_CreateManagedNative, _CreateManagedDart>(
-        'howl_native_host_create_managed',
-      );
-  final createLocal = dylib
-      .lookupFunction<_CreateLocalNative, _CreateLocalDart>(
-        'howl_native_host_create_local',
-      );
+  final createManaged = route == 1
+      ? dylib.lookupFunction<_CreateManagedNative, _CreateManagedDart>(
+          'howl_native_host_create_managed',
+        )
+      : null;
+  final createLocal = route == 2
+      ? dylib.lookupFunction<_CreateLocalNative, _CreateLocalDart>(
+          'howl_native_host_create_local',
+        )
+      : null;
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
@@ -1134,7 +1136,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
   final host = switch (route) {
-    1 => createManaged(
+    1 => createManaged!(
       endpointPointer,
       endpointBytes.length,
       serverId,
@@ -1154,7 +1156,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       _nativeCreateDiagnosticBytes,
       diagnosticLength,
     ),
-    2 => createLocal(
+    2 => createLocal!(
       ffi.Pointer<ffi.Void>.fromAddress(localInstanceAddress),
       primaryPointer,
       primaryBytes.length,
@@ -1707,14 +1709,18 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final localInstanceAddress = init[8]! as int;
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
-  final createManaged = dylib
-      .lookupFunction<_ControlCreateManagedNative, _ControlCreateManagedDart>(
-        'howl_native_control_create_managed',
-      );
-  final createLocal = dylib
-      .lookupFunction<_ControlCreateLocalNative, _ControlCreateLocalDart>(
-        'howl_native_control_create_local',
-      );
+  final createManaged = route == 1
+      ? dylib.lookupFunction<
+          _ControlCreateManagedNative,
+          _ControlCreateManagedDart
+        >('howl_native_control_create_managed')
+      : null;
+  final createLocal = route == 2
+      ? dylib
+            .lookupFunction<_ControlCreateLocalNative, _ControlCreateLocalDart>(
+              'howl_native_control_create_local',
+            )
+      : null;
   final destroy = dylib
       .lookupFunction<_ControlDestroyNative, _ControlDestroyDart>(
         'howl_native_control_destroy',
@@ -1764,7 +1770,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
   final control = switch (route) {
-    1 => createManaged(
+    1 => createManaged!(
       endpointPointer,
       endpointBytes.length,
       serverId,
@@ -1775,7 +1781,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       _nativeCreateDiagnosticBytes,
       diagnosticLength,
     ),
-    2 => createLocal(
+    2 => createLocal!(
       ffi.Pointer<ffi.Void>.fromAddress(localInstanceAddress),
       interrupt,
       diagnosticPointer,
