@@ -21,12 +21,14 @@ final class HowlServerBrowser extends StatefulWidget {
     super.key,
     required this.endpoint,
     required this.onOpenTarget,
+    this.onMenu,
     this.fetchTree = NativeServerTree.request,
     this.launchTerminal = NativeServerLaunch.request,
   });
 
   final HowlEndpoint endpoint;
   final ValueChanged<ManagedHowlInstanceTarget> onOpenTarget;
+  final VoidCallback? onMenu;
 
   final HowlServerTreeFetcher fetchTree;
   final HowlServerLauncher launchTerminal;
@@ -269,7 +271,14 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
     return Scaffold(
       backgroundColor: const Color(0xff090b0e),
       appBar: AppBar(
-        leading: const SizedBox.shrink(),
+        leading: widget.onMenu == null
+            ? const SizedBox.shrink()
+            : IconButton(
+                key: const Key('howl-shell-menu'),
+                tooltip: 'Howl menu',
+                onPressed: widget.onMenu,
+                icon: const Icon(Icons.menu, size: 19),
+              ),
         leadingWidth: 48,
         title: const Text('Howl Server'),
         toolbarHeight: 44,

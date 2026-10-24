@@ -22,7 +22,7 @@ pub const panic = if (builtin.os.tag == .ios)
 else
     std.debug.FullPanic(std.debug.defaultPanic);
 
-const host_header_bytes: usize = 64;
+const host_header_bytes: usize = 68;
 const global_header_bytes: usize = 16;
 const frame_header_bytes: usize = 48;
 const resource_record_bytes: usize = 40;
@@ -33,6 +33,7 @@ const image_refill_header_bytes: usize = 56;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
 const semantic_capacity: usize = 64 * 1024;
+const title_capacity: usize = protocol.properties.maximum_field_bytes;
 const selection_rows_capacity: usize = limits.maximum_rows * @sizeOf(u16);
 // Reuse one bounded decode/projection arena for every observation so dense live
 // frames do not churn the process-global malloc arenas. Web uses the same
@@ -55,7 +56,7 @@ const command_capacity: usize = limits.maximum_frame_commands;
 // frames use the complete terminal projection path unchanged.
 const incremental_command_capacity: usize = 8 * 1024;
 const render_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
-const output_minimum_bytes: usize = render_packet_budget + selection_rows_capacity + semantic_capacity;
+const output_minimum_bytes: usize = render_packet_budget + selection_rows_capacity + semantic_capacity + title_capacity;
 const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
@@ -77,8 +78,8 @@ comptime {
         @compileError("native host frame bounds exceed its minimum output packet");
     if (render_packet_budget - maximum_packet_bytes >= command_record_bytes)
         @compileError("native host command capacity does not consume the available packet budget");
-    if (output_minimum_bytes - render_packet_budget != selection_rows_capacity + semantic_capacity)
-        @compileError("native host selection/semantic allowance drifted from its packet budget");
+    if (output_minimum_bytes - render_packet_budget != selection_rows_capacity + semantic_capacity + title_capacity)
+        @compileError("native host selection/semantic/title allowance drifted from its packet budget");
     if (terminal.maximum_frame_resources > maximum_frame_resources)
         @compileError("native image bound leaves no room for the terminal glyph atlas");
 }
@@ -1592,6 +1593,7 @@ fn projectObservation(raw: *anyopaque, observation: *const native_instance.Termi
     const semantic_start = writer.offset;
     const semantic = vt_native.queries.writeVisibleText(&view, output[semantic_start .. semantic_start + semantic_capacity]) catch return error.InvalidFrame;
     writer.offset += semantic.bytes_written;
+    try appendTitle(&writer, observation.title());
     std.mem.writeInt(u32, output[8..12], @intCast(writer.offset), .little);
     std.mem.writeInt(u32, output[16..20], @intCast(hcr_len), .little);
     std.mem.writeInt(u32, output[60..64], @intCast(semantic.bytes_written), .little);
@@ -1710,6 +1712,7 @@ fn observe(
         output[semantic_start .. semantic_start + semantic_capacity],
     );
     writer.offset = semantic_start + semantic.bytes_written;
+    try appendTitle(&writer, rich_view.properties.title);
     const total = writer.offset;
     if (total > std.math.maxInt(u32) or hcr_len > std.math.maxInt(u32) or
         semantic.bytes_written > std.math.maxInt(u32))
@@ -1878,7 +1881,7 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(u32, limits.maximum_columns), howl_native_host_maximum_columns());
     try std.testing.expectEqual(
         maximum_non_command_packet_bytes + command_capacity * command_record_bytes +
-            selection_rows_capacity + semantic_capacity,
+            selection_rows_capacity + semantic_capacity + title_capacity,
         output_minimum_bytes,
     );
     try std.testing.expect(output_minimum_bytes < 8 * 1024 * 1024);
@@ -2061,7 +2064,7 @@ fn transportedFacts(begin: client.view.Begin) HostFacts {
 fn writeHostHeader(writer: *Writer, begin: HostFacts) !void {
     const magic = try writer.need(4);
     @memcpy(magic, "HNH1");
-    try writer.writeU16(3);
+    try writer.writeU16(4);
     try writer.writeU16(host_header_bytes);
     try writer.writeU32(0); // total bytes, patched after serialization
     try writer.writeU32(host_header_bytes);
@@ -2084,7 +2087,18 @@ fn writeHostHeader(writer: *Writer, begin: HostFacts) !void {
     try writer.writeU16(begin.cursor_row);
     try writer.writeU16(begin.cursor_column);
     try writer.writeU32(0); // semantic UTF-8 bytes, patched after serialization
+    try writer.writeU32(0); // terminal title bytes, patched after serialization
     if (writer.offset != host_header_bytes) return error.InvalidFrame;
+}
+
+fn appendTitle(writer: *Writer, title: ?[]const u8) HostPacketError!void {
+    if (title) |value| {
+        if (value.len > title_capacity) return error.InvalidFrame;
+        @memcpy(try writer.need(value.len), value);
+        std.mem.writeInt(u32, writer.bytes[64..68], @intCast(value.len), .little);
+        const flags = std.mem.readInt(u32, writer.bytes[20..24], .little);
+        std.mem.writeInt(u32, writer.bytes[20..24], flags | (1 << 7), .little);
+    }
 }
 
 fn writeGlobalHeader(writer: *Writer, surface: terminal.Size) !void {
@@ -2404,9 +2418,18 @@ fn copiedSemantic(packet: []const u8) ![]const u8 {
     const hcr = std.mem.readInt(u32, packet[16..20], .little);
     const rows = std.mem.readInt(u16, packet[52..54], .little);
     const count = std.mem.readInt(u32, packet[60..64], .little);
+    const title_count = std.mem.readInt(u32, packet[64..68], .little);
     const start = host_header_bytes + hcr + @as(usize, rows) * @sizeOf(u16);
-    if (start > packet.len or count != packet.len - start) return error.InvalidPacket;
-    return packet[start..];
+    if (start > packet.len or @as(usize, count) + title_count != packet.len - start) return error.InvalidPacket;
+    return packet[start..][0..count];
+}
+
+fn copiedTitle(packet: []const u8) !?[]const u8 {
+    if (packet.len < host_header_bytes) return error.InvalidPacket;
+    if (std.mem.readInt(u32, packet[20..24], .little) & (1 << 7) == 0) return null;
+    _ = try copiedSemantic(packet);
+    const title_len = std.mem.readInt(u32, packet[64..68], .little);
+    return packet[packet.len - title_len ..];
 }
 
 fn observeUntil(host: *HostHandle, output: []u8, needle: []const u8) ![]const u8 {
@@ -2443,6 +2466,7 @@ test "Flutter Local FFI presents copied canonical frames, Unicode, geometry and 
     defer std.testing.allocator.free(output);
     const first = try observeUntil(raw_host, output, "Á中");
     try std.testing.expectEqualSlices(u8, "HNH1", first[0..4]);
+    try std.testing.expectEqualStrings("READY", (try copiedTitle(first)).?);
     try std.testing.expectEqualSlices(u8, "HCR1", first[host_header_bytes..][0..4]);
     const selection_start = host_header_bytes + std.mem.readInt(u32, first[16..20], .little);
     try std.testing.expectEqual(@as(u16, 3), std.mem.readInt(u16, first[selection_start..][0..2], .little));

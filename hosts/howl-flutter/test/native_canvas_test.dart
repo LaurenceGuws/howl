@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -167,6 +168,7 @@ Uint8List _coalescedSolidCanvas() {
 
 Uint8List _hostPacket({
   bool semanticTruncated = false,
+  String? title,
   TerminalPresentation presentation = const TerminalPresentation(
     fontPixels: 16,
     cellWidth: 10,
@@ -178,20 +180,27 @@ Uint8List _hostPacket({
     surfaceHeight: presentation.lineHeight,
   );
   final semantics = Uint8List.fromList('visible terminal'.codeUnits);
+  final titleBytes = title == null
+      ? Uint8List(0)
+      : Uint8List.fromList(utf8.encode(title));
   const selectionRows = <int>[1];
   final bytes = Uint8List(
-    64 + canvas.length + selectionRows.length * 2 + semantics.length,
+    68 +
+        canvas.length +
+        selectionRows.length * 2 +
+        semantics.length +
+        titleBytes.length,
   );
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x4e, 0x48, 0x31]);
-  data.setUint16(4, 3, Endian.little);
-  data.setUint16(6, 64, Endian.little);
+  data.setUint16(4, 4, Endian.little);
+  data.setUint16(6, 68, Endian.little);
   data.setUint32(8, bytes.length, Endian.little);
-  data.setUint32(12, 64, Endian.little);
+  data.setUint32(12, 68, Endian.little);
   data.setUint32(16, canvas.length, Endian.little);
   data.setUint32(
     20,
-    (1 << 5) | (semanticTruncated ? 1 << 6 : 0),
+    (1 << 5) | (semanticTruncated ? 1 << 6 : 0) | (title != null ? 1 << 7 : 0),
     Endian.little,
   );
   data.setUint64(24, 7, Endian.little);
@@ -204,13 +213,16 @@ Uint8List _hostPacket({
   data.setUint16(56, 0, Endian.little);
   data.setUint16(58, 0, Endian.little);
   data.setUint32(60, semantics.length, Endian.little);
-  bytes.setAll(64, canvas);
-  var at = 64 + canvas.length;
+  data.setUint32(64, titleBytes.length, Endian.little);
+  bytes.setAll(68, canvas);
+  var at = 68 + canvas.length;
   for (final row in selectionRows) {
     data.setUint16(at, row, Endian.little);
     at += 2;
   }
   bytes.setAll(at, semantics);
+  at += semantics.length;
+  bytes.setAll(at, titleBytes);
   return bytes;
 }
 
@@ -538,6 +550,32 @@ void main() {
     expect(packet.canvas.commandCount, 3);
     expect(packet.semanticText, 'visible terminal');
     expect(packet.semanticTruncated, isFalse);
+    expect(packet.title, isNull);
+  });
+
+  test('native host carries Unicode terminal title independently of text', () {
+    final packet = parseNativeHostPacket(
+      _hostPacket(title: 'rain 🌧'),
+      TerminalZoomPreset.normal.presentation,
+    );
+    expect(packet.title, 'rain 🌧');
+    expect(packet.semanticText, 'visible terminal');
+    expect(
+      parseNativeHostPacket(
+        _hostPacket(title: ''),
+        TerminalZoomPreset.normal.presentation,
+      ).title,
+      '',
+    );
+    final badLength = _hostPacket(title: 'rain');
+    ByteData.sublistView(badLength).setUint32(64, 1025, Endian.little);
+    expect(
+      () => parseNativeHostPacket(
+        badLength,
+        TerminalZoomPreset.normal.presentation,
+      ),
+      throwsA(isA<NativeHostException>()),
+    );
   });
 
   test('native host external refill becomes exact Canvas residency', () async {

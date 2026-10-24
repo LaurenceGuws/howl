@@ -22,7 +22,7 @@ const int _nativeHostImageRefillHeaderBytes = 56;
 const int _nativeHostMaximumImageBytes = 16 * 1024 * 1024;
 const int _nativeHostMaximumImageRefillBytes =
     _nativeHostImageRefillHeaderBytes + _nativeHostMaximumImageBytes;
-const int _hostHeaderBytes = 64;
+const int _hostHeaderBytes = 68;
 const int _residencyRecordBytes = 24;
 const int _nativeCreateDiagnosticBytes = 256;
 
@@ -98,12 +98,14 @@ final class NativeHostFrame {
     required this.canvas,
     required this.semanticText,
     required this.semanticTruncated,
+    required this.title,
   });
 
   final NativeHostMetadata metadata;
   final NativeCanvasFrame canvas;
   final String semanticText;
   final bool semanticTruncated;
+  final String? title;
 }
 
 sealed class NativeHostObservation {
@@ -138,7 +140,7 @@ NativeHostFrame parseNativeHostPacket(
     throw const NativeHostException('packet_magic');
   }
   final data = ByteData.sublistView(bytes);
-  if (data.getUint16(4, Endian.little) != 3 ||
+  if (data.getUint16(4, Endian.little) != 4 ||
       data.getUint16(6, Endian.little) != _hostHeaderBytes) {
     throw const NativeHostException('packet_version');
   }
@@ -146,17 +148,21 @@ NativeHostFrame parseNativeHostPacket(
   final canvasOffset = data.getUint32(12, Endian.little);
   final canvasLength = data.getUint32(16, Endian.little);
   final semanticLength = data.getUint32(60, Endian.little);
+  final titleLength = data.getUint32(64, Endian.little);
+  final flags = data.getUint32(20, Endian.little);
   final rows = data.getUint16(52, Endian.little);
   final selectionRowsOffset = canvasOffset + canvasLength;
   final selectionRowsLength = rows * 2;
   final semanticOffset = selectionRowsOffset + selectionRowsLength;
+  final titleOffset = semanticOffset + semanticLength;
   if (total != bytes.length ||
       canvasOffset != _hostHeaderBytes ||
-      semanticOffset > bytes.length ||
-      semanticLength != bytes.length - semanticOffset) {
+      titleOffset > bytes.length ||
+      titleLength > 1024 ||
+      titleLength != bytes.length - titleOffset ||
+      (flags & (1 << 7) == 0 && titleLength != 0)) {
     throw const NativeHostException('packet_layout');
   }
-  final flags = data.getUint32(20, Endian.little);
   final columns = data.getUint16(54, Endian.little);
   final selectionRows = List<TerminalSelectionRowShape>.generate(rows, (row) {
     final encoded = data.getUint16(
@@ -203,13 +209,24 @@ NativeHostFrame parseNativeHostPacket(
       frame.surfaceHeight != metadata.rows * expectedPresentation.lineHeight) {
     throw const NativeHostException('packet_canvas');
   }
-  final semanticBytes = Uint8List.sublistView(bytes, semanticOffset);
+  final semanticBytes = Uint8List.sublistView(
+    bytes,
+    semanticOffset,
+    titleOffset,
+  );
   final semanticText = utf8.decode(semanticBytes, allowMalformed: false);
+  final title = flags & (1 << 7) != 0
+      ? utf8.decode(
+          Uint8List.sublistView(bytes, titleOffset),
+          allowMalformed: true,
+        )
+      : null;
   return NativeHostFrame(
     metadata: metadata,
     canvas: frame,
     semanticText: semanticText,
     semanticTruncated: flags & (1 << 6) != 0,
+    title: title,
   );
 }
 

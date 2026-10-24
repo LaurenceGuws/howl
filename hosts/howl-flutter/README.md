@@ -16,6 +16,16 @@ app-private copied native-host frame
 Flutter resource lease + batched Canvas backend
 ```
 
+The mobile app shell keeps client-side tabs for selected Instances. A tab is an
+attachment choice, not a Server resource: closing it detaches the visible
+observer/control without terminating the canonical PTY/VT. The fixed tab strip
+occupies the top safe area instead of floating over terminal cells. Tab labels
+use an explicit client override when present, otherwise the child's retained
+OSC terminal title, otherwise the Instance identity. Clearing a rename returns
+to the live terminal title. The versioned private native host frame includes
+the bounded title bytes from the same coherent observation; neither Flutter
+nor the renderer reparses escape sequences.
+
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
 Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts. Remote forwards them through `server-client.actions`; desktop Local uses the exact child-owned `howl_vt_native` input helpers before submitting canonical events to its private Instance worker. Local process-signal tags use the exact Instance-owned native conversion before worker submission. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
