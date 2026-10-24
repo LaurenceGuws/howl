@@ -393,7 +393,7 @@ final class _LaunchDialog extends StatefulWidget {
 
 final class _LaunchDialogState extends State<_LaunchDialog> {
   late final TextEditingController _name;
-  final TextEditingController _shell = TextEditingController(text: '/bin/sh');
+  final TextEditingController _shell = TextEditingController(text: '/bin/bash');
 
   @override
   void initState() {

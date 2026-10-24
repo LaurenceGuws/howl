@@ -196,5 +196,9 @@ void main() {
       find.widgetWithText(TextField, 'Session name'),
     );
     expect(field.controller!.text, 'mobile-2');
+    final shell = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Shell on Server'),
+    );
+    expect(shell.controller!.text, '/bin/bash');
   });
 }
