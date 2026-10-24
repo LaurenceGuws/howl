@@ -320,53 +320,61 @@ pub export fn howl_native_local_instance_create(
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
 ) ?*LocalInstanceHandle {
-    resetCreateDiagnostic(diagnostic_len);
-    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0 or
-        rows > limits.maximum_rows or columns > limits.maximum_columns or
-        @as(u32, rows) * columns > limits.maximum_cells)
-    {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
+    if (comptime builtin.os.tag == .ios) {
+        // iOS attaches to Server-owned Instances. Its Local process path is
+        // unavailable, and Zig 0.17 cannot compile desktop spawn for iOS.
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_instance_unavailable_ios");
         return null;
+    } else {
+        resetCreateDiagnostic(diagnostic_len);
+        if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0 or
+            rows > limits.maximum_rows or columns > limits.maximum_columns or
+            @as(u32, rows) * columns > limits.maximum_cells)
+        {
+            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
+            return null;
+        }
+        const allocator = std.heap.c_allocator;
+        const value = allocator.create(LocalInstance) catch |failure| {
+            writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_alloc", failure);
+            return null;
+        };
+        value.* = .{
+            .allocator = allocator,
+            .threaded = std.Io.Threaded.init(
+                std.heap.page_allocator,
+                .{ .environ = currentProcessEnviron() },
+            ),
+            .owner = undefined,
+        };
+        value.owner = local.init(
+            allocator,
+            value.threaded.io(),
+            currentProcessEnviron(),
+            .{
+                .shell = shell_ptr[0..shell_len],
+                .command = if (command_len == 0) null else command_ptr[0..command_len],
+                .cwd = if (cwd_len == 0) null else cwd_ptr[0..cwd_len],
+                .rows = rows,
+                .columns = columns,
+                .history_rows = history_rows,
+            },
+        ) catch |failure| {
+            value.threaded.deinit();
+            allocator.destroy(value);
+            writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_create", failure);
+            return null;
+        };
+        // zig-audit: acknowledge ptr_cast
+        // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+        return @ptrCast(value);
     }
-    const allocator = std.heap.c_allocator;
-    const value = allocator.create(LocalInstance) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_alloc", failure);
-        return null;
-    };
-    value.* = .{
-        .allocator = allocator,
-        .threaded = std.Io.Threaded.init(
-            std.heap.page_allocator,
-            .{ .environ = currentProcessEnviron() },
-        ),
-        .owner = undefined,
-    };
-    value.owner = local.init(
-        allocator,
-        value.threaded.io(),
-        currentProcessEnviron(),
-        .{
-            .shell = shell_ptr[0..shell_len],
-            .command = if (command_len == 0) null else command_ptr[0..command_len],
-            .cwd = if (cwd_len == 0) null else cwd_ptr[0..cwd_len],
-            .rows = rows,
-            .columns = columns,
-            .history_rows = history_rows,
-        },
-    ) catch |failure| {
-        value.threaded.deinit();
-        allocator.destroy(value);
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_create", failure);
-        return null;
-    };
-    // zig-audit: acknowledge ptr_cast
-    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
-    return @ptrCast(value);
 }
 
 /// Returns 0 on destruction and 2 while any Host/Control handle still
 /// borrows the Local Instance. The caller must retire those handles first.
 pub export fn howl_native_local_instance_destroy(raw: ?*LocalInstanceHandle) i32 {
+    if (comptime builtin.os.tag == .ios) return 1;
     const value = localInstanceFromRaw(raw) orelse return 1;
     if (value.borrowers.load(.acquire) != 0) return 2;
     local.deinit(value.owner);
