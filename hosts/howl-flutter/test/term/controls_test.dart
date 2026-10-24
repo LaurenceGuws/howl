@@ -15,7 +15,7 @@ void main() {
       var pastes = 0;
       var logs = 0;
       var leads = 0;
-      var browseInstances = 0;
+      var browseSessions = 0;
       final zooms = <TerminalZoomPreset>[];
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -37,7 +37,7 @@ void main() {
               onCopy: () => copies += 1,
               onPaste: () => pastes += 1,
               onLog: () => logs += 1,
-              onBrowseInstances: () => browseInstances += 1,
+              onBrowseSessions: () => browseSessions += 1,
             ),
           ),
         ),
@@ -60,7 +60,7 @@ void main() {
       await tester.tap(find.text('→'));
       await tester.tap(find.text('Kbd'));
       for (final label in <String>[
-        'Instances',
+        'Sessions',
         'Alt',
         '16px',
         'Lead',
@@ -84,7 +84,7 @@ void main() {
       expect(copies, 1);
       expect(pastes, 1);
       expect(logs, 1);
-      expect(browseInstances, 1);
+      expect(browseSessions, 1);
       expect(HowlInput.maximumPasteBytes, 65535);
 
       final toggled = tester

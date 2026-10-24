@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/server/endpoint.dart';
 import 'package:howl_flutter/server/attachment.dart';
 import 'package:howl_flutter/server/browser.dart';
+import 'package:howl_flutter/server/change.dart';
+import 'package:howl_flutter/server/connections.dart';
+import 'package:howl_flutter/server/launch.dart';
 import 'package:howl_flutter/server/tree.dart';
 
 void main() {
@@ -22,7 +25,7 @@ void main() {
       MaterialApp(
         home: ServerBrowser(
           endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
-          selectedSessionId: '7',
+          initialExpandedSessionId: '7',
           fetchTree: (_) => ServerTreeRequest.fromFuture(Future.value(tree)),
           onOpenInstance: (target) => selected = target,
         ),
@@ -30,16 +33,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('work'), findsOneWidget);
-    expect(find.text('Instances'), findsOneWidget);
+    expect(find.text('Sessions'), findsOneWidget);
     expect(find.text('Instance 1'), findsOneWidget);
     expect(find.text('exited'), findsOneWidget);
     expect(find.text('Instance 2'), findsOneWidget);
     expect(find.text('running'), findsOneWidget);
 
     expect(
-      tester
-          .widget<ActionChip>(find.byKey(const Key('howl-instance-7-1')))
-          .onPressed,
+      tester.widget<ListTile>(find.byKey(const Key('howl-instance-7-1'))).onTap,
       isNull,
     );
     expect(selected, isNull);
@@ -68,7 +69,7 @@ void main() {
         MaterialApp(
           home: ServerBrowser(
             endpoint: Endpoint.parse('tcp://127.0.0.1:1'),
-            selectedSessionId: '7',
+            initialExpandedSessionId: '7',
             fetchTree: (_) => ServerTreeRequest.fromFuture(
               calls++ == 0
                   ? Future.value(tree('91', 'OLD_OCCURRENCE'))
@@ -195,16 +196,260 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('New Session + terminal'));
+    await tester.tap(find.byTooltip('New Session'));
     await tester.pumpAndSettle();
     final field = tester.widget<TextField>(
       find.widgetWithText(TextField, 'Session name'),
     );
     expect(field.controller!.text, 'mobile-2');
-    final shell = tester.widget<TextField>(
-      find.widgetWithText(TextField, 'Shell on Server'),
+    expect(find.byKey(const Key('howl-new-session-server')), findsOneWidget);
+  });
+
+  testWidgets('New Session targets the selected configured Server', (
+    tester,
+  ) async {
+    final home = Endpoint.parse('tcp://127.0.0.1:43130');
+    final remote = Endpoint.parse('tcp://127.0.0.1:43131');
+    final requests = <String>[];
+    String? selectedServer;
+    String? mutatedServer;
+    String? mutatedId;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ServerBrowser(
+            endpoint: home,
+            availableServers: <ServerConnection>[
+              ServerConnection(label: 'Home', endpoint: home.toString()),
+              ServerConnection(label: 'Remote', endpoint: remote.toString()),
+            ],
+            fetchTree: (endpoint) {
+              requests.add(endpoint.toString());
+              final id = endpoint.toString() == home.toString() ? '91' : '92';
+              return ServerTreeRequest.fromFuture(
+                Future.value(
+                  ServerTree.parse(
+                    '{"schema":"howl.server.tree/v1","server_id":"$id",'
+                    '"tree_revision":"1","sessions":[]}',
+                  ),
+                ),
+              );
+            },
+            changeServer:
+                (endpoint, id, {required kind, sessionId, instanceId, name}) {
+                  mutatedServer = endpoint.toString();
+                  mutatedId = id;
+                  expect(kind, ServerChangeKind.createSession);
+                  expect(name, 'mobile');
+                  return ServerChangeRequest.fromFuture(
+                    Future.value(
+                      ServerChangeReceipt.parse(
+                        '{"schema":"howl.server.change/v1","server_id":"92","session_id":"3"}',
+                      ),
+                    ),
+                  );
+                },
+            onChooseServer: (server) async {
+              selectedServer = server.endpoint;
+              return true;
+            },
+            onOpenInstance: (_) =>
+                fail('Session create must not launch an Instance'),
+          ),
+        ),
+      ),
     );
-    expect(shell.controller!.text, '/bin/bash');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('howl-new-session')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('howl-new-session-server')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remote').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(requests, <String>[home.toString(), remote.toString()]);
+    expect(mutatedServer, remote.toString());
+    expect(mutatedId, '92');
+    expect(selectedServer, remote.toString());
+  });
+
+  testWidgets('new Instance refreshes its Session before reopening the drawer', (
+    tester,
+  ) async {
+    final before = ServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"91",'
+      '"tree_revision":"2","sessions":['
+      '{"session_id":"7","name":"work","instances":[]}]}',
+    );
+    final after = ServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"91",'
+      '"tree_revision":"3","sessions":['
+      '{"session_id":"7","name":"work","instances":['
+      '{"instance_id":"8","state":"running"}]}]}',
+    );
+    var fetches = 0;
+    Attachment? opened;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ServerBrowser(
+            endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
+            fetchTree: (_) => ServerTreeRequest.fromFuture(
+              Future.value(fetches++ == 0 ? before : after),
+            ),
+            launchTerminal:
+                (endpoint, serverId, {required sessionId, required shell}) {
+                  expect(serverId, '91');
+                  expect(sessionId, '7');
+                  expect(shell, '/bin/bash');
+                  return ServerLaunchRequest.fromFuture(
+                    Future.value(
+                      ServerLaunchReceipt.parse(
+                        '{"schema":"howl.server.launch/v1",'
+                        '"server_id":"91","session_id":"7","instance_id":"8"}',
+                      ),
+                    ),
+                  );
+                },
+            onOpenInstance: (target) => opened = target,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('howl-new-instance-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Launch'));
+    await tester.pumpAndSettle();
+    expect(opened?.instanceId, '8');
+    expect(fetches, 2);
+    expect(find.text('Instance 8'), findsOneWidget);
+  });
+
+  testWidgets('close Instance requires confirmation and refreshes Server', (
+    tester,
+  ) async {
+    final before = ServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"91","tree_revision":"2",'
+      '"sessions":[{"session_id":"7","name":"work","instances":['
+      '{"instance_id":"2","state":"running"}]}]}',
+    );
+    final after = ServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"91","tree_revision":"3",'
+      '"sessions":[{"session_id":"7","name":"work","instances":[]}]}',
+    );
+    var fetches = 0;
+    var closes = 0;
+    String? closedInstance;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ServerBrowser(
+            endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
+            fetchTree: (_) => ServerTreeRequest.fromFuture(
+              Future.value(fetches++ == 0 ? before : after),
+            ),
+            changeServer:
+                (_, id, {required kind, sessionId, instanceId, name}) {
+                  closes++;
+                  expect(id, '91');
+                  expect(kind, ServerChangeKind.closeInstance);
+                  expect(sessionId, '7');
+                  expect(instanceId, '2');
+                  return ServerChangeRequest.fromFuture(
+                    Future.value(
+                      ServerChangeReceipt.parse(
+                        '{"schema":"howl.server.change/v1","server_id":"91","session_id":"7"}',
+                      ),
+                    ),
+                  );
+                },
+            onClosedInstance: (sessionId, instanceId) =>
+                closedInstance = instanceId,
+            onOpenInstance: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Instance options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close Instance').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(closes, 0);
+    await tester.tap(find.byTooltip('Instance options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close Instance').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close Instance').last);
+    await tester.pumpAndSettle();
+    expect(closes, 1);
+    expect(closedInstance, '2');
+    expect(find.text('Instance 2'), findsNothing);
+    expect(fetches, 2);
+  });
+
+  testWidgets('closing a Session closes its children only after confirmation', (
+    tester,
+  ) async {
+    final before = ServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"91","tree_revision":"2",'
+      '"sessions":[{"session_id":"7","name":"work","instances":['
+      '{"instance_id":"2","state":"running"},'
+      '{"instance_id":"3","state":"exited"}]}]}',
+    );
+    final after = ServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"91","tree_revision":"3",'
+      '"sessions":[]}',
+    );
+    var fetches = 0;
+    var closes = 0;
+    String? closedSession;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ServerBrowser(
+            endpoint: Endpoint.parse('tcp://127.0.0.1:43130'),
+            fetchTree: (_) => ServerTreeRequest.fromFuture(
+              Future.value(fetches++ == 0 ? before : after),
+            ),
+            changeServer:
+                (_, id, {required kind, sessionId, instanceId, name}) {
+                  closes++;
+                  expect(id, '91');
+                  expect(kind, ServerChangeKind.closeSession);
+                  expect(sessionId, '7');
+                  expect(instanceId, isNull);
+                  return ServerChangeRequest.fromFuture(
+                    Future.value(
+                      ServerChangeReceipt.parse(
+                        '{"schema":"howl.server.change/v1","server_id":"91","session_id":"7"}',
+                      ),
+                    ),
+                  );
+                },
+            onClosedSession: (sessionId) => closedSession = sessionId,
+            onOpenInstance: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Session options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close Session').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('all 2 Instances'), findsOneWidget);
+    expect(closes, 0);
+    await tester.tap(find.text('Close Session').last);
+    await tester.pumpAndSettle();
+    expect(closes, 1);
+    expect(closedSession, '7');
+    expect(find.byKey(const Key('howl-session-7')), findsNothing);
+    expect(fetches, 2);
   });
 
   testWidgets('synchronous native request failure never strands loading', (

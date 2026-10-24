@@ -773,7 +773,7 @@ ffi.DynamicLibrary _nativeHostLibrary() {
   final version = library.lookupFunction<_HostVersionNative, _HostVersionDart>(
     'howl_native_host_version',
   )();
-  if (version != 8) {
+  if (version != 9) {
     throw NativeHostException('native_host_version_$version');
   }
   return library;

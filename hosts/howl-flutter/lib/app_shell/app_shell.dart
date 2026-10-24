@@ -5,14 +5,16 @@ import 'package:flutter/material.dart';
 import '../server/endpoint.dart';
 import '../server/attachment.dart';
 import '../server/browser.dart';
+import '../server/change.dart';
 import '../server/connections.dart';
+import '../server/launch.dart';
 import '../server/tree.dart';
 
 typedef HowlTerminalBuilder = Widget Function(
   BuildContext context,
   Attachment target,
   VoidCallback onStaleTarget,
-  VoidCallback onBrowseInstances,
+  VoidCallback onBrowseSessions,
 );
 
 /// Minimal app shell around the terminal canary.
@@ -28,6 +30,8 @@ final class AppShell extends StatefulWidget {
     this.initialAttachment,
     this.connections,
     this.fetchTree = NativeServerTree.request,
+    this.launchTerminal = ServerLaunch.request,
+    this.changeServer = ServerChange.request,
   });
 
   final HowlTerminalBuilder terminalBuilder;
@@ -35,6 +39,8 @@ final class AppShell extends StatefulWidget {
   final Attachment? initialAttachment;
   final ServerConnections? connections;
   final ServerTreeFetcher fetchTree;
+  final ServerLauncher launchTerminal;
+  final ServerChanger changeServer;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -46,8 +52,6 @@ final class _AppShellState extends State<AppShell> {
   late final bool _ownsConnections;
   Endpoint? _activeServer;
   Attachment? _attachment;
-  ServerTree? _tree;
-  String? _selectedSessionId;
   bool _followSavedServer = false;
   bool _initialized = false;
   int _navigation = 0;
@@ -61,7 +65,6 @@ final class _AppShellState extends State<AppShell> {
         ServerConnections(SharedPreferencesServerConnectionStore());
     _connections.addListener(_connectionsChanged);
     _attachment = widget.initialAttachment;
-    _selectedSessionId = _attachment?.sessionId;
     _activeServer = widget.initialServerEndpoint ?? _attachment?.serverEndpoint;
     _initialized = _activeServer != null || _attachment != null;
     unawaited(_initialize());
@@ -104,37 +107,39 @@ final class _AppShellState extends State<AppShell> {
     setState(() {
       _activeServer = selected == null ? null : Endpoint.parse(selected);
       _attachment = null;
-      _tree = null;
-      _selectedSessionId = null;
       if (selected == null) _followSavedServer = false;
     });
   }
 
-  Future<void> _selectServer(ServerConnection server) async {
+  Future<bool> _selectServer(
+    ServerConnection server, {
+    bool closeCurrentRoute = true,
+  }) async {
     final navigation = ++_navigation;
     try {
       await _connections.select(server.endpoint);
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('$error')));
-      return;
+      return false;
     }
     if (!mounted ||
         navigation != _navigation ||
         _connections.selectedEndpoint != server.endpoint ||
         _connections.find(server.endpoint) == null) {
-      return;
+      return false;
     }
     final endpoint = Endpoint.parse(server.endpoint);
     setState(() {
-      _activeServer = endpoint;
-      _attachment = null;
-      _tree = null;
-      _selectedSessionId = null;
+      if (_activeServer?.toString() != endpoint.toString()) {
+        _activeServer = endpoint;
+        _attachment = null;
+      }
       _followSavedServer = true;
     });
-    _closeDrawer();
+    if (closeCurrentRoute) _closeDrawer();
+    return true;
   }
 
   void _openInstance(Attachment target) {
@@ -142,19 +147,11 @@ final class _AppShellState extends State<AppShell> {
     setState(() {
       _activeServer = target.serverEndpoint;
       _attachment = target;
-      _selectedSessionId = target.sessionId;
-    });
-  }
-
-  void _backToInstances() {
-    _navigation++;
-    if (_attachment == null) return;
-    setState(() {
-      _attachment = null;
-      _tree = null;
     });
     _closeDrawer();
   }
+
+  void _browseSessions() => _openDrawer();
 
   void _staleTarget() {
     final target = _attachment;
@@ -163,28 +160,25 @@ final class _AppShellState extends State<AppShell> {
     setState(() {
       _activeServer = target.serverEndpoint;
       _attachment = null;
-      _tree = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openDrawer();
     });
   }
 
-  void _selectSession(String sessionId) {
-    _navigation++;
+  void _closedSession(String sessionId) {
+    if (_attachment?.sessionId != sessionId) return;
     setState(() {
-      _selectedSessionId = sessionId;
       _attachment = null;
     });
-    _closeDrawer();
   }
 
-  void _treeChanged(Endpoint endpoint, ServerTree tree) {
-    if (!mounted || endpoint.toString() != _activeServer?.toString()) return;
-    setState(() {
-      _tree = tree;
-      if (_selectedSessionId != null &&
-          !tree.sessions.any((session) => session.id == _selectedSessionId)) {
-        _selectedSessionId = null;
-      }
-    });
+  void _closedInstance(String sessionId, String instanceId) {
+    if (_attachment?.sessionId != sessionId ||
+        _attachment?.instanceId != instanceId) {
+      return;
+    }
+    setState(() => _attachment = null);
   }
 
   void _openSettings() {
@@ -215,21 +209,10 @@ final class _AppShellState extends State<AppShell> {
         context,
         instance,
         _staleTarget,
-        _backToInstances,
+        _browseSessions,
       );
     }
-    final server = _activeServer;
-    if (server != null) {
-      return ServerBrowser(
-        key: ValueKey<String>('server:${server.toString()}'),
-        endpoint: server,
-        onMenu: _openDrawer,
-        fetchTree: widget.fetchTree,
-        onOpenInstance: _openInstance,
-        selectedSessionId: _selectedSessionId,
-        onTreeChanged: (tree) => _treeChanged(server, tree),
-      );
-    }
+    if (_activeServer != null) return _BrowsePrompt(onBrowse: _openDrawer);
     return _EmptyShell(onConfigure: _openSettings);
   }
 
@@ -241,15 +224,19 @@ final class _AppShellState extends State<AppShell> {
       key: _scaffoldKey,
       drawerEnableOpenDragGesture: false,
       drawer: _SessionDrawer(
+        connections: _connections,
         activeServer: _activeServer,
-        tree: _tree,
-        selectedSessionId: _selectedSessionId,
-        onSelectSession: _selectSession,
+        fetchTree: widget.fetchTree,
+        launchTerminal: widget.launchTerminal,
+        changeServer: widget.changeServer,
+        onSelectServer: (server) =>
+            _selectServer(server, closeCurrentRoute: false),
+        onOpenInstance: _openInstance,
+        onClosedSession: _closedSession,
+        onClosedInstance: _closedInstance,
         onSettings: _openSettings,
       ),
       body: _attachment != null
-          ? body
-          : _activeServer != null
           ? body
           : Stack(
               children: <Widget>[
@@ -344,70 +331,133 @@ final class _EmptyShell extends StatelessWidget {
   );
 }
 
-final class _SessionDrawer extends StatelessWidget {
-  const _SessionDrawer({
-    required this.activeServer,
-    required this.tree,
-    required this.selectedSessionId,
-    required this.onSelectSession,
-    required this.onSettings,
-  });
-
-  final Endpoint? activeServer;
-  final ServerTree? tree;
-  final String? selectedSessionId;
-  final ValueChanged<String> onSelectSession;
-  final VoidCallback onSettings;
+final class _BrowsePrompt extends StatelessWidget {
+  const _BrowsePrompt({required this.onBrowse});
+  final VoidCallback onBrowse;
 
   @override
-  Widget build(BuildContext context) => Drawer(
-    width: 320,
-    child: SafeArea(
-      child: Column(
-        children: <Widget>[
-          ListTile(
-            leading: const Icon(Icons.terminal),
-            title: const Text('Sessions'),
-            trailing: IconButton(
-              tooltip: 'Close',
-              icon: const Icon(Icons.close),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: activeServer == null
-                ? const Center(child: Text('Select a Server in Settings'))
-                : tree == null
-                ? const Center(child: Text('Fetching Sessions'))
-                : tree!.sessions.isEmpty
-                ? const Center(child: Text('No Sessions yet'))
-                : ListView(
-                    children: <Widget>[
-                      for (final session in tree!.sessions)
-                        ListTile(
-                          key: Key('howl-session-${session.id}'),
-                          title: Text(session.name),
-                          subtitle: Text(
-                            '${session.instances.length} Instances',
-                          ),
-                          selected: session.id == selectedSessionId,
-                          onTap: () => onSelectSession(session.id),
-                        ),
-                    ],
-                  ),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            key: const Key('howl-shell-settings'),
-            leading: const Icon(Icons.settings),
-            title: const Text('Settings'),
-            onTap: onSettings,
-          ),
-        ],
+  Widget build(BuildContext context) => ColoredBox(
+    color: const Color(0xff090b0e),
+    child: Center(
+      child: FilledButton.icon(
+        key: const Key('howl-open-sessions'),
+        onPressed: onBrowse,
+        icon: const Icon(Icons.folder_open),
+        label: const Text('Open Sessions'),
       ),
     ),
   );
+}
+
+final class _SessionDrawer extends StatelessWidget {
+  const _SessionDrawer({
+    required this.connections,
+    required this.activeServer,
+    required this.fetchTree,
+    required this.launchTerminal,
+    required this.changeServer,
+    required this.onSelectServer,
+    required this.onOpenInstance,
+    required this.onClosedSession,
+    required this.onClosedInstance,
+    required this.onSettings,
+  });
+
+  final ServerConnections connections;
+  final Endpoint? activeServer;
+  final ServerTreeFetcher fetchTree;
+  final ServerLauncher launchTerminal;
+  final ServerChanger changeServer;
+  final Future<bool> Function(ServerConnection) onSelectServer;
+  final ValueChanged<Attachment> onOpenInstance;
+  final ValueChanged<String> onClosedSession;
+  final void Function(String sessionId, String instanceId) onClosedInstance;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final servers = connections.servers.toList();
+    final selected = activeServer?.toString();
+    if (selected != null && connections.find(selected) == null) {
+      servers.insert(
+        0,
+        ServerConnection(label: 'Current Server', endpoint: selected),
+      );
+    }
+    return Drawer(
+      width: 320,
+      child: SafeArea(
+        child: Column(
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.terminal),
+              title: const Text('Howl'),
+              trailing: IconButton(
+                tooltip: 'Close',
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  key: const Key('howl-server-picker'),
+                  isExpanded: true,
+                  value:
+                      selected != null &&
+                          servers.any((server) => server.endpoint == selected)
+                      ? selected
+                      : null,
+                  hint: const Text('Choose Server'),
+                  items: <DropdownMenuItem<String>>[
+                    for (final server in servers)
+                      DropdownMenuItem(
+                        value: server.endpoint,
+                        child: Text(
+                          'Server: ${server.label}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (endpoint) {
+                    final server = endpoint == null
+                        ? null
+                        : connections.find(endpoint);
+                    if (server != null) onSelectServer(server);
+                  },
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: activeServer == null
+                  ? const Center(child: Text('Add a Server in Settings'))
+                  : ServerBrowser(
+                      key: ValueKey<String>('server-browser:$activeServer'),
+                      endpoint: activeServer!,
+                      availableServers: connections.servers.toList(),
+                      onChooseServer: onSelectServer,
+                      fetchTree: fetchTree,
+                      launchTerminal: launchTerminal,
+                      changeServer: changeServer,
+                      onOpenInstance: onOpenInstance,
+                      onClosedSession: onClosedSession,
+                      onClosedInstance: onClosedInstance,
+                    ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              key: const Key('howl-shell-settings'),
+              leading: const Icon(Icons.settings),
+              title: const Text('Settings'),
+              onTap: onSettings,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 final class _ServerSettingsPage extends StatelessWidget {
@@ -419,7 +469,7 @@ final class _ServerSettingsPage extends StatelessWidget {
 
   final ServerConnections connections;
   final Endpoint? activeServer;
-  final Future<void> Function(ServerConnection) onSelectServer;
+  final Future<bool> Function(ServerConnection) onSelectServer;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(

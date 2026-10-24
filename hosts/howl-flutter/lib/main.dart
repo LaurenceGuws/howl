@@ -99,13 +99,13 @@ final class HowlApp extends StatelessWidget {
       theme: ThemeData.dark(useMaterial3: false),
       home: AppShell(
         initialServerEndpoint: endpoint,
-        terminalBuilder: (context, target, onStaleTarget, onBrowseInstances) =>
+        terminalBuilder: (context, target, onStaleTarget, onBrowseSessions) =>
             HowlTerminal(
               key: ValueKey<String>(target.diagnosticLabel),
               target: target,
               geometryLeader: geometryLeader,
               onStaleTarget: onStaleTarget,
-              onBrowseInstances: onBrowseInstances,
+              onBrowseSessions: onBrowseSessions,
             ),
       ),
     );
@@ -117,13 +117,13 @@ final class HowlTerminal extends StatefulWidget {
     super.key,
     required this.target,
     required this.geometryLeader,
-    required this.onBrowseInstances,
+    required this.onBrowseSessions,
     this.onStaleTarget,
   });
   final Attachment target;
   final bool geometryLeader;
   final VoidCallback? onStaleTarget;
-  final VoidCallback onBrowseInstances;
+  final VoidCallback onBrowseSessions;
 
   @override
   State<HowlTerminal> createState() => _HowlTerminalState();
@@ -2112,7 +2112,7 @@ final class _HowlTerminalState extends State<HowlTerminal>
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
             onLog: () => unawaited(_copyDiagnostics()),
-            onBrowseInstances: widget.onBrowseInstances,
+            onBrowseSessions: widget.onBrowseSessions,
           ),
         ],
       ),

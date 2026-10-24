@@ -48,11 +48,10 @@ Future<ServerConnections> _savedServer(_MemoryStore store) async {
   return connections;
 }
 
-Future<void> _selectWork(WidgetTester tester) async {
+Future<void> _openSessions(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('howl-shell-menu')));
   await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const Key('howl-session-7')));
-  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('howl-session-7')), findsOneWidget);
 }
 
 void main() {
@@ -90,81 +89,75 @@ void main() {
     expect(find.byKey(const Key('howl-tab-browse')), findsNothing);
   });
 
-  testWidgets(
-    'Settings selects Server, drawer selects Session, chips open Instance',
-    (tester) async {
-      final connections = ServerConnections(_MemoryStore());
-      VoidCallback? browseInstances;
-      var fetches = 0;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(
-            connections: connections,
-            fetchTree: (_) {
-              fetches++;
-              return ServerTreeRequest.fromFuture(Future.value(_tree()));
-            },
-            terminalBuilder: (_, attachment, _, browse) {
-              browseInstances = browse;
-              return Text(
-                'terminal ${attachment.instanceId}',
-                key: const Key('fake-terminal'),
-              );
-            },
-          ),
+  testWidgets('Settings selects Server, drawer nests Sessions and Instances', (
+    tester,
+  ) async {
+    final connections = ServerConnections(_MemoryStore());
+    VoidCallback? browseInstances;
+    var fetches = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(
+          connections: connections,
+          fetchTree: (_) {
+            fetches++;
+            return ServerTreeRequest.fromFuture(Future.value(_tree()));
+          },
+          terminalBuilder: (_, attachment, _, browse) {
+            browseInstances = browse;
+            return Text(
+              'terminal ${attachment.instanceId}',
+              key: const Key('fake-terminal'),
+            );
+          },
         ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('No Server configured'), findsOneWidget);
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No Server configured'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('howl-shell-configure')));
-      await tester.pumpAndSettle();
-      expect(find.text('Server Settings'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('howl-shell-add-server')));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const Key('howl-server-label')),
-        'Home',
-      );
-      await tester.enterText(
-        find.byKey(const Key('howl-server-endpoint')),
-        _endpoint.toString(),
-      );
-      await tester.tap(find.byKey(const Key('howl-server-save')));
-      await tester.pumpAndSettle();
-      expect(connections.servers.single.label, 'Home');
-      await tester.tap(
-        find.byKey(Key('howl-shell-server-${_endpoint.toString()}')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Choose a Session'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('howl-shell-configure')));
+    await tester.pumpAndSettle();
+    expect(find.text('Server Settings'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('howl-shell-add-server')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('howl-server-label')), 'Home');
+    await tester.enterText(
+      find.byKey(const Key('howl-server-endpoint')),
+      _endpoint.toString(),
+    );
+    await tester.tap(find.byKey(const Key('howl-server-save')));
+    await tester.pumpAndSettle();
+    expect(connections.servers.single.label, 'Home');
+    await tester.tap(
+      find.byKey(Key('howl-shell-server-${_endpoint.toString()}')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Open Sessions'), findsOneWidget);
 
-      await _selectWork(tester);
-      expect(find.text('Instance 1'), findsOneWidget);
-      expect(find.text('Instance 2'), findsOneWidget);
-      expect(find.text('exited'), findsOneWidget);
-      expect(
-        tester
-            .widget<ActionChip>(find.byKey(const Key('howl-instance-7-1')))
-            .onPressed,
-        isNull,
-      );
-      expect(find.byKey(const Key('fake-terminal')), findsNothing);
-      await tester.tap(find.byKey(const Key('howl-instance-7-2')));
-      await tester.pumpAndSettle();
-      expect(find.text('terminal 2'), findsOneWidget);
-      expect(find.byKey(const Key('howl-tab-actions')), findsNothing);
-      expect(browseInstances, isNotNull);
+    await _openSessions(tester);
+    expect(find.text('Instance 1'), findsOneWidget);
+    expect(find.text('Instance 2'), findsOneWidget);
+    expect(find.text('exited'), findsOneWidget);
+    expect(
+      tester.widget<ListTile>(find.byKey(const Key('howl-instance-7-1'))).onTap,
+      isNull,
+    );
+    expect(find.byKey(const Key('fake-terminal')), findsNothing);
+    await tester.tap(find.byKey(const Key('howl-instance-7-2')));
+    await tester.pumpAndSettle();
+    expect(find.text('terminal 2'), findsOneWidget);
+    expect(find.byKey(const Key('howl-tab-actions')), findsNothing);
+    expect(browseInstances, isNotNull);
 
-      browseInstances!();
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('fake-terminal')), findsNothing);
-      expect(find.text('Instance 2'), findsOneWidget);
-      expect(fetches, greaterThanOrEqualTo(2));
-    },
-  );
+    browseInstances!();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('fake-terminal')), findsOneWidget);
+    expect(find.text('Instance 2'), findsOneWidget);
+    expect(fetches, greaterThanOrEqualTo(1));
+  });
 
-  testWidgets('Instance switching uses fresh Server chips, not local tabs', (
+  testWidgets('Instance switching uses the drawer, not local tabs', (
     tester,
   ) async {
     final connections = await _savedServer(_MemoryStore());
@@ -186,7 +179,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _selectWork(tester);
+    await _openSessions(tester);
     await tester.tap(find.byKey(const Key('howl-instance-7-1')));
     await tester.pumpAndSettle();
     expect(find.text('active 1'), findsOneWidget);
@@ -222,7 +215,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await _selectWork(tester);
+      await _openSessions(tester);
       await tester.tap(find.byKey(const Key('howl-instance-7-2')));
       await tester.pumpAndSettle();
       expect(find.text('active 2'), findsOneWidget);
@@ -239,10 +232,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(requests, 2);
-      expect(find.text('Choose a Session'), findsOneWidget);
+      expect(requests, 1);
+      expect(find.text('Open Sessions'), findsOneWidget);
       expect(find.text('active 2'), findsNothing);
-      await _selectWork(tester);
+      await _openSessions(tester);
+      expect(requests, 2);
       expect(find.text('Instance 2'), findsOneWidget);
     },
   );
@@ -265,6 +259,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _openSessions(tester);
     final replacement = ServerConnection(
       label: 'Home',
       endpoint: 'tcp://127.0.0.1:43132',
@@ -276,7 +271,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(connections.selectedEndpoint, replacement.endpoint);
     expect(fetched.last, replacement.endpoint);
-    expect(find.text('Choose a Session'), findsOneWidget);
+    expect(find.text('Open Sessions'), findsOneWidget);
   });
 
   testWidgets('removing selected Server detaches its visible Instance', (
@@ -296,7 +291,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _selectWork(tester);
+    await _openSessions(tester);
     await tester.tap(find.byKey(const Key('howl-instance-7-2')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('terminal-under-removal')), findsOneWidget);

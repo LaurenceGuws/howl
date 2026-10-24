@@ -194,7 +194,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
 
 /// Returns the native host ABI version.
 pub export fn howl_native_host_version() u32 {
-    return 8;
+    return 9;
 }
 
 /// Reports the shared maintained-client row envelope.
@@ -291,7 +291,6 @@ pub export fn howl_native_host_fetch_image_refill(
     const required = howl_native_host_image_refill_size(raw);
     if (required == 0 or required > maximum_image_refill_bytes) return 4;
     if (output_capacity < required) return 1;
-
 
     var fetched = client.images.request(
         host.connection,
@@ -713,6 +712,14 @@ fn writeServerLaunchReceipt(writer: *std.Io.Writer, server_id: u64, session_id: 
     try writer.writeByte('}');
 }
 
+fn writeServerChangeReceipt(writer: *std.Io.Writer, server_id: u64, session_id: u64) !void {
+    try writer.writeAll("{\"schema\":\"howl.server.change/v1\",\"server_id\":");
+    try writeJsonIdentity(writer, server_id);
+    try writer.writeAll(",\"session_id\":");
+    try writeJsonIdentity(writer, session_id);
+    try writer.writeByte('}');
+}
+
 /// Copies the Server catalogue into caller-owned bounded output.
 pub export fn howl_native_server_tree(
     endpoint_ptr: [*]const u8,
@@ -792,16 +799,105 @@ pub export fn howl_native_server_tree(
     return 0;
 }
 
-/// Launches one Server Instance, optionally creating its named Session first.
-/// A failed Instance launch closes only the Session created by this call.
+/// Mutates one exact Server-owned Session or Instance using its control stream.
+/// 1 creates an empty Session, 2 closes a Session and its Instances,
+/// 3 closes an exact Instance. The caller never owns these lifetimes.
+pub export fn howl_native_server_change(
+    endpoint_ptr: [*]const u8,
+    endpoint_len: usize,
+    expected_server_id: u64,
+    operation: u32,
+    session_id: u64,
+    instance_id: u64,
+    name_ptr: [*]const u8,
+    name_len: usize,
+    interrupt_raw: ?*InterruptHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) i32 {
+    output_len.* = 0;
+    resetCreateDiagnostic(diagnostic_len);
+    if (endpoint_len == 0 or expected_server_id == 0 or output_capacity < 192 or
+        !switch (operation) {
+            1 => session_id == 0 and instance_id == 0 and name_len != 0 and
+                name_len <= server_client.protocol.maximum_session_name_bytes,
+            2 => session_id != 0 and instance_id == 0 and name_len == 0,
+            3 => session_id != 0 and instance_id != 0 and name_len == 0,
+            else => false,
+        })
+    {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_change_arguments");
+        return 1;
+    }
+    if (operation == 1) server_client.protocol.validateSessionName(name_ptr[0..name_len]) catch {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_name");
+        return 1;
+    };
+
+    const allocator = std.heap.c_allocator;
+    var connect_diagnostic: server_client.ConnectDiagnostic = .{};
+    var connection = server_client.Connection.connectCancelable(
+        allocator,
+        endpoint_ptr[0..endpoint_len],
+        &connect_diagnostic,
+        interruptFromRaw(interrupt_raw),
+    ) catch |failure| {
+        writeManagedConnectDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "server_change_connect", failure, connect_diagnostic);
+        return 2;
+    };
+    defer connection.deinit();
+    if (connection.serverId() != expected_server_id) {
+        writeFailureText(diagnostic_ptr, diagnostic_capacity, diagnostic_len, .stale, "server_incarnation_changed");
+        return 3;
+    }
+
+    const changed_session = switch (operation) {
+        1 => connection.createSession(name_ptr[0..name_len]) catch |failure| {
+            writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "session_create", failure);
+            return 4;
+        },
+        2 => blk: {
+            connection.closeSession(session_id) catch |failure| {
+                writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "session_close", failure);
+                return 4;
+            };
+            break :blk session_id;
+        },
+        3 => blk: {
+            connection.closeInstance(.{ .session_id = session_id, .instance_id = instance_id }) catch |failure| {
+                writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "instance_close", failure);
+                return 4;
+            };
+            break :blk session_id;
+        },
+        else => unreachable,
+    };
+    var writer: std.Io.Writer = .fixed(output_ptr[0..output_capacity]);
+    writeServerChangeReceipt(&writer, expected_server_id, changed_session) catch {
+        // The fixed 192-byte floor exceeds the largest two-u64 receipt.
+        // Preserve explicit cleanup if that private receipt format grows.
+        if (operation == 1) connection.closeSession(changed_session) catch {
+            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "receipt_failed_session_cleanup_failed");
+            return 5;
+        };
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "change_receipt_failed");
+        return 5;
+    };
+    output_len.* = writer.buffered().len;
+    return 0;
+}
+
+/// Launches one Instance in an existing Server-owned Session.
 /// All identities are returned as decimal strings to preserve full u64 values.
 pub export fn howl_native_server_launch(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
     expected_server_id: u64,
     session_id: u64,
-    name_ptr: [*]const u8,
-    name_len: usize,
     shell_ptr: [*]const u8,
     shell_len: usize,
     interrupt_raw: ?*InterruptHandle,
@@ -814,21 +910,14 @@ pub export fn howl_native_server_launch(
 ) i32 {
     output_len.* = 0;
     resetCreateDiagnostic(diagnostic_len);
-    const name = name_ptr[0..name_len];
     const shell = shell_ptr[0..shell_len];
-    if (endpoint_len == 0 or expected_server_id == 0 or output_capacity < 192 or
+    if (endpoint_len == 0 or expected_server_id == 0 or session_id == 0 or output_capacity < 192 or
         shell.len == 0 or shell.len > server_client.protocol.maximum_shell_bytes or
-        std.mem.indexOfScalar(u8, shell, 0) != null or
-        (session_id == 0 and (name_len == 0 or name_len > server_client.protocol.maximum_session_name_bytes)) or
-        (session_id != 0 and name_len != 0))
+        std.mem.indexOfScalar(u8, shell, 0) != null)
     {
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_launch_arguments");
         return 1;
     }
-    if (session_id == 0) server_client.protocol.validateSessionName(name) catch {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_name");
-        return 1;
-    };
 
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: server_client.ConnectDiagnostic = .{};
@@ -847,22 +936,13 @@ pub export fn howl_native_server_launch(
         return 3;
     }
 
-    const created_session = session_id == 0;
-    const selected_session = if (created_session) connection.createSession(name) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "session_create", failure);
-        return 4;
-    } else session_id;
     const identity = connection.createInstance(.{
-        .session_id = selected_session,
+        .session_id = session_id,
         .shell = shell,
         .rows = 24,
         .columns = 40,
         .history_rows = 4096,
     }) catch |failure| {
-        if (created_session) connection.closeSession(selected_session) catch {
-            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "instance_create_failed_session_cleanup_failed");
-            return 5;
-        };
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "instance_create", failure);
         return 5;
     };
@@ -873,10 +953,6 @@ pub export fn howl_native_server_launch(
         // exact if the private FFI receipt format ever outgrows that floor.
         connection.closeInstance(identity) catch {
             writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "launch_receipt_failed_instance_cleanup_failed");
-            return 6;
-        };
-        if (created_session) connection.closeSession(selected_session) catch {
-            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "launch_receipt_failed_session_cleanup_failed");
             return 6;
         };
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "launch_receipt_failed");

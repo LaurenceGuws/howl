@@ -72,8 +72,7 @@ final class ServerLaunchRequest {
 typedef ServerLauncher = ServerLaunchRequest Function(
   Endpoint endpoint,
   String serverId, {
-  String? sessionId,
-  String? sessionName,
+  required String sessionId,
   required String shell,
 });
 
@@ -85,17 +84,10 @@ final class ServerLaunch {
   static ServerLaunchRequest request(
     Endpoint endpoint,
     String serverId, {
-    String? sessionId,
-    String? sessionName,
+    required String sessionId,
     required String shell,
   }) {
-    if ((sessionId == null) == (sessionName == null)) {
-      throw ArgumentError('select exactly one Session or name a new one');
-    }
-    if (sessionName != null &&
-        !RegExp(r'^[A-Za-z0-9._-]{1,64}$').hasMatch(sessionName)) {
-      throw ArgumentError.value(sessionName, 'sessionName', 'ASCII name');
-    }
+    exactIdentity(sessionId);
     final bytes = utf8.encode(shell);
     if (bytes.isEmpty || bytes.length > 1024 || bytes.contains(0)) {
       throw ArgumentError.value(shell, 'shell', 'invalid executable path');
@@ -107,8 +99,7 @@ final class ServerLaunch {
       () => _launch(
         endpoint.toString(),
         BigInt.parse(serverId).toSigned(64).toInt(),
-        sessionId == null ? 0 : BigInt.parse(sessionId).toSigned(64).toInt(),
-        sessionName ?? '',
+        BigInt.parse(sessionId).toSigned(64).toInt(),
         shell,
         interrupt.address,
       ),
@@ -151,8 +142,6 @@ typedef _LaunchNative = ffi.Int32 Function(
   ffi.Uint64,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
@@ -165,8 +154,6 @@ typedef _LaunchDart = int Function(
   ffi.Pointer<ffi.Uint8>,
   int,
   int,
-  int,
-  ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Uint8>,
   int,
@@ -183,7 +170,6 @@ String _launch(
   String endpoint,
   int serverId,
   int sessionId,
-  String sessionName,
   String shell,
   int interruptAddress,
 ) {
@@ -194,7 +180,6 @@ String _launch(
     'howl_native_server_launch',
   );
   final endpointBytes = utf8.encode(endpoint);
-  final nameBytes = utf8.encode(sessionName);
   final shellBytes = utf8.encode(shell);
   ffi.Pointer<ffi.Uint8> bytes(List<int> data) {
     final pointer = calloc<ffi.Uint8>(data.isEmpty ? 1 : data.length);
@@ -203,7 +188,6 @@ String _launch(
   }
 
   final endpointPointer = bytes(endpointBytes);
-  final namePointer = bytes(nameBytes);
   final shellPointer = bytes(shellBytes);
   final output = calloc<ffi.Uint8>(256);
   final outputLength = calloc<ffi.Size>();
@@ -215,8 +199,6 @@ String _launch(
       endpointBytes.length,
       serverId,
       sessionId,
-      namePointer,
-      nameBytes.length,
       shellPointer,
       shellBytes.length,
       ffi.Pointer<ffi.Void>.fromAddress(interruptAddress),
@@ -251,7 +233,6 @@ String _launch(
     calloc.free(outputLength);
     calloc.free(output);
     calloc.free(shellPointer);
-    calloc.free(namePointer);
     calloc.free(endpointPointer);
   }
 }

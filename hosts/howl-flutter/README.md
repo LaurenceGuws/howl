@@ -16,21 +16,23 @@ app-private copied native-host frame
 Flutter resource lease + batched Canvas backend
 ```
 
-The mobile app shell persists only Server endpoint settings. It fetches Sessions
-and their Instances from Server and offers Session selection in the drawer,
-followed by Instance chips on the browser page. Selecting a running Instance
-attaches its visible observer/control without owning or terminating the canonical
-PTY/VT. The existing terminal control strip returns to the Instance picker;
-there is no client-side tab model or permanent tab strip. Closing and relaunching
-Flutter rediscovers the Server tree rather than restoring client-owned Session
-or Instance state. The private native host frame includes bounded terminal title
+The mobile app shell persists only Server endpoint settings. One drawer shows
+the configured Server and its fetched Sessions, with Instances nested beneath
+their owning Session. Session creation chooses an explicit configured Server;
+Instance launch, Session close and Instance close use the Server's own lifecycle.
+Selecting a running Instance attaches its visible observer/control without
+owning or terminating the canonical PTY/VT. The terminal control strip opens
+the same drawer without detaching; there is no client-side tab model or
+permanent tab strip. Closing and relaunching Flutter rediscovers the Server tree
+rather than restoring client-owned Session or Instance state.
+The private native host frame includes bounded terminal title
 bytes from the coherent observation; Flutter does not reparse escape sequences.
 
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
 Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts, forwarded through `server-client.actions`. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
-Interaction observations use VT's copied 16-byte native record over the Server client. Flutter keeps its platform binding and worker. Visible text retains printed spaces and visual row breaks, hides concealed text, and truncates at a UTF-8 scalar boundary. Private frame and image packets retain their existing formats. The Server client feeds canonical Render projection into the existing 40-byte command records and frame-local resource indices. No additional command array or public C call is introduced. Private ABI 8 must be built alongside this Dart client; the version gate rejects older libraries before constructing a handle.
+Interaction observations use VT's copied 16-byte native record over the Server client. Flutter keeps its platform binding and worker. Visible text retains printed spaces and visual row breaks, hides concealed text, and truncates at a UTF-8 scalar boundary. Private frame and image packets retain their existing formats. The Server client feeds canonical Render projection into the existing 40-byte command records and frame-local resource indices. No additional command array or public C call is introduced. Private ABI 9 must be built alongside this Dart client; the version gate rejects older libraries before constructing a handle.
 
 ## Android
 
@@ -145,7 +147,7 @@ cannot cancel the live terminal. Control close is out-of-band from its serialize
 command queue and therefore wakes an unanswered blocking request instead of
 waiting behind it. The v5 ABI replaces the former host-derived cancellation
 handle exports with `howl_native_interrupt_create/cancel/destroy`; Dart checks
-`howl_native_host_version == 7` before using the binding.
+`howl_native_host_version == 9` before using the binding.
 
 TCP live presentation permits one pending native observation while Flutter waits for
 `endOfFrame`. That pending result owns only copied bytes, including any refill
