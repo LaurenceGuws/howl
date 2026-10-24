@@ -16,13 +16,13 @@ jobs:
       - name: Install tracked Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         with:
-          version: 0.17.0-dev.1980+e78ea8f2c
+          version: '0.17.0'
 
       - name: Install native iPhoneOS build tools
         run: brew install meson ninja pkg-config
 
       - name: Build app-private native Howl host for iPhoneOS
-        run: howl-flutter/native/build-ios.sh
+        run: hosts/howl-flutter/native/build-ios.sh
 
       - name: Install Flutter 3.47.4
         uses: subosito/flutter-action@v2
@@ -32,15 +32,15 @@ jobs:
           cache: true
 
       - name: Resolve dependencies
-        working-directory: howl-flutter
+        working-directory: hosts/howl-flutter
         run: flutter pub get
 
       - name: Analyze iOS client
-        working-directory: howl-flutter
+        working-directory: hosts/howl-flutter
         run: flutter analyze
 
       - name: Build unsigned iOS smoke app
-        working-directory: howl-flutter
+        working-directory: hosts/howl-flutter
         run: >-
           flutter build ios --release --no-codesign
           --dart-define=HOWL_GEOMETRY_LEADER=1
@@ -48,17 +48,17 @@ jobs:
       - name: Verify final Runner native-host exports
         run: |
           set -euxo pipefail
-          runner=howl-flutter/build/ios/iphoneos/Runner.app/Runner
+          runner=hosts/howl-flutter/build/ios/iphoneos/Runner.app/Runner
           file "$runner"
           nm -gU "$runner" > "$RUNNER_TEMP/runner-symbols.txt"
           while IFS= read -r symbol; do
             grep -q " _$symbol$" "$RUNNER_TEMP/runner-symbols.txt"
-          done < howl-flutter/native/ffi-symbols.txt
-          test -f howl-flutter/build/ios/iphoneos/Runner.app/IosevkaTermNerdFont-Regular.ttf
-          test -f howl-flutter/build/ios/iphoneos/Runner.app/NotoSans-Regular.ttf
+          done < hosts/howl-flutter/native/ffi-symbols.txt
+          test -f hosts/howl-flutter/build/ios/iphoneos/Runner.app/IosevkaTermNerdFont-Regular.ttf
+          test -f hosts/howl-flutter/build/ios/iphoneos/Runner.app/NotoSans-Regular.ttf
 
       - name: Package Splice-ready unsigned IPA
-        working-directory: howl-flutter
+        working-directory: hosts/howl-flutter
         run: |
           set -euxo pipefail
           rm -rf dist
@@ -82,7 +82,7 @@ jobs:
         with:
           name: howl-ios
           path: |
-            howl-flutter/dist/howl.ipa
-            howl-flutter/dist/SHA256SUMS
+            hosts/howl-flutter/dist/howl.ipa
+            hosts/howl-flutter/dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 7

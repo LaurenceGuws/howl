@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'howl_endpoint.dart';
 import 'instance_target.dart';
+import 'server_launch.dart';
 import 'server_tree.dart';
 
 typedef HowlServerTreeFetcher = HowlServerTreeRequest Function(
@@ -18,12 +19,14 @@ final class HowlServerBrowser extends StatefulWidget {
     required this.endpoint,
     required this.onOpenTarget,
     this.fetchTree = NativeServerTree.request,
+    this.launchTerminal = NativeServerLaunch.request,
   });
 
   final HowlEndpoint endpoint;
   final ValueChanged<ManagedHowlInstanceTarget> onOpenTarget;
 
   final HowlServerTreeFetcher fetchTree;
+  final HowlServerLauncher launchTerminal;
 
   @override
   State<HowlServerBrowser> createState() => _HowlServerBrowserState();
@@ -34,6 +37,8 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
   Object? _failure;
   bool _loading = true;
   HowlServerTreeRequest? _request;
+  HowlServerLaunchRequest? _launchRequest;
+  bool _launching = false;
 
   @override
   void initState() {
@@ -88,7 +93,91 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
       _request?.cancel();
     } catch (_) {}
     _request = null;
+    _launchRequest?.cancel();
+    _launchRequest = null;
     super.dispose();
+  }
+
+  Future<void> _promptLaunch([HowlServerSession? session]) async {
+    final tree = _tree;
+    if (tree == null || _launching) return;
+    final details = await showDialog<_LaunchDetails>(
+      context: context,
+      builder: (context) => _LaunchDialog(session: session),
+    );
+    if (details == null || !mounted || _launching) return;
+    if ((session == null &&
+            !RegExp(r'^[A-Za-z0-9._-]{1,64}$').hasMatch(details.name)) ||
+        details.shell.isEmpty ||
+        details.shell.contains('\u0000')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Check Session name and shell path')),
+      );
+      return;
+    }
+    await _launch(
+      tree,
+      sessionId: session?.id,
+      sessionName: session == null ? details.name : null,
+      shell: details.shell,
+    );
+  }
+
+  Future<void> _launch(
+    HowlServerTree tree, {
+    String? sessionId,
+    String? sessionName,
+    required String shell,
+  }) async {
+    if (_launching) return;
+    final HowlServerLaunchRequest request;
+    try {
+      request = widget.launchTerminal(
+        widget.endpoint,
+        tree.serverId,
+        sessionId: sessionId,
+        sessionName: sessionName,
+        shell: shell,
+      );
+    } catch (error) {
+      _showLaunchFailure(error);
+      return;
+    }
+    _launchRequest = request;
+    setState(() => _launching = true);
+    try {
+      final receipt = await request.future;
+      if (!mounted || !identical(_launchRequest, request)) return;
+      if (receipt.serverId != tree.serverId) {
+        throw const HowlServerTreeException('launch_server_identity');
+      }
+      widget.onOpenTarget(
+        ManagedHowlInstanceTarget(
+          serverEndpoint: widget.endpoint,
+          serverId: receipt.serverId,
+          sessionId: receipt.sessionId,
+          instanceId: receipt.instanceId,
+        ),
+      );
+    } catch (error) {
+      if (!mounted || !identical(_launchRequest, request)) return;
+      _showLaunchFailure(error);
+      await _refresh();
+    } finally {
+      if (mounted && identical(_launchRequest, request)) {
+        setState(() {
+          _launchRequest = null;
+          _launching = false;
+        });
+      }
+    }
+  }
+
+  void _showLaunchFailure(Object failure) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not launch terminal: $failure')),
+    );
   }
 
   void _open(
@@ -118,6 +207,14 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
         title: const Text('Howl Server'),
         toolbarHeight: 44,
         actions: <Widget>[
+          if (_launching)
+            const Center(child: Text('Launching...'))
+          else
+            IconButton(
+              tooltip: 'New Session + terminal',
+              onPressed: tree == null ? null : () => _promptLaunch(),
+              icon: const Icon(Icons.add),
+            ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: _loading ? null : _refresh,
@@ -156,7 +253,20 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
 
   Widget _buildTree(BuildContext context, HowlServerTree tree) {
     if (tree.sessions.isEmpty) {
-      return const Center(child: Text('No Sessions'));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Text('No Sessions yet'),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: _launching ? null : () => _promptLaunch(),
+              icon: const Icon(Icons.add),
+              label: const Text('Create first terminal'),
+            ),
+          ],
+        ),
+      );
     }
     return RefreshIndicator(
       onRefresh: _refresh,
@@ -168,6 +278,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
           final session = tree.sessions[index];
           return _SessionSection(
             session: session,
+            onNewTerminal: _launching ? null : () => _promptLaunch(session),
             onOpen: (session, instance) =>
                 _open(tree.serverId, session, instance),
           );
@@ -178,9 +289,14 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
 }
 
 final class _SessionSection extends StatelessWidget {
-  const _SessionSection({required this.session, required this.onOpen});
+  const _SessionSection({
+    required this.session,
+    required this.onOpen,
+    required this.onNewTerminal,
+  });
 
   final HowlServerSession session;
+  final VoidCallback? onNewTerminal;
   final void Function(HowlServerSession, HowlServerInstance) onOpen;
 
   @override
@@ -197,10 +313,21 @@ final class _SessionSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-              child: Text(
-                session.name,
-                style: Theme.of(context).textTheme.titleSmall,
+              padding: const EdgeInsets.fromLTRB(14, 2, 6, 2),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      session.name,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'New terminal in ${session.name}',
+                    onPressed: onNewTerminal,
+                    icon: const Icon(Icons.add),
+                  ),
+                ],
               ),
             ),
             if (instances.isEmpty)
@@ -227,4 +354,78 @@ final class _SessionSection extends StatelessWidget {
       ),
     );
   }
+}
+
+final class _LaunchDetails {
+  const _LaunchDetails(this.name, this.shell);
+  final String name;
+  final String shell;
+}
+
+/// Owns its text controllers until the dialog route actually retires.
+final class _LaunchDialog extends StatefulWidget {
+  const _LaunchDialog({required this.session});
+
+  final HowlServerSession? session;
+
+  @override
+  State<_LaunchDialog> createState() => _LaunchDialogState();
+}
+
+final class _LaunchDialogState extends State<_LaunchDialog> {
+  final TextEditingController _name = TextEditingController(text: 'mobile');
+  final TextEditingController _shell = TextEditingController(text: '/bin/sh');
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _shell.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    _LaunchDetails(_name.text.trim(), _shell.text.trim()),
+  );
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(
+      widget.session == null ? 'New Session + terminal' : 'New terminal',
+    ),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (widget.session == null) ...<Widget>[
+            TextField(
+              controller: _name,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Session name',
+                helperText: 'Letters, digits, dot, dash or underscore',
+              ),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 12),
+          ] else
+            Text('In ${widget.session!.name}'),
+          TextField(
+            controller: _shell,
+            decoration: const InputDecoration(labelText: 'Shell on Server'),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('Launch')),
+    ],
+  );
 }
