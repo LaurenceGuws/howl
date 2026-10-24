@@ -538,6 +538,47 @@ void main() {
     },
   );
 
+  testWidgets('iOS editor reattachment discards an interrupted native buffer', (
+    tester,
+  ) async {
+    final committed = <String>[];
+    final client = TerminalTextInputClient(
+      platformOverride: TargetPlatform.iOS,
+      backspaceRunway: 64,
+      newlineActionFallback: false,
+      onCommit: committed.add,
+      onEditKey: (_, _) => fail('Unexpected semantic edit key'),
+    );
+    client.attach(viewId: tester.view.viewId);
+    addTearDown(client.detach);
+
+    final guards = List<String>.filled(
+      64,
+      TerminalInputStager.leftGuard,
+    ).join();
+    TextEditingValue nativeValue(String text) => TextEditingValue(
+      text: '$guards$text${TerminalInputStager.rightGuard}',
+      selection: TextSelection.collapsed(offset: guards.length + text.length),
+    );
+
+    tester.testTextInput.updateEditingValue(nativeValue('echo'));
+    await tester.idle();
+    expect(committed, <String>['echo']);
+
+    // A call can leave iOS holding that old native value. Closing the client
+    // retires its editing session; resumption starts with only guard text.
+    client.detach();
+    client.attach(viewId: tester.view.viewId);
+    expect(
+      tester.testTextInput.editingState?['text'],
+      '$guards${TerminalInputStager.rightGuard}',
+    );
+
+    tester.testTextInput.updateEditingValue(nativeValue('x'));
+    await tester.idle();
+    expect(committed, <String>['echo', 'x']);
+  });
+
   testWidgets('editor action newline becomes semantic Enter', (tester) async {
     final editKeys = <TerminalEditKey>[];
     final client = TerminalTextInputClient(

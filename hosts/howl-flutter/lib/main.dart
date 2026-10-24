@@ -130,7 +130,8 @@ final class _PresentationRestart implements Exception {
   const _PresentationRestart();
 }
 
-final class _HowlTerminalState extends State<HowlTerminal> {
+final class _HowlTerminalState extends State<HowlTerminal>
+    with WidgetsBindingObserver {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final HowlDiagnostics _diagnostics = HowlDiagnostics();
   final TerminalFramePerf _framePerf = TerminalFramePerf();
@@ -163,6 +164,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   Object? _failure;
   bool _reconnecting = false;
   bool _stopping = false;
+  bool _iosInputSuspended = false;
   int _transportGeneration = 0;
   Completer<Object>? _transportFault;
   final TransportRecovery _transportRecovery = TransportRecovery();
@@ -280,9 +282,37 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
       },
     );
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_stopping) unawaited(_observe());
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_platformInput.platform != TargetPlatform.iOS || _stopping) return;
+    if (state == AppLifecycleState.resumed) {
+      _iosInputSuspended = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            _stopping ||
+            _iosInputSuspended ||
+            !_focusNode.hasFocus ||
+            _selection != null) {
+          return;
+        }
+        // The iOS native editor may retain an entire pre-call buffer even
+        // after Flutter requested the guarded empty value. A new client ID
+        // forces a fresh editing session instead of replaying that buffer.
+        _activateTextInput();
+        if (_softKeyboard.requestedVisible) _scheduleSoftKeyboardApply();
+      });
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      _iosInputSuspended = true;
+      _textInput.detach();
+    }
   }
 
   Future<void> _observe() => _observeNative();
@@ -475,7 +505,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _interactionStateCache = null;
       _interactionStateCachedAt = null;
       _transportFault = Completer<Object>();
-      if (_focusNode.hasFocus && _selection == null) {
+      if (_focusNode.hasFocus && _selection == null && !_iosInputSuspended) {
         _textInput.attach(viewId: View.of(context).viewId);
         if (_softKeyboard.requestedVisible) {
           _scheduleSoftKeyboardApply();
@@ -1179,7 +1209,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _activateTextInput() {
-    if (_selection != null) return;
+    if (_selection != null || _iosInputSuspended) return;
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
     if (!_hasControl) return;
     _textInput.attach(viewId: View.of(context).viewId);
@@ -1831,7 +1861,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _onFocusChange(bool focused) {
     if (!focused) _iosPhysicalArrowRepeat.cancel();
-    if (focused && _hasControl && _selection == null) {
+    if (focused && _hasControl && _selection == null && !_iosInputSuspended) {
       _textInput.attach(viewId: View.of(context).viewId);
       if (_softKeyboard.requestedVisible) {
         _scheduleSoftKeyboardApply();
@@ -1926,6 +1956,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    WidgetsBinding.instance.removeObserver(this);
     SchedulerBinding.instance.removeTimingsCallback(_frameTimingsCallback);
     SemanticsBinding.instance.removeSemanticsEnabledListener(
       _semanticsEnabledListener,
