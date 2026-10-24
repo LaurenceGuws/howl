@@ -31,6 +31,7 @@ rm -rf "$root/zig-out" "$root/.zig-cache"
 (
   cd "$root"
   zig build \
+    -freference-trace=50 \
     --sysroot "$sdk" \
     -Dtarget=aarch64-ios.15.0 \
     -Doptimize=ReleaseFast \
