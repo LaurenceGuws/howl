@@ -113,9 +113,15 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser>
   Future<void> _promptLaunch([HowlServerSession? session]) async {
     final tree = _tree;
     if (tree == null || _launching) return;
+    var suggestedName = 'mobile';
+    var suffix = 2;
+    while (tree.sessions.any((existing) => existing.name == suggestedName)) {
+      suggestedName = 'mobile-${suffix++}';
+    }
     final details = await showDialog<_LaunchDetails>(
       context: context,
-      builder: (context) => _LaunchDialog(session: session),
+      builder: (context) =>
+          _LaunchDialog(session: session, suggestedName: suggestedName),
     );
     if (details == null || !mounted || _launching) return;
     if ((session == null &&
@@ -376,17 +382,24 @@ final class _LaunchDetails {
 
 /// Owns its text controllers until the dialog route actually retires.
 final class _LaunchDialog extends StatefulWidget {
-  const _LaunchDialog({required this.session});
+  const _LaunchDialog({required this.session, required this.suggestedName});
 
   final HowlServerSession? session;
+  final String suggestedName;
 
   @override
   State<_LaunchDialog> createState() => _LaunchDialogState();
 }
 
 final class _LaunchDialogState extends State<_LaunchDialog> {
-  final TextEditingController _name = TextEditingController(text: 'mobile');
+  late final TextEditingController _name;
   final TextEditingController _shell = TextEditingController(text: '/bin/sh');
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.suggestedName);
+  }
 
   @override
   void dispose() {

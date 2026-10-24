@@ -170,4 +170,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(requests, 2);
   });
+
+  testWidgets('new Session suggests an unused mobile name', (tester) async {
+    final tree = HowlServerTree.parse(
+      '{"schema":"howl.server.tree/v1","server_id":"9",'
+          '"tree_revision":"1","sessions":['
+          '{"session_id":"1","name":"mobile","instances":[]},'
+          '{"session_id":"2","name":"mobile-3","instances":[]},'
+      '{"session_id":"3","name":"work","instances":[]}]}',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlServerBrowser(
+          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          fetchTree: (_) =>
+              HowlServerTreeRequest.fromFuture(Future.value(tree)),
+          onOpenTarget: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New Session + terminal'));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Session name'),
+    );
+    expect(field.controller!.text, 'mobile-2');
+  });
 }
