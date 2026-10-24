@@ -186,8 +186,10 @@ The promoted app uses LLVM ReleaseFast on Zig 0.17.0, SHA-256
 `69eed7fabe160b7465ba305a87e1fe8407a641e62141e9dc6b6610964a8052e1`.
 The prior d94f7a2/f055 artifact is retained as rollback. Installation targets are
 independent regular files at `hosts/howl-app/zig-out/bin/howl-app` and
-`~/.local/bin/howl-app`; running sessions are not restarted. GitHub SSH push is
-currently blocked by `Permission denied (publickey)`; no credentials are changed.
+`~/.local/bin/howl-app`; running sessions are not restarted. Ordinary GitHub
+SSH push succeeded for both the accepted wide-glyph change and this atlas
+promotion. The earlier authentication blocker is resolved; no credentials were
+changed by this work.
 
 
 
