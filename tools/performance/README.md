@@ -6,6 +6,16 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Render memory and cold turns · 24 October
+
+[The allocation and service-turn accounting](RENDER_ACCOUNTING.md) locates a large
+idle footprint at SDL renderer construction, before the terminal exists, and
+cold CJK cost in raster misses. It keeps requested capacity, resident pages and
+native allocator accounting distinct. Canvas now reserves exact alpha-conversion
+storage; a real bounded-buffer recovery proof fails before the fix and passes
+after it. Ordinary guards and five native image pairs pass. No general RSS/CPU
+win, new worker, pacer or backend change is claimed.
+
 ## Bounded glyph admission · 24 October
 
 [Bounded atlas admission](ATLAS_ADMISSION.md) lets the desktop retain the real
