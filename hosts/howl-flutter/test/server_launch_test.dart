@@ -65,7 +65,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(serverId, '18446744073709551615');
     expect(name, 'mobile');
-    expect(shellSeen, '/bin/sh');
+    expect(shellSeen, '/bin/bash');
     expect(selected?.sessionId, '17');
     expect(selected?.instanceId, '3');
   });
