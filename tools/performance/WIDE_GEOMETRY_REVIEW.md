@@ -1,11 +1,11 @@
-# Ordinary wide-glyph geometry: qualified candidate, acceptance held
+# Ordinary wide-glyph geometry: accepted measured tradeoff
 
-24 October 2026. Baseline c1271d5; installed LLVM Fast app1adc2beb.
-Captain requested continued small Render/API-and-above optimization, not a VT
-rewrite. This investigation reaches a real workload-priority decision. The
-candidate is **not accepted or installed**; production source is restored to the
-control. Its reviewable patch and exact qualified executable remain in the
-workstream. No throughput claim below describes the installed app.
+24 October 2026. Control: c1271d5, LLVM Fast app1adc2beb.
+Captain explicitly approved accepting candidate E's measured workload tradeoff:
+substantial CJK/emoji savings with a small ordinary ASCII cost. The exact qualified
+source and executable are selected for promotion; the workstream's promotion
+receipt records publication and rollback. The measurements below compare that
+accepted E artifact against the control, not a universal throughput improvement.
 
 ## Mechanism and scope
 
@@ -103,19 +103,24 @@ ASCII+0.46/+4.95%, despite real wide savings. E isolates the wide-only recogniti
 and earns the best observed balance. These are distinct cohorts, not additive
 percentages or one pooled score. No rejected artifact was installed.
 
-## Decision and continuation
+## Accepted tradeoff and continuation
 
-**Captain input is needed before accepting this tradeoff:** prioritize the
-15–21% measured CJK/emoji CPU savings with a small ordinary ASCII cost, or require
-ASCII/sparse non-regression and keep this optimization parked. The conservative
-state is to leave c1271d5 installed until that preference is explicit. This is a
-performance-priority decision, not a correctness failure or a request for a rewrite.
+**Captain approved this tradeoff on24October2026.** Accept the measured15–21%
+CJK/emoji CPU savings alongside the independent ordinary ASCII median+1.73%
+and sparse median+0.57%. Adverse pairs remain in the tables above; they are not
+renamed noise. This approval applies to candidate E and these measured costs,
+not a blanket regression budget for future optimizations.
+
+The accepted change remains confined to Render's ordinary wide-glyph geometry.
+Publication must use source-matched, independently installed executable bytes;
+existing sessions need not be restarted. Full source gates and exact artifact
+identity are rechecked at promotion, with the previous app retained for rollback.
 
 The default256entry atlas still rejects4096-glyph views. That admission policy,
 independent glyph planes and complete durable sparse-paint reuse remain separate
 work. This candidate does not resolve them or justify changing VT semantics.
 
-Evidence and cleanly applicable proposal:
+Evidence and exact accepted proposal:
 
     ~/.local/state/workstreams/howl-current/night-20261024/decoration-projection/
 
@@ -127,7 +132,14 @@ zero cgroup limit events, OOM, CPU throttling and output loss. The one reconcili
 script syntax error was corrected before validating receipts; no trial was retried
 or discarded to conceal an adverse result.
 
-Restored control-source verification passes all341root steps with1122reported
-tests plus cached proofs, consumer/protocol/audits/formatting/diff checks. Both
-installed app paths still hash to1adc2beb. The proposal applies cleanly against
-the restored tree; no candidate source or executable was silently promoted.
+Before approval, restored control-source verification passed all341root steps
+with1122reported tests plus cached proofs and complete gates; both installed
+paths remained1adc2beb. Promotion is explicit following Captain's approval, not
+a retroactive relabelling of the earlier held state.
+
+Approval-time verification passes all341root steps with1124reported tests plus
+cached proofs, Render Safe/Fast and Fast app gates, consumer/protocol/audits,
+formatting and whitespace checks. The fresh app rebuild is byte-identical to the
+measured f055045c artifact; exact source and font pins match. The bounded gate
+records zero resource-limit events, OOM, CPU throttling or output loss. Promotion
+and rollback receipts live under `promotion-20261024/` in the same workstream.

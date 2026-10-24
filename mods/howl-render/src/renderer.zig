@@ -1683,6 +1683,60 @@ inline fn contentUsesPlainGeometry(
         !cell.semantic_width;
 }
 
+// Unicode-wide occupancy is a two-cell allocation, not an explicit cell
+// transform. Keep DEC, OSC66 scaling/alignment and continuation cells general.
+fn contentUsesOrdinaryWideGeometry(
+    comptime Source: type,
+    cell: Source.Cell,
+    line_geometry: source_semantics.LineGeometry,
+) bool {
+    return cell.width == 2 and cell.semantic_width and
+        line_geometry == .single_width and cell.height == 1 and
+        cell.x == 0 and cell.y == 0 and
+        cell.subscale_n == 0 and cell.subscale_d == 0 and
+        cell.vertical_align == 0 and cell.horizontal_align == 0;
+}
+
+test "ordinary Unicode wide geometry is identity without admitting explicit transforms" {
+    const Fixture = struct {
+        const Cell = struct {
+            width: u8 = 2,
+            height: u8 = 1,
+            x: u8 = 0,
+            y: u8 = 0,
+            subscale_n: u8 = 0,
+            subscale_d: u8 = 0,
+            vertical_align: u8 = 0,
+            horizontal_align: u8 = 0,
+            semantic_width: bool = true,
+        };
+    };
+    const cell: Fixture.Cell = .{};
+    try std.testing.expect(contentUsesOrdinaryWideGeometry(Fixture, cell, .single_width));
+    for ([_]source_semantics.LineGeometry{ .double_width, .double_height_top, .double_height_bottom }) |geometry|
+        try std.testing.expect(!contentUsesOrdinaryWideGeometry(Fixture, cell, geometry));
+    inline for (.{ "width", "height", "x", "y", "subscale_n", "subscale_d", "vertical_align", "horizontal_align" }) |field| {
+        var changed = cell;
+        @field(changed, field) = if (comptime std.mem.eql(u8, field, "height")) 2 else 1;
+        try std.testing.expect(!contentUsesOrdinaryWideGeometry(Fixture, changed, .single_width));
+    }
+    var explicit = cell;
+    explicit.semantic_width = false;
+    try std.testing.expect(!contentUsesOrdinaryWideGeometry(Fixture, explicit, .single_width));
+    const sizing = try contentCellSizing(Fixture, 5, 3, cell, .{ .width = 7, .height = 11 });
+    const allocation: Rect = .{ .x = 21, .y = 55, .width = 14, .height = 11 };
+    try std.testing.expectEqualDeep(allocation, sizing.origin);
+    try std.testing.expectEqualDeep(allocation, sizing.allocation);
+    const overhang: Rect = .{ .x = -3, .y = 50, .width = 31, .height = 15 };
+    try std.testing.expectEqualDeep(overhang, try contentCellTransformRect(overhang, sizing));
+    // Even a clipped source cut preserves the general path's allocation clip;
+    // the full two-cell destination remains separate for glyph fitting/sampling.
+    const edge_surface: Size = .{ .width = 28, .height = 66 };
+    const edge = contentIntersectRects(allocation, contentSurfaceRect(edge_surface));
+    try std.testing.expectEqualDeep(try contentCellVisibleClip(sizing, 5, .single_width, .{ .width = 7, .height = 11 }, edge_surface), edge);
+    try std.testing.expectEqual(@as(u16, 7), edge.?.width);
+}
+
 inline fn contentIsContextualOperatorCell(
     comptime Source: type,
     cell: Source.Cell,
@@ -2632,14 +2686,18 @@ fn buildContentCommands(
                     }
                 }
             }
-            const physical = try contentCellRect(row_index, column, cell_size);
-            const plain_geometry = contentUsesPlainGeometry(Source, cell, line_geometry);
+            var physical = try contentCellRect(row_index, column, cell_size);
+            // Keep the wide-only recognition outside the large narrow-glyph loop.
+            const plain_geometry = contentUsesPlainGeometry(Source, cell, line_geometry) or
+                @call(.never_inline, contentUsesOrdinaryWideGeometry, .{ Source, cell, line_geometry });
+            if (plain_geometry and cell.width == 2) physical.width = std.math.mul(u16, physical.width, 2) catch
+                return error.InvalidPresentationGeometry;
             const sizing: ?ContentCellSizing = if (plain_geometry)
                 null
             else
                 try contentCellSizing(Source, row_index, column, cell, cell_size);
             const allocation_clip = if (plain_geometry)
-                physical
+                if (cell.width == 2) contentIntersectRects(physical, whole) orelse continue else physical
             else
                 try contentCellVisibleClip(
                     sizing.?,
@@ -2800,7 +2858,7 @@ fn buildContentCommands(
                             .resource = resource,
                         } });
                     } else {
-                        if (plain_geometry and !contextual and run.glyphs.len == 1 and ascii_index != null)
+                        if (plain_geometry and cell.width == 1 and !contextual and run.glyphs.len == 1 and ascii_index != null)
                             glyph_cache.rememberAsciiPlacement(atlas, font_variant, ascii_index.?, shaped, raster);
                         const symbol_clip = if (bounded_symbol) allocation_clip else font_clip;
                         try appendContentInput(output, &used, .{ .alpha_mask = .{

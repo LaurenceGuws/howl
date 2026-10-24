@@ -6,13 +6,13 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
-## Ordinary wide-glyph geometry · 24 October · decision held
+## Ordinary wide-glyph geometry · 24 October · accepted tradeoff
 
-[The qualified wide-glyph candidate](WIDE_GEOMETRY_REVIEW.md) reduces measured
-CJK/emoji app CPU15–21% but retains a small ordinary ASCII cost. Correctness,
-complete-frame/native-pixel equivalence and full source gates pass. It is not
-installed or accepted; Captain's workload-priority decision is explicit. The
-report also records rejected decoration-loop experiments and all adverse pairs.
+[The accepted wide-glyph optimization](WIDE_GEOMETRY_REVIEW.md) reduces measured
+CJK/emoji app CPU15–21% while retaining a small ordinary ASCII cost, explicitly
+approved by Captain. Correctness, complete-frame/native-pixel equivalence and full
+source gates pass. The report retains the exact tradeoff, rejected decoration-loop
+experiments and every adverse pair; it makes no universal throughput claim.
 
 ## Exact publication pixel sizing · 24 October
 

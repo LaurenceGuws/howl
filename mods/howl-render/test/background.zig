@@ -217,6 +217,60 @@ fn fontConfig(font: *render.text.FontSet) RR.Config {
     };
 }
 
+test "sparse decorations retain exact rows colours and removal beyond the retained-row bound" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 12 },
+    });
+    defer font.deinit();
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const cfg = fontConfig(font);
+    for ([_]u16{ 1, 7, render.limits.maximum_rows, render.limits.maximum_rows + 1 }) |rows| {
+        var vt: VT = undefined;
+        try VT.initWithHistoryInto(&vt, allocator, rows, 8, 8);
+        defer vt.deinit();
+        const renderer = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+        defer RR.deinit(renderer);
+        for ([_]u16{ 0, rows / 2, rows - 1 }) |row| {
+            const cases = [_]struct { sgr: []const u8, solids: usize }{
+                .{ .sgr = "4", .solids = 1 },
+                .{ .sgr = "9", .solids = 1 },
+                .{ .sgr = "4;9", .solids = 2 },
+                .{ .sgr = "8;4;9", .solids = 0 },
+                .{ .sgr = "0", .solids = 0 },
+            };
+            for (cases) |case| {
+                var bytes: [128]u8 = undefined;
+                const input = try std.fmt.bufPrint(&bytes, "\x1b[0m\x1b[?25l\x1b[2J\x1b[{d};1H\x1b[{s}m\x1b[58;2;17;34;51mX", .{ row + 1, case.sgr });
+                // zig-audit: acknowledge discard
+                // reason: Exact decoration commands and their later removal, not feed progress, are the observable contract under proof.
+                _ = try vt.feed(input);
+                try RR.updateObservation(renderer, vt.observation(), 0, &.{});
+                const frame = try output.frame(renderer);
+                var solids: usize = 0;
+                for (frame.commands[1..]) |command| if (command == .solid) {
+                    const rect = command.solid.rect;
+                    try std.testing.expectEqual(@as(i32, 0), rect.x);
+                    try std.testing.expectEqual(cfg.cell_size.width, rect.width);
+                    try std.testing.expect(rect.y >= @as(i32, row) * cfg.cell_size.height);
+                    try std.testing.expect(rect.y + rect.height <= @as(i32, row + 1) * cfg.cell_size.height);
+                    try std.testing.expectEqualDeep(RR.Color{ .r = 17, .g = 34, .b = 51, .a = 255 }, command.solid.color);
+                    solids += 1;
+                };
+                try std.testing.expectEqual(case.solids, solids);
+                const clear = try std.fmt.bufPrint(&bytes, "\x1b[{d};1H\x1b[0mX", .{row + 1});
+                // zig-audit: acknowledge discard
+                // reason: An undecorated overwrite must remove every decoration, even when the background provenance is unchanged.
+                _ = try vt.feed(clear);
+                try RR.updateObservation(renderer, vt.observation(), 0, &.{});
+                const plain = try output.frame(renderer);
+                for (plain.commands[1..]) |command| try std.testing.expect(command != .solid);
+            }
+        }
+    }
+}
+
 test "contextual runs match native shaping across long short and scalar fallback rows" {
     const font = try render.text.FontSet.init(allocator, .{
         .primary = @import("test_fonts").normal_ligature_font,
