@@ -24,6 +24,14 @@ The audit also checks host-advertised versions against their owning packages.
 This layout freeze preserves the qualified terminal runtime; it does not promote
 experimental hosts or orchestration to stable core.
 
+Independent core source releases use
+[`tools/package-release`](tools/package-release) and the
+[`release-overlays`](tools/release-overlays/README.md). Each archive contains
+one module's tracked source at an exact commit; Render and Instance release
+manifests pin their core dependencies by immutable artifact URL and Zig hash.
+The sibling package paths in this source checkout are for local development,
+not the released dependency contract.
+
 ## Ownership model
 
 The terminal layers are deliberately narrow:

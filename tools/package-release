@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Archive one tracked Howl module at one exact Git commit. The module is the
+# release unit; neither the workspace nor a neighbouring checkout is bundled.
+set -euo pipefail
+
+if [[ $# -ne 3 ]]; then
+  printf 'usage: package-release howl-{pty,vt,text,render,instance} COMMIT OUTPUT_DIRECTORY\n' >&2
+  exit 2
+fi
+
+module=$1
+revision=$2
+output_dir=$3
+case "$module" in
+  howl-pty|howl-vt|howl-text|howl-render|howl-instance) ;;
+  *) printf 'unrecognised Howl release package: %s\n' "$module" >&2; exit 2 ;;
+esac
+repo_root=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
+git -C "$repo_root" cat-file -e "$revision^{commit}"
+revision=$(git -C "$repo_root" rev-parse "$revision^{commit}")
+manifest=$(git -C "$repo_root" show "$revision:mods/$module/build.zig.zon")
+version=$(printf '%s\n' "$manifest" | sed -n 's/^[[:space:]]*\.version = "\([^"]*\)".*/\1/p')
+[[ -n "$version" ]] || { printf 'no package version in %s\n' "$module" >&2; exit 1; }
+
+mkdir -p "$output_dir"
+output_dir=$(cd "$output_dir" && pwd -P)
+destination="$output_dir/$module-$version.tar.gz"
+[[ ! -e "$destination" ]] || { printf 'refusing to overwrite %s\n' "$destination" >&2; exit 1; }
+candidate=$(mktemp "$output_dir/.$module.XXXXXXXX.tar.gz")
+stage=
+cleanup() {
+  if [[ -n "$stage" ]]; then rm -rf -- "$stage"; fi
+  if [[ -e "$candidate" ]]; then rm -f -- "$candidate"; fi
+}
+trap cleanup EXIT
+
+overlay="tools/release-overlays/$module/release.zon"
+if [[ "$module" == howl-render || "$module" == howl-instance ]]; then
+  git -C "$repo_root" cat-file -e "$revision:$overlay"
+  stage=$(mktemp -d "$output_dir/.$module.XXXXXXXX")
+  git -C "$repo_root" archive "$revision:mods/$module" | tar -xf - -C "$stage"
+  git -C "$repo_root" show "$revision:$overlay" > "$stage/build.zig.zon"
+  source_fingerprint=$(printf '%s\n' "$manifest" | sed -n 's/^[[:space:]]*\.fingerprint = \([^,]*\),.*/\1/p')
+  overlay_version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)".*/\1/p' "$stage/build.zig.zon")
+  overlay_fingerprint=$(sed -n 's/^[[:space:]]*\.fingerprint = \([^,]*\),.*/\1/p' "$stage/build.zig.zon")
+  if [[ "$version" != "$overlay_version" || "$source_fingerprint" != "$overlay_fingerprint" ]]; then
+    printf 'release overlay version/fingerprint differs from source %s\n' "$module" >&2
+    exit 1
+  fi
+  if rg -q 'REPLACE_WITH_|\.path = "\.\./' "$stage/build.zig.zon"; then
+    printf 'unresolved dependency in %s\n' "$overlay" >&2
+    exit 1
+  fi
+  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf - -C "$stage" . | gzip -n -9 > "$candidate"
+else
+  git -C "$repo_root" archive "$revision:mods/$module" | gzip -n -9 > "$candidate"
+fi
+
+hash=$(zig fetch "$candidate")
+mv -- "$candidate" "$destination"
+printf '%s %s %s\n' "$revision" "$module" "$version"
+printf 'zig: %s\n' "$hash"
+sha256sum "$destination"
