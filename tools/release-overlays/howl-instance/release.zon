@@ -10,7 +10,7 @@
         },
         .howl_vt = .{
             .url = "https://github.com/LaurenceGuws/howl/releases/download/howl-vt-v0.1.7-dev.1/howl-vt-0.1.7-dev.tar.gz",
-            .hash = "howl_vt-0.1.7-dev-DNIreWI1LgCifHOuThyhbnebfWuujRZe6xsrgmk1wGTd",
+            .hash = "howl_vt-0.1.7-dev-DNIreY01LgDPkubfmIKIaZ4X668Kpxi-KQ8ftEjKeqPC",
         },
         .howl_text = .{
             .url = "https://github.com/LaurenceGuws/howl/releases/download/howl-text-v0.1.6-dev.3/howl-text-0.1.6-dev.tar.gz",
@@ -18,8 +18,8 @@
         },
         .howl_render = .{
             .url = "https://github.com/LaurenceGuws/howl/releases/download/howl-render-v0.1.10-dev.1/howl-render-0.1.10-dev.tar.gz",
-            .hash = "howl_render-0.1.10-dev-4E3u4_wxBwCyuZz3Da0sf5KB3Fw3QdJSj3r8u22q-KRl",
+            .hash = "howl_render-0.1.10-dev-4E3u4ycyBwCvzDPZvmNqex1EKiSnRfjoNARTPn4Vp0YO",
         },
     },
-    .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "src", "include", "bindings", "docs", "test", "README.md" },
+    .paths = .{ ".gitignore", ".zig-audit.json", "build.zig", "build.zig.zon", "src", "include", "bindings", "docs", "test", "README.md" },
 }

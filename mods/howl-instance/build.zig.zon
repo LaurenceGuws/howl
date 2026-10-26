@@ -9,5 +9,5 @@
         .howl_text = .{ .path = "../howl-text" },
         .howl_vt = .{ .path = "../howl-vt" },
     },
-    .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "src", "include", "bindings", "docs", "test", "README.md" },
+    .paths = .{ ".gitignore", ".zig-audit.json", "build.zig", "build.zig.zon", "src", "include", "bindings", "docs", "test", "README.md" },
 }
