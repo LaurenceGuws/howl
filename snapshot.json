@@ -17,7 +17,7 @@
     "mods/howl-render": "0.1.9-dev",
     "mods/howl-text": "0.1.6-dev",
     "mods/howl-vk": "0.1.6-dev",
-    "mods/howl-vt": "0.1.6-dev",
+    "mods/howl-vt": "0.1.7-dev",
     "mods/howl-vt/examples/0.1.4-dev": "0.1.4-dev",
     "mods/howl-wayland": "0.1.6-dev",
     "mods/server": "0.1.7-dev",

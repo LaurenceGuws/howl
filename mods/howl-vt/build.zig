@@ -3,7 +3,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const clipboard_grammar = b.createModule(.{ .root_source_file = b.path("src/clipboard_grammar.zig"), .target = target, .optimize = optimize });
+    // Other terminal consumers must share VT's exact OSC 52 validation grammar.
+    // Export only this pure leaf; canonical VT never acquires a client dependency.
+    const clipboard_grammar = b.addModule("vt_clipboard_grammar", .{
+        .root_source_file = b.path("src/clipboard_grammar.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const module = b.addModule("howl_vt", .{
         .root_source_file = b.path("src/howl_vt.zig"),
         .target = target,
