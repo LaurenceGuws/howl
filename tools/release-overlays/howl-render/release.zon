@@ -6,7 +6,7 @@
     .dependencies = .{
         .howl_vt = .{
             .url = "https://github.com/LaurenceGuws/howl/releases/download/howl-vt-v0.1.7-dev.1/howl-vt-0.1.7-dev.tar.gz",
-            .hash = "howl_vt-0.1.7-dev-DNIreWI1LgCifHOuThyhbnebfWuujRZe6xsrgmk1wGTd",
+            .hash = "howl_vt-0.1.7-dev-DNIreY01LgDPkubfmIKIaZ4X668Kpxi-KQ8ftEjKeqPC",
         },
         .howl_text = .{
             .url = "https://github.com/LaurenceGuws/howl/releases/download/howl-text-v0.1.6-dev.3/howl-text-0.1.6-dev.tar.gz",
@@ -14,6 +14,7 @@
         },
     },
     .paths = .{
+        ".gitignore",
         ".zig-audit.json",
         "build.zig",
         "build.zig.zon",
