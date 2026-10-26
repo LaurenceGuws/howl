@@ -12,7 +12,7 @@
     "hosts/howl-web/gateway": "0.1.6-dev",
     "hosts/howl-web/render": "0.1.6-dev",
     "hosts/howl-web/text": "0.1.6-dev",
-    "mods/howl-instance": "0.1.7-dev",
+    "mods/howl-instance": "0.1.8-dev",
     "mods/howl-pty": "0.1.6-dev",
     "mods/howl-render": "0.1.10-dev",
     "mods/howl-text": "0.1.6-dev",

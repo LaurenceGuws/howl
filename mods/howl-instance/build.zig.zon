@@ -1,6 +1,6 @@
 .{
     .name = .howl_instance,
-    .version = "0.1.7-dev",
+    .version = "0.1.8-dev",
     .fingerprint = 0x9779ff56c17a44de,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
