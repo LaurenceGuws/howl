@@ -16,14 +16,11 @@ rules:
   - The platform process-terminal owner owns native descriptors or handles, child process/control lifetime, resize, signals, and cleanup.
   - Attaching an observer never resizes the platform process-terminal transport; geometry changes are explicit serialized Instance mutations.
   - Rendering, UI, platform lifecycle, networking, authentication, and Session/Server orchestration remain outside VT, PTY, and Instance.
-  - Terminal renderer may synchronously consume VT-owned Terminal.Observation, a validated Server terminal-client rich observation, or the owned terminal-client view form for consumers that need independent lifetime; no borrowed source may outlive the update call. All storage forms share one presentation implementation and must prove final-frame equivalence.
+  - Terminal renderer may consume VT-owned Terminal.Observation synchronously or a validated presentation-only view supplied by a downstream adapter; borrowed state never outlives an update. Rendering has no Server wire or client ownership.
   - Each core package owns its direct build identity, dependencies, native interfaces, and proofs.
   - Every concrete core artifact uses the tracked Zig compiler with self-hosted code generation and linking.
   - Tests prove behavior, failure, cleanup, bounds, and ownership rather than rejected architecture.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.
-  - Session and Server are optional orchestration nouns above the terminal family. The required hierarchy is Server -> Sessions -> Instances; an Instance is never a Session.
   - A local VT, PTY, or Instance embedder must not import or know about Session/Server machinery.
-  - The optional howl_vt_codec entry point owns terminal observation payload encoding/validation; the live howl_vt root and direct local Instance/Render path never import it.
-  - Server owns orchestration and one control-listener runtime when hosted; it owns no terminal grid, rows/columns, cell-pixel lattice, pane/split layout, renderer state, or surface composition.
-  - Session is lifecycle identity/labeling above Instances; it owns no PTY, VT, Server terminal service, geometry, renderer, pane, or surface state.
+  - VT exports only the pure OSC 52 clipboard grammar to downstream observation codecs. Payload serialization, cache and transport are owned outside this repository; local VT, PTY, Instance, Text and Render paths never import them.
   - Each Instance owns one singular canonical process-terminal/VT geometry. A client may compose multiple Instances on one surface, but any shared app layout remains presentation state and only results in explicit per-Instance geometry mutations.

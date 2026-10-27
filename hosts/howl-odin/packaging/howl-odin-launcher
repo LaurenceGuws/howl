@@ -1,3 +1,0 @@
-#!/bin/sh
-set -eu
-exec "$HOME/.local/libexec/howl-odin/howl-odin" "$@"

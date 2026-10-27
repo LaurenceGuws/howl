@@ -3,25 +3,11 @@
 `howl-vt` is a native Zig terminal emulator. Its public package root exports
 `howl_vt.Terminal`; implementation files are not embedding interfaces.
 
-The package separately exports `howl_vt_codec` for optional portable terminal
-observation payload encoding/validation. Its text, graphics and property grammar
-and decoded cells, scalar banks, palettes, links and manifests have no Server,
-socket, live terminal parser or renderer dependency. Complete text decoding
-returns one explicit owner for rows, scalar banks and URI bytes; raw, zlib and
-packed zlib bodies share the same validation and cleanup. The optional text
-compressor owns reusable packed/output buffers and DEFLATE storage, returning a
-copied length prefix beside borrowed compressed bytes for framing without a copy. Publishers separately
-specialize `codec.encoder.Encoder` on VT's read-only `Observation` type for
-text, property and graphics encoding; the codec imports no live parser. The normal
-`howl_vt` root never imports or re-exports this codec; local observation remains a
-direct borrow. The codec does not schedule, publish or deliver observations.
-
-The optional encoder's DeltaCache retains screen-local row generations for live
-views, exact copied cells for historical views, and bounded row link memberships.
-Changing screen bank, history offset or geometry requires a complete text baseline.
-The caller authorizes the exact delivery predecessor; the cache holds no Server
-revision. Encoding is provisional until the caller queues the whole observation:
-a downstream failure must invalidate the cache before another delta is allowed.
+VT exports the pure `vt_clipboard_grammar` for exact OSC 52 validation. The
+terminal's read-only `Observation` stays a direct borrow. No portable
+observation encoding, transport framing, delta cache or client projection is
+owned here: those capabilities were transferred to howl-sessions Server Protocol.
+They are outside local VT construction and do not affect terminal progress.
 
 ## Ownership
 
@@ -135,12 +121,8 @@ protocol; it is not an embedder failure.
 ## Source ownership
 
 - `src/howl_vt.zig` is the curated live-terminal embedding root.
-- `src/codec.zig` is the separately selected portable observation payload codec;
-  `src/codec/wire.zig` owns portable payload grammar/packing,
-  `src/codec/decoded.zig` owns decoded values, validation and allocation cleanup,
-  `src/codec/text.zig` owns complete text-body decoding/allocation lifetime,
-  `src/codec/encode.zig` specializes synchronous read-only VT encoding,
-  and `src/codec/properties.zig` owns bounded properties and borrowed decode.
+- `src/clipboard_grammar.zig` is the pure child-owned OSC 52 grammar shared
+  by VT and independent downstream consumers.
 - `src/parser.zig` recognizes bounded terminal syntax and materializes typed
   parser actions.
 - `src/screen.zig` owns screen-bank cells, cursor state, margins, tab stops,
@@ -205,13 +187,9 @@ integration simulation.
 
 ## Shared clipboard grammar identity
 
-The live clipboard owner and optional codec share one pure child-owned
-`vt_clipboard_grammar` build module. It owns OSC 52 selector, separator, query/set
-classification and replacement Base64 validation. The live owner keeps consequence
-retention, reply queues and decoding; the codec exposes `parseClipboardRequest`
-for validating transported metadata against complete payloads. No live Terminal,
-consequences, reply queue, Server or renderer is imported by that grammar leaf.
-The child build injects the exact same module into both roots and owned direct
-proof roots, preventing duplicate source/type ownership when live VT and codec
-are composed together. Normal local execution calls this grammar directly and
-still never selects the codec or Server.
+VT owns one pure `vt_clipboard_grammar` build module for OSC 52 selector,
+separator, query/set classification and replacement Base64 validation. Its live
+parser imports that leaf. External codecs borrow the very same published grammar
+without importing a Terminal, consequence queue, Server or renderer. The grammar
+has its own isolated proofs so future transport development cannot silently
+change terminal acceptance rules.

@@ -8,14 +8,12 @@ several modules. Being here does not make a package terminal core.
 | --- | --- |
 | howl-vt, howl-pty, howl-instance, howl-text | accepted terminal foundations |
 | howl-render | shared terminal-to-frame presentation machinery |
-| server | optional Server runtime, model/service, wire, clients and private transport; separately selectable entry points |
 | howl-vk, howl-wayland | experimental graphics/platform libraries |
 
-The Server family is optional orchestration above Instance. Its single package
-owns the listener and scheduler alongside the wire/client implementation.
-Wire-only and client-only graphs consume the optional VT codec without importing
-the canonical VT, PTY, Instance or Server lifetime. Client integration proofs use
-the same family's model/service as fixtures.
+Server orchestration, its wire and observation codec, clients and presentation
+adapters now belong to the separately released howl-sessions repository.
+Neither their build steps nor their symbols can enter this terminal package
+graph. VT exports only its pure OSC 52 validation grammar for that consumer.
 
 Each package owns its public build exports, version, dependencies and proofs.
 Package versions are recorded in the root [snapshot](../snapshot.json).

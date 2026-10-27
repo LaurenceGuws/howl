@@ -1,5 +1,11 @@
 # Flutter Linux refresh-rate patch
 
+**Inactive bring-up reference.** This patch and its prepare/build scripts
+belonged to the old Flutter canary, which is no longer an active Howl product.
+Do not run them as current build, installation or release entrypoints. They
+remain here to explain the old high-refresh validation until the new Flutter
+product in howl-sessions makes its own platform decisions.
+
 Howl pins Flutter with FVM. Flutter 3.47.4's Linux GTK embedder does not install
 an embedder `vsync_callback`, so the engine falls back to
 `VsyncWaiterFallback`, which is fixed at 60 Hz even when the Flutter view is on

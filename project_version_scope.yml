@@ -1,10 +1,10 @@
 schema: 1
-version: 0.1.6-dev
+version: 0.1.7-dev
 
 objective: >-
-  Keep one observer-independent canonical PTY/VT Instance while pressure-proving
-  optional Server -> Sessions -> Instances orchestration plus shared text and graphics
-  presentation across native and browser canaries.
+  Keep independent terminal semantics, process transport, local Instance, Text and
+  Render packages. Server and remote client product ownership is now in howl-sessions;
+  this snapshot proves the retained direct-local core without that product dependency.
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
@@ -25,23 +25,15 @@ invariants:
 
 active:
   - keep the basic native cursor path independently qualified: content reuse, clipped glyph recoloring, complete immutable publications and visible-pane pixel composition, with CPU and memory tradeoffs measured separately
-  - replace the Local Odin daily shell with the smallest direct Zig SDL howl-app; fully exclude Server and attachment/detach machinery from this app and retain Odin until Local qualification
-  - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
+  - qualify the smallest direct Zig SDL howl-app without Server, endpoint, transport or attachment/detach machinery
   - pressure the shortest native path through howl-host: one in-process Instance, direct canonical VT observation, text/render and Vulkan/Wayland with no transported client or Server route
-  - pressure the same Instance/client/text/renderer owners through maintained visual canaries: Flutter over Server-selected native streams and Web over its Wasm/browser presentation gates; SDL desktop hosts own local Instance composition
-  - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
-  - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
-  - keep Chromium as the fast primary Web acceptance lane and iPhone Safari/Home-Screen as the narrower WebKit/PWA platform canary
-  - dogfood the Odin/SDL3 desktop canary across accepted Local and Server-selected routes with tabs/splits, profiles, settings, explicit attachments and shared terminal-renderer presentation without duplicating terminal semantics
+  - keep the old Flutter native/Dart/iOS tree as explicitly inactive engineering evidence, outside check/test/release contracts
 
 deferred:
   - reduce bounded ASCII/BG span bookkeeping overhead on styled VT writes and scrolling; compare VT-only cost and complete VT-to-frame cost while preserving plain-ASCII throughput, exact invalidation and observer independence
-  - qualify ordinary Odin desktop installation and remaining accessibility/platform behavior
-  - further Android visual/app-lifecycle polish beyond the accepted Note10 route-less shell, persistence, managed attach, and rotation canaries
-  - authenticated/public remote Howl transport policy
   - renderer backend selection and presentation polish
 
 gates:
-  - root checks/tests forward all maintained Zig roots, nested Web proofs and the external consumer contract, and pass
+  - root checks/tests forward all retained Zig roots and the external core consumer contract, and pass
   - VT simulation, fuzz, and protocol validation pass
   - zig-audit ruleset-3 source audit, Howl project audit, formatting, and git diff checks pass

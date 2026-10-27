@@ -1,8 +1,8 @@
 //! Defines bounded limits for maintained terminal-frame production.
 //!
-//! Session geometry remains generic `u16` protocol state. These bounds are the
-//! renderer/client contract for maintained Howl presentations so native and Web
-//! cannot drift into different viewport or renderer-capacity policies.
+//! Canonical terminal geometry belongs to its terminal owner, not Render.
+//! These finite projection capacities are shared with outside consumers as
+//! plain limits; importing them must not acquire a Session, wire or client.
 
 const std = @import("std");
 

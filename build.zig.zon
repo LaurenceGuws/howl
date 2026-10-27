@@ -1,6 +1,6 @@
 .{
     .name = .howl_workspace,
-    .version = "0.1.6-dev",
+    .version = "0.1.7-dev",
     .fingerprint = 0x6e224245e45a69d0,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
@@ -9,15 +9,10 @@
         .howl_instance = .{ .path = "mods/howl-instance" },
         .howl_text = .{ .path = "mods/howl-text" },
         .howl_render = .{ .path = "mods/howl-render" },
-        .server = .{ .path = "mods/server" },
-        .howl_cli = .{ .path = "hosts/howl-cli" },
         .howl_vk = .{ .path = "mods/howl-vk" },
         .howl_wayland = .{ .path = "mods/howl-wayland" },
         .howl_host = .{ .path = "hosts/howl-host" },
         .howl_app = .{ .path = "hosts/howl-app" },
-        .howl_odin = .{ .path = "hosts/howl-odin/native" },
-        .howl_flutter = .{ .path = "hosts/howl-flutter/native" },
-        .howl_web = .{ .path = "hosts/howl-web" },
         .howl_vt_example = .{ .path = "mods/howl-vt/examples/0.1.4-dev" },
     },
     .paths = .{

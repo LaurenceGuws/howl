@@ -95,10 +95,11 @@ pub fn build(b: *std.Build) void {
     tests.dependOn(protocol);
 
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
-    // Forward the optional codec directly; the live VT identity comes from Instance.
+    // OSC 52 grammar is the only VT-owned observation-adjacent language shared
+    // upward. Session encoding must not become a dependency of a local terminal.
     // zig-audit: acknowledge panic
     // reason: Build configuration cannot recover from allocation failure.
-    b.modules.put(b.allocator, "howl_vt_codec", vt.module("howl_vt_codec")) catch @panic("OOM");
+    b.modules.put(b.allocator, "vt_clipboard_grammar", vt.module("vt_clipboard_grammar")) catch @panic("OOM");
     // The optional standalone native contract is the exact VT-owned module.
     // zig-audit: acknowledge panic
     // reason: Build graph allocation failure is unrecoverable while forwarding the child-owned module.

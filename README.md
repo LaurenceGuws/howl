@@ -11,10 +11,9 @@ Reusable packages live in [mods/](mods/README.md); application and runtime
 composition lives in [hosts/](hosts/README.md). Core is an ownership/capability
 designation, not a synonym for every package in mods.
 
-The optional Server family lives in [mods/server](mods/server/README.md).
-Its one package exports independent runtime, model/service, wire, client and
-client-render modules. The existing CLI composes its listener/scheduler; remote
-clients select only the wire/client graph.
+The Server, Protocol, Client and their Codec, CLI, Web and Odin products now
+live in the independently versioned sibling howl-sessions repository. This
+repository exports terminal primitives and direct-local hosts only.
 
 Each package owns its build.zig.zon version. [snapshot.json](snapshot.json) records
 the exact tested package versions and Zig pin; VERSION names that combination.
@@ -51,122 +50,31 @@ Observers and clients may disconnect, stall, or disappear without pacing canonic
 Instance progress. Attaching a client never silently resizes an Instance; geometry is
 an explicit Instance mutation.
 
-## Optional orchestration
+## Product boundary and maintained hosts
 
-Persistent multi-Instance orchestration is a separate optional layer:
+Howl's VT, PTY, Instance, Text and Render can be embedded without a Session,
+Server, socket or observation serialization. Optional Server -> Sessions ->
+Instances orchestration is a separately released consumer in howl-sessions;
+it depends down on Howl and never changes this local composition.
 
-```text
-Server
-├── Session "work"
-│   ├── Instance 1  exited
-│   └── Instance 2  running
-└── Session "logs"
-    └── Instance 1  running
-```
+Local howl-app uses a Zig/SDL frontend with its own Instance and immutable
+Render publications. howl-host directly exercises VT observation through
+Text, Render, Vulkan and Wayland without client transport or server routing.
 
-A **Session** is lifecycle identity/labeling for an Instance lineage. It owns no PTY,
-VT, Server terminal service, geometry, renderer, pane, split, or surface layout. Session creation
-never launches a shell.
+The former Flutter source remains in hosts/howl-flutter strictly as an
+**inactive, unsupported bring-up reference**. Its native/Dart/iOS build and
+installation scripts are not current interfaces. It is absent from the
+active build, snapshot and release inventory. The exact audit exception for
+its native root is temporary; no other package receives that exemption.
 
-A hosted **Server runtime** owns exactly one control listener, the Server tree, and
-bounded scheduling across all Instance services. It starts with zero Sessions and zero
-Instances. It owns no terminal grid or presentation composition. Graphical clients may
-place several Instances on one surface, but that layout remains client-side and only
-results in explicit per-Instance geometry mutations.
+Server-facing native clients, CLI, browser and Odin ownership now live in
+howl-sessions, including the extracted terminal observation codec. That
+codec consumes VT's pure OSC 52 grammar rather than living inside VT.
 
-There is no per-Instance listener in the Server runtime. A Server client requests an
-exact `(session_id, instance_id)` and the accepted control stream is transferred into
-the Server-owned terminal service beside that Instance. One complete `attach_ready` response carries Server, Session, Instance, tree revision
-and client identity; the same SRVR version 2 stream is then dedicated to that Instance.
-Separate catalog/CRUD connections stay in Server control. There is no second handshake.
-Disconnect leaves the Instance alive; explicit close ends it. No Server-side byte proxy sits in the terminal path.
-
-Transport reachability, authentication, discovery, public routing and service
-supervision remain outside Howl.
-
-The optional [standalone Render native contract](mods/howl-render/native.md)
-composes explicit fonts with a retained VT observation capability and reusable
-immutable frame buffers. It supplies complete commands and residency-relative
-pixel uploads, while the embedder owns source service, GPU residency and scheduling.
-The ordinary local and existing native schema paths remain separate.
-
-The optional [standalone VT native contract](mods/howl-vt/native.md) publishes
-the exact `howl_vt_native` static artifact and header. Foreign callers construct
-a bare VT, feed their own bytes, encode semantic input, copy queries and explicitly
-service replies and retained requests. Transport, time, scheduling and platform
-policy belong to the embedder.
-
-## Native clients
-
-`server-client` owns native Server control and terminal-interaction clients.
-`server_client.terminal` supplies bounded observations, actions, selection, search,
-images and consequences; private transport retains bounded deadlines and cancellation.
-Opaque control handles inspect the tree and perform Session/Instance CRUD.
-Independent opaque attachments retain their exact ready identity. The optional
-`howl_server_client` static artifact and public C header expose versioned native
-connection/control/input/observation ownership, immutable snapshot queries,
-canonical text extraction and attachment-bound raw/delta caching. Local terminal ownership belongs to each host.
-
-`howl-cli` builds the machine-friendly `howl` executable with two deliberately distinct
-command families:
-
-```text
-howl instance ...   # interaction with one exact Server-selected Instance
-howl server ...     # Server tree / Session / Instance orchestration
-```
-
-The CLI is a frontend/composition root, not an architectural owner. Instance commands
-share one exact target grammar:
-`--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`. This performs exact Server
-attach only to obtain the Instance stream; snapshot/input/resize semantics remain
-Instance-owned. In particular, `howl server session create` creates only logical Session identity, while
-`howl server instance create` is the only orchestration command that accepts
-shell/command/cwd/geometry.
-
-## Maintained canaries
-
-Flutter, Web, the native Vulkan Host and Odin clients are pressure canaries rather than
-compatibility surfaces. They may iterate rapidly, but none may duplicate terminal
-semantics or move presentation policy into VT/PTY/Instance/Server.
-
-Flutter exercises desktop Local and exact Server-selected Instance routes. Linux and Windows Local use a private worker owning one in-process Instance
-with direct semantic commands and copied canonical observations; Android and iOS
-remain client-only. Its small app shell may persist explicit labelled Server
-endpoints, but that is application configuration, not Server discovery. Odin exposes exact Server-selected startup and direct Local launch profiles.
-Its transported workers independently attach to that Instance; endpoint-only saved
-Attach profiles report that Server selection is required.
-
-howl-app is the direct Local-only Zig/SDL shell beside Odin. Its graphical thread
-borrows immutable Render leases; matching panes share native fonts and bounded
-shaping while keeping atlases and frames local. Presented embedders must choose
-private or shared text ownership; see [the lifetime contract](mods/howl-instance/README.md#presented-text-ownership).
-
-The Vulkan Host is deliberately different: it is the native direct-embed performance
-canary only. It owns one in-process Instance and projects canonical VT observation
-directly through text/render/Vulkan/Wayland. Its build disables transported client
-render sources and contains no server-client, endpoint, Session, Server,
-or transported terminal route.
-
-The Web wire/renderer/gateway proofs remain maintained. The browser gateway reaches an
-exact Server-selected Instance through `server-client`. Each WebSocket first receives
-the common ready response, then carries Server terminal traffic. No per-Instance
-listener is created.
-
-### Current consequence consumers
-
-`server_client.terminal.consequences` provides the Server terminal consequence client; host policy is opt-in.
-Current maintained source has one explicit product policy owner:
-
-| Surface | Consequence authority today |
-| --- | --- |
-| Odin desktop | claims explicit authority; surfaces bell/attention notifications as modest window attention, replies empty/default/dark/screen-cell facts to required queries, and consumes the remaining host-neutral occurrences |
-| Flutter | no explicit authority; Instance deterministic headless policy applies |
-| Web | no explicit authority; Instance deterministic headless policy applies |
-| Vulkan Host | no explicit authority; Instance deterministic headless policy applies |
-| CLI | exposes no product host policy; Instance deterministic headless policy applies |
-
-Direct `howl-vt` embedders are outside that Instance fallback and must choose their own
-policy if they want host side effects or replies.
+The optional [standalone VT native contract](mods/howl-vt/native.md) and
+[standalone Render native contract](mods/howl-render/native.md) remain
+independently qualified C interfaces for foreign embedders. They do not
+introduce Server, socket, GUI scheduling or client ownership into the core.
 
 ## VT protocol coverage
 
@@ -213,51 +121,24 @@ their named contracts.
 
 `.zig-audit.json` uses schema 2 and ruleset 3 over the accepted core source, its build
 glue, and the VT unit-proof root. Intentional sharp constructs are acknowledged beside
-the exact source with a reason. Experimental clients remain outside the root core audit
-until promoted; their package-local gates still own their proofs.
+the exact source with a reason. Every active child has its own required audit;
+only the exact old Flutter native copybook root is exempt from active checks.
 
-Each maintained Zig package owns its complete checks, tests and public consumer
-graph. Root `check` and `test` depend directly on those child steps, including the
-native bridges, CLI/Server, Vulkan host, versioned VT example, and Web's nested
-text/render/gateway proofs. `test` includes VT simulation and protocol validation.
-Live desktop/browser sessions and benchmarks retain explicit opt-in entrypoints.
+Each maintained Zig package owns complete checks, tests, audits and its public
+consumer graph. The root forwards those child gates and the independent
+VT embedding example, howl-app and howl-host. The root does not compile or
+install historical Flutter, and does not build any moved Server product.
 
-Targeted child steps are available at the root, for example
-`zig build howl_odin:test` or `zig build howl_web:render-check`. Web canaries retain
-their explicit Wasm target; native packages receive the root target and optimization.
-Root execution requires the children's ordinary tools and native libraries, including
-Node, Python, Wayland's pinned scanner, SPIR-V tools, FreeType and HarfBuzz.
+The root distribution exports exact child-owned Zig module identities,
+including VT's pure OSC 52 grammar, and the tested native VT, Instance and
+Render artifacts. It does not re-create modules, or export Server client,
+protocol, terminal codec, CLI or remote host artifacts. Consumers should
+pin immutable module releases and provide matching dependency options
+(notably Render's bundled_text=false where sharing with Instance).
 
-The repository root is also the distribution boundary for downstream Zig consumers.
-It forwards the exact child module objects and installable artifacts; it does not
-recreate their source/module graphs. For example:
-
-```zig
-const howl = b.dependency("howl", .{
-    .target = target,
-    .optimize = optimize,
-});
-root.addImport("howl_instance", howl.module("howl_instance"));
-root.addImport("howl_vt", howl.module("howl_vt"));
-root.addImport("howl_render", howl.module("howl_render"));
-root.addImport("howl_text", howl.module("howl_text"));
-```
-
-Public modules include Server control/terminal services and protocols, server_client,
-Vulkan and Wayland. Instance exports only its direct canonical APIs. Native binaries,
-bridge libraries/objects, the optional `howl_vt_native` terminal and
-`howl_server_client` client C libraries/headers,
-and Web Wasm artifacts are available through
-`howl.artifact(name)`. Importing a module does not link unrelated public modules.
-The shared renderer consumes direct VT observation. Transported-client source
-adapters are exported separately as server_client_render by mods/server;
-they depend outward on the same renderer and preserve its text type identity.
-Consumers should pin an immutable repository tag or commit.
-
-`zig build consumer` runs the separate package in `test/consumer`, which imports
-the distribution root, resolves its artifacts and proves compatible VT/Instance
-and text/renderer type identities. It also links the exact native client library
-and consumes its artifact-owned C header. Root checks and tests include this proof.
-
+The test/consumer package imports the root as a separate distribution
+consumer, verifies VT/Instance/Text/Render identity and exercises the
+real VT/Instance/Render native C headers and artifacts. It is included in
+root check and test; no old Server client ABI is required.
 For the detailed current ownership rules, read `project_design.yml`,
 `project_rules.yml`, and `project_source_map.yml`.

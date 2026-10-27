@@ -29,28 +29,7 @@ test "root exposes the complete native consumer vocabulary" {
     _ = @import("howl_pty");
     // zig-audit: acknowledge discard
     // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server_protocol").terminal;
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server_terminal_service");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server_protocol");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server_service");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server_runtime");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("server_client");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("howl_cli");
+    _ = @import("vt_clipboard_grammar");
     // zig-audit: acknowledge discard
     // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
     _ = @import("howl_render_limits");
@@ -83,83 +62,21 @@ test "readonly VT accessors retain ordinary function pointers" {
     try std.testing.expectEqual(.single_width, geometry(&view, 0));
 }
 
-test "Server clients share the wire without importing host ownership" {
-    const client = @import("server_client");
-    const protocol = @import("server_protocol");
-    try std.testing.expect(client.protocol == protocol);
-    try std.testing.expect(client.terminal.protocol == protocol.terminal);
-    try std.testing.expect(!@hasDecl(client.terminal, "instance"));
-    try std.testing.expect(!@hasDecl(client, "Runtime"));
-    try std.testing.expect(!@hasDecl(protocol, "Server"));
-    try std.testing.expect(!@hasDecl(protocol, "Runtime"));
-}
-
 test "Instance API has no remote protocol or client identity" {
     try std.testing.expect(!@hasDecl(instance, "protocol"));
     try std.testing.expect(!@hasDecl(instance, "ClientId"));
     try std.testing.expect(!@hasDecl(instance, "ResizeAuthority"));
 }
 
-test "optional VT codec has its own root and canonical wire value identity" {
-    const codec = @import("howl_vt_codec");
-    const wire = @import("server_protocol").terminal;
-    try std.testing.expect(codec.TextColor == wire.TextColor);
-    try std.testing.expect(codec.SnapshotImage == wire.SnapshotImage);
-    try std.testing.expect(codec.properties == wire.properties);
-    try std.testing.expect(codec.Metadata == @TypeOf(@as(wire.SnapshotBegin, undefined).terminal));
-    try std.testing.expect(!@hasField(codec.Metadata, "stream_closed"));
-    try std.testing.expect(!@hasField(codec.Metadata, "leader_present"));
-    try std.testing.expect(!@hasField(codec.Metadata, "you_are_leader"));
-    try std.testing.expect(codec.Row == @import("server_client").terminal.rich.Row);
-    try std.testing.expect(!@hasField(codec.text.Compressed, "revision"));
-    try std.testing.expect(@TypeOf(codec.text.Compressor.compress) == fn (*codec.text.Compressor, codec.text.Compression, []const u8) codec.decoded.Error!codec.text.Compressed);
-    const Delta = codec.encoder.Encoder(vt.Terminal.Observation).DeltaCache;
-    try std.testing.expect(!@hasField(Delta, "revision"));
-    try std.testing.expect(!@hasField(Delta, "client"));
-    try std.testing.expect(@TypeOf(Delta.appendText) == fn (*Delta, std.mem.Allocator, *std.ArrayList(u8), *const vt.Terminal.Observation, u32, u64, bool) codec.decoded.Error!Delta.Mode);
-    try std.testing.expect(!@hasField(codec.cache.View, "begin"));
-    try std.testing.expect(!@hasField(codec.cache.View, "changed_rows_base_revision"));
-    const client_view = @import("server_client").terminal.view;
-    try std.testing.expect(codec.view.Row == client_view.Row);
-    try std.testing.expect(codec.view.Cell == client_view.Cell);
-    try std.testing.expect(codec.view.TextProjection == client_view.TextProjection);
-    try std.testing.expect(!@hasField(codec.view.Source, "begin"));
-    try std.testing.expect(!@hasField(codec.view.Source, "changed_rows_base_revision"));
-    try std.testing.expect(!@hasDecl(codec.view, "Begin"));
-    try std.testing.expect(@TypeOf(codec.view.projectInto) == fn ([]align(codec.view.storage_alignment) u8, *const codec.view.Source) codec.view.Error!*const codec.view.Snapshot);
-    try std.testing.expect(@TypeOf(codec.view.deinit) == fn (*codec.view.Snapshot) void);
+test "VT exports only its canonical OSC 52 grammar, never a transport codec" {
+    const grammar = @import("vt_clipboard_grammar");
+    const request = grammar.parse("c;SG93bA==").?;
+    try std.testing.expectEqualStrings("c", request.selection);
+    try std.testing.expect(request.kind == .set);
+    try std.testing.expect(grammar.parse("c;????") == null);
     try std.testing.expect(!@hasDecl(vt, "codec"));
-    try std.testing.expect(!@hasDecl(instance, "codec"));
+    try std.testing.expect(!@hasDecl(instance, "protocol"));
     try std.testing.expect(!@hasDecl(render, "codec"));
-    try std.testing.expect(!@hasDecl(codec, "Terminal"));
-    try std.testing.expect(!@hasDecl(codec, "ClientId"));
-    try std.testing.expect(!@hasDecl(codec, "ResizeAuthority"));
-    const color = codec.TextColor{ .kind = .rgb, .value = 0x123456 };
-    var bytes: [codec.text_v1.color_bytes]u8 = undefined;
-    try codec.encodeTextColor(&bytes, color);
-    try std.testing.expectEqualDeep(color, try codec.decodeTextColor(&bytes));
-}
-
-test "Server selects presentation-free Instance with the canonical VT identity" {
-    const headless = @import("howl_instance_headless");
-    const server = @import("server");
-    try std.testing.expect(headless.Terminal == vt.Terminal);
-    try std.testing.expect(headless.Instance != instance.Instance);
-    try std.testing.expect(@TypeOf(headless.terminal) == fn (*const headless.Instance) *const vt.Terminal.Observation);
-    try std.testing.expect(@typeInfo(headless.Instance) == .@"opaque");
-    inline for (.{
-        "render",            "text",           "initPresented", "presented",       "PresentationConfig",
-        "PresentationStore", "RenderExchange", "renderFrame",   "publishRender",   "reconfigurePresentation",
-        "protocol",          "codec",          "ClientId",      "ResizeAuthority",
-    }) |name| try std.testing.expect(!@hasDecl(headless, name));
-    const create = @typeInfo(@TypeOf(server.Server.createInstance)).@"fn";
-    try std.testing.expect(create.param_types[4] == headless.Launch);
-}
-
-extern fn howl_external_client_abi() c_int;
-
-test "root exposes the exact native client artifact and its C header" {
-    try std.testing.expectEqual(@as(c_int, 0), howl_external_client_abi());
 }
 
 extern fn howl_external_instance_abi() c_int;
@@ -171,14 +88,6 @@ test "root exposes exact Instance native artifact and VT-owned header" {
     try std.testing.expect(native.vt.Terminal == vt.Terminal);
     try std.testing.expect(native_vt.Terminal == vt.Terminal);
     try std.testing.expectEqual(@as(c_int, 0), howl_external_instance_abi());
-}
-
-test "root forwards the exact caller-driven byte client" {
-    const client = @import("server_client");
-    const byte = @import("server_client_byte");
-    try std.testing.expect(client.terminal.byte == byte);
-    try std.testing.expect(byte.protocol == @import("server_protocol").terminal);
-    try std.testing.expect(@typeInfo(byte.ByteClient) == .@"opaque");
 }
 
 extern fn howl_external_vt_abi() c_int;

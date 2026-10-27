@@ -92,40 +92,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&observation_run.step);
     native_step.dependOn(&observation_run.step);
 
-    // Optional observation encoding is never imported by the live VT root.
-    const codec = b.addModule("howl_vt_codec", .{
-        .root_source_file = b.path("src/codec.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    codec.addImport("vt_clipboard_grammar", clipboard_grammar);
+    // Keep OSC 52 grammar independently tested: remote clients need the exact
+    // terminal validation rules without transporting an observation codec in VT.
     const grammar_proofs = b.addTest(.{ .name = "howl-vt-clipboard-grammar", .root_module = clipboard_grammar, .use_llvm = false, .use_lld = false });
     check.dependOn(&grammar_proofs.step);
     test_step.dependOn(&b.addRunArtifact(grammar_proofs).step);
-    const codec_proofs = b.addTest(.{
-        .name = "howl-vt-codec",
-        .root_module = codec,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&codec_proofs.step);
-    test_step.dependOn(&b.addRunArtifact(codec_proofs).step);
-
-    const encoder_root = b.createModule(.{
-        .root_source_file = b.path("test/codec_encoder.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    encoder_root.addImport("howl_vt", module);
-    encoder_root.addImport("howl_vt_codec", codec);
-    const encoder_proofs = b.addTest(.{
-        .name = "howl-vt-codec-encoder",
-        .root_module = encoder_root,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&encoder_proofs.step);
-    test_step.dependOn(&b.addRunArtifact(encoder_proofs).step);
 
     const unicode_digest_module = b.createModule(.{
         .root_source_file = b.path("src/unicode_17_digest.zig"),

@@ -6,12 +6,12 @@ accepted:
   build.zig.zon: complete workspace dependency and distribution source boundary
   .zig-audit.json: required zig-audit schema-2/ruleset-3 scope for the accepted core source and root-check proofs; intentional sharp constructs are acknowledged beside source
   mods/howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-external-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
-  mods/howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; local howl_instance and presentation-free howl_instance_headless select one private service implementation at compilation; Server selects the latter without Render/Text imports; publishes no listener, daemon, Session, or Server identity
+  mods/howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; direct and headless specializations share one private service implementation; publishes no listener, daemon, Session, or Server identity
   mods/howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   mods/howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
-  tools/audit_project.sh: Howl-specific structural, FFI, asset-mirror, and workspace-version audit; generic Zig sharp-edge detection belongs only to zig-audit
+  tools/audit_project.sh: Howl-specific core structural, exact package graph, audit coverage and workspace-version checks; one named old-Flutter exception, no legacy FFI compatibility checks
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
@@ -45,9 +45,9 @@ experimental:
     cells, queries, graphics manifests/pixels, immutable logical-output results and pending request facts; named canonical replies and explicit
     retained/headless service policy. Exact local Instance specialization; no host runtime, wait/poll loop,
     wake source, clock or Server/codec. Public native Zig helpers share input
-    conversion/operations with Odin. Optional howl_instance_frames_native owns one
+    conversion/operations. Optional howl_instance_frames_native owns one
     backend endpoint, immutable frame leases, bulk payload projection and checked
-    parent destruction; Odin embeds the exact artifact export root and owns worker
+    parent destruction; embedders own their worker
     handoff/pacing. Standalone presented C construction owns explicit copied
     path/memory font inputs and a caller reference to the canonical shared Store;
     Instances retain it independently. Core try-claim admission precedes canonical
@@ -68,122 +68,13 @@ experimental:
     copying RGBA and alpha pixels before publication. One producer owns mutation; backend
     read/release use atomic lease handoff. Direct and existing schema roots import no
     standalone ownership. It owns no Instance, GUI backend, host scheduler or Server codec.
-  howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, shared canonical OSC52 request validation through an exact pure VT-owned clipboard grammar leaf module, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
-  server-runtime: >-
-    mods/server foreground `server_runtime` module owning exactly one Server control listener,
-    one Server model/control service and bounded cooperative scheduling. The Server
-    listener, exact control-socket readiness masks and dormant live PTYs share one
-    aggregate poll; Server terminal-client work and Instance timer/write work receive
-    direct rotating service turns. Fully quiescent
-    exited Instances remain attachable but consume no scheduler work. Exact attach
-    transfers the same fd downward
-    into dedicated Server terminal interaction; no per-Instance listener/proxy exists. Runtime owns no terminal grid,
-    geometry, pane/split layout, renderer, authentication, discovery, persistence or
-    service-supervision policy
-  server-client: >-
-    mods/server src/client owns Server control and terminal interaction clients plus
-    private Unix/numeric-IPv4 transport, bounded deadlines and cancellation.
-    server_client.terminal exposes snapshots, state, actions, search, selection,
-    images and consequences. Each attachment has its own connection, completing at one shared ready response;
-    catalog/CRUD connections remain separate. Attach checks exact Server incarnation,
-    Session and Instance identities and preserves the same stream. Neither client imports
-    Instance, PTY, Server model or process ownership. Public control/attachment
-    handles are opaque; raw constructors and socket/allocator storage stay in
-    private child-owned build modules.
-  server-client-byte: >-
-    mods/server src/client/terminal/byte.zig owns caller-driven dedicated attachment
-    framing and transactions. server_client_byte is the exact module exposed as
-    server_client.terminal.byte; it imports only Server protocol vocabulary.
-    Opaque state lives in module-sized aligned caller Storage with disjoint caller
-    buffers. Typed starts and feed/finish events have no allocator, socket, clock,
-    worker, reconnect, renderer or canonical process owner. Collected observation
-    completion does not validate VT payloads. Web owns semantic rich projection,
-    private ABI budgets and application close/scheduling policy.
-  server-client-abi: >-
-    mods/server optional howl_server_client static artifact and owned
-    include/howl_server_client.h header. Versioned C opaque handles expose catalog
-    CRUD, exact dedicated attachment, caller-owned cancellation, semantic input and
-    complete rich observation/image facts through the same client/VT codec graph.
-    Optional server_client_native composes VT native request/interaction schemas with
-    explicit Server authority and owns all transported request metadata decoding and
-    named reply serialization, immutable snapshot queries, canonical extraction and
-    attachment-bound raw/delta caching. It imports no live VT, Instance or renderer.
-    C records are copied explicitly and immutable byte/scalar borrows expire with
-    their independent catalog/snapshot/image/request/text owner; no Zig layout, runtime,
-    renderer or live terminal owner crosses the boundary.
-  server-service: >-
-    experimental listener-free `server_service` module. It borrows one Server,
-    owns only bounded adopted control streams and long-poll state, decodes
-    server_protocol, performs CRUD through exact Server/Session/Instance identities,
-    serializes read-only tree state and transfers attach streams directly into the
-    Server-owned terminal service beside the selected Instance. It owns no listener/address/process, does not
-    turn Instances, and owns no routing/authentication/supervision policy
-  server-protocol: >-
-    experimental pure module `server_protocol` in mods/server src/protocol. It encodes bounded
-    control and terminal interaction using one SRVR version 2 envelope and disjoint phase
-    tags. One attachment-ready carries all occurrence identities, tree revision and
-    client ID; no terminal hello/welcome remains. Control preserves Server -> Sessions -> Instances:
-    Session create carries only logical name, Instance create carries launch policy
-    under an exact Session id, and attach identifies exact Session+Instance ids.
-    It owns no listener, address, process, authentication or supervision policy
-  server-terminal-service: >-
-    optional module `server_terminal_service` inside mods/server. It
-    borrows one existing Instance and owns only bounded dedicated attachment streams,
-    request decoding, publication scratch and client-local backpressure. It has no
-    listener, executable, address, canonical lifetime or identity allocation. It encodes
-    ready from owner-supplied context and owns no routing, authentication or supervision policy
-  server: >-
-    mods/server optional listener-free orchestration model/service above the Howl terminal family. The exact owner
-    tree is Server -> Sessions -> Instances. Session creation never launches a
-    terminal; shell/command/cwd/geometry belong only to explicit Instance creation.
-    Instance identity is scoped by its owning Session and Session identity by Server.
-    Exact Session+Instance routing may hand an already-connected stream into the
-    Server-owned terminal service. The Server model owns no listener or geometry;
-    the same package's server_runtime entry point owns the single control listener/scheduler
-  howl-cli: >-
-    machine-friendly native CLI with two explicit semantic lanes: Instance interaction
-    under `howl instance ...`, and Server orchestration under `howl server ...`.
-    Instance interaction requires
-    `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` and completes a dedicated
-    attachment at the common ready response. Session create carries no launch policy;
-    Instance create owns shell/command/cwd/geometry inputs. The CLI owns no PTY, VT,
-    Instance, Session, Server, listener, discovery, authentication or supervision
   howl-render: >-
-    backend-independent terminal-frame projection backed by howl-text. Thin source
-    adapters accept canonical VT Observation, validated borrowed server_client.terminal.rich,
-    or owned server_client.terminal.view storage while the source-neutral renderer itself
-    knows no VT owner, client transport, window system, or graphics backend. The
-    direct facade consumes VT observation. Transported-client adapters live in
-    the separate server_client_render module owned by mods/server and depend
-    outward on the same renderer without pulling Client into Render. The
-    package separately exposes dependency-free `howl_render_limits` for wire-only
-    consumers; its full root re-exports the exact howl-text module instance so
-    caller-owned FontSet values preserve Zig type identity. It owns
-    terminal pixel geometry, colors/decorations/cursor projection, caller-supplied
-    regular/italic/bold/bold-italic face selection with deterministic fallback,
-    bounded shape/alpha-atlas caching, exact terminal-image resource projection,
-    backend residency reconciliation, and final terminal frames of resource
-    uploads/removals plus solid, alpha-mask, and RGBA commands. There is no font
-    discovery, generic multi-source compositor, or stable mobile ABI.
-  howl-flutter: >-
-    maintained native graphical client canary with a deliberately small app shell.
-    The shell may start route-less and persists only labelled Server endpoints
-    plus the selected saved Server, configured on a settings page. Its
-    button-opened drawer selects Sessions; a second page presents the selected
-    Session's Instance chips, including exited lineage and explicit creation.
-    Edge-drag drawer opening is disabled. Server mode performs validated native
-    tree queries and incarnation-guarded Session/Instance creation through
-    server-client; opening a running Instance attaches exact Session+Instance
-    identity and client ID in one ready response, with no second handshake or
-    proxy. The existing terminal controls return to the picker without any
-    client-owned tab strip or durable Session/Instance navigation. Relaunch
-    refreshes Server state. Dart keeps no authoritative Server mirror; terminal presentation/input/viewport/
-    history/selection/native-size UX remains Instance-only after handoff. Every
-    Flutter platform (including desktop development hosts) is Server-client-only.
-    Native client observation and semantic controls copy frame/text/image packets
-    into Dart, retaining the 40-byte Render command record and frame-local resource
-    table. SDL desktop hosts own direct local Instance composition. Flutter owns
-    no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
+    Backend-independent terminal-to-frame presentation composed with howl-text.
+    Its direct VT adapter borrows canonical Terminal.Observation; no Server,
+    wire, remote client or transport source can become a Render dependency.
+    Bounded shaping, font families, image upload/removal, cursor, decorations,
+    frame commands and residency reconciliation remain its presentation work.
+    Its separately usable limits module has no terminal-process owner.
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,
     services its PTY/VT lifetime directly, borrows canonical Terminal.Observation for
@@ -193,35 +84,8 @@ experimental:
     remote-target route; outside the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
-  howl-web: >-
-    maintained WebAssembly wire/text/render/browser canary. Browser presentation/input/
-    history/selection stays client-owned; the loopback WebSocket gateway performs exact
-    Server Session+Instance attach through server-client and becomes protocol-blind once
-    it forwards the common ready as the first WebSocket message and enters dedicated
-    terminal interaction. It owns no PTY/VT/Instance/Session/Server lifetime
-    and requires no per-Instance listener. The low-level Node `live` step negotiates an exact disposable Server Instance
-    and feeds the real Wasm ready/terminal frames under single-byte delivery. Chromium is the primary fast lane and
-    Safari/Home-Screen the WebKit/PWA canary; outside the core gate
-  howl-odin: >-
-    experimental Odin/SDL3 graphical Instance client with tabs/splits, profiles,
-    settings/actions and history/selection. Transient `--server` startup uses exact Server,
-    Session and Instance identities for independent transported observer/control/render/
-    consequence attachments. Old endpoint-only Attach profiles report that Server
-    Instance selection is required. Local launch profiles instead create one fully presented
-    in-process Instance (Linux PTY or Windows ConPTY) claimed by one terminal worker.
-    That worker owns PTY/VT service, semantic input, resize, history, search, selection,
-    hyperlink/consequence handling and Render production; SDL consumes immutable Render
-    publications through NativeCanvas on the graphical thread. Local has no HWLS,
-    transported observer/control/render workers, listener or service worker. Target
-    identity includes route+endpoint+Server+Session+Instance so distinct Server-owned Instances
-    never share consequence authority accidentally. Server-selected routes are
-    non-owning dedicated terminal attachments. Its desktop font owner resolves
-    regular/italic/bold/bold-italic files plus fallbacks and supplies independent
-    howl-text FontSets to the shared Render face-family contract. No sibling
-    daemon/socket path exists. Outside the core gate
-
   howl-app: >-
-    experimental Local-only Zig/SDL3 daily-shell replacement beside Odin. Each
+    experimental Local-only Zig/SDL3 daily-shell. Each
     pane owns one direct canonical Instance on an exclusive terminal worker;
     SDL consumes immutable Render leases and copied facts. No client transport,
     HWLS, Server/Session, endpoint, attachment/detach lane, listener, internal
@@ -239,5 +103,11 @@ experimental:
     Local child-only environment overlays preserve parent state and canonical
     terminal identity. Frame stalls and projection failures cannot stop canonical
     service. SDL preedit/caret/commit is proved; external native IME remains.
-    Odin stays daily until Local qualification. Its package check includes
-    the complete ruleset-3 source audit.
+    Its package check includes the complete ruleset-3 source audit.
+
+inactive_reference:
+  hosts/howl-flutter: >-
+    Temporarily preserved as historical bring-up evidence. Its native build root
+    is exactly excluded from active graph, snapshot and audit coverage; no Dart,
+    iOS, native FFI, release or installation entrypoint here is supported.
+    Another build root does not inherit this named exception.

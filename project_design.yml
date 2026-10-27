@@ -5,7 +5,7 @@ project:
 
 core:
   howl-vt:
-    role: terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences; separately exported optional observation payload codec
+    role: terminal parsing, semantic state, history, images, input encoding, replies, protocol consequences, and the pure shared OSC 52 grammar; no observation transport codec
   howl-instance:
     role: optional batteries-included composition of one platform process-terminal owner (Linux PTY or Windows ConPTY), one canonical howl-vt terminal, ordered I/O lifetime, geometry, signals, and headless environment policy
     invariant: Instance is one concrete terminal occurrence, not a Session, Server, listener, daemon, or product identity; observers never own, pace, or block canonical progress
@@ -18,34 +18,26 @@ composition:
   - howl-app is Local-only: one direct in-process Instance per pane, with no Server/Session, endpoint, transport or attachment/detach subsystem
   - howl-vt may be embedded directly without PTY, Instance, Session, or Server machinery
   - a local shell or terminal host may compose howl-pty plus howl-vt through howl-instance without knowing that Session or Server concepts exist
-  - optional orchestration has the noun/process tree Server -> Sessions -> Instances
-  - an Instance is not a Session; Session identity/lifetime belongs to orchestration above the terminal family
+  - optional Server -> Sessions -> Instances orchestration belongs to the separate howl-sessions product, which depends downward on these terminal primitives
+  - an Instance is not a Session; Session identity/lifetime never belongs to the terminal family
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
-  - every Instance owns exactly one canonical terminal geometry; Server and Session own no rows, columns, cell-pixel lattice, pane, split, or surface layout
+  - every Instance owns exactly one canonical terminal geometry; external orchestration and clients receive no direct geometry authority
   - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
-  - the maintained Flutter mobile shell owns lightweight app navigation and explicit persisted Server endpoints, and interacts only with Server-owned Instances on every platform; desktop Flutter remains useful for client development and testing, while local desktop Instance composition belongs to the SDL hosts
-  - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
+  - the old Flutter tree here is inactive historical reference, not an executable, release, or compatibility contract; new Flutter product work belongs to howl-sessions
+  - local desktop Instance composition belongs only to direct-local hosts here
 
 experimental:
-  - server-protocol
-  - server-runtime
-  - server-client
-  - server
-  - howl-cli
   - howl-render
   - howl-host
   - howl-vk
   - howl-wayland
-  - howl-flutter
-  - howl-web
-  - howl-odin
   - howl-app
 
 ownership:
   - terminal semantics belong to howl-vt and remain usable without any orchestration layer
   - one howl-instance owns exactly one authoritative platform process-terminal transport and VT when an embedder chooses the batteries-included local composition
   - Instance exposes no wire protocol, Session or Server identity and publishes no listener or executable
-  - howl-vt owns optional terminal observation payload grammar; server-protocol owns control and terminal framing; server owns adopted-stream services; server-client owns remote clients and private transport
+  - howl-vt owns the pure OSC 52 grammar shared with downstream consumers; observation payload encoding and transport belong entirely to howl-sessions Server Protocol
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt
   - attaching a client never changes canonical terminal geometry
@@ -63,16 +55,17 @@ ownership:
   - Canvas content targets are backend acceleration only, released for hidden panes and rebuilt after geometry, presentation or target-reset changes; canonical progress never depends on their lifetime
   - howl-app blocks a failed projection only for its exact canonical content identity and history viewport; cursor-only movement cannot retry it, new content may recover, and only successful publication clears the failure
   - VT owns retained image/frame/animation semantics; Instance supplies monotonic service/wake scheduling when used, while a direct VT embedder supplies its own clock
-  - Server/Session orchestration, when present, depends downward on Instances and must never become a prerequisite for local terminal composition
+  - separately released Server/Session orchestration depends downward on Instances and must never become a prerequisite for local terminal composition
 
 workspace:
   modules: mods/; reusable does not imply terminal core
   hosts: hosts/; process/application and listener/scheduling policy
   versions: package-owned; VERSION labels the exact snapshot.json combination
-  local_root_gate: all maintained Zig package check/test graphs, including nested Web roots and the external consumer proof
+  local_root_gate: all retained Zig package check/test graphs, including direct-local hosts, versioned VT example and external core consumer proof
   distribution_root: forwards child-owned modules and artifacts without reconstructing their type identities
   toolchain: exact tracked Zig pin with self-hosted code generation and linking
   root: development curator only; exports no product module
+  inactive_reference: hosts/howl-flutter/native; one exact, temporary audit/graph exception; excluded from active builds, snapshot and releases
 
 
 shared_presented_text:
