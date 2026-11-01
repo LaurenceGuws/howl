@@ -1,6 +1,6 @@
 .{
     .name = .howl_workspace,
-    .version = "0.1.7-dev",
+    .version = "0.1.8-dev",
     .fingerprint = 0x6e224245e45a69d0,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{

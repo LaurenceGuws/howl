@@ -14,6 +14,7 @@ const pointer = @import("pointer.zig");
 const composition = @import("composition.zig");
 const config = @import("config.zig");
 const widgets = @import("widgets.zig");
+const tab_title = @import("tab_title.zig");
 const settings = @import("settings.zig");
 const discovery = @import("discovery.zig");
 const picker = @import("picker.zig");
@@ -28,7 +29,7 @@ const scrollbar = @import("scrollbar.zig");
 const desktop = @import("desktop.zig");
 const drawing = @import("pixels.zig");
 const allocator = std.heap.smp_allocator;
-const version = "0.1.6-dev";
+const version = "0.1.7-dev";
 const tab_limit = 8;
 const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn".return_type.?).error_union.error_set ||
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
@@ -67,8 +68,15 @@ const Pane = struct {
 };
 const Tab = struct {
     recipe: config.Recipe,
+    title: tab_title.Title = .{},
     tree: layout.Tree = layout.Tree.init(),
     panes: [layout.pane_limit]?*Pane = @splat(null),
+};
+const RenameEditor = struct {
+    tab: *Tab,
+    edit: widgets.Text = .{},
+    bytes: [tab_title.limit]u8 = undefined,
+    len: usize = 0,
 };
 const Palette = picker.Picker;
 const FindEditor = struct {
@@ -104,6 +112,7 @@ const App = struct {
     selection_tick: u64 = 0,
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
+    rename_editor: ?RenameEditor = null,
     discovered: ?*discovery.Catalogue = null,
     settings_editor: ?settings.Editor = null,
     chooser: ?*font_chooser.Chooser = null,
@@ -233,6 +242,7 @@ const App = struct {
         allocator.destroy(value);
     }
     fn destroyTab(self: *App, value: *Tab) void {
+        if (self.rename_editor) |editor| if (editor.tab == value) self.clearRename();
         for (value.panes) |maybe| if (maybe) |p| self.destroyPane(p);
         value.recipe.deinit();
         allocator.destroy(value);
@@ -253,14 +263,14 @@ const App = struct {
         self.cancelComposition();
         try self.finishPointer();
         try self.keyboard.releaseTerminal();
-        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
+        if (self.tab_count == 0 or !self.focused or (self.rename_editor != null or self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
         const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .out } });
     }
     fn gainKeyboard(self: *App) !void {
         self.cancelComposition();
-        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
+        if (self.tab_count == 0 or !self.focused or (self.rename_editor != null or self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
         const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .in } });
@@ -281,6 +291,7 @@ const App = struct {
     fn selectTab(self: *App, index: u8) !void {
         if (index >= self.tab_count or index == self.active) return;
         try self.loseKeyboard();
+        self.clearRename();
         self.active = index;
         self.syncVisible();
         try self.gainKeyboard();
@@ -294,6 +305,7 @@ const App = struct {
         value.panes[0] = try self.createPane(value.recipe.value, font_size);
         errdefer self.destroyPane(value.panes[0].?);
         try self.loseKeyboard();
+        self.clearRename();
         self.tabs[self.tab_count] = value;
         self.active = self.tab_count;
         self.tab_count += 1;
@@ -357,6 +369,7 @@ const App = struct {
         self.active = destination;
     }
     fn openPalette(self: *App, profile: bool) !void {
+        try self.finishRename(false);
         if (self.settings_editor != null) self.settings_editor = null;
         if (self.palette) |current| {
             if (current.profile == profile) {
@@ -407,6 +420,7 @@ const App = struct {
             .next_tab, .previous_tab => self.tab_count > 1,
             .move_tab_left => self.active > 0,
             .move_tab_right => self.active + 1 < self.tab_count,
+            .reset_tab_title => self.tab().title.len != 0,
             .take_size_control => !self.pane().size_control,
             .stop_resizing => self.pane().size_control,
             else => true,
@@ -424,6 +438,7 @@ const App = struct {
     fn dispatch(self: *App, target: keybindings.Target) !void {
         if (!self.targetEnabled(target)) return;
         self.notice_len = 0;
+        if (!(target == .action and target.action == .rename_tab)) try self.finishRename(false);
         if (self.settings_editor != null and !(target == .action and target.action == .open_settings)) {
             self.settings_editor = null;
             try self.gainKeyboard();
@@ -439,6 +454,8 @@ const App = struct {
                 .new_tab => try self.createTab(try self.startup(), null),
                 .open_local => try self.createTab(try self.configuration.profile(0), null),
                 .duplicate_tab => try self.createTab(try savedRecipe(self.configuration, self.tab().recipe.value), null),
+                .rename_tab => try self.beginRename(),
+                .reset_tab_title => self.tab().title.clear(),
                 .new_window => try self.newWindow(),
                 .split_vertical => try self.split(.horizontal),
                 .split_horizontal => try self.split(.vertical),
@@ -664,6 +681,7 @@ const App = struct {
         }
     }
     fn toggleSettings(self: *App) !void {
+        try self.finishRename(false);
         if (self.settings_editor != null) {
             self.settings_editor = null;
             try self.gainKeyboard();
@@ -887,6 +905,88 @@ const App = struct {
             try self.clippedText(label, button, button.x + 6);
         }
     }
+    fn beginRename(self: *App) !void {
+        if (self.rename_editor != null) return;
+        var editor: RenameEditor = .{ .tab = self.tab() };
+        const status = self.pane().snapshot();
+        const current = self.tab().title.resolve(status.title[0..status.title_len]);
+        // An oversized or malformed application title must not prevent a manual name.
+        if (current.len <= editor.bytes.len and tab_title.valid(current))
+            try editor.edit.insert(&editor.bytes, &editor.len, current);
+        editor.edit.selectAll(editor.len);
+        try self.loseKeyboard();
+        self.keyboard.retireOverlay();
+        self.palette = null;
+        self.settings_editor = null;
+        self.rename_editor = editor;
+        self.setNotice("Rename tab: Enter saves · Esc cancels · empty restores automatic title");
+    }
+    fn clearRename(self: *App) void {
+        if (self.rename_editor == null) return;
+        self.rename_editor = null;
+        self.keyboard.retireOverlay();
+        self.keyboard.suppress_text = true;
+        self.notice_len = 0;
+    }
+    fn finishRename(self: *App, commit: bool) !void {
+        const editor = self.rename_editor orelse return;
+        if (commit) {
+            var owned = false;
+            for (self.tabs[0..self.tab_count]) |value| if (value == editor.tab) {
+                owned = true;
+                break;
+            };
+            if (!owned) return error.TabClosed;
+            try editor.tab.title.set(editor.bytes[0..editor.len]);
+        }
+        self.clearRename();
+        try self.gainKeyboard();
+    }
+    fn renameField(self: *const App) !layout.Rect {
+        const editor = self.rename_editor orelse return error.TabClosed;
+        for (self.tabs[0..self.tab_count], 0..) |value, index| if (value == editor.tab) {
+            // A hidden one-tab header stays hidden: editing floats above the pane
+            // rather than resizing the canonical terminal for a transient field.
+            if (self.headerHeight() == 0) return .{
+                .x = 8,
+                .y = 8,
+                .width = @max(1, @min(400, self.width - 16)),
+                .height = 30,
+            };
+            const rect = self.headerTabs(self.width).body(@intCast(index));
+            return .{ .x = rect.x + 3, .y = rect.y + 2, .width = @max(1, rect.width - 6), .height = @max(1, rect.height - 4) };
+        };
+        return error.TabClosed;
+    }
+    fn renameKey(self: *App, key: c.SDL_KeyboardEvent) !void {
+        if (key.key == c.SDLK_ESCAPE) return self.finishRename(false);
+        if (key.key == c.SDLK_RETURN) return self.finishRename(true);
+        const editor = &self.rename_editor.?;
+        if (try self.textKey(&editor.edit, &editor.bytes, &editor.len, key)) self.cancelComposition();
+    }
+    fn renameClick(self: *App, x: f32, clicks: u8, extend: bool) !void {
+        const rect = try self.renameField();
+        const editor = &self.rename_editor.?;
+        if (clicks >= 2) {
+            editor.edit.selectAll(editor.len);
+        } else {
+            const point = x - rect.x - 7 + editor.edit.scroll;
+            var offset: usize = 0;
+            var left: f32 = 0;
+            while (offset < editor.len) {
+                var next = offset + 1;
+                while (next < editor.len and editor.bytes[next] & 0xc0 == 0x80) next += 1;
+                const right = try self.textWidth(editor.bytes[0..next]);
+                if (point < (left + right) / 2) break;
+                offset = next;
+                left = right;
+            }
+            editor.edit.jump(offset, extend);
+        }
+        self.cancelComposition();
+        self.consume_left_release = true;
+    }
+
     fn textKey(self: *App, edit: *widgets.Text, buffer: []u8, len: *usize, event_value: c.SDL_KeyboardEvent) !bool {
         const key = event_value.key;
         const mods = input.semanticModifiers(event_value.mod);
@@ -1270,17 +1370,17 @@ const App = struct {
                 const mapping = self.bindings.find(value.key.key, value.key.mod);
                 const command = if (mapping) |index| blk: {
                     const target = keybindings.definitions[index].target;
-                    if (self.chooser != null) break :blk null;
+                    if (self.chooser != null or self.rename_editor != null) break :blk null;
                     if (self.settings_editor) |e| {
                         if (e.editing != null or !(target == .action and target.action == .open_settings)) break :blk null;
                     }
                     break :blk target;
                 } else null;
-                const route = try self.keyboard.route(value.key, press, self.pane().owner, command, self.palette != null or self.settings_editor != null or self.pane().finder != null);
+                const route = try self.keyboard.route(value.key, press, self.pane().owner, command, self.rename_editor != null or self.palette != null or self.settings_editor != null or self.pane().finder != null);
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => if (self.chooser != null) try self.chooserKey(value.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
+                    .overlay => if (self.rename_editor != null) try self.renameKey(value.key) else if (self.chooser != null) try self.chooserKey(value.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -1292,7 +1392,9 @@ const App = struct {
                 self.preedit.clear();
                 const text = std.mem.span(value.text.text);
                 if (try self.keyboard.commitText(text)) return;
-                if (self.chooser) |chooser| {
+                if (self.rename_editor) |*editor| {
+                    try editor.edit.insert(&editor.bytes, &editor.len, text);
+                } else if (self.chooser) |chooser| {
                     try chooser.append(text);
                 } else if (self.settings_editor) |*e| {
                     if (!e.recording) try e.append(text);
@@ -1348,7 +1450,7 @@ const App = struct {
                     self.moveTab(self.drag.tab.move(value.motion.x, self.headerTabs(self.width)));
                 } else if (self.palette != null) {
                     try self.paletteHover(value.motion.x, value.motion.y);
-                } else if (self.settings_editor == null) {
+                } else if (self.settings_editor == null and self.rename_editor == null) {
                     if (self.pointerPane(value.motion.x, value.motion.y)) |slot| {
                         const p = self.tab().panes[slot].?;
                         const state = p.snapshot().interaction orelse return;
@@ -1364,7 +1466,7 @@ const App = struct {
                 if (value.drop.windowID != c.SDL_GetWindowID(self.window)) return;
                 try self.drop(value.drop.data, value.type == c.SDL_EVENT_DROP_FILE);
             },
-            c.SDL_EVENT_MOUSE_WHEEL => try self.pointerWheel(value.wheel),
+            c.SDL_EVENT_MOUSE_WHEEL => if (self.rename_editor == null) try self.pointerWheel(value.wheel),
             c.SDL_EVENT_WINDOW_FOCUS_GAINED => {
                 self.focused = true;
                 try self.gainKeyboard();
@@ -1378,6 +1480,16 @@ const App = struct {
         }
     }
     fn pointerDown(self: *App, x: f32, y: f32, button: instance.MouseButton, mods: instance.InputModifier, clicks: u8) !void {
+        if (self.rename_editor != null) {
+            if (button == .left and (try self.renameField()).contains(x, y)) return self.renameClick(x, clicks, mods.shift);
+            // Commit an outside click, but do not deliver that same click to the
+            // terminal. Header clicks may still select, close or reorder tabs.
+            try self.finishRename(true);
+            if (y >= self.headerHeight()) {
+                if (button == .left) self.consume_left_release = true;
+                return;
+            }
+        }
         if (self.selecting != null or self.scrolling != null) return;
         if (self.capture) |held| {
             const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
@@ -1426,6 +1538,9 @@ const App = struct {
                 try self.selectTab(index);
                 if (if (self.headerTabs(self.width).close(index)) |close| close.contains(x, y) else false) {
                     try self.closeTab();
+                    self.consume_left_release = true;
+                } else if (clicks >= 2) {
+                    try self.beginRename();
                     self.consume_left_release = true;
                 } else self.drag = .{ .tab = chrome.Drag.begin(rect, x) };
                 return;
@@ -1496,7 +1611,7 @@ const App = struct {
         if (!c.SDL_OpenURL(uri)) return error.SDLBrowser;
     }
     fn drop(self: *App, data: ?[*:0]const u8, file: bool) !void {
-        if (data == null or self.palette != null or self.settings_editor != null or self.pane().finder != null) return;
+        if (data == null or self.rename_editor != null or self.palette != null or self.settings_editor != null or self.pane().finder != null) return;
         const p = self.pane();
         const status = p.snapshot();
         if (p.owner == null or status.failure != null or status.closed) return;
@@ -2140,7 +2255,11 @@ const App = struct {
         var y: f32 = undefined;
         var cell_height: f32 = 20;
         var logical_font: f32 = 15;
-        if (self.chooser) |chooser| {
+        if (self.rename_editor) |editor| {
+            clip = try self.renameField();
+            x = clip.x + 7 + try self.textWidth(editor.bytes[0..editor.edit.cursor]) - editor.edit.scroll;
+            y = clip.y + 6;
+        } else if (self.chooser) |chooser| {
             clip = self.chooserField();
             x = clip.x + 7 + try self.textWidth(chooser.query[0..chooser.edit.cursor]) - chooser.edit.scroll;
             y = clip.y + 6;
@@ -2248,6 +2367,7 @@ const App = struct {
             e.list.hovered = if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
             return self.setPointer(if ((e.search or (e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice())) and self.settingsField().contains(x, y)) 2 else null);
         }
+        if (self.rename_editor != null) return self.setPointer(if ((try self.renameField()).contains(x, y)) 2 else null);
         if (self.palette != null) return self.setPointer(if (self.paletteField().contains(x, y)) 2 else null);
         if (self.drag == .divider) {
             const held = self.drag.divider;
@@ -2323,7 +2443,7 @@ const App = struct {
         const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) 30 else 0;
         if (target == .tab and target.tab == index) try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.width - close_width, .height = rect.height - 1 }, appearance.hover(if (index == self.active) colors.active else colors.idle));
         if (target == .tab_close and target.tab_close == index) try fill(self.renderer, .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height - 1 }, appearance.hover(if (index == self.active) colors.active else colors.idle));
-        try self.clippedText(status.title[0..status.title_len], .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
+        try self.clippedText(value.title.resolve(status.title[0..status.title_len]), .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
         if (close_width != 0) try self.drawText("×", rect.x + rect.width - 18, rect.y + 6);
     }
     fn drawWindowControls(self: *App) !void {
@@ -2427,7 +2547,7 @@ const App = struct {
                 }
                 const placed = terminalPlacement(rect, frame.surface, self.scale);
                 const cursor_focused = self.focused and active and !status.closed and p.graphics_failure == null and
-                    self.palette == null and self.settings_editor == null and self.chooser == null and p.finder == null and
+                    self.rename_editor == null and self.palette == null and self.settings_editor == null and self.chooser == null and p.finder == null and
                     c.SDL_GetWindowFlags(self.window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED) == 0;
                 const cursor_now = c.SDL_GetTicks();
                 const show_cursor = p.blink.update(cursor_now, frame, cursor_focused, .{ .policy = self.configuration.value.cursor_blink, .interval_ms = self.configuration.value.cursor_blink_interval_ms, .idle_ms = self.configuration.value.cursor_blink_idle_ms });
@@ -2480,6 +2600,7 @@ const App = struct {
         if (self.palette != null) try self.drawPalette();
         if (self.settings_editor != null) try self.drawSettings();
         if (self.chooser != null) try self.drawChooser();
+        if (self.rename_editor) |*editor| try self.drawField(try self.renameField(), &editor.edit, editor.bytes[0..editor.len], "Automatic title", true);
         try self.drawComposition();
         if (!c.SDL_RenderPresent(self.renderer)) return error.SDL;
         for (places[0..result.panes]) |place| {
@@ -3603,4 +3724,174 @@ test "cursor deadline shares notice and selection waits and retires without poll
     try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(500));
     app.cursor_deadline = null;
     try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(500));
+}
+
+test "tab rename owns text, follows its tab, resets and never leaks a commit to the shell" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("tab rename proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    try std.testing.expect(c.SDL_StartTextInput(window));
+    const surface = c.SDL_CreateSurface(1000, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const geometry = try a.create(canvas.Geometry);
+    defer a.destroy(geometry);
+    geometry.* = .{};
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const owner = try terminal.Terminal.create(a, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033]0;AUTO\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, try fonts.config(threaded.io(), 15), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    var pane_a: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(a, try configuration.profile(0)), .canvas = canvas.Canvas.init(a) };
+    defer pane_a.recipe.deinit();
+    defer pane_a.canvas.deinit();
+    var pane_b: Pane = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(0)), .canvas = canvas.Canvas.init(a) };
+    defer pane_b.recipe.deinit();
+    defer pane_b.canvas.deinit();
+    var tab_a: Tab = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(0)) };
+    defer tab_a.recipe.deinit();
+    var tab_b: Tab = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(0)) };
+    defer tab_b.recipe.deinit();
+    tab_a.panes[0] = &pane_a;
+    tab_b.panes[0] = &pane_b;
+    try tab_b.title.set("Second");
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = geometry,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .focused = true,
+        .tab_count = 2,
+        .input_timestamp = 100,
+    };
+    app.tabs[0] = &tab_a;
+    app.tabs[1] = &tab_b;
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "AUTO")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    attempts = 0;
+    while (pane_a.canvas.frame() == null and attempts < 5000) : (attempts += 1) {
+        try pane_a.canvas.update(renderer, owner);
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(pane_a.canvas.frame() != null);
+    configuration.value.cursor_blink = .always;
+    try app.draw();
+    try std.testing.expect(app.cursor_deadline != null);
+    const body = app.headerTabs(app.width).body(0);
+    try app.pointerDown(body.x + 12, body.y + 12, .left, .{}, 2);
+    try std.testing.expect(app.rename_editor != null);
+    try std.testing.expect(app.drag == .none);
+    try app.draw();
+    try std.testing.expect(app.cursor_deadline == null);
+    try std.testing.expect(pane_a.blink.deadline == null);
+    var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 110, .windowID = c.SDL_GetWindowID(window), .text = "Hannes 界" };
+    try app.event(event_value);
+    try std.testing.expectEqualStrings("Hannes 界", app.rename_editor.?.bytes[0..app.rename_editor.?.len]);
+    try std.testing.expectEqual(@as(usize, 0), tab_a.title.len);
+    try app.drawField(try app.renameField(), &app.rename_editor.?.edit, app.rename_editor.?.bytes[0..app.rename_editor.?.len], "Automatic title", true);
+    try app.drawComposition();
+    event_value.key = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event_value.key.type = c.SDL_EVENT_KEY_DOWN;
+    event_value.key.timestamp = 120;
+    event_value.key.key = c.SDLK_RETURN;
+    event_value.key.scancode = c.SDL_SCANCODE_RETURN;
+    try app.event(event_value);
+    try std.testing.expect(app.rename_editor == null);
+    try std.testing.expectEqual(@as(usize, 0), app.notice_len);
+    try std.testing.expectEqualStrings("Hannes 界", tab_a.title.resolve("changed by shell"));
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 121, .windowID = c.SDL_GetWindowID(window), .text = "ENTER-LEAK\n" };
+    try app.event(event_value);
+    try app.beginRename();
+    try app.rename_editor.?.edit.insert(&app.rename_editor.?.bytes, &app.rename_editor.?.len, "discard");
+    try app.finishRename(false);
+    try std.testing.expectEqualStrings("Hannes 界", tab_a.title.resolve("automatic"));
+    try app.beginRename();
+    try app.rename_editor.?.edit.insert(&app.rename_editor.?.bytes, &app.rename_editor.?.len, "Moved");
+    app.moveTab(1);
+    try std.testing.expect(app.rename_editor.?.tab == app.tab());
+    try app.finishRename(true);
+    try std.testing.expectEqualStrings("Moved", tab_a.title.resolve("automatic"));
+    try std.testing.expectEqualStrings("Second", tab_b.title.resolve("automatic"));
+    try app.dispatch(.{ .action = .reset_tab_title });
+    try std.testing.expectEqualStrings("new automatic", tab_a.title.resolve("new automatic"));
+    app.moveTab(0);
+    app.tab_count = 1;
+    app.tabs[1] = null;
+    configuration.value.hide_single_tab = true;
+    const terminal_body = app.terminalBody();
+    try app.beginRename();
+    try std.testing.expectEqualDeep(terminal_body, app.terminalBody());
+    try std.testing.expectEqual(@as(f32, 0), app.headerHeight());
+    try std.testing.expect((try app.renameField()).height > 0);
+    try app.finishRename(false);
+    event_value.key = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event_value.key.type = c.SDL_EVENT_KEY_DOWN;
+    event_value.key.timestamp = 200;
+    event_value.key.key = c.SDLK_S;
+    event_value.key.scancode = c.SDL_SCANCODE_S;
+    try app.event(event_value);
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 201, .windowID = c.SDL_GetWindowID(window), .text = "sentinel\n" };
+    try app.event(event_value);
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "sentinel")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+}
+
+test "retiring a tab clears its rename target before freeing it" {
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    var owned: ?*Tab = try allocator.create(Tab);
+    defer if (owned) |value| allocator.destroy(value);
+    const value = owned.?;
+    value.* = .{ .recipe = try config.Recipe.copy(allocator, try configuration.profile(0)) };
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = undefined,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = undefined,
+        .rename_editor = .{ .tab = value },
+    };
+    app.destroyTab(value);
+    owned = null;
+    try std.testing.expect(app.rename_editor == null);
+    try std.testing.expect(app.keyboard.suppress_text);
 }

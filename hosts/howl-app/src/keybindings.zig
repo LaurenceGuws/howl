@@ -7,6 +7,8 @@ pub const Action = enum {
     new_tab,
     new_window,
     duplicate_tab,
+    rename_tab,
+    reset_tab_title,
     split_vertical,
     split_horizontal,
     toggle_pane_zoom,
@@ -52,6 +54,8 @@ pub const Definition = struct { target: Target, id: []const u8, label: []const u
 pub const definitions = [_]Definition{
     .{ .target = .{ .action = .new_tab }, .id = "new_tab", .label = "New tab", .default_shortcut = "Ctrl+T", .category = .tab },
     .{ .target = .{ .action = .new_window }, .id = "new_window", .label = "New window", .default_shortcut = "Ctrl+Shift+N", .category = .window },
+    .{ .target = .{ .action = .rename_tab }, .id = "rename_tab", .label = "Rename tab", .default_shortcut = "", .category = .tab },
+    .{ .target = .{ .action = .reset_tab_title }, .id = "reset_tab_title", .label = "Use automatic tab title", .default_shortcut = "", .category = .tab },
     .{ .target = .{ .action = .duplicate_tab }, .id = "duplicate_tab", .label = "Duplicate tab recipe", .default_shortcut = "Ctrl+Shift+D", .category = .tab },
     .{ .target = .{ .action = .split_vertical }, .id = "split_right", .label = "Split pane right", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .split_horizontal }, .id = "split_down", .label = "Split pane down", .default_shortcut = "", .category = .pane },
@@ -220,10 +224,14 @@ pub fn indexForId(id: []const u8) ?usize {
 
 test "daily defaults preserve Local mappings, unbound Alt directions and shifted Plus" {
     const bindings = try Bindings.init();
-    try std.testing.expectEqual(@as(usize, 52), definitions.len);
+    try std.testing.expectEqual(@as(usize, 54), definitions.len);
     for (definitions, bindings.rows) |definition, binding| {
         if (definition.target == .pane_focus or definition.target == .pane_resize or definition.target == .pane_swap)
             try std.testing.expectEqual(@as(c.SDL_Keycode, 0), binding.shortcut.key);
+    }
+    for ([_][]const u8{ "rename_tab", "reset_tab_title" }) |id| {
+        const index = indexForId(id) orelse return error.MissingBinding;
+        try std.testing.expectEqual(@as(c.SDL_Keycode, 0), bindings.rows[index].shortcut.key);
     }
     const plus = try parse("Ctrl+Plus");
     try std.testing.expect(plus.matches(c.SDLK_EQUALS, c.SDL_KMOD_CTRL | c.SDL_KMOD_SHIFT));

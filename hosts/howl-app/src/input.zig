@@ -53,7 +53,12 @@ pub const Keyboard = struct {
                     self.suppress_text = true;
                     return .handled;
                 },
-                .overlay => return if (overlay) .overlay else .handled,
+                .overlay => {
+                    // A held editor key must not commit text into the terminal
+                    // after that editor has closed.
+                    self.suppress_text = !overlay;
+                    return if (overlay) .overlay else .handled;
+                },
                 .terminal => {
                     const owner = entry.target.?;
                     const status = owner.snapshot();
@@ -119,6 +124,14 @@ pub const Keyboard = struct {
             if (status.failure == null and !status.closed)
                 try owner.submit(.{ .input = .{ .key = .{ .key = previous.key.?, .mods = previous.mods, .action = .release } } });
         }
+    }
+
+    /// A retiring editor's held keys stay consumed until release, even if another editor opens.
+    pub fn retireOverlay(self: *Keyboard) void {
+        for (&self.held) |*entry| if (entry.kind == .overlay) {
+            entry.* = .{ .kind = .application };
+            self.suppress_text = true;
+        };
     }
 
     /// Removes every pointer to a retiring pane before its terminal owner is destroyed.
@@ -301,4 +314,36 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
     }
     try std.testing.expect(attempt < 5000);
     try std.testing.expectEqual(Kind.none, keyboard.held[event.scancode].kind);
+}
+
+test "held overlay repeats cannot commit into a newly focused terminal" {
+    var keyboard: Keyboard = .{};
+    var event: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event.scancode = c.SDL_SCANCODE_A;
+    event.key = c.SDLK_A;
+    try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .overlay);
+    event.repeat = true;
+    for (0..3) |_| {
+        try std.testing.expect((try keyboard.route(event, true, null, null, false)) == .handled);
+        try std.testing.expect(try keyboard.commitText("a"));
+    }
+    try std.testing.expect((try keyboard.route(event, false, null, null, false)) == .handled);
+    event.repeat = false;
+    try std.testing.expect((try keyboard.route(event, true, null, null, false)) == .handled);
+    try std.testing.expect(!try keyboard.commitText("new owner"));
+}
+
+test "changing overlay owners fences held Enter before the new editor opens" {
+    var keyboard: Keyboard = .{};
+    var event: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event.scancode = c.SDL_SCANCODE_RETURN;
+    event.key = c.SDLK_RETURN;
+    try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .overlay);
+    keyboard.retireOverlay();
+    event.repeat = true;
+    try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .handled);
+    try std.testing.expect(try keyboard.commitText("\n"));
+    try std.testing.expect((try keyboard.route(event, false, null, null, true)) == .handled);
+    event.repeat = false;
+    try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .overlay);
 }

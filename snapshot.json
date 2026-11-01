@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "0.1.7-dev",
+  "version": "0.1.8-dev",
   "zig": "0.17.0",
   "packages": {
-    "hosts/howl-app": "0.1.6-dev",
+    "hosts/howl-app": "0.1.7-dev",
     "hosts/howl-host": "0.1.6-dev",
     "mods/howl-instance": "0.1.8-dev",
     "mods/howl-pty": "0.1.6-dev",

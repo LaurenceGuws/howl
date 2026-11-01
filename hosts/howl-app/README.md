@@ -6,6 +6,17 @@ presentation delay cannot throttle canonical PTY/VT progress. The app has no
 client transport, Server/Session identity, endpoint, attachment, detach operation
 or internal C ABI. Application allocations use Zig's SMP allocator.
 
+Double-click a tab chip, or choose **Rename tab** in the command palette, to
+edit its name inline. Enter saves; Escape cancels. Empty input (or **Use automatic
+tab title**) restores the latest active-pane title. Overrides belong to the tab,
+follow reorder, and survive program/OSC title changes or pane switches; they do
+not rename a shell, profile, or future duplicated recipe. Names are bounded to
+256 UTF-8 bytes, trim surrounding spaces and reject ASCII controls. Editing
+supports normal text selection, clipboard shortcuts and IME without sending
+those keys to the terminal. With a hidden single-tab bar, the editor floats above
+the pane without resizing the terminal. Both actions can receive custom shortcuts.
+Overrides last for this tab's lifetime; no session-restoration model is implied.
+
 The shell supports eight tabs and nested panes, duplicate/new window, tab order,
 divider drag, directional focus/resize/swap, pane cycling, balanced splits, zoom,
 leaf collapse and restart. Hovering a pane divider highlights its grab surface and

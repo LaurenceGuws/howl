@@ -1,6 +1,6 @@
 .{
     .name = .howl_app,
-    .version = "0.1.6-dev",
+    .version = "0.1.7-dev",
     .fingerprint = 0xf47649779279c0da,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{ .howl_instance = .{ .path = "../../mods/howl-instance" } },

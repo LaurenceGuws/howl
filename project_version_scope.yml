@@ -1,5 +1,5 @@
 schema: 1
-version: 0.1.7-dev
+version: 0.1.8-dev
 
 objective: >-
   Keep independent terminal semantics, process transport, local Instance, Text and
