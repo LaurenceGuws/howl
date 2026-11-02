@@ -4,5 +4,5 @@
     .fingerprint = 0xf47649779279c0da,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{ .howl_instance = .{ .path = "../../mods/howl-instance" } },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", ".zig-audit.json" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "assets", "install.sh", "test_install.py", "README.md", ".zig-audit.json" },
 }

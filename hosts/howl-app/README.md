@@ -242,3 +242,40 @@ Pane outlines compose after terminal content; split boundaries remain visible wh
 not hovered. Cursor reference widths scale with physical font size (including the
 display scale), rounded and bounded to 1–16 physical pixels. Block cursors continue
 to occupy the canonical cell; font changes resize that cell rather than its ink.
+
+
+## User desktop installation (Linux)
+
+Normal `zig build install` keeps Zig's prefix/staging semantics and does not
+register a launcher in your desktop. After building and testing the app, run:
+
+```sh
+./install.sh                         # uses this package's zig-out/bin/howl-app
+./install.sh /path/to/built/howl-app  # or an explicitly staged binary
+```
+
+Run as your desktop user, not root. The script does not build, fetch dependencies,
+launch the app, or alter other terminals. It replaces only:
+
+- `~/.local/bin/howl-app`
+- `$XDG_DATA_HOME/applications/io.github.laurenceguws.howl.desktop`
+- `$XDG_DATA_HOME/icons/hicolor/512x512/apps/io.github.laurenceguws.howl.png`
+
+XDG_DATA_HOME defaults to `~/.local/share`. The launcher records absolute paths,
+so the graphical session does not need `~/.local/bin` on PATH. It uses the packaged
+512px Howl icon. Reopen your application picker and select **Howl**.
+
+Each file is replaced by rename; running terminals keep their executable.
+This is not a transactional multi-file upgrade or rollback manager. Keep your
+previous built binary if you need to reinstall it. To uninstall, remove the
+three installed files above. Relocating the installed files requires rerunning
+the installer.
+
+Installation paths must be absolute and cannot contain line breaks or percent signs
+(desktop Exec field-code ambiguity). Spaces and shell metacharacters are escaped.
+
+Installer regression check (requires Python 3, GIO and desktop-file-validate):
+
+    python3 test_install.py /path/to/disposable-parent
+
+This checks the launcher against a mock executable; it does not open a terminal.

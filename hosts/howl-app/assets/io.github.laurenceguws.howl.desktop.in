@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Howl
+GenericName=Terminal Emulator
+Comment=Howl local terminal
+Exec=@EXEC@
+Icon=@ICON@
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;console;
+StartupWMClass=io.github.laurenceguws.howl
+Path=@HOME@
