@@ -279,3 +279,8 @@ Installer regression check (requires Python 3, GIO and desktop-file-validate):
     python3 test_install.py /path/to/disposable-parent
 
 This checks the launcher against a mock executable; it does not open a terminal.
+
+Before replacing the executable, the installer probes the staged copy with
+--version (five-second timeout) and requires the package version and Howl identity.
+It verifies copied bytes and probes the installed path afterward. This catches stale
+builds; a version string alone is not proof of a source revision or authenticity.

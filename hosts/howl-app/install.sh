@@ -34,6 +34,16 @@ for path in "$bin/howl-app" "$icon" "$desktop"; do
         { echo "Refusing non-regular destination: $path" >&2; exit 1; }
 done
 
+package_version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)".*/\1/p' "$root/build.zig.zon")
+[ -n "$package_version" ] || { echo 'Package version missing.' >&2; exit 1; }
+expected="Howl $package_version (Zig SDL app)"
+verify_version() {
+    actual=$(timeout 5 "$1" --version 2>&1) ||
+        { echo "Version probe failed: $1" >&2; exit 1; }
+    [ "$actual" = "$expected" ] ||
+        { printf 'Version mismatch: expected %s; got %s\n' "$expected" "$actual" >&2; exit 1; }
+}
+
 # Desktop-entry string escaping, followed by Exec's additional argument quoting.
 desktop_string() { printf '%s' "$1" | sed 's/\\/\\\\/g'; }
 exec_string() {
@@ -53,10 +63,14 @@ trap 'exit 143' HUP TERM
 publish() {
     pending=$(mktemp "$2.new.XXXXXX")
     install -m "$3" -- "$1" "$pending"
+    cmp -s -- "$1" "$pending" || { echo 'Staged copy differs.' >&2; exit 1; }
+    if [ "$2" = "$bin/howl-app" ]; then verify_version "$pending"; fi
     mv -f -- "$pending" "$2"
     pending=
+    cmp -s -- "$1" "$2" || { echo 'Installed copy differs.' >&2; exit 1; }
 }
 publish "$binary" "$bin/howl-app" 755
+verify_version "$bin/howl-app"
 publish "$root/assets/howl.png" "$icon" 644
 pending=$(mktemp "$(dirname "$desktop")/.howl-new.XXXXXX.desktop")
 sed -e "s|@EXEC@|$exec_value|g" -e "s|@ICON@|$icon_value|g" \
@@ -67,4 +81,5 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
 fi
 mv -f -- "$pending" "$desktop"
 pending=
+printf 'Verified %s\n' "$expected"
 printf 'Installed %s\nLauncher: %s\n' "$bin/howl-app" "$desktop"

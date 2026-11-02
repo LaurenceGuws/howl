@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run with a disposable parent directory: python3 test_install.py PATH."""
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -11,7 +12,8 @@ installer = Path(__file__).resolve().with_name("install.sh")
 with tempfile.TemporaryDirectory(prefix="howl-install-", dir=sys.argv[1]) as directory:
     root = Path(directory)
     binary = root / "built"
-    binary.write_text('#!/bin/sh\nprintf "%s" "$0" > "$HOWL_INSTALL_TEST_RECEIPT"\n')
+    version = re.search(r'\.version = "([^"]+)"', installer.with_name("build.zig.zon").read_text())[1]
+    binary.write_text(f'#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Howl {version} (Zig SDL app)" >&2; exit 0; fi\nprintf "%s" "$0" > "$HOWL_INSTALL_TEST_RECEIPT"\n')
     binary.chmod(0o755)
     home = root / 'home space $cash "quote" back\\slash'
     home.mkdir()
@@ -37,6 +39,15 @@ with tempfile.TemporaryDirectory(prefix="howl-install-", dir=sys.argv[1]) as dir
     before = desktop.read_bytes()
     run(str(installer), str(root / "missing"), success=False)
     assert desktop.read_bytes() == before
+    installed = home / ".local/bin/howl-app"
+    previous = installed.read_bytes()
+    wrong = root / "wrong-version"
+    wrong.write_text('#!/bin/sh\necho "Howl 0.0.0 (Zig SDL app)"\n')
+    wrong.chmod(0o755)
+    run(str(installer), str(wrong), success=False)
+    assert installed.read_bytes() == previous
+    assert desktop.read_bytes() == before
+    assert not list(installed.parent.glob("howl-app.new.*"))
     target = home / ".local/bin/howl-app"
     target.unlink()
     target.symlink_to(binary)
