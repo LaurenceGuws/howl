@@ -55,11 +55,17 @@ pub const Range = struct {
     columns: u16,
     alternate: bool,
     empty: bool = false,
+    /// Whole-unit drags retain the initial span even when the pointer reverses direction.
+    unit: union(enum) { cell, word: vt.TextRange, row: vt.TextRange } = .cell,
 
     /// Eviction, reflow or screen-bank changes invalidate explicitly; vertical growth and scrolling do not.
     pub fn validity(self: Range, context: Context) Validity {
         if (self.columns != context.columns or self.alternate != context.alternate) return .context_changed;
         if (!context.retained(self.anchor) or !context.retained(self.focus)) return .evicted;
+        switch (self.unit) {
+            .cell => {},
+            .word, .row => |origin| if (!context.retained(origin.start) or !context.retained(origin.end)) return .evicted,
+        }
         return .valid;
     }
     /// Orders inclusive extraction endpoints while preserving the drag's anchor identity.
@@ -70,6 +76,29 @@ pub const Range = struct {
     }
     /// Extends a retained range; entering actual text activates an initially empty padding anchor.
     pub fn extend(self: *Range, view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!void {
+        const origin: ?vt.TextRange = switch (self.unit) {
+            .cell => null,
+            .word, .row => |value| value,
+        };
+        if (origin) |initial| {
+            const target = switch (self.unit) {
+                .word => try word(view, row_index, column),
+                .row => try visualRow(view, row_index),
+                .cell => return error.InvalidSelection,
+            };
+            const edge = if (target) |range| range.ordered() else blk: {
+                const value = try dragPoint(view, row_index, column);
+                break :blk vt.TextRange{ .start = value, .end = value };
+            };
+            if (after(initial.start, edge.start)) {
+                self.anchor = initial.end;
+                self.focus = edge.start;
+            } else {
+                self.anchor = initial.start;
+                self.focus = if (after(edge.end, initial.end)) edge.end else initial.end;
+            }
+            return;
+        }
         self.focus = try dragPoint(view, row_index, column);
         const raw = try point(view, row_index, column);
         if (!std.meta.eql(self.anchor, self.focus) or
@@ -188,6 +217,7 @@ pub fn visualRow(view: vt.SemanticView, row_index: u16) !?Range {
     if (first == end) return null;
     var result = try start(view, row_index, first);
     result.focus = try point(view, row_index, end - 1);
+    result.unit = .{ .row = result.ordered() };
     return result;
 }
 const Position = struct { row: u16, col: u16 };
@@ -230,6 +260,7 @@ pub fn word(view: vt.SemanticView, row_index: u16, column: u16) !?Range {
     }
     var result = try start(view, first.row, first.col);
     result.focus = try point(view, last.row, last.col);
+    result.unit = .{ .word = result.ordered() };
     return result;
 }
 fn rowContentEnd(view: vt.SemanticView, row_index: u16) u16 {
@@ -337,4 +368,63 @@ test "a drag beginning below or right of the prompt selects backwards without a 
         defer std.testing.allocator.free(last);
         try std.testing.expectEqualStrings(">", last);
     }
+}
+
+test "word drag retains its original word and expands whole words in either direction" {
+    var terminal = try vt.init(std.testing.allocator, 4, 20);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: selection assertions consume the canonical text produced by this feed.
+    _ = try terminal.feed("one two three");
+    const view = terminal.semanticView(0);
+    var selected = (try word(view, 0, 5)).?;
+    const cases = .{
+        .{ @as(u16, 5), "two" },
+        .{ @as(u16, 10), "two three" },
+        .{ @as(u16, 1), "one two" },
+        .{ @as(u16, 6), "two" },
+        .{ @as(u16, 3), " two" },
+    };
+    inline for (cases) |case| {
+        try selected.extend(view, 0, case[0]);
+        const text = try selected.copy(terminal.observation(), std.testing.allocator, 128);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings(case[1], text);
+    }
+}
+
+test "row drag retains the starting row on release and reversal" {
+    var terminal = try vt.init(std.testing.allocator, 4, 20);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: selection assertions consume the canonical text produced by this feed.
+    _ = try terminal.feed("one\r\ntwo\r\nthree");
+    const view = terminal.semanticView(0);
+    var selected = (try visualRow(view, 1)).?;
+    const cases = .{
+        .{ @as(u16, 1), "two" },
+        .{ @as(u16, 2), "two\nthree" },
+        .{ @as(u16, 0), "one\ntwo" },
+        .{ @as(u16, 1), "two" },
+    };
+    inline for (cases) |case| {
+        try selected.extend(view, case[0], 1);
+        const text = try selected.copy(terminal.observation(), std.testing.allocator, 128);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings(case[1], text);
+    }
+}
+
+test "word drag keeps softwrapped wide glyphs whole" {
+    var terminal = try vt.init(std.testing.allocator, 4, 6);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: selection assertions consume the canonical text produced by this feed.
+    _ = try terminal.feed("foo bar 界z");
+    const view = terminal.semanticView(0);
+    var selected = (try word(view, 0, 4)).?;
+    try selected.extend(view, 1, 3);
+    const text = try selected.copy(terminal.observation(), std.testing.allocator, 128);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("bar 界z", text);
 }

@@ -29,7 +29,7 @@ const scrollbar = @import("scrollbar.zig");
 const desktop = @import("desktop.zig");
 const drawing = @import("pixels.zig");
 const allocator = std.heap.smp_allocator;
-const version = "0.1.7-dev";
+const version = "0.1.8-dev";
 const tab_limit = 8;
 const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn".return_type.?).error_union.error_set ||
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
@@ -1590,11 +1590,9 @@ const App = struct {
             } else if (button == .left) {
                 const kind: terminal.SelectKind = if (clicks >= 3) .row else if (clicks == 2) .word else .start;
                 try self.selectPoint(p, x, y, kind, false);
-                if (kind == .start) {
-                    self.selecting = .{ .pane = p, .x = x, .y = y };
-                    self.selectionEdge();
-                    self.selection_tick = c.SDL_GetTicksNS();
-                } else self.consume_left_release = true;
+                self.selecting = .{ .pane = p, .x = x, .y = y };
+                self.selectionEdge();
+                self.selection_tick = c.SDL_GetTicksNS();
             }
             return;
         };
@@ -3894,4 +3892,109 @@ test "retiring a tab clears its rename target before freeing it" {
     owned = null;
     try std.testing.expect(app.rename_editor == null);
     try std.testing.expect(app.keyboard.suppress_text);
+}
+
+test "SDL single double and triple clicks retain selection through motion and release" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const test_allocator = std.testing.allocator;
+    const window = c.SDL_CreateWindow("selection drag proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    try std.testing.expect(c.SDL_StartTextInput(window));
+    const surface = c.SDL_CreateSurface(1000, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const geometry = try test_allocator.create(canvas.Geometry);
+    defer test_allocator.destroy(geometry);
+    geometry.* = .{};
+    var fonts = try testFonts(test_allocator);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(test_allocator, &fonts, 15);
+    defer ui_fonts.deinit();
+    var threaded = std.Io.Threaded.init(test_allocator, .{});
+    defer threaded.deinit();
+    const owner = try terminal.Terminal.create(test_allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf 'one two three\\r\\nfour five\\r\\nsix seven\\033]0;READY\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, try fonts.config(threaded.io(), 15), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    var configuration = config.Config.defaults(test_allocator);
+    defer configuration.deinit();
+    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(0)), .canvas = canvas.Canvas.init(test_allocator) };
+    defer p.recipe.deinit();
+    defer p.canvas.deinit();
+    var t: Tab = .{ .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(0)) };
+    defer t.recipe.deinit();
+    t.panes[0] = &p;
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = geometry,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .focused = true,
+        .tab_count = 1,
+    };
+    app.tabs[0] = &t;
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        try p.canvas.update(renderer, owner);
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "READY") and p.canvas.frame() != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+
+    const frame = p.canvas.frame().?;
+    const rect = terminalPlacement(paneContent(app.terminalBody()), frame.surface, app.scale);
+    const cw: f32 = @floatFromInt(frame.cell_size.width);
+    const ch: f32 = @floatFromInt(frame.cell_size.height);
+    for ([_]u8{ 1, 2, 3 }) |clicks| {
+        for ([_]bool{ false, true }) |drag| {
+            var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+            event_value.button.type = c.SDL_EVENT_MOUSE_BUTTON_DOWN;
+            event_value.button.button = c.SDL_BUTTON_LEFT;
+            event_value.button.clicks = clicks;
+            event_value.button.x = rect.x + 5.5 * cw;
+            event_value.button.y = rect.y + 0.5 * ch;
+            try app.event(event_value);
+            try std.testing.expect(app.selecting != null);
+            if (drag) {
+                event_value = std.mem.zeroes(c.SDL_Event);
+                event_value.motion.type = c.SDL_EVENT_MOUSE_MOTION;
+                event_value.motion.x = rect.x + 10.5 * cw;
+                event_value.motion.y = rect.y + (if (clicks == 3) @as(f32, 1.5) else 0.5) * ch;
+                try app.event(event_value);
+                try std.testing.expectEqual(event_value.motion.x, app.selecting.?.x);
+            }
+            const held = app.selecting.?;
+            event_value = std.mem.zeroes(c.SDL_Event);
+            event_value.button.type = c.SDL_EVENT_MOUSE_BUTTON_UP;
+            event_value.button.button = c.SDL_BUTTON_LEFT;
+            event_value.button.x = held.x;
+            event_value.button.y = held.y;
+            try app.event(event_value);
+            try std.testing.expect(app.selecting == null);
+            const text = try owner.copySelection(test_allocator, 128);
+            defer test_allocator.free(text);
+            const expected: []const u8 = switch (clicks) {
+                1 => if (drag) "wo thr" else "w",
+                2 => if (drag) "two three" else "two",
+                else => if (drag) "one two three\nfour five" else "one two three",
+            };
+            try std.testing.expectEqualStrings(expected, text);
+        }
+    }
 }
