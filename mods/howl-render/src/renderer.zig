@@ -336,7 +336,8 @@ const IncrementalPlan = struct {
     uniform_background: bool,
 };
 
-// Resolved row backgrounds are independent of glyph and decoration reuse.
+// Retained row witnesses and resolved backgrounds share one bounded row owner.
+// Background reuse is independent of glyph and decoration reuse.
 // A row exceeding this bound is still projected completely; it just is not cached.
 const BackgroundRun = struct {
     start: u16,
@@ -344,16 +345,19 @@ const BackgroundRun = struct {
     color: frame_vocabulary.Color,
 };
 
-const BackgroundRow = struct {
+const RetainedRow = struct {
+    row_generation: u64 = 0,
     generation: u64 = 0,
     runs: [8]BackgroundRun = undefined,
     count: u8 = 0,
     valid: bool = false,
 };
 
-const BackgroundCache = struct {
-    rows: []BackgroundRow,
-    ready: bool = false,
+const RetainedRows = struct {
+    rows: []RetainedRow,
+    witnesses_ready: bool = false,
+    occurrence: ?u64 = null,
+    backgrounds_ready: bool = false,
     source_revision: u64 = 0,
     row_count: u16 = 0,
     columns: u16 = 0,
@@ -363,15 +367,26 @@ const BackgroundCache = struct {
     background: frame_vocabulary.Color = undefined,
     palette: [256]frame_vocabulary.Color = undefined,
 
-    fn matches(self: *const BackgroundCache, comptime Source: type, snapshot: *const Source.Snapshot) bool {
+    fn sameSource(self: *const RetainedRows, comptime Source: type, snapshot: *const Source.Snapshot) bool {
+        return self.witnesses_ready and self.occurrence == sourceOccurrence(Source, snapshot) and
+            Source.rows(snapshot) == self.row_count and Source.columns(snapshot) == self.columns and
+            Source.historyOffset(snapshot) == self.history_offset and
+            Source.alternateScreen(snapshot) == self.alternate_screen;
+    }
+
+    fn matchesBackgrounds(self: *const RetainedRows, comptime Source: type, snapshot: *const Source.Snapshot) bool {
         if (comptime !@hasDecl(Source, "rowBackgroundGeneration")) return false;
-        if (!self.ready or Source.rows(snapshot) != self.row_count or
+        if (!self.backgrounds_ready or Source.rows(snapshot) != self.row_count or
             Source.columns(snapshot) != self.columns or
             Source.historyOffset(snapshot) != self.history_offset or
             Source.alternateScreen(snapshot) != self.alternate_screen or
             Source.presentation(snapshot).reverse_screen) return false;
-        const base = Source.changedRowsBaseRevision(snapshot) orelse return false;
-        if (base != self.source_revision or (Source.rowShift(snapshot) orelse 0) != 0) return false;
+        if (comptime @hasDecl(Source, "rowGeneration")) {
+            if (!self.sameSource(Source, snapshot)) return false;
+        } else {
+            const base = Source.changedRowsBaseRevision(snapshot) orelse return false;
+            if (self.occurrence != null or base != self.source_revision or (Source.rowShift(snapshot) orelse 0) != 0) return false;
+        }
         const presentation = Source.presentation(snapshot);
         if (!std.meta.eql(self.foreground, contentRgba(Source, presentation.foreground)) or
             !std.meta.eql(self.background, contentRgba(Source, presentation.background))) return false;
@@ -381,24 +396,39 @@ const BackgroundCache = struct {
         return true;
     }
 
-    fn accept(self: *BackgroundCache, comptime Source: type, snapshot: *const Source.Snapshot) void {
-        self.ready = false;
-        if (comptime !@hasDecl(Source, "rowBackgroundGeneration")) return;
+    fn accept(self: *RetainedRows, comptime Source: type, snapshot: *const Source.Snapshot) void {
+        self.backgrounds_ready = false;
+        self.witnesses_ready = false;
+        self.occurrence = sourceOccurrence(Source, snapshot);
+        if (comptime !@hasDecl(Source, "rowGeneration") and !@hasDecl(Source, "rowBackgroundGeneration")) return;
         const rows = Source.rows(snapshot);
         const presentation = Source.presentation(snapshot);
-        if (rows == 0 or rows > self.rows.len or presentation.reverse_screen or
-            Source.historyOffset(snapshot) != 0) return;
+        if (rows == 0 or rows > self.rows.len) return;
         self.row_count = rows;
         self.columns = Source.columns(snapshot);
         self.history_offset = Source.historyOffset(snapshot);
         self.alternate_screen = Source.alternateScreen(snapshot);
         self.source_revision = Source.observationRevision(snapshot);
+        if (comptime @hasDecl(Source, "rowGeneration")) {
+            for (self.rows[0..rows], 0..) |*row, index|
+                row.row_generation = Source.rowGeneration(snapshot, index) orelse return;
+            self.witnesses_ready = true;
+        }
+        if (comptime !@hasDecl(Source, "rowBackgroundGeneration")) return;
+        if (presentation.reverse_screen or Source.historyOffset(snapshot) != 0) return;
         self.foreground = contentRgba(Source, presentation.foreground);
         self.background = contentRgba(Source, presentation.background);
         for (presentation.palette, 0..) |value, i| self.palette[i] = contentRgba(Source, value);
-        self.ready = true;
+        self.backgrounds_ready = true;
     }
 };
+
+fn sourceOccurrence(comptime Source: type, snapshot: *const Source.Snapshot) ?u64 {
+    if (comptime @hasDecl(Source, "rowGeneration") and !@hasDecl(Source, "occurrenceIdentity"))
+        @compileError("rowGeneration requires process-unique occurrenceIdentity");
+    if (comptime @hasDecl(Source, "occurrenceIdentity")) return Source.occurrenceIdentity(snapshot);
+    return null;
+}
 
 fn sourceBackgroundGeneration(comptime Source: type, snapshot: *const Source.Snapshot, row: usize) ?u64 {
     if (comptime @hasDecl(Source, "rowBackgroundGeneration"))
@@ -418,7 +448,7 @@ const Impl = struct {
     incremental_rows: []IncrementalRowCommands,
     incremental_candidate_rows: []IncrementalRowCommands,
     incremental_repairs: []bool,
-    backgrounds: BackgroundCache,
+    retained_rows: RetainedRows,
     incremental_glyphs: IncrementalGlyphSpan = .{},
     incremental_scene_kind: RowSceneKind = .baseline,
     incremental_scene_revision: u64 = 0,
@@ -653,9 +683,9 @@ fn initWithStoreInner(
     errdefer allocator.free(incremental_candidate_rows);
     const incremental_repairs = try allocator.alloc(bool, config.incremental_row_capacity);
     errdefer allocator.free(incremental_repairs);
-    const background_rows = try allocator.alloc(BackgroundRow, config.incremental_row_capacity);
-    errdefer allocator.free(background_rows);
-    @memset(background_rows, .{});
+    const retained_row_storage = try allocator.alloc(RetainedRow, config.incremental_row_capacity);
+    errdefer allocator.free(retained_row_storage);
+    @memset(retained_row_storage, .{});
 
     impl.* = .{
         .allocator = allocator,
@@ -668,7 +698,7 @@ fn initWithStoreInner(
         .incremental_rows = incremental_rows,
         .incremental_candidate_rows = incremental_candidate_rows,
         .incremental_repairs = incremental_repairs,
-        .backgrounds = .{ .rows = background_rows },
+        .retained_rows = .{ .rows = retained_row_storage },
     };
     // zig-audit: acknowledge ptr_cast
     // reason: Renderer is the opaque handle for this exact allocator-owned Impl allocation and preserves its address.
@@ -686,11 +716,11 @@ pub fn deinit(owner: *Renderer) void {
     const incremental_rows = impl.incremental_rows;
     const incremental_candidate_rows = impl.incremental_candidate_rows;
     const incremental_repairs = impl.incremental_repairs;
-    const background_rows = impl.backgrounds.rows;
+    const retained_row_storage = impl.retained_rows.rows;
     impl.* = undefined;
     allocator.free(commands);
     allocator.free(incremental_repairs);
-    allocator.free(background_rows);
+    allocator.free(retained_row_storage);
     allocator.free(incremental_candidate_rows);
     allocator.free(incremental_rows);
     allocator.free(incremental_commands);
@@ -707,7 +737,8 @@ pub fn resetCaches(owner: *Renderer) error{GenerationOverflow}!void {
     const impl = rendererImpl(owner);
     impl.frame_ready = false;
     impl.incremental_ready = false;
-    impl.backgrounds.ready = false;
+    impl.retained_rows.backgrounds_ready = false;
+    impl.retained_rows.witnesses_ready = false;
     impl.incremental_glyphs.count = 0;
     try glyph_cache.resetAtlas(impl.atlas);
 }
@@ -734,9 +765,12 @@ pub fn updateSource(
     snapshot: *const Source.Snapshot,
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
+    // Decide against the accepted cut once. Failed allocation/cache attempts must
+    // not turn a broad update into a new glyph-cache baseline on retry.
+    const changed_rows = sourceChangedRows(Source, rendererImpl(owner), snapshot);
     var atlas_retried = false;
     while (true) {
-        updateInnerOnce(Source, owner, snapshot, image_bindings) catch |failure| switch (failure) {
+        updateInnerOnce(Source, owner, snapshot, image_bindings, changed_rows) catch |failure| switch (failure) {
             error.CommandLimit => {
                 if (!try growCommandStorage(owner)) return error.CommandLimit;
                 continue;
@@ -812,12 +846,14 @@ fn updateInnerOnce(
     owner: *Renderer,
     snapshot: *const Source.Snapshot,
     image_bindings: []const ExternalImageBinding,
+    changed_rows: ?[]const bool,
 ) Error!void {
     const impl = rendererImpl(owner);
     const store = storeImpl(impl.store);
     impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
-    errdefer impl.backgrounds.ready = false;
+    errdefer impl.retained_rows.backgrounds_ready = false;
+    errdefer impl.retained_rows.witnesses_ready = false;
     if (comptime Source.supports_incremental) if (impl.incremental_ready) {
         std.mem.swap([]frame_vocabulary.Input, &impl.commands, &impl.incremental_commands);
         impl.commands_use_incremental_allocation = !impl.commands_use_incremental_allocation;
@@ -833,10 +869,9 @@ fn updateInnerOnce(
         &.{};
     const rows = Source.rows(snapshot);
     const surface = try contentSurfaceSize(rows, Source.columns(snapshot), impl.config.cell_size);
-    const changed_rows = sourceChangedRows(Source, snapshot);
     const wants_incremental = changed_rows != null;
     const incremental_candidate = if (wants_incremental)
-        try planIncrementalRows(Source, owner, snapshot)
+        try planIncrementalRows(Source, owner, snapshot, changed_rows.?)
     else
         null;
     const candidate_rows = if (wants_incremental and rows <= impl.incremental_candidate_rows.len)
@@ -856,8 +891,8 @@ fn updateInnerOnce(
         cached_commands,
         impl.incremental_rows,
         candidate_rows,
-        &impl.backgrounds,
-        impl.backgrounds.matches(Source, snapshot),
+        &impl.retained_rows,
+        impl.retained_rows.matchesBackgrounds(Source, snapshot),
         impl.config.cell_size,
         store.clusters,
         store.shaped,
@@ -1038,7 +1073,8 @@ fn updateInnerOnce(
                 impl.incremental_scene_kind = .patch;
                 impl.incremental_scene_base_revision = previous_revision;
                 impl.incremental_scene_shift = plan.shift;
-                @memcpy(impl.incremental_repairs[0..Source.rows(snapshot)], plan.repairs);
+                if (plan.repairs.ptr != impl.incremental_repairs.ptr)
+                    @memcpy(impl.incremental_repairs[0..Source.rows(snapshot)], plan.repairs);
             } else {
                 impl.incremental_scene_kind = .baseline;
                 impl.incremental_scene_base_revision = null;
@@ -1050,7 +1086,7 @@ fn updateInnerOnce(
         impl.incremental_ready = false;
         impl.incremental_glyphs.count = 0;
     }
-    impl.backgrounds.accept(Source, snapshot);
+    impl.retained_rows.accept(Source, snapshot);
     impl.frame_ready = true;
 }
 
@@ -1824,7 +1860,7 @@ fn flushBackgroundRun(
     used: *usize,
     run: BackgroundRun,
     default_background: frame_vocabulary.Color,
-    cached: ?*BackgroundRow,
+    cached: ?*RetainedRow,
     row: usize,
     cell_size: frame_vocabulary.Size,
     surface: frame_vocabulary.Size,
@@ -2188,8 +2224,8 @@ fn sameIncrementalCellPresentation(
     return true;
 }
 
-/// Returns the largest repair set admitted for one retained-row viewport.
-pub fn rowReuseLimit(row_count: u16) u16 {
+// Returns the largest repair set admitted for one retained-row viewport.
+fn rowReuseLimit(row_count: u16) u16 {
     return @intCast(@max(@as(u32, 1), @as(u32, row_count) * 2 / 3));
 }
 
@@ -2197,6 +2233,7 @@ fn planIncrementalRows(
     comptime Source: type,
     content: *Renderer,
     snapshot: *const Source.Snapshot,
+    repairs: []const bool,
 ) Error!?IncrementalPlan {
     if (comptime !Source.supports_incremental) return null;
     const impl = rendererImpl(content);
@@ -2210,13 +2247,14 @@ fn planIncrementalRows(
         Source.historyOffset(snapshot) != impl.incremental_history_offset or
         Source.alternateScreen(snapshot) != impl.incremental_alternate_screen)
         return null;
-    const base_revision = Source.changedRowsBaseRevision(snapshot) orelse return null;
-    if (impl.incremental_source_revision == null or
-        impl.incremental_source_revision.? != base_revision)
-        return null;
-    const shift = Source.rowShift(snapshot) orelse 0;
+    if (comptime @hasDecl(Source, "rowGeneration")) {
+        if (!impl.retained_rows.sameSource(Source, snapshot)) return null;
+    } else {
+        const base_revision = Source.changedRowsBaseRevision(snapshot) orelse return null;
+        if (impl.retained_rows.occurrence != null or impl.incremental_source_revision != base_revision) return null;
+    }
+    const shift = if (comptime @hasDecl(Source, "rowGeneration")) @as(u16, 0) else Source.rowShift(snapshot) orelse 0;
     if (shift != 0 and impl.incremental_glyphs.start != 1) return null;
-    const repairs = Source.changedRows(snapshot) orelse return null;
     if (shift >= rows or repairs.len != rows or
         !sameIncrementalCellPresentation(Source, impl, Source.presentation(snapshot)))
         return null;
@@ -2314,10 +2352,25 @@ fn rememberIncrementalCommands(
 
 fn sourceChangedRows(
     comptime Source: type,
+    impl: *Impl,
     snapshot: *const Source.Snapshot,
 ) ?[]const bool {
-    if (comptime Source.supports_incremental) return Source.changedRows(snapshot);
-    return null;
+    if (comptime !Source.supports_incremental) return null;
+    if (comptime @hasDecl(Source, "rowGeneration")) {
+        const rows = Source.rows(snapshot);
+        if (rows == 0 or rows > impl.incremental_repairs.len) return null;
+        const same = impl.retained_rows.sameSource(Source, snapshot);
+        const repairs = impl.incremental_repairs[0..rows];
+        var count: usize = 0;
+        for (repairs, impl.retained_rows.rows[0..rows], 0..) |*repair, prior, row| {
+            const generation = Source.rowGeneration(snapshot, row) orelse return null;
+            repair.* = !same or prior.row_generation != generation;
+            count += @intFromBool(repair.*);
+        }
+        // Broad changes rebuild without priming glyph reuse; background witnesses
+        // still advance independently after successful preparation.
+        return if (same and count > rowReuseLimit(rows)) null else repairs;
+    } else return Source.changedRows(snapshot);
 }
 
 const ContentProjection = struct {
@@ -2382,7 +2435,7 @@ fn buildContentCommands(
     incremental_commands: []const frame_vocabulary.Input,
     incremental_rows: []const IncrementalRowCommands,
     row_ranges: ?[]IncrementalRowCommands,
-    backgrounds: *BackgroundCache,
+    retained_rows: *RetainedRows,
     reuse_backgrounds: bool,
     cell_size: frame_vocabulary.Size,
     cluster_scratch: []u32,
@@ -2423,7 +2476,7 @@ fn buildContentCommands(
         const line_geometry = Source.lineGeometry(snapshot, row);
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, line_geometry);
-        const cached: ?*BackgroundRow = if (row_index < backgrounds.rows.len) &backgrounds.rows[row_index] else null;
+        const cached: ?*RetainedRow = if (row_index < retained_rows.rows.len) &retained_rows.rows[row_index] else null;
         const generation = sourceBackgroundGeneration(Source, snapshot, row_index);
         // The glyph cache proves geometry/style for unchanged rows, independently
         // of their background. Reuse BG runs only against their own exact witness.

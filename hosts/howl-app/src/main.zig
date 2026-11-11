@@ -29,7 +29,7 @@ const scrollbar = @import("scrollbar.zig");
 const desktop = @import("desktop.zig");
 const drawing = @import("pixels.zig");
 const allocator = std.heap.smp_allocator;
-const version = "0.1.8-dev";
+const version = "0.1.9-dev";
 const tab_limit = 8;
 const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn".return_type.?).error_union.error_set ||
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;

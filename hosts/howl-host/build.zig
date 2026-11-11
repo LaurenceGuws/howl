@@ -65,6 +65,7 @@ pub fn build(b: *std.Build) void {
     presentation.addImport("howl_instance", instance.module("howl_instance"));
     local_terminal.addImport("host_c", host_c);
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
+    local_terminal.addImport("test_fonts", instance.module("howl_text_test_fonts"));
     local_terminal.addImport("host_presentation", presentation);
     local_terminal.addImport("host_scrollback", scrollback);
     const root = b.createModule(.{

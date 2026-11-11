@@ -6,7 +6,7 @@ accepted:
   build.zig.zon: complete workspace dependency and distribution source boundary
   .zig-audit.json: required zig-audit schema-2/ruleset-3 scope for the accepted core source and root-check proofs; intentional sharp constructs are acknowledged beside source
   mods/howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-external-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
-  mods/howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; direct and headless specializations share one private service implementation; publishes no listener, daemon, Session, or Server identity
+  mods/howl-instance: required platform process-terminal/VT/Render composition for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; src/instance.zig owns the single implementation; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation and consume immutable frames on their GPU backend; publishes no listener, daemon, Session, or Server identity
   mods/howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   mods/howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
   protocol_coverage.yml: pinned terminal-protocol census
@@ -41,14 +41,14 @@ experimental:
   howl-instance-native: >-
     Optional howl_instance_native static artifact and owned aggregate C header
     expose the initial plain Linux/x86_64-qualified lifecycle, semantic input,
-    geometry/signals, bounded caller-driven headless service and VT-owned copied
+    geometry/signals, bounded caller-driven service and VT-owned copied
     cells, queries, graphics manifests/pixels, immutable logical-output results and pending request facts; named canonical replies and explicit
-    retained/headless service policy. Exact local Instance specialization; no host runtime, wait/poll loop,
+    retained/discard consequence policy. Exact local Instance composition; no host runtime, wait/poll loop,
     wake source, clock or Server/codec. Public native Zig helpers share input
     conversion/operations. Optional howl_instance_frames_native owns one
     backend endpoint, immutable frame leases, bulk payload projection and checked
     parent destruction; embedders own their worker
-    handoff/pacing. Standalone presented C construction owns explicit copied
+    handoff/pacing. The sole C construction requires presentation and owns explicit copied
     path/memory font inputs and a caller reference to the canonical shared Store;
     Instances retain it independently. Core try-claim admission precedes canonical
     State allocation/child launch; C environment/wrapper admission may allocate
@@ -77,9 +77,8 @@ experimental:
     Its separately usable limits module has no terminal-process owner.
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,
-    services its PTY/VT lifetime directly, borrows canonical Terminal.Observation for
-    synchronous projection, and renders through howl-text/howl-render/Vulkan/Wayland.
-    Its howl-render dependency disables transported client sources. Host has no
+    services its PTY/VT lifetime directly and consumes Instance-owned immutable
+    Render frames through Vulkan/Wayland. Instance composes howl-text/howl-render. Host has no
     client transport, HWLS, server-client, Server, Session, endpoint or
     remote-target route; outside the core gate
   howl-vk: Vulkan experiments; not part of the core gate

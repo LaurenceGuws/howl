@@ -79,7 +79,7 @@ test "VT exports only its canonical OSC 52 grammar, never a transport codec" {
     try std.testing.expect(!@hasDecl(render, "codec"));
 }
 
-extern fn howl_external_instance_abi() c_int;
+extern fn howl_external_instance_abi([*]const u8, usize) c_int;
 
 test "root exposes exact Instance native artifact and VT-owned header" {
     const native = @import("howl_instance_native");
@@ -87,7 +87,8 @@ test "root exposes exact Instance native artifact and VT-owned header" {
     try std.testing.expect(native.Instance == instance.Instance);
     try std.testing.expect(native.vt.Terminal == vt.Terminal);
     try std.testing.expect(native_vt.Terminal == vt.Terminal);
-    try std.testing.expectEqual(@as(c_int, 0), howl_external_instance_abi());
+    const font = @import("howl_text_test_fonts").primary_font;
+    try std.testing.expectEqual(@as(c_int, 0), howl_external_instance_abi(font.ptr, font.len));
 }
 
 extern fn howl_external_vt_abi() c_int;

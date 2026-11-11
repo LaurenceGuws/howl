@@ -7,16 +7,16 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define HI_ABI_VERSION 1u
+#define HI_ABI_VERSION 2u
 #if HRC_NATIVE_VERSION != 1u
-#error "Instance ABI v1 incorporates Render native v1; changing its layout requires ABI review/versioning"
+#error "Instance ABI v2 incorporates Render native v1; changing its layout requires ABI review/versioning"
 #endif
 #if HVT_NATIVE_VERSION != 1u
-#error "Instance ABI v1 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
+#error "Instance ABI v2 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
 #endif
 typedef struct hi_instance hi_instance;
-enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_PRESENTATION_UNAVAILABLE=9, HI_CONTEXT_CHANGED=10, HI_BUFFER_TOO_SMALL=11, HI_STALE_REQUEST=12, HI_REPLY_REQUIRED=13, HI_REQUEST_MISMATCH=14 };
-enum hi_service_policy { HI_SERVICE_HEADLESS=1, HI_SERVICE_RETAIN=2 };
+enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_CONTEXT_CHANGED=9, HI_BUFFER_TOO_SMALL=10, HI_STALE_REQUEST=11, HI_REPLY_REQUIRED=12, HI_REQUEST_MISMATCH=13 };
+enum hi_service_policy { HI_SERVICE_DISCARD=1, HI_SERVICE_RETAIN=2 };
 enum hi_signal { HI_HANGUP=1, HI_INTERRUPT=2, HI_RESIZE_NOTIFY=3, HI_KILL=9, HI_TERMINATE=15 };
 enum hi_signal_result { HI_SIGNAL_DELIVERED=1, HI_SIGNAL_TARGET_MISSING=2, HI_SIGNAL_PERMISSION_DENIED=3, HI_SIGNAL_NATIVE_FAILURE=4 };
 /* Endpoint open is producer-thread-only; frame acquire/read/release/close are
@@ -24,7 +24,7 @@ enum hi_signal_result { HI_SIGNAL_DELIVERED=1, HI_SIGNAL_TARGET_MISSING=2, HI_SI
  * handed to the backend. An open endpoint pins parent publication storage even
  * between frames. Checked parent destruction returns HI_BUSY without mutation.
  * Opening resets backend residency to empty. Caller publishes a fresh cut before
- * handoff. Presented construction uses the matching hi_create_presented contract. */
+ * handoff. Construction uses the matching hi_create contract. */
 typedef struct hi_frame_stream hi_frame_stream;
 typedef struct hi_frame_info {
     /* content_revision identifies drawing within presentation_generation; terminal cuts may advance independently. */
@@ -74,14 +74,14 @@ typedef struct hi_cell_size {
  * RASTER_BYTES. Entries/command capacities <= ITEMS; hard limit >= initial > 0.
  * Retained rows <= ROWS; rows and incremental_commands are both zero or positive.
  * Reserved fields in every input record must be zero. */
-typedef struct hi_presented_config {
+typedef struct hi_instance_config {
     float stroke_points[4];
     uint32_t dpi_x_numerator, dpi_x_denominator;
     uint32_t dpi_y_numerator, dpi_y_denominator;
     uint16_t atlas_width, atlas_height, atlas_gap, incremental_rows;
     size_t atlas_entries, command_capacity, command_limit, incremental_commands;
     uint8_t reserved[8];
-} hi_presented_config;
+} hi_instance_config;
 
 /* Creation requires *out==NULL and preserves it on failure. The regular font
  * is required; other styles may be NONE only with every other source field zero.
@@ -104,7 +104,6 @@ typedef struct hi_launch {
     const hi_bytes *environment;
     size_t environment_count;
     uint16_t rows, columns, history_rows, reserved;
-    uint32_t cell_width, cell_height;
 } hi_launch;
 /* All fields are initialized on entry when the output pointer is non-null.
  * exit_kind: 0=not observed, 1=normal code, 2=signal.
@@ -120,10 +119,10 @@ typedef struct hi_service {
     uint8_t sync_ended, sync_trailing_effect, retained_fallback, descriptor_kind;
     uint8_t reserved[4];
 } hi_service;
-/* Live C handles come only from hi_create/hi_create_presented and are invalid
+/* Live C handles come only from hi_create and are invalid
  * after hi_destroy. Direct Zig Instance pointers are a different opaque family
  * and must not be cast here. Calls on one live owner serialize.
- * Different Instance specializations and Server handles must never be cast here.
+ * Server handles must never be cast here.
  * Arrays/strings borrow caller memory only for the duration of each call.
  * create requires *out==NULL; failure preserves it.
  * Linux create copies an explicit environment (<=1024 entries, <=1MiB including
@@ -133,30 +132,29 @@ typedef struct hi_service {
  * explicit, never an implicit capture of the embedding process environment.
  * Initial standalone native lifecycle is Linux-qualified; other targets return
  * HI_UNSUPPORTED. The artifact selects the exact local Instance composition.
- * First service contract applies deterministic headless consequence policy.
- * hi_create_presented derives its lattice from an explicit presentation owner. */
+ * First service contract applies deterministic discard consequence policy.
+ * hi_create derives its lattice from an explicit presentation owner. */
 uint32_t hi_abi_version(void);
-uint32_t hi_create(uint32_t version, const hi_launch *launch, hi_instance **out);
 /* Opens the VT-owned read capability from one matching C Instance:
  * Same VT-owned capability, backed by the exact local Instance observation.
- * May be opened for presented or unpresented Instance. No second observation API.
+ * No second observation API.
  * Uses HI version/status mapping; source reference ceiling maps RESOURCE_LIMIT.
  * Busy Instance destruction leaves capability live; successful destruction
  * retires it before returning, without waiting for capability/frame consumers.
  * Existing Instance input/service/lifecycle behavior and direct Zig owners remain
- * canonical. All C hi_instance handles use the same new private C wrapper.
+ * canonical. All C hi_instance handles use the same private C wrapper.
  * Output requires a null slot and is unchanged on all failures. */
 uint32_t hi_observation_open(uint32_t version, hi_instance *, hvt_observation **out);
 
 /* A matching presentation is required.
- * Launch cell_width/cell_height must both be zero: regular-font metrics supply
- * the sole canonical pixel lattice. Construction only tries shared font access.
+ * Regular-font metrics supply the sole canonical pixel lattice.
+ * Construction only tries shared font access.
  * HI_BUSY publishes no owner and launches no child; the caller chooses retry.
  * Other construction failures release staged resources; child-side effects of a
  * late failure cannot be undone. No worker, clock, wait backend or UI is owned.
  * hi_destroy and all existing operations use this same exact local handle type. */
-uint32_t hi_create_presented(uint32_t version, const hi_launch *,
-    hi_presentation *, const hi_presented_config *, hi_instance **out);
+uint32_t hi_create(uint32_t version, const hi_launch *,
+    hi_presentation *, const hi_instance_config *, hi_instance **out);
 
 uint32_t hi_destroy(hi_instance **owner);
 uint32_t hi_send_text(hi_instance *, const uint8_t *, size_t);
@@ -169,7 +167,7 @@ uint32_t hi_resize(hi_instance *, uint16_t rows, uint16_t columns, uint32_t cell
 uint32_t hi_signal_group(hi_instance *, uint8_t signal, uint8_t *result);
 uint32_t hi_service_turn(hi_instance *, uint8_t readable, uint8_t writable, uint64_t monotonic_ns, hi_service *out);
 /* Explicit per-turn consequence policy. Retain preserves canonical bounded queue
- * pressure fallback and reports retained_fallback. Switching to headless drains
+ * pressure fallback and reports retained_fallback. Switching to discard drains
  * pending requests with the existing deterministic policy on that same turn. */
 uint32_t hi_service_turn_policy(hi_instance *, uint8_t policy, uint8_t readable, uint8_t writable, uint64_t monotonic_ns, hi_service *out);
 /* Copied pending request facts and exact-head operations, serialized by the owner.

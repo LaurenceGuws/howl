@@ -1,17 +1,14 @@
-#include "howl_instance_native.h"
+#include "howl_vt_native.h"
 #include "howl_render_native.h"
 #include <string.h>
 #define REQUIRE(x) do { if (!(x)) return __LINE__; } while (0)
 int howl_external_render_abi(const uint8_t *font,size_t font_len) {
-    /* Resolve an actual headless C Instance through its owned source capability.
-     * Render itself depends only on VT and Text; this composition lives here. */
-    hi_instance *instance=0;
-    const char shell[]="/bin/sh", command[]="exit 0";
-    hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},
-        {(const uint8_t *)command,sizeof(command)-1},{0,0},0,0,3,12,8,0,8,16};
-    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&instance)==HI_OK);
+    /* Standalone Render consumes a bare VT observation; Instance owns its own Render. */
+    hvt_terminal *terminal=0;
+    hvt_config vt_config={3,12,8,0,8,16};
+    REQUIRE(hvt_create(HVT_NATIVE_VERSION,&vt_config,&terminal)==HVT_OK);
     hvt_observation *source=0;
-    REQUIRE(hi_observation_open(HI_ABI_VERSION,instance,&source)==HI_OK);
+    REQUIRE(hvt_observation_open(HVT_NATIVE_VERSION,terminal,&source)==HVT_OK);
     hrc_config c={0};
     c.fonts[0].kind=HRC_FONT_PATH; c.fonts[0].primary=(hrc_bytes){font,font_len};
     c.pixel_size=18; c.max_sequence_scalars=16;
@@ -31,7 +28,8 @@ int howl_external_render_abi(const uint8_t *font,size_t font_len) {
     REQUIRE(hrc_frame_capture(frame,0,0,0,&info)==HRC_OK);
     hrc_frame_view first,after;
     REQUIRE(hrc_frame_read(frame,&first)==HRC_OK);
-    REQUIRE(hi_destroy(&instance)==HI_OK && !instance);
+    hvt_release(&terminal);
+    REQUIRE(!terminal);
     REQUIRE(hrc_frame_capture(other,0,0,0,&info)==HRC_SOURCE_CLOSED);
     REQUIRE(hrc_frame_read(frame,&after)==HRC_OK);
     REQUIRE(!memcmp(&first.info,&after.info,sizeof(first.info)));

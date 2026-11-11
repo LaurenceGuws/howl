@@ -31,7 +31,7 @@ fn canonical(raw: *c.hi_instance) *Instance {
 fn canonicalConst(raw: *const c.hi_instance) *const Instance {
     return c_owner.getConst(convert(*const c_owner.Owner, raw));
 }
-const Error = InputError || instance.InitError || instance.ResizeError || instance.ServiceError;
+const Error = InputError || instance.TryInitError || instance.ResizeError || instance.ServiceError || presentation.CreateError;
 fn status(err: Error) u32 {
     if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
     return switch (err) {
@@ -40,19 +40,11 @@ fn status(err: Error) u32 {
         error.ArgumentByteLimit, error.ArgumentCountLimit, error.EnvironmentByteLimit, error.EnvironmentCountLimit, error.WriteQueueFull, error.LengthOverflow, error.KeyTextLimit, error.ReplyLimit, error.ScalarCapacity, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ParsedEventLimit => c.HI_RESOURCE_LIMIT,
         error.UnsupportedPlatform => c.HI_UNSUPPORTED,
         error.WriteFailed, error.WouldBlock, error.EndOfStream, error.ReadFailed, error.NotStarted, error.ForegroundGroupFailed, error.SignalFailed, error.TermiosQueryFailed, error.AlreadyStarted, error.ChildCwdFailed, error.ChildExecFailed, error.ChildSessionFailed, error.ChildStdioFailed, error.ForkFailed, error.LaunchStatusFailed, error.LaunchStatusPipeFailed, error.MasterConfigureFailed, error.OpenPtyFailed, error.ShellUnavailable, error.ResizeFailed, error.Interrupted, error.ChildClosed, error.ObserveFailed, error.StaleClipboardRequest, error.StaleColorPreferenceQuery, error.StaleContainerRequest, error.ContainerReplyMismatch, error.StalePointerShape, error.PointerShapeReplyMismatch => c.HI_OPERATION_FAILED,
-    };
-}
-const PresentedError = presentation.CreateError || instance.TryPresentedInitError;
-fn presentedStatus(err: PresentedError) u32 {
-    return switch (err) {
         error.InvalidConfig, error.InvalidCapacity, error.InvalidAtlasConfig, error.InvalidShapeCacheConfig => c.HI_INVALID_ARGUMENT,
         error.ResourceLimit, error.PresentationStoreLimit, error.CacheFull, error.AtlasFull, error.GlyphTooLarge, error.BufferTooSmall, error.InsufficientCommands, error.ImageLimit, error.CommandLimit, error.PixelLimit, error.RasterTooLarge, error.TextTooLong, error.GlyphLimit, error.InsufficientShapeBuffer, error.InsufficientGlyphs, error.ShapeSequenceLimit, error.GenerationOverflow, error.RevisionOverflow, error.ResourceIdentityOverflow, error.ResourceGenerationOverflow, error.ArithmeticOverflow => c.HI_RESOURCE_LIMIT,
         error.PresentationBusy => c.HI_BUSY,
         error.UnsupportedPixelMode, error.UnsupportedGlyph => c.HI_UNSUPPORTED,
         error.FreeTypeInit, error.FontOpen, error.UnicodeCharmap, error.FontSize, error.HarfBuzzFont, error.InvalidMetrics, error.InvalidFontFaces, error.HarfBuzzBuffer, error.InvalidRaster, error.GlyphLoad, error.GlyphRender, error.InvalidBitmap, error.InvalidPlacement, error.RasterExtentMismatch, error.InvalidShapeResult, error.InvalidGlyphIdentity, error.MissingGlyph, error.InvalidSize, error.InvalidStroke, error.InvalidSurface, error.InvalidRectangle, error.InvalidIdentity, error.InvalidGeneration, error.InvalidPixels, error.FormatMismatch, error.ExtentMismatch, error.AliasedStorage, error.InvalidResidency, error.InvalidView, error.InvalidColor, error.InvalidImageBinding, error.InvalidPresentationGeometry, error.FontSetMismatch, error.MissingExternalResource => c.HI_OPERATION_FAILED,
-        // The inferred remainder must fit the existing closed map. A newly
-        // introduced error outside either classification is a compile failure.
-        else => |failure| status(failure),
     };
 }
 fn admissionStatus(err: presentation.AdmissionError) u32 {
@@ -83,7 +75,7 @@ pub export fn hi_presentation_create(version: u32, config: ?*const c.hi_presenta
     const slot = out orelse return c.HI_INVALID_ARGUMENT;
     if (slot.* != null) return c.HI_INVALID_ARGUMENT;
     if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
-    const owner = presentation.create(heap, request) catch |failure| return presentedStatus(failure);
+    const owner = presentation.create(heap, request) catch |failure| return status(failure);
     slot.* = convert(*c.hi_presentation, owner);
     return c.HI_OK;
 }
@@ -110,11 +102,11 @@ pub export fn hi_presentation_cell_size(raw: ?*const c.hi_presentation, out: ?*c
 }
 
 /// Creates the exact local owner with nonblocking shared-font admission.
-pub export fn hi_create_presented(
+pub export fn hi_create(
     version: u32,
     request: ?*const c.hi_launch,
     raw: ?*c.hi_presentation,
-    config: ?*const c.hi_presented_config,
+    config: ?*const c.hi_instance_config,
     out: ?*?*c.hi_instance,
 ) u32 {
     if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
@@ -125,27 +117,10 @@ pub export fn hi_create_presented(
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     const options = config orelse return c.HI_INVALID_ARGUMENT;
     const selected = presentation.instanceConfig(convert(*const presentation.Owner, owner), options) catch |failure| return admissionStatus(failure);
-    return create(version, launch, slot, selected);
-}
-
-/// Copies bounded launch/environment before publishing one canonical owner.
-pub export fn hi_create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance) u32 {
-    return create(version, request, out, null);
-}
-
-fn create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance, presented: ?instance.PresentationConfig) u32 {
-    if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
-    const launch = request orelse return c.HI_INVALID_ARGUMENT;
-    const slot = out orelse return c.HI_INVALID_ARGUMENT;
-    if (slot.* != null or launch.reserved != 0) return c.HI_INVALID_ARGUMENT;
-    if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
     const shell = launchBytes(launch.shell, 4096) orelse return c.HI_INVALID_ARGUMENT;
     const command = launchBytes(launch.command, 64 * 1024) orelse return c.HI_INVALID_ARGUMENT;
     const cwd = launchBytes(launch.cwd, 4096) orelse return c.HI_INVALID_ARGUMENT;
     if (shell.len == 0 or launch.rows == 0 or launch.columns == 0) return c.HI_INVALID_ARGUMENT;
-    if (presented != null) {
-        if (launch.cell_width != 0 or launch.cell_height != 0) return c.HI_INVALID_ARGUMENT;
-    } else if (launch.cell_width == 0 or launch.cell_height == 0) return c.HI_INVALID_ARGUMENT;
     if (launch.environment_count > 1024) return c.HI_RESOURCE_LIMIT;
     if (launch.environment_count != 0 and launch.environment == null) return c.HI_INVALID_ARGUMENT;
     var count: usize = 0;
@@ -186,14 +161,9 @@ fn create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance, pr
         .rows = launch.rows,
         .columns = launch.columns,
         .history_rows = launch.history_rows,
-        .cell_pixel_width = launch.cell_width,
-        .cell_pixel_height = launch.cell_height,
     };
     const environment = std.process.Environ{ .block = .{ .slice = entries } };
-    const value = if (presented) |options|
-        c_owner.createPresented(heap, environment, selected_launch, options) catch |failure| return presentedStatus(failure)
-    else
-        c_owner.create(heap, environment, selected_launch) catch |failure| return status(failure);
+    const value = c_owner.create(heap, environment, selected_launch, selected) catch |failure| return status(failure);
     slot.* = convert(*c.hi_instance, value);
     return c.HI_OK;
 }
@@ -278,9 +248,9 @@ pub export fn hi_signal_group(raw: ?*c.hi_instance, tag: u8, out: ?*u8) u32 {
     };
     return c.HI_OK;
 }
-/// Services one bounded headless turn; monotonic_ns uses caller-owned monotonic nanoseconds.
+/// Services one bounded turn with discard consequence policy; monotonic_ns uses caller-owned monotonic nanoseconds.
 pub export fn hi_service_turn(raw: ?*c.hi_instance, readable: u8, writable: u8, timestamp: u64, out: ?*c.hi_service) u32 {
-    return hi_service_turn_policy(raw, c.HI_SERVICE_HEADLESS, readable, writable, timestamp, out);
+    return hi_service_turn_policy(raw, c.HI_SERVICE_DISCARD, readable, writable, timestamp, out);
 }
 /// Services one explicit caller-selected policy with canonical pressure/fallback behavior.
 pub export fn hi_service_turn_policy(raw: ?*c.hi_instance, policy: u8, readable: u8, writable: u8, timestamp: u64, out: ?*c.hi_service) u32 {
@@ -292,7 +262,7 @@ pub export fn hi_service_turn_policy(raw: ?*c.hi_instance, policy: u8, readable:
     const value = canonical(raw_value);
     const descriptor = instance.descriptor(value) catch |err| return status(err);
     const selected: instance.ConsequencePolicy = switch (policy) {
-        c.HI_SERVICE_HEADLESS => .headless,
+        c.HI_SERVICE_DISCARD => .discard,
         c.HI_SERVICE_RETAIN => .retain,
         else => return c.HI_INVALID_ARGUMENT,
     };
@@ -342,7 +312,6 @@ pub export fn hi_frame_open(version: u32, raw: ?*c.hi_instance, out: ?*?*c.hi_fr
     if (slot.* != null) return c.HI_INVALID_ARGUMENT;
     const stream = frames.open(heap, canonical(owner)) catch |failure| return switch (failure) {
         error.OutOfMemory => c.HI_OUT_OF_MEMORY,
-        error.PresentationUnavailable => c.HI_PRESENTATION_UNAVAILABLE,
         error.PublicationBorrowed => c.HI_BUSY,
     };
     slot.* = convert(*c.hi_frame_stream, stream);
@@ -448,7 +417,6 @@ pub export fn hi_publish_frame(raw: ?*c.hi_instance, history: u32) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
     instance.publishRenderAt(canonical(value), history) catch |failure| {
         return switch (failure) {
-            error.PresentationUnavailable => c.HI_PRESENTATION_UNAVAILABLE,
             error.PresentationBusy, error.PublicationBusy => c.HI_BUSY,
             error.OutOfMemory => c.HI_OUT_OF_MEMORY,
             else => c.HI_OPERATION_FAILED,

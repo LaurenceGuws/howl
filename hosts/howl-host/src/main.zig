@@ -80,7 +80,7 @@ pub fn main(init: std.process.Init) !void {
         font,
         presentation.base_font_pixels,
     );
-    var local_owner = try local_terminal.Owner.initPresented(
+    var local_owner = try local_terminal.Owner.init(
         std.heap.c_allocator,
         init.minimal.environ,
         .{
@@ -100,7 +100,7 @@ pub fn main(init: std.process.Init) !void {
         window_thread.join();
         return failure;
     };
-    const render_exchange = try local_owner.renderExchange();
+    const render_exchange = local_owner.renderExchange();
     const render_thread = std.Thread.spawn(.{}, renderer.run, .{
         &boundary,
         std.heap.c_allocator,

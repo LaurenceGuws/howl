@@ -157,7 +157,7 @@ pub fn release(owner: *Owner) void {
 }
 
 /// Admits per-Instance budgets and selects the matching shared Store.
-pub fn instanceConfig(owner: *const Owner, config: *const c.hi_presented_config) AdmissionError!instance.PresentationConfig {
+pub fn instanceConfig(owner: *const Owner, config: *const c.hi_instance_config) AdmissionError!instance.PresentationConfig {
     if (!std.mem.allEqual(u8, &config.reserved, 0)) return error.InvalidArgument;
     try item(config.atlas_entries);
     try item(config.command_capacity);
@@ -205,8 +205,8 @@ fn testConfig() c.hi_presentation_config {
     return config;
 }
 
-fn testInstanceConfig() c.hi_presented_config {
-    var config = std.mem.zeroes(c.hi_presented_config);
+fn testInstanceConfig() c.hi_instance_config {
+    var config = std.mem.zeroes(c.hi_instance_config);
     config.stroke_points = .{ 0.001, 1, 1.5, 2 };
     config.dpi_x_numerator = 96;
     config.dpi_x_denominator = 1;

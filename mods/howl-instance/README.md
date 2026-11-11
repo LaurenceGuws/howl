@@ -1,14 +1,24 @@
 # howl-instance
 
-`howl-instance` is the batteries-included local terminal composition: one platform process-terminal transport (Linux PTY or Windows ConPTY), one canonical `howl-vt` terminal, ordered child I/O, explicit geometry, signals, and deterministic headless consequence policy. It is a module, not a daemon, listener, Session, or Server.
+`howl-instance` has one composition: platform process-terminal transport (Linux
+PTY or Windows ConPTY), canonical `howl-vt`, `howl-render`, and immutable frames
+consumed by the embedder's GPU backend. Every Instance requires presentation
+configuration and owns ordered child I/O, geometry, signals, renderer state and
+publication storage. It is a module, not a daemon, listener, Session, or Server.
 
-An embedder may use `howl-vt` directly and omit PTY/Instance composition entirely. Higher-level Session/Server orchestration is optional and must depend on Instance; Instance never depends on it.
+The sole `howl_instance` entry point constructs this path with
+`init(allocator, environ, launch, presentation)` or nonwaiting `tryInit`.
+Font metrics supply its canonical PTY/VT/Render cell lattice. The embedder owns
+GPU residency, scheduling, windowing and display. A stalled or absent frame
+consumer does not block canonical PTY/VT service.
 
-The package exports two compile-time entry points. `howl_instance` keeps optional direct Render presentation; `howl_instance_headless` exposes only PTY/VT operations and imports no Render or Text module. Server selects the latter. Both select the same private lifetime and service implementation and retain the exact child-owned PTY/VT module identities. Their opaque Instance handles belong to the selected composition and cannot be exchanged. Neither entry point imports the optional VT codec.
+An embedder that wants to compose terminal primitives itself uses `howl-vt` and
+`howl-pty` directly. No alternate Instance composition or mutable terminal escape
+hatch exists. Neither Instance nor its native interface imports a wire codec.
 
-## Presented text ownership
+## Text ownership
 
-A presented Instance owns its canonical VT, atlas, commands and three immutable
+An Instance owns its canonical VT, atlas, commands and three immutable
 publication slots. Its font/shaping choice is required in `PresentationConfig.text`:
 
 | Choice | Font and shape owner | Terminal-local state |
@@ -17,13 +27,13 @@ publication slots. Its font/shaping choice is required in `PresentationConfig.te
 | `.private = family` | A new native font family and Store for this Instance | The same terminal-local state |
 
 Create a shared owner with `initPresentationStore(allocator, io, family, bounds)`,
-then pass its pointer to matching `initPresented` and reconfiguration calls.
+then pass its pointer to matching `init` and reconfiguration calls.
 The family fixes paths/bytes, styles, fallbacks and physical pixel size. Store
 bounds must match each borrower's shape/scratch configuration; mismatch fails
 before canonical geometry or the old presentation changes. Use another owner
 for a different font recipe or pixel size.
 
-Each successful presented construction/reconfiguration retains one reference.
+Each successful construction/reconfiguration retains one reference.
 `releasePresentationStore` releases the embedding caller's reference; surviving
 Instances keep the native faces alive. Release the caller reference exactly once
 and stop using that pointer. The supplied Io must outlive the borrowers.
@@ -34,21 +44,23 @@ Only full text projection takes the native-face claim. Runtime contention return
 `PresentationBusy`; service PTY/VT normally and schedule a bounded retry.
 Cursor-only updates and immutable frame transfer do not take this claim, and no
 claim survives publication preparation. Ordinary synchronous construction/reconfiguration
-may wait for a bounded projection. `tryInitPresented` instead claims shared fonts
+may wait for a bounded projection. `tryInit` instead claims shared fonts
 before allocation or child launch and returns `PresentationBusy` for caller retry. A held frame or hidden observer cannot hold
 shared text. The owner admits at most 1023 Instance borrowers.
 
-Advanced Render embedders use `render.terminal.initStore` plus `initWithStore`
-and serialize the borrowed native faces themselves. The convenience constructor
-is deliberately named `initPrivate`. `resetStore` forgets shared shaping;
-`resetCaches` resets only the caller's terminal atlas. Each pressure retry is
-bounded independently, and one atlas does not flush the shared shape store.
-
 ## Direct API boundary
 
-Instance exposes semantic operations and canonical observation. Server communications,
-remote client identities, resize/consequence authority and wire codecs belong to the
-optional Server implementation above this package.
+Instance serializes semantic input, explicit geometry changes and canonical
+consequence operations. The embedder schedules service, handles host consequences
+and submits Render frames to its GPU backend. Session identity, orchestration,
+networking and wire codecs belong outside this module.
+
+## Retained rows
+
+Render owns row-generation comparisons and their retained command/background
+state. Instance forwards each selected VT observation without copying row
+generations or manufacturing repair masks. Render checks the terminal occurrence,
+screen bank, geometry and viewport before reuse, and invalidates failed work.
 
 ## Ordered large paste (direct Zig)
 
@@ -76,14 +88,13 @@ Explicit signals and geometry remain separately available.
 
 Poll writable readiness while `writePending`. Use `bufferedOutputRunnable` to
 schedule immediate buffered output: `bufferedOutputPending` reports storage
-only and may be waiting for reply space or paste completion. Both direct roots
-select this same implementation. The existing foreign interface still exposes
-atomic paste; this streaming API adds no C ABI or Server wire operation.
+only and may be waiting for reply space or paste completion. The foreign
+interface exposes atomic paste; streaming adds no C ABI or wire operation.
 
 ## Native foreign interface
 
 The optional module-owned [native contract](docs/native.md) exposes Linux
-unpresented and presented construction, caller-driven service, VT-owned copied
+construction with required presentation, caller-driven service, VT-owned copied
 queries/requests, and immutable frame leases. Explicit presentation owners copy
 path or memory fonts and can be shared across Instances; caller release leaves
 Instance references alive. Zig hosts can reuse the exact native contract helpers

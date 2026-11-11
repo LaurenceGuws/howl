@@ -17,7 +17,7 @@ fn advance(context: *Context) callconv(.c) c_int {
     }
     return 5;
 }
-fn createPresented(command_capacity: usize, command: []const u8, rows: u16, columns: u16, history: u16) !*c.hi_instance {
+fn create(command_capacity: usize, command: []const u8, rows: u16, columns: u16, history: u16) !*c.hi_instance {
     var config = std.mem.zeroes(c.hi_presentation_config);
     config.fonts[0].kind = c.HI_FONT_PATH;
     config.fonts[0].primary = .{ .data = fonts.primary_font.ptr, .len = fonts.primary_font.len };
@@ -35,7 +35,7 @@ fn createPresented(command_capacity: usize, command: []const u8, rows: u16, colu
         // reason: A failed release in proof cleanup is an invariant violation that must fail this test.
         @panic("presentation cleanup failed");
     };
-    var renderer = std.mem.zeroes(c.hi_presented_config);
+    var renderer = std.mem.zeroes(c.hi_instance_config);
     renderer.stroke_points = .{ 0.001, 1, 1.5, 2 };
     renderer.dpi_x_numerator = 96;
     renderer.dpi_x_denominator = 1;
@@ -58,11 +58,9 @@ fn createPresented(command_capacity: usize, command: []const u8, rows: u16, colu
         .columns = columns,
         .history_rows = history,
         .reserved = 0,
-        .cell_width = 0,
-        .cell_height = 0,
     };
     var value: ?*c.hi_instance = null;
-    try std.testing.expectEqual(@as(u32, c.HI_OK), c.hi_create_presented(c.HI_ABI_VERSION, &launch, presentation, &renderer, &value));
+    try std.testing.expectEqual(@as(u32, c.HI_OK), c.hi_create(c.HI_ABI_VERSION, &launch, presentation, &renderer, &value));
     return value.?;
 }
 fn destroy(value: *?*c.hi_instance) void {
@@ -87,7 +85,7 @@ test "foreign frame lease is immutable, pins teardown and resets replacement res
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ });
     defer threaded.deinit();
     const io = threaded.io();
-    var owner: ?*c.hi_instance = try createPresented(256, "stty -echo; printf FRESH; read line; printf NEW; read line", 2, 16, 8);
+    var owner: ?*c.hi_instance = try create(256, "stty -echo; printf FRESH; read line; printf NEW; read line", 2, 16, 8);
     defer destroy(&owner);
     const before = try awaitCell(owner.?, io, 0, 0, 'F', 2000);
     var context = Context{ .owner = owner.?, .io = io, .before = before };
@@ -110,7 +108,7 @@ test "foreign ABI copies a real frame above the maintained host command envelope
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ });
     defer threaded.deinit();
     const io = threaded.io();
-    var owner: ?*c.hi_instance = try createPresented(131072, "stty -echo; printf '%115200s' '' | tr ' ' X; read line", 225, 512, 0);
+    var owner: ?*c.hi_instance = try create(131072, "stty -echo; printf '%115200s' '' | tr ' ' X; read line", 225, 512, 0);
     defer destroy(&owner);
     // zig-audit: acknowledge discard
     // reason: The copied final cell establishes complete output; no later assertion needs its service revision.

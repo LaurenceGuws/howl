@@ -24,7 +24,7 @@ Use Fleet's installed `zig` from `PATH` and require `zig version` to match the t
 1. Prefer direct singular code lanes and deletion. Foot is the simplicity reference.
 2. Bounds, ownership, cleanup, exact errors, invariants, and hostile proofs are mandatory. TigerBeetle is the Zig-quality reference.
 3. VT owns terminal semantics only. It must never wait for or publish to a renderer or observer.
-4. Instance is the optional batteries-included PTY+VT composition for one concrete terminal occurrence. It is not a Session, Server, listener, or product identity. Observers may disappear or stall without affecting canonical progress.
+4. Instance has one composition path for one concrete terminal occurrence: PTY → VT → Render → the embedder's GPU backend. It owns PTY, VT, and Render; the embedder owns GPU, UI, window, and platform lifecycle. VT and PTY remain independently usable. It is not a Session, Server, listener, or product identity. Observers may disappear or stall without affecting canonical progress.
 5. PTY owns Linux process and descriptor mechanics. Platform policy never leaks downward. Session/Server orchestration, when present, depends on Instance and never leaks into VT, PTY, or local Instance composition.
 6. The tracked `howl-text` module owns native font metrics, shaping, source clusters, glyph lookup, and bounded natural rasterization. Renderer, window, terminal-cell, session, and client policy never leaks downward.
 7. Public authority boundaries must be mechanically enforceable, not comments pretending fields are private.

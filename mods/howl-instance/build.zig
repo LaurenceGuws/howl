@@ -21,15 +21,6 @@ pub fn build(b: *std.Build) void {
     });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
 
-    // Both entry points share this exact private owner. It imports only PTY/VT.
-    const runtime = b.createModule(.{
-        .root_source_file = b.path("src/runtime.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    runtime.addImport("howl_pty", pty.module("howl_pty"));
-    runtime.addImport("howl_vt", vt.module("howl_vt"));
-
     const publication = b.createModule(.{
         .root_source_file = b.path("src/publication.zig"),
         .target = target,
@@ -42,16 +33,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("instance_runtime", runtime);
+    module.addImport("howl_pty", pty.module("howl_pty"));
+    module.addImport("howl_vt", vt.module("howl_vt"));
     module.addImport("howl_render", render.module("howl_render"));
     module.addImport("instance_publication", publication);
-
-    const headless = b.addModule("howl_instance_headless", .{
-        .root_source_file = b.path("src/headless.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    headless.addImport("instance_runtime", runtime);
 
     // Expose the exact composition modules rather than asking embedders to
     // instantiate sibling copies with independent type identity.
@@ -93,22 +78,22 @@ pub fn build(b: *std.Build) void {
     // Forward the exact VT companion used to release module-owned Readers.
     b.installArtifact(vt.artifact("howl_vt_native"));
 
-    const tests = compositionProofs(b, target, optimize, pty.module("howl_pty"), vt.module("howl_vt"), render.module("howl_render"), publication, text.module("howl_text_test_fonts"));
-    const headless_proofs = compositionProofs(b, target, optimize, pty.module("howl_pty"), vt.module("howl_vt"), null, null, null);
-
-    const boundary_root = b.createModule(.{
-        .root_source_file = b.path("test/headless.zig"),
+    const test_root = b.createModule(.{
+        .root_source_file = b.path("src/instance.zig"),
         .target = target,
         .optimize = optimize,
     });
-    boundary_root.addImport("howl_instance_headless", headless);
-    const boundary = b.addTest(.{
-        .name = "howl-instance-headless-api",
-        .root_module = boundary_root,
+    test_root.addImport("howl_pty", pty.module("howl_pty"));
+    test_root.addImport("howl_vt", vt.module("howl_vt"));
+    test_root.addImport("howl_render", render.module("howl_render"));
+    test_root.addImport("instance_publication", publication);
+    test_root.addImport("test_fonts", text.module("howl_text_test_fonts"));
+    const tests = b.addTest(.{
+        .name = "howl-instance",
+        .root_module = test_root,
         .use_llvm = false,
         .use_lld = false,
     });
-
     const publication_proofs = b.addTest(.{
         .name = "howl-instance-publication",
         .root_module = publication,
@@ -116,15 +101,13 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
-    const check = b.step("check", "Compile one canonical PTY and VT instance");
+    const check = b.step("check", "Compile one canonical PTY, VT and Render instance");
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
     zig_audit.setCwd(b.path("."));
     audit.dependOn(&zig_audit.step);
     check.dependOn(audit);
     check.dependOn(&tests.step);
-    check.dependOn(&headless_proofs.step);
-    check.dependOn(&boundary.step);
     check.dependOn(&publication_proofs.step);
     check.dependOn(&native_library.step);
 
@@ -132,8 +115,6 @@ pub fn build(b: *std.Build) void {
     run_tests.addPassthruArgs();
     const test_step = b.step("test", "Run canonical instance ownership proofs");
     test_step.dependOn(&run_tests.step);
-    test_step.dependOn(&b.addRunArtifact(headless_proofs).step);
-    test_step.dependOn(&b.addRunArtifact(boundary).step);
     test_step.dependOn(&b.addRunArtifact(publication_proofs).step);
     if (target.result.os.tag == .linux) {
         const abi_owner_tests = b.addTest(.{ .name = "howl-instance-c-owner", .root_module = abi_owner, .use_llvm = false, .use_lld = false });
@@ -149,18 +130,18 @@ pub fn build(b: *std.Build) void {
         check.dependOn(&admission.step);
         const admission_run = b.addRunArtifact(admission);
         test_step.dependOn(&admission_run.step);
-        const presented_step = b.step("test:native-presentation", "Qualify standalone C presented construction and ownership");
-        presented_step.dependOn(&admission_run.step);
-        const presented_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
-        presented_root.linkLibrary(native_library);
-        presented_root.linkLibrary(vt.artifact("howl_vt_native"));
-        presented_root.addCSourceFile(.{ .file = b.path("test/native_presented.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-        const presented = b.addExecutable(.{ .name = "howl-instance-native-presented", .root_module = presented_root, .use_llvm = false, .use_lld = false });
-        check.dependOn(&presented.step);
-        const presented_run = b.addRunArtifact(presented);
-        presented_run.addFileArg(text.namedLazyPath("howl_text_test_font"));
-        test_step.dependOn(&presented_run.step);
-        presented_step.dependOn(&presented_run.step);
+        const presentation_step = b.step("test:native-presentation", "Qualify standalone C construction and ownership");
+        presentation_step.dependOn(&admission_run.step);
+        const presentation_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+        presentation_root.linkLibrary(native_library);
+        presentation_root.linkLibrary(vt.artifact("howl_vt_native"));
+        presentation_root.addCSourceFile(.{ .file = b.path("test/native_presentation.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+        const presentation_proof = b.addExecutable(.{ .name = "howl-instance-native-presentation", .root_module = presentation_root, .use_llvm = false, .use_lld = false });
+        check.dependOn(&presentation_proof.step);
+        const presentation_run = b.addRunArtifact(presentation_proof);
+        presentation_run.addFileArg(text.namedLazyPath("howl_text_test_font"));
+        test_step.dependOn(&presentation_run.step);
+        presentation_step.dependOn(&presentation_run.step);
         const foreign_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
         foreign_root.linkLibrary(native_library);
         foreign_root.linkLibrary(vt.artifact("howl_vt_native"));
@@ -169,6 +150,7 @@ pub fn build(b: *std.Build) void {
         const foreign = b.addExecutable(.{ .name = "howl-instance-native-consumer", .root_module = foreign_root, .use_llvm = false, .use_lld = false });
         check.dependOn(&foreign.step);
         const run_foreign = b.addRunArtifact(foreign);
+        run_foreign.addFileArg(text.namedLazyPath("howl_text_test_font"));
         test_step.dependOn(&run_foreign.step);
         b.step("test:native", "Qualify the standalone Instance C lifecycle").dependOn(&run_foreign.step);
         // Exercise the same foreign proof inside a host-owned shared library.
@@ -184,6 +166,7 @@ pub fn build(b: *std.Build) void {
         const shared_driver = b.addExecutable(.{ .name = "howl-instance-static-embedding", .root_module = shared_driver_root, .use_llvm = false, .use_lld = false });
         check.dependOn(&shared_driver.step);
         const shared_run = b.addRunArtifact(shared_driver);
+        shared_run.addFileArg(text.namedLazyPath("howl_text_test_font"));
         test_step.dependOn(&shared_run.step);
         b.step("test:static-embedding", "Qualify static Instance ABI inside a foreign shared library").dependOn(&shared_run.step);
 
@@ -215,37 +198,4 @@ fn exposeModule(b: *std.Build, name: []const u8, module: *std.Build.Module) void
     // zig-audit: acknowledge panic
     // reason: Build configuration cannot recover from allocation failure.
     b.modules.put(b.allocator, name, module) catch @panic("OOM");
-}
-
-fn compositionProofs(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    pty: *std.Build.Module,
-    vt: *std.Build.Module,
-    render: ?*std.Build.Module,
-    publication: ?*std.Build.Module,
-    fonts: ?*std.Build.Module,
-) *std.Build.Step.Compile {
-    const root = b.createModule(.{
-        .root_source_file = b.path("src/runtime.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    root.addImport("howl_pty", pty);
-    root.addImport("howl_vt", vt);
-    const options = b.addOptions();
-    options.addOption(bool, "presentation", render != null);
-    root.addOptions("composition_options", options);
-    if (render) |module| {
-        root.addImport("howl_render", module);
-        root.addImport("instance_publication", publication.?);
-        root.addImport("test_fonts", fonts.?);
-    }
-    return b.addTest(.{
-        .name = if (render != null) "howl-instance" else "howl-instance-headless",
-        .root_module = root,
-        .use_llvm = false,
-        .use_lld = false,
-    });
 }

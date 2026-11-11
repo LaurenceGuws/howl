@@ -10,10 +10,9 @@ UI framework.
       +-- howl-instance
       |     +-- howl-pty
       |     +-- howl-vt
-      |
-      +-- howl-render   (-Dclient_sources=false)
-      |     +-- howl-text
-      |     +-- direct VT observation adapter
+      |     +-- howl-render
+      |           +-- howl-text
+      |           +-- direct VT observation adapter
       |
       +-- howl-vk
       +-- howl-wayland
@@ -23,9 +22,9 @@ The command line has one route:
     howl-host FONT [--fallback FONT ...]
 
 The Host creates one in-process Instance. Input directly services its PTY/VT
-lifetime and submits typed Instance input. Render borrows the canonical
+lifetime and submits typed Instance input. Instance-owned Render borrows the canonical
 Terminal.Observation only while projecting one frame, then releases the borrow
-before Vulkan/DRM or compositor waits. Geometry is an explicit direct Instance
+before immutable frames reach the embedder-owned Vulkan/DRM backend or compositor waits. Geometry is an explicit direct Instance
 mutation. History is projected directly from canonical VT state.
 
 There is deliberately no howl-client, client transport, HWLS, server-client,
@@ -42,7 +41,7 @@ color-bitmap emoji fonts.
 Current foundation:
 
 - one Wayland window owner;
-- one in-process Instance owning one PTY and canonical VT;
+- one in-process Instance owning one PTY, canonical VT and Render;
 - one dedicated Input owner that services PTY/VT progress independently of
   presentation;
 - synchronized-output publication with bounded timeout and lifecycle wakeups;

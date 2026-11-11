@@ -88,38 +88,18 @@ pub const Owner = struct {
     write_pending: bool = false,
     animation_wait_ms: ?u32 = null,
     publication: Publication,
-    font: ?presentation.FontPaths = null,
+    font: presentation.FontPaths,
     history: scrollback.State = .{},
 
-    /// Creates the local Instance worker and bounded publication/wake resources.
+    /// Creates one Instance and publishes its initial immutable frame.
     pub fn init(
-        allocator: std.mem.Allocator,
-        inherited_environment: std.process.Environ,
-        launch: instance.Launch,
-    ) !Owner {
-        const value = try instance.init(allocator, inherited_environment, launch);
-        errdefer instance.deinit(value);
-        const descriptor = try instance.descriptor(value);
-        const initial_revision = instance.terminal(value).semanticSequence();
-        const publication_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-        if (publication_fd < 0) return error.Signal;
-        return .{
-            .value = value,
-            .descriptor = descriptor,
-            .publication_fd = publication_fd,
-            .publication = .{ .revision = initial_revision },
-        };
-    }
-
-    /// Creates one presented Instance and publishes its initial immutable frame.
-    pub fn initPresented(
         allocator: std.mem.Allocator,
         inherited_environment: std.process.Environ,
         launch: instance.Launch,
         font: presentation.FontPaths,
         font_pixels: u16,
     ) !Owner {
-        const value = try instance.initPresented(
+        const value = try instance.init(
             allocator,
             inherited_environment,
             launch,
@@ -199,7 +179,6 @@ pub const Owner = struct {
         self.write_pending = serviced.write_pending;
         self.animation_wait_ms = serviced.animation_wait_ms;
         if ((publish or lifecycle_changed) and
-            instance.presented(self.value) and
             !self.history.active())
         {
             try instance.publishRender(self.value);
@@ -213,8 +192,8 @@ pub const Owner = struct {
         return self.publication_fd;
     }
 
-    /// Borrows the backend-only Render exchange from a presented local Instance.
-    pub fn renderExchange(self: *const Owner) error{PresentationUnavailable}!*instance.RenderExchange {
+    /// Borrows the backend-only Render exchange from the local Instance.
+    pub fn renderExchange(self: *const Owner) *instance.RenderExchange {
         return instance.renderExchange(self.value);
     }
 
@@ -225,10 +204,9 @@ pub const Owner = struct {
         width: u16,
         height: u16,
     ) !instance.PresentationGeometry {
-        const font = self.font orelse return error.PresentationUnavailable;
         const geometry = try instance.reconfigurePresentationSurface(
             self.value,
-            presentation.config(font, font_pixels),
+            presentation.config(self.font, font_pixels),
             .{ .width = width, .height = height },
         );
         self.history.reset();
@@ -256,9 +234,7 @@ pub const Owner = struct {
         try instance.resize(self.value, rows, columns);
         self.history.reset();
         self.publication.revision = instance.terminal(self.value).semanticSequence();
-        if (instance.presented(self.value)) {
-            try instance.publishRender(self.value);
-        }
+        try instance.publishRender(self.value);
         signal(self.publication_fd);
         return .{
             .cell_size = .{
@@ -273,8 +249,7 @@ pub const Owner = struct {
     /// Applies one wheel history delta on the terminal thread and publishes that cut.
     pub fn scrollHistory(self: *Owner, amount: i16) !bool {
         if (amount == 0) return false;
-        if (!instance.presented(self.value) or self.presentationHeld())
-            return false;
+        if (self.presentationHeld()) return false;
         const observation = instance.terminal(self.value);
         const live = observation.semanticView(0);
         var candidate = self.history;
@@ -383,7 +358,7 @@ test "local terminal owner serializes service input and observation without an e
         .rows = 4,
         .columns = 20,
         .history_rows = 16,
-    });
+    }, .{ .primary = @import("test_fonts").primary_font }, presentation.base_font_pixels);
     defer owner.deinit();
 
     var attempts: u16 = 0;
@@ -508,7 +483,7 @@ test "local owner yields a released cut before renewing synchronized timeout pro
         .rows = 2,
         .columns = 8,
         .history_rows = 8,
-    });
+    }, .{ .primary = @import("test_fonts").primary_font }, presentation.base_font_pixels);
     defer owner.deinit();
     try std.testing.expect((try testServiceCut(&owner, "FIRST", 10)).changed);
     try std.testing.expect(owner.publication.synchronized_pending);
@@ -550,7 +525,7 @@ test "local owner new pending frame gets a fresh deadline but repeated begin doe
         .rows = 2,
         .columns = 8,
         .history_rows = 8,
-    });
+    }, .{ .primary = @import("test_fonts").primary_font }, presentation.base_font_pixels);
     defer owner.deinit();
     try std.testing.expect((try testServiceCut(&owner, "FIRST", 10)).changed);
     const old = owner.publication.revision;

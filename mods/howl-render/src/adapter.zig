@@ -35,6 +35,10 @@ pub fn planImageBindings(
 }
 
 /// Projects one synchronous compile-time source snapshot through the canonical Renderer.
+/// Incremental adapters supply revision-relative changedRows/changedRowsBaseRevision
+/// and rowShift. Alternatively, rowGeneration plus a process-unique occurrenceIdentity
+/// let Render own position-relative row comparisons (without scroll translation). Occurrence IDs must never alias across sources or
+/// reconstructed lifetimes; neither mode retains source pointers.
 pub fn updateSource(
     comptime Source: type,
     owner: *renderer.Renderer,

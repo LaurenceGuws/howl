@@ -69,6 +69,19 @@ const SgrStackEntry = struct {
     selection: u16 = 0,
 };
 
+// Each constructed owner has a distinct lifetime, including address reuse.
+var next_occurrence_identity: std.atomic.Value(u64) = .init(1);
+
+fn allocateOccurrenceIdentity() u64 {
+    var value = next_occurrence_identity.load(.monotonic);
+    while (true) {
+        // zig-audit: acknowledge panic
+        // reason: Lifetime identities never wrap or alias; exhaustion is an unrecoverable invariant breach, matching semantic identities.
+        if (value == std.math.maxInt(u64)) @panic("terminal occurrence identity exhausted");
+        value = next_occurrence_identity.cmpxchgWeak(value, value + 1, .monotonic, .monotonic) orelse return value;
+    }
+}
+
 fn advanceIdentity(value: *u64) void {
     // zig-audit: acknowledge panic
     // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
@@ -6028,6 +6041,11 @@ pub const Terminal = struct {
             return self.terminal().reportKeyUp();
         }
 
+        /// Identifies this constructed terminal lifetime independently of storage address.
+        pub fn occurrenceIdentity(self: *const Observation) u64 {
+            return self.terminal().occurrence_identity;
+        }
+
         /// Copies the canonical semantic mutation identity.
         pub fn semanticSequence(self: *const Observation) u64 {
             return self.terminal().semanticSequence();
@@ -6191,6 +6209,7 @@ pub const Terminal = struct {
     // Cursor savepoints and lifecycle identity.
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
+    occurrence_identity: u64,
     semantic_sequence: u64 = 1,
     content_sequence: u64 = 1,
     resize_prepared: bool = false,
@@ -6213,6 +6232,7 @@ pub const Terminal = struct {
         alt_state: Screen,
     ) void {
         terminal.* = .{
+            .occurrence_identity = allocateOccurrenceIdentity(),
             .allocator = allocator,
             .stream_state = stream_state,
             .screen_state = ScreenSet.init(state, alt_state),
@@ -11457,4 +11477,19 @@ test "configured cursor defaults preserve overrides across screens and reset wit
     // reason: RIS preserves the configured default on the previously inactive bank too.
     _ = try terminal.feed("\x1b[?47h");
     try std.testing.expectEqual(.underline, terminal.semanticView(0).cursor_shape);
+}
+
+test "terminal occurrence identity survives mutations and rejects storage reuse" {
+    var terminal: Terminal = undefined;
+    var prior: u64 = 0;
+    for (0..2) |_| {
+        try Terminal.initWithHistoryInto(&terminal, std.testing.allocator, 3, 8, 4);
+        defer terminal.deinit();
+        const identity = terminal.observation().occurrenceIdentity();
+        try std.testing.expect(identity != 0 and identity != prior);
+        prior = identity;
+        try std.testing.expect((try terminal.feed("before\x1b[?1049hafter")).stateChanged());
+        try terminal.resize(4, 12);
+        try std.testing.expectEqual(identity, terminal.observation().occurrenceIdentity());
+    }
 }

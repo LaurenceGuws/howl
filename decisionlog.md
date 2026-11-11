@@ -20,3 +20,15 @@ local Instance depend on Server or Session merely to host a terminal.
 See [Howl Sessions decisions](https://github.com/LaurenceGuws/howl-sessions/blob/main/decisionlog.md) for the product
 promotion and fresh Flutter host rationale. Neither promotion means that all
 features are complete or production-qualified.
+
+## One Instance composition path
+
+Recorded 11 November 2026 from Captain's instruction:
+
+> instance has only 1 accepted path that includes pty-tv-render-embedder's gpu and nothing else.
+
+Captain clarified that this applies to the Instance module and Howl's docs,
+with Session work deferred. Instance composes PTY, VT and Render; the embedder
+owns the GPU backend, UI, window and platform lifecycle. VT and PTY remain
+independently usable. Remove alternate Instance construction paths first, then
+remove duplicate bookkeeping and compare performance for regressions.

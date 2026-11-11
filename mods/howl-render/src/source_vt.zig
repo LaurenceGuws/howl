@@ -17,8 +17,7 @@ pub const Source = struct {
         colors: VT.Presentation,
         images: VT.Images,
         revision: u64 = 0,
-        changed_rows_base_revision: ?u64 = null,
-        changed_rows: ?[]const bool = null,
+        occurrence: u64 = 0,
     };
 
     /// Borrows a live row once per projection pass; history uses copied-cell fallback.
@@ -33,7 +32,7 @@ pub const Source = struct {
     pub const PresentationColor = VT.Rgb;
     /// Borrows one coherent canonical image/placement observation.
     pub const Graphics = VT.Images;
-    /// A synchronous owner may supply repairs from its non-consuming row identities.
+    /// Render owns reuse decisions over non-consuming canonical row identities.
     pub const supports_incremental = true;
 
     /// Returns the canonical content identity captured for these repairs.
@@ -51,14 +50,14 @@ pub const Source = struct {
         return snapshot.view.is_alternate_screen;
     }
 
-    /// Returns the last complete source revision described by the repair hint.
-    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
-        return snapshot.changed_rows_base_revision;
+    /// Copies terminal lifetime identity; no canonical pointer is retained.
+    pub fn occurrenceIdentity(snapshot: *const Snapshot) u64 {
+        return snapshot.occurrence;
     }
 
-    /// Borrows synchronous owner-computed row repairs, or requests full projection.
-    pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
-        return snapshot.changed_rows;
+    /// Copies one canonical row witness, including history rows.
+    pub fn rowGeneration(snapshot: *const Snapshot, row: usize) ?u64 {
+        return snapshot.view.rowGeneration(@intCast(row));
     }
 
     /// Non-consuming BG-source identity for live ordinary rows. Global reverse

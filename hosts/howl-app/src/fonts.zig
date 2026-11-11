@@ -212,7 +212,7 @@ test "desktop presentation renders the full canonical cell scalar bound" {
     }
     const command = try std.fmt.allocPrint(a, "printf '{s}\\033]0;READY\\007'; sleep 30", .{output.buffered()});
     defer a.free(command);
-    const owner = try instance.initPresented(a, std.testing.environ, .{
+    const owner = try instance.init(a, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = command,
         .rows = 4,

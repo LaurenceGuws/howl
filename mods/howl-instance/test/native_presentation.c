@@ -8,7 +8,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Linux/x86_64 version-1 presentation records, including reserved fields. */
+/* Linux/x86_64 version-2 presentation records, including reserved fields. */
 _Static_assert(sizeof(hi_font_source) == 40, "presentation layout");
 _Static_assert(_Alignof(hi_font_source) == 8, "presentation layout");
 _Static_assert(offsetof(hi_font_source, kind) == 0, "presentation layout");
@@ -32,26 +32,26 @@ _Static_assert(_Alignof(hi_cell_size) == 4, "presentation layout");
 _Static_assert(offsetof(hi_cell_size, width) == 0, "presentation layout");
 _Static_assert(offsetof(hi_cell_size, height) == 2, "presentation layout");
 _Static_assert(offsetof(hi_cell_size, reserved) == 4, "presentation layout");
-_Static_assert(sizeof(hi_presented_config) == 80, "presentation layout");
-_Static_assert(_Alignof(hi_presented_config) == 8, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, stroke_points) == 0, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, dpi_x_numerator) == 16, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, dpi_x_denominator) == 20, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, dpi_y_numerator) == 24, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, dpi_y_denominator) == 28, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, atlas_width) == 32, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, atlas_height) == 34, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, atlas_gap) == 36, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, incremental_rows) == 38, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, atlas_entries) == 40, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, command_capacity) == 48, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, command_limit) == 56, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, incremental_commands) == 64, "presentation layout");
-_Static_assert(offsetof(hi_presented_config, reserved) == 72, "presentation layout");
+_Static_assert(sizeof(hi_instance_config) == 80, "presentation layout");
+_Static_assert(_Alignof(hi_instance_config) == 8, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, stroke_points) == 0, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, dpi_x_numerator) == 16, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, dpi_x_denominator) == 20, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, dpi_y_numerator) == 24, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, dpi_y_denominator) == 28, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, atlas_width) == 32, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, atlas_height) == 34, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, atlas_gap) == 36, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, incremental_rows) == 38, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, atlas_entries) == 40, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, command_capacity) == 48, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, command_limit) == 56, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, incremental_commands) == 64, "presentation layout");
+_Static_assert(offsetof(hi_instance_config, reserved) == 72, "presentation layout");
 
 /* This process uses only installed C contracts. It owns fonts, child recipes,
  * readiness, clocks and all backend state; no Zig setup/advance callback exists. */
-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "presented C proof line %d: %s\n", __LINE__, #x); result=__LINE__; goto cleanup; } } while (0)
+#define CHECK(x) do { if (!(x)) { fprintf(stderr, "presentation C proof line %d: %s\n", __LINE__, #x); result=__LINE__; goto cleanup; } } while (0)
 static uint64_t now_ns(void) {
     struct timespec value;
     if (clock_gettime(CLOCK_MONOTONIC,&value) != 0) return 0;
@@ -101,8 +101,8 @@ static hi_presentation_config store_config(void) {
     c.shaped_capacity=1024; c.raster_bytes=64*1024;
     return c;
 }
-static hi_presented_config presented_config(void) {
-    hi_presented_config c={0};
+static hi_instance_config instance_config(void) {
+    hi_instance_config c={0};
     c.stroke_points[0]=0.001f; c.stroke_points[1]=1;
     c.stroke_points[2]=1.5f; c.stroke_points[3]=2;
     c.dpi_x_numerator=96; c.dpi_x_denominator=1;
@@ -127,13 +127,13 @@ static int exercise(const char *font_path, int memory) {
     hi_frame_info first={0}, next={0};
     hi_cell_size cell={0}, copied={0};
     hi_presentation_config sc=store_config();
-    hi_presented_config pc=presented_config();
+    hi_instance_config pc=instance_config();
     const char shell[]="/bin/sh", environment[]="PATH=/usr/bin:/bin";
     const char recipe_a[]="stty -echo; printf READY-A; while IFS= read -r line; do printf '\\r\\n\\033[1;3mA:%s\\033[0m\\r\\n' \"$line\"; done";
     const char recipe_b[]="stty -echo; printf READY-B; while IFS= read -r line; do printf '\\r\\n\\033[3mB:%s\\033[0m\\r\\n' \"$line\"; done";
     hi_bytes env={(const uint8_t *)environment,sizeof(environment)-1};
     hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},
-        {(const uint8_t *)recipe_a,sizeof(recipe_a)-1},{NULL,0},&env,1,4,32,8,0,0,0};
+        {(const uint8_t *)recipe_a,sizeof(recipe_a)-1},{NULL,0},&env,1,4,32,8,0};
     CHECK(now_ns() != 0);
     if (memory) {
         file=fopen(font_path,"rb"); CHECK(file);
@@ -175,20 +175,24 @@ static int exercise(const char *font_path, int memory) {
         !cell.width && !cell.height && !cell.reserved);
     CHECK(hi_presentation_cell_size(store,&cell) == HI_OK && cell.width && cell.height && !cell.reserved);
     copied=cell;
-    CHECK(hi_create_presented(99,&launch,store,&pc,&a) == HI_VERSION_MISMATCH && !a);
-    hi_launch bad_launch=launch; bad_launch.cell_width=cell.width;
-    CHECK(hi_create_presented(HI_ABI_VERSION,&bad_launch,store,&pc,&a) == HI_INVALID_ARGUMENT && !a);
-    hi_presented_config bad_pc=pc; bad_pc.command_limit=0;
-    CHECK(hi_create_presented(HI_ABI_VERSION,&launch,store,&bad_pc,&a) == HI_INVALID_ARGUMENT && !a);
+    CHECK(hi_create(1,&launch,store,&pc,&a) == HI_VERSION_MISMATCH && !a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,NULL,&pc,&a) == HI_INVALID_ARGUMENT && !a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,NULL,&a) == HI_INVALID_ARGUMENT && !a);
+    CHECK(hi_create(HI_ABI_VERSION,NULL,store,&pc,&a) == HI_INVALID_ARGUMENT && !a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&pc,NULL) == HI_INVALID_ARGUMENT && !a);
+    hi_launch bad_launch=launch; bad_launch.reserved=1;
+    CHECK(hi_create(HI_ABI_VERSION,&bad_launch,store,&pc,&a) == HI_INVALID_ARGUMENT && !a);
+    hi_instance_config bad_pc=pc; bad_pc.command_limit=0;
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&bad_pc,&a) == HI_INVALID_ARGUMENT && !a);
     bad_pc=pc; bad_pc.incremental_commands=0;
-    CHECK(hi_create_presented(HI_ABI_VERSION,&launch,store,&bad_pc,&a) == HI_INVALID_ARGUMENT && !a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&bad_pc,&a) == HI_INVALID_ARGUMENT && !a);
     bad_pc=pc; bad_pc.atlas_width=65535; bad_pc.atlas_height=65535;
-    CHECK(hi_create_presented(HI_ABI_VERSION,&launch,store,&bad_pc,&a) == HI_RESOURCE_LIMIT && !a);
-    CHECK(hi_create_presented(HI_ABI_VERSION,&launch,store,&pc,&a) == HI_OK && a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&bad_pc,&a) == HI_RESOURCE_LIMIT && !a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&pc,&a) == HI_OK && a);
     hi_instance *saved_a=a;
-    CHECK(hi_create_presented(HI_ABI_VERSION,&launch,store,&pc,&a) == HI_INVALID_ARGUMENT && a == saved_a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&pc,&a) == HI_INVALID_ARGUMENT && a == saved_a);
     launch.command=(hi_bytes){(const uint8_t *)recipe_b,sizeof(recipe_b)-1};
-    CHECK(hi_create_presented(HI_ABI_VERSION,&launch,store,&pc,&b) == HI_OK && b && b != a);
+    CHECK(hi_create(HI_ABI_VERSION,&launch,store,&pc,&b) == HI_OK && b && b != a);
     CHECK(hi_presentation_release(&store) == HI_OK && !store);
     CHECK(hi_presentation_release(&store) == HI_OK);
     CHECK(copied.width == cell.width && copied.height == cell.height);

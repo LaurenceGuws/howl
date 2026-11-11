@@ -1,5 +1,5 @@
 schema: 1
-version: 0.1.9-dev
+version: 0.1.10-dev
 
 objective: >-
   Keep independent terminal semantics, process transport, local Instance, Text and
@@ -9,24 +9,24 @@ objective: >-
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
   pty: caller-polled platform process-terminal ownership with Linux PTY and Windows ConPTY child-process lifecycle
-  instance: opaque owner of one platform process-terminal transport and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
+  instance: opaque owner of one required platform process-terminal/VT/Render composition with bounded ordered I/O, font-derived geometry, explicit resize, signals, child observation, and retained/discard consequence handling
   text: tracked bounded native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and natural alpha rasterization
 
 invariants:
-  - one local Instance has one authoritative PTY and VT
+  - one local Instance has one authoritative PTY, VT and Render; its sole path ends at the embedder's GPU backend
   - observers cannot mutate VT directly and cannot pace Instance progress
   - attaching an observer never changes canonical geometry
   - text shaping and rasterization expose no renderer, window, Instance, Session, Server, or client authority
-  - renderer and platform code are not core dependencies
+  - Render is required by Instance; GPU backend, UI, window and platform lifecycle remain embedder-owned; VT and PTY remain independently usable
   - VT owns terminal animation state and Instance owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
-  - canonical graphics identity/resource generations cross an Instance interaction boundary; renderer/backend residency does not
+  - canonical graphics identity/resource generations cross an Instance interaction boundary; backend residency remains presentation state
   - projected history plus the visible screen are the complete future-reflow cell authority; evicted rows never return
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
   - keep the basic native cursor path independently qualified: content reuse, clipped glyph recoloring, complete immutable publications and visible-pane pixel composition, with CPU and memory tradeoffs measured separately
   - qualify the smallest direct Zig SDL howl-app without Server, endpoint, transport or attachment/detach machinery
-  - pressure the shortest native path through howl-host: one in-process Instance, direct canonical VT observation, text/render and Vulkan/Wayland with no transported client or Server route
+  - pressure the shortest native path through howl-host: one in-process PTY/VT/Render Instance and an embedder-owned Vulkan/Wayland backend with no transported client or Server route
   - keep the old Flutter native/Dart/iOS tree as explicitly inactive engineering evidence, outside check/test/release contracts
 
 deferred:

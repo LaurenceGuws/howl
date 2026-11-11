@@ -140,7 +140,7 @@ python3 - <<'PYINSTANCEABI'
 from pathlib import Path
 import re
 base = Path("mods/howl-instance/src").resolve()
-roots = ["instance.zig", "headless.zig", "runtime.zig", "native.zig", "native_frames.zig"]
+roots = ["instance.zig", "native.zig", "native_frames.zig"]
 seen = set()
 def visit(path):
     path = path.resolve()

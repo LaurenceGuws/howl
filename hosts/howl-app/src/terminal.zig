@@ -233,9 +233,9 @@ const State = struct {
     ) !*State {
         const self = try allocator.create(State);
         errdefer allocator.destroy(self);
-        const value = try instance.initPresented(allocator, environ, launch, presentation);
+        const value = try instance.init(allocator, environ, launch, presentation);
         errdefer instance.deinit(value);
-        const exchange = try instance.renderExchange(value);
+        const exchange = instance.renderExchange(value);
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (fd < 0) return error.WakeFailed;
         errdefer closeWake(fd);

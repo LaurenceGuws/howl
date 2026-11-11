@@ -7,7 +7,7 @@ pub const vt = @import("howl_vt_native");
 pub const c = @import("instance_native_types");
 /// Validation and canonical ordered-input failures used by C and Zig host adapters.
 pub const InputError = instance.InputError || vt.Error;
-/// Exact local composition; never interchangeable with a headless handle.
+/// Exact local PTY, VT and Render composition.
 pub const Instance = instance.Instance;
 
 /// Converts fixed native process-group signal tags without host or queue policy.

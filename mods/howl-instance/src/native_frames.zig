@@ -17,7 +17,7 @@ const State = struct {
     lease: ?instance.RenderLease = null,
 };
 /// Bounded allocation and single-backend admission failures.
-pub const OpenError = std.mem.Allocator.Error || error{ PresentationUnavailable, PublicationBorrowed };
+pub const OpenError = std.mem.Allocator.Error || error{PublicationBorrowed};
 /// Explicit backend release outcomes; invalid/busy feedback leaves the lease live.
 pub const ReleaseError = error{ NoPendingFrame, InvalidResidency, FeedbackBusy };
 

@@ -27,13 +27,13 @@ static int text_has(hi_instance *instance, const char *needle) {
     return strstr(text, needle) != NULL;
 }
 /* Foreign retained request proof. Policy, clock, poll and child recipe are caller-owned. */
-static int retained_requests(void) {
+static int retained_requests(hi_presentation *store, const hi_instance_config *config) {
     hi_instance *owner=NULL;
     const char shell[]="/bin/sh", env_text[]="PATH=/usr/bin:/bin";
     const char command[]="stty -echo -icanon min 1 time 0; printf '\033]52;c;?\007'; dd bs=1 count=9 status=none | od -An -tx1; exit 0";
     hi_bytes environment={(const uint8_t *)env_text,sizeof(env_text)-1};
-    hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},{(const uint8_t *)command,sizeof(command)-1},{NULL,0},&environment,1,4,80,16,0,10,20};
-    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner) == HI_OK);
+    hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},{(const uint8_t *)command,sizeof(command)-1},{NULL,0},&environment,1,4,80,16,0};
+    REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&owner) == HI_OK);
     hi_service state;
     REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,0,0,now_ns(),&state) == HI_OK);
     hvt_request first={0};
@@ -82,7 +82,7 @@ static int retained_requests(void) {
 }
 /* Reader references cross the two exact module artifacts; they neither keep the
  * process alive nor make Instance destruction busy. */
-static int observation_lifetime(void) {
+static int observation_lifetime(hi_presentation *store, const hi_instance_config *config) {
     int result=1;
     hi_instance *owner=NULL,*fresh=NULL;
     hvt_observation *reader=NULL,*peer=NULL,*next=NULL;
@@ -91,12 +91,12 @@ static int observation_lifetime(void) {
     const char shell[]="/bin/sh", command[]="exec sleep 30", env[]="PATH=/usr/bin:/bin";
     const hi_bytes environment={(const uint8_t *)env,sizeof(env)-1};
     const hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},
-        {(const uint8_t *)command,sizeof(command)-1},{NULL,0},&environment,1,2,8,0,0,8,16};
+        {(const uint8_t *)command,sizeof(command)-1},{NULL,0},&environment,1,2,8,0,0};
     hvt_interaction before={0},after={0};
 #define SOURCE_REQUIRE(x) do { if (!(x)) { fprintf(stderr,"source C proof line %d: %s\n",__LINE__,#x); goto cleanup; } } while (0)
     SOURCE_REQUIRE(hi_observation_open(0,NULL,&reader)==HI_VERSION_MISMATCH && !reader);
     SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,NULL,&reader)==HI_INVALID_ARGUMENT && !reader);
-    SOURCE_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner)==HI_OK && owner);
+    SOURCE_REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&owner)==HI_OK && owner);
     SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,NULL)==HI_INVALID_ARGUMENT);
     SOURCE_REQUIRE(hi_interaction(owner,&before)==HI_OK);
     SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&reader)==HI_OK && reader);
@@ -113,7 +113,7 @@ static int observation_lifetime(void) {
     SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&extra[count])==HI_OK && extra[count]==reader);
     ++count;
     SOURCE_REQUIRE(hi_destroy(&owner)==HI_OK && !owner);
-    SOURCE_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&fresh)==HI_OK && fresh);
+    SOURCE_REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&fresh)==HI_OK && fresh);
     SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,fresh,&next)==HI_OK && next && next!=reader);
     SOURCE_REQUIRE(hi_destroy(&fresh)==HI_OK && !fresh);
     result=0;
@@ -131,13 +131,13 @@ cleanup:
 extern int howl_instance_cpp_header(void);
 
 /* Actual process bytes reach the same VT-owned copied graphics helper. */
-static int copied_graphics(void) {
+static int copied_graphics(hi_presentation *store, const hi_instance_config *config, hi_cell_size cell) {
     int result=1;
     hi_instance *owner=NULL;
     const char shell[]="/bin/sh", env[]="PATH=/usr/bin:/bin";
     const char command[]="printf '\\033_Ga=T,f=32,s=1,v=1,i=7,C=1,q=2;AQIDBA==\\033\\\\'; exec sleep 30";
     const hi_bytes environment={(const uint8_t *)env,sizeof env-1};
-    const hi_launch launch={{(const uint8_t *)shell,sizeof shell-1},{(const uint8_t *)command,sizeof command-1},{NULL,0},&environment,1,2,8,0,0,8,16};
+    const hi_launch launch={{(const uint8_t *)shell,sizeof shell-1},{(const uint8_t *)command,sizeof command-1},{NULL,0},&environment,1,2,8,0,0};
     hvt_image images[2];
     hvt_image_placement placements[2];
     hvt_graphics manifest={0},zero={0};
@@ -147,7 +147,7 @@ static int copied_graphics(void) {
 #define GRAPHICS_REQUIRE(x) do { if (!(x)) { fprintf(stderr,"Instance graphics proof line %d: %s\n",__LINE__,#x); goto cleanup; } } while (0)
     GRAPHICS_REQUIRE(hi_copy_graphics(NULL,0,NULL,0,NULL,0,&manifest)==HI_INVALID_ARGUMENT && memcmp(&manifest,&zero,sizeof zero)==0);
     GRAPHICS_REQUIRE(hi_copy_image_pixels(NULL,0,1,1,pixels,sizeof pixels,&required)==HI_INVALID_ARGUMENT && required==0);
-    GRAPHICS_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner)==HI_OK);
+    GRAPHICS_REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&owner)==HI_OK);
     GRAPHICS_REQUIRE(hi_service_turn(owner,0,0,now_ns(),&state)==HI_OK);
     const uint64_t deadline=now_ns()+UINT64_C(5000000000);
     do {
@@ -157,7 +157,7 @@ static int copied_graphics(void) {
         GRAPHICS_REQUIRE(hi_service_turn(owner,(fd.revents & (POLLIN|POLLHUP))!=0,(fd.revents & POLLOUT)!=0,now_ns(),&state)==HI_OK);
         GRAPHICS_REQUIRE(hi_copy_graphics(owner,0,images,2,placements,2,&manifest)==HI_OK);
     } while (!manifest.image_count && now_ns()<deadline);
-    GRAPHICS_REQUIRE(manifest.image_count==1 && manifest.placement_count==1 && manifest.cell_width==8 && manifest.cell_height==16);
+    GRAPHICS_REQUIRE(manifest.image_count==1 && manifest.placement_count==1 && manifest.cell_width==cell.width && manifest.cell_height==cell.height);
     GRAPHICS_REQUIRE(images[0].byte_count==4 && placements[0].image_id==images[0].image_id);
     GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,3,&required)==HI_BUFFER_TOO_SMALL && required==4 && pixels[0]==0xa5);
     GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,sizeof pixels,&required)==HI_OK && required==4 && memcmp(pixels,"\1\2\3\4",4)==0 && pixels[4]==0xa5);
@@ -176,8 +176,8 @@ cleanup:
 
 
 /* Result owns only copied output; the exact VT companion reads/releases it after
- * the Instance process owner is gone. No frame or presentation owner is used. */
-static int copied_output(void) {
+ * the Instance process owner is gone. No frame lease is used. */
+static int copied_output(hi_presentation *store, const hi_instance_config *config) {
     int result=1;
     hi_instance *owner=NULL;
     hvt_output *snapshot=NULL;
@@ -185,12 +185,12 @@ static int copied_output(void) {
     const char shell[]="/bin/sh",env[]="PATH=/usr/bin:/bin";
     const char command[]="printf 'one\\r\\ntwo\\r\\nopen'; exec sleep 30";
     const hi_bytes environment={(const uint8_t *)env,sizeof env-1};
-    const hi_launch launch={{(const uint8_t *)shell,sizeof shell-1},{(const uint8_t *)command,sizeof command-1},{NULL,0},&environment,1,2,8,4,0,8,16};
+    const hi_launch launch={{(const uint8_t *)shell,sizeof shell-1},{(const uint8_t *)command,sizeof command-1},{NULL,0},&environment,1,2,8,4,0};
     hi_service state={0};
 #define OUTPUT_REQUIRE(x) do { if (!(x)) { fprintf(stderr,"Instance output proof line %d: %s\n",__LINE__,#x); goto cleanup; } } while (0)
     OUTPUT_REQUIRE(hi_output_open(0,NULL,0,0,0,NULL)==HI_VERSION_MISMATCH);
     OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,NULL,0,1,1,&snapshot)==HI_INVALID_ARGUMENT && !snapshot);
-    OUTPUT_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner)==HI_OK);
+    OUTPUT_REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&owner)==HI_OK);
     OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,0,1,&snapshot)==HI_INVALID_ARGUMENT && !snapshot);
     OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,1,HVT_MAX_COPY_BYTES+1u,&snapshot)==HI_INVALID_ARGUMENT && !snapshot);
     OUTPUT_REQUIRE(hi_service_turn(owner,0,0,now_ns(),&state)==HI_OK);
@@ -221,12 +221,12 @@ cleanup:
     return result;
 }
 
-int main(void) {
+static int lifecycle(hi_presentation *store, const hi_instance_config *config, hi_cell_size cell) {
     REQUIRE(howl_instance_cpp_header() == 0);
-    REQUIRE(observation_lifetime() == 0);
-    REQUIRE(retained_requests() == 0);
-    REQUIRE(copied_graphics() == 0);
-    REQUIRE(copied_output() == 0);
+    REQUIRE(observation_lifetime(store,config) == 0);
+    REQUIRE(retained_requests(store,config) == 0);
+    REQUIRE(copied_graphics(store,config,cell) == 0);
+    REQUIRE(copied_output(store,config) == 0);
     hi_instance *instance = NULL;
     char shell[] = "/bin/sh";
     const char command[] = "stty -echo; printf READY; IFS= read -r line; printf '\r\nREPLY:%s:%s:%s:%s' \"$line\" \"$ABI_TEST\" \"$TERM\" \"$COLORTERM\"; exit 7";
@@ -236,32 +236,32 @@ int main(void) {
     hi_launch launch = {
         {(const uint8_t *)shell,sizeof(shell)-1},
         {(const uint8_t *)command,sizeof(command)-1}, {NULL,0},
-        env,4,4,80,16,0,10,20
+        env,4,4,80,16,0
     };
     REQUIRE(hi_abi_version() == HI_ABI_VERSION);
-    REQUIRE(hi_create(99, &launch, &instance) == HI_VERSION_MISMATCH && instance == NULL);
+    REQUIRE(hi_create(99,&launch,store,config,&instance) == HI_VERSION_MISMATCH && instance == NULL);
     hi_launch bad = launch; bad.reserved = 1;
-    REQUIRE(hi_create(HI_ABI_VERSION,&bad,&instance) == HI_INVALID_ARGUMENT && instance == NULL);
+    REQUIRE(hi_create(HI_ABI_VERSION,&bad,store,config,&instance) == HI_INVALID_ARGUMENT && instance == NULL);
     hi_bytes duplicates[] = {env[1],env[1]}; bad = launch; bad.environment=duplicates; bad.environment_count=2;
-    REQUIRE(hi_create(HI_ABI_VERSION,&bad,&instance) == HI_INVALID_ARGUMENT && instance == NULL);
+    REQUIRE(hi_create(HI_ABI_VERSION,&bad,store,config,&instance) == HI_INVALID_ARGUMENT && instance == NULL);
     bad = launch; bad.environment_count=1025;
-    REQUIRE(hi_create(HI_ABI_VERSION,&bad,&instance) == HI_RESOURCE_LIMIT && instance == NULL);
+    REQUIRE(hi_create(HI_ABI_VERSION,&bad,store,config,&instance) == HI_RESOURCE_LIMIT && instance == NULL);
     const uint8_t invalid_name[] = "=bad";
     const uint8_t no_equals[] = "BAD";
     const uint8_t embedded_nul[] = {'A','=','x',0,'y'};
     hi_bytes malformed[] = {{invalid_name,sizeof(invalid_name)-1},{no_equals,sizeof(no_equals)-1},{embedded_nul,sizeof(embedded_nul)}};
     for (size_t n=0;n<3;++n) {
         bad = launch; bad.environment=&malformed[n]; bad.environment_count=1;
-        REQUIRE(hi_create(HI_ABI_VERSION,&bad,&instance) == HI_INVALID_ARGUMENT && instance == NULL);
+        REQUIRE(hi_create(HI_ABI_VERSION,&bad,store,config,&instance) == HI_INVALID_ARGUMENT && instance == NULL);
     }
     uint8_t *large = malloc(1024 * 1024);
     REQUIRE(large != NULL);
     memset(large,'a',1024 * 1024); large[0]='A'; large[1]='=';
     hi_bytes excessive = {large,1024 * 1024 - 1};
     bad = launch; bad.environment=&excessive; bad.environment_count=1;
-    REQUIRE(hi_create(HI_ABI_VERSION,&bad,&instance) == HI_RESOURCE_LIMIT && instance == NULL);
+    REQUIRE(hi_create(HI_ABI_VERSION,&bad,store,config,&instance) == HI_RESOURCE_LIMIT && instance == NULL);
     free(large);
-    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&instance) == HI_OK && instance != NULL);
+    REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&instance) == HI_OK && instance != NULL);
     env1[9] = 'X'; shell[1] = 'X';
     REQUIRE(hi_send_named_key(instance,0,HVT_PRESS,0) == HI_INVALID_ARGUMENT);
     REQUIRE(hi_send_unicode_key(instance,0xd800,HVT_PRESS,0) == HI_INVALID_ARGUMENT);
@@ -338,7 +338,7 @@ int main(void) {
     const char occupancy[] = "printf '\033]8;;https://example.invalid/x\007\347\225\214\033]8;;\007\033[2;1H\033]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\007\033[?1003h\033[?1016h\033[?1004h\033[?1007h'; exit 0";
     launch.command.data = (const uint8_t *)occupancy;
     launch.command.len = sizeof(occupancy)-1;
-    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&instance) == HI_OK);
+    REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&instance) == HI_OK);
     uint64_t occupancy_deadline = now_ns() + UINT64_C(5000000000);
     do {
         REQUIRE(hi_service_turn(instance,1,1,now_ns(),&state) == HI_OK);
@@ -370,7 +370,7 @@ int main(void) {
     const char tall_wrap[] = "printf '\033]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\007abcde'; exit 0";
     launch.command.data=(const uint8_t *)tall_wrap; launch.command.len=sizeof(tall_wrap)-1;
     launch.rows=2; launch.columns=8; launch.history_rows=0;
-    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&instance) == HI_OK);
+    REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&instance) == HI_OK);
     uint64_t wrap_deadline=now_ns()+UINT64_C(5000000000);
     do {
         REQUIRE(hi_service_turn(instance,1,1,now_ns(),&state) == HI_OK);
@@ -389,4 +389,28 @@ int main(void) {
     REQUIRE(selected_len == 7 && memcmp(selected,"Hiabcde",7) == 0);
     REQUIRE(hi_destroy(&instance) == HI_OK);
     return 0;
+}
+
+/* One explicit font fixture is shared by every real lifecycle proof. */
+int main(int argc, char **argv) {
+    if (argc != 2) return 1;
+    hi_presentation_config fonts={0};
+    fonts.fonts[HI_FONT_REGULAR].kind=HI_FONT_PATH;
+    fonts.fonts[HI_FONT_REGULAR].primary=(hi_bytes){(const uint8_t *)argv[1],strlen(argv[1])};
+    fonts.pixel_size=18; fonts.max_sequence_scalars=16;
+    fonts.shape_entries=256; fonts.shape_scalars=1024; fonts.shape_glyphs=1024;
+    fonts.shaped_capacity=1024; fonts.raster_bytes=64*1024;
+    hi_instance_config config={0};
+    config.stroke_points[0]=0.001f; config.stroke_points[1]=1;
+    config.stroke_points[2]=1.5f; config.stroke_points[3]=2;
+    config.dpi_x_numerator=96; config.dpi_x_denominator=1;
+    config.dpi_y_numerator=96; config.dpi_y_denominator=1;
+    config.atlas_width=256; config.atlas_height=256; config.atlas_gap=1;
+    config.atlas_entries=256; config.command_capacity=2048; config.command_limit=4096;
+    hi_presentation *store=NULL;
+    if (hi_presentation_create(HI_ABI_VERSION,&fonts,&store)!=HI_OK) return 1;
+    hi_cell_size cell={0};
+    int result=hi_presentation_cell_size(store,&cell)==HI_OK ? lifecycle(store,&config,cell) : 1;
+    if (hi_presentation_release(&store)!=HI_OK || store) result=1;
+    return result;
 }

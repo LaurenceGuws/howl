@@ -26,24 +26,14 @@ fn stateConst(value: *const Owner) *const State {
     // reason: The const view preserves the matching State allocation alignment.
     return @ptrCast(@alignCast(value));
 }
-/// Stages C storage before canonical construction or any child launch.
-pub fn create(allocator: std.mem.Allocator, environ: std.process.Environ, launch: engine.Launch) engine.InitError!*Owner {
+/// Stages the C wrapper before canonical nonwaiting construction and child launch.
+pub fn create(allocator: std.mem.Allocator, environ: std.process.Environ, launch: engine.Launch, presentation: engine.PresentationConfig) engine.TryInitError!*Owner {
     const value = try allocator.create(State);
     errdefer allocator.destroy(value);
-    const instance = try engine.init(allocator, environ, launch);
+    const instance = try engine.tryInit(allocator, environ, launch, presentation);
     value.* = .{ .allocator = allocator, .instance = instance, .controller = null };
     // zig-audit: acknowledge ptr_cast
     // reason: Publish only the fully constructed matching C wrapper.
-    return @ptrCast(value);
-}
-/// Keeps the canonical nonwaiting shared-font factory and specialization unchanged.
-pub fn createPresented(allocator: std.mem.Allocator, environ: std.process.Environ, launch: engine.Launch, presentation: engine.PresentationConfig) engine.TryPresentedInitError!*Owner {
-    const value = try allocator.create(State);
-    errdefer allocator.destroy(value);
-    const instance = try engine.tryInitPresented(allocator, environ, launch, presentation);
-    value.* = .{ .allocator = allocator, .instance = instance, .controller = null };
-    // zig-audit: acknowledge ptr_cast
-    // reason: Presented and unpresented C construction publish the same complete wrapper family.
     return @ptrCast(value);
 }
 /// Private ABI entrypoints borrow the exact canonical opaque Instance.
@@ -94,17 +84,14 @@ fn testPresentation() engine.PresentationConfig {
 }
 test "C wrapper allocation precedes canonical construction" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, create(failing.allocator(), std.testing.environ, testLaunch()));
+    try std.testing.expectError(error.OutOfMemory, create(failing.allocator(), std.testing.environ, testLaunch(), testPresentation()));
     try std.testing.expect(failing.has_induced_failure and failing.allocations == 0);
-    try std.testing.expectError(error.OutOfMemory, createPresented(failing.allocator(), std.testing.environ, testLaunch(), testPresentation()));
-    try std.testing.expect(failing.allocations == 0);
 }
-test "C owner and lazy observation unwind every headless and presented allocation prefix" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, campaign, .{false});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, campaign, .{true});
+test "C owner and lazy observation unwind every allocation prefix" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, campaign, .{});
 }
-fn campaign(allocator: std.mem.Allocator, presented: bool) !void {
-    const value = if (presented) try createPresented(allocator, std.testing.environ, testLaunch(), testPresentation()) else try create(allocator, std.testing.environ, testLaunch());
+fn campaign(allocator: std.mem.Allocator) !void {
+    const value = try create(allocator, std.testing.environ, testLaunch(), testPresentation());
     var live = true;
     defer if (live) destroy(value) catch {
         // zig-audit: acknowledge panic
@@ -124,7 +111,7 @@ fn campaign(allocator: std.mem.Allocator, presented: bool) !void {
     try std.testing.expectError(error.SourceClosed, source.read(reader));
 }
 test "busy C owner destruction preserves its live observation through endpoint gaps" {
-    const value = try createPresented(std.testing.allocator, std.testing.environ, testLaunch(), testPresentation());
+    const value = try create(std.testing.allocator, std.testing.environ, testLaunch(), testPresentation());
     var live = true;
     defer if (live) destroy(value) catch {
         // zig-audit: acknowledge panic

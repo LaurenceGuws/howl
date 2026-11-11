@@ -3,17 +3,17 @@
 The package owns `howl_instance_native`, an optional static library, and
 `howl_instance_native.h`. Its header composes the VT-owned
 `howl_vt_native.h` and Render-owned `howl_render_native.h`. The artifact selects the exact local `howl_instance`
-specialization; its handles cannot be interchanged with headless or Server handles.
+composition; its handles cannot be interchanged with direct Zig or Server handles.
 Ordinary Zig callers retain the direct Instance API. The separate
 `howl_instance_native` Zig module shares native input validation with host adapters,
 without emitting the artifact's C exports into those hosts.
 
-Version 1 supplies Linux/x86_64-qualified unpresented and presented lifecycles:
+Version 2 supplies one Linux/x86_64-qualified PTY → VT → Render → embedder GPU path:
 create, ordered semantic input, canonical geometry, process-group signals,
 caller-driven bounded service, copied scalar/occupancy observation, and destroy.
-Default service uses deterministic headless policy. Explicit per-turn retained
-service, copied pending-request facts and named replies are now supported.
-The presented factory shares one explicit font/cache owner across compatible
+Default service discards consequences with deterministic query replies. Explicit
+per-turn retained service, copied pending-request facts and named replies are supported.
+The factory shares one explicit font/cache owner across compatible
 Instances. Each Instance owns its renderer and immutable publication endpoint.
 Odin uses the shared native input vocabulary and operation implementations while
 preserving its existing retained-request policy and host runtime.
@@ -21,7 +21,7 @@ preserving its existing retained-request policy and host runtime.
 ## Calling and memory
 
 One owner thread serializes operations on each live constructor-owned handle.
-A C handle comes only from `hi_create` or `hi_create_presented`; a direct Zig
+A C handle comes only from `hi_create`; a direct Zig
 Instance pointer is a different opaque family and cannot be cast into this ABI.
 An input/launch buffer need only survive its call; accepted input and launch state
 are copied by the canonical owners. A copied `hvt_cell` survives later mutation
@@ -59,8 +59,7 @@ reject silent version or scalar-capacity drift.
 ## VT source capability
 
 `hi_observation_open` returns the same VT-owned opaque Reader family as bare VT.
-It works for presented and unpresented C Instances and changes no terminal
-revision. Link the exact `howl_vt_native` companion artifact for its
+It changes no terminal revision. Link the exact `howl_vt_native` companion for its
 `hvt_observation_release` operation. Instance forwards that same child artifact;
 the repository root deduplicates repeated forwarding only when object and install
 identity both match.
@@ -78,12 +77,13 @@ destruction caused by an existing frame endpoint leaves the source capability
 live. Open, source mutation/destruction, consumer construction and capture
 serialize. Independent retained references may release concurrently.
 
-This bookkeeping lives in an optional C wrapper around the exact local Instance.
-Direct Zig owners, host helpers, the core Instance layout and its service path
-retain their existing APIs. Use composed artifacts from the same qualified build
-and keep their origin libraries loaded while handles remain live.
+This bookkeeping lives in the C wrapper around the exact local Instance.
+Direct Zig owners and host helpers use the sole core API without importing that
+wrapper. ABI 2 intentionally replaces the prior construction contract. Use
+composed artifacts from the same qualified build and keep their origin libraries
+loaded while handles remain live.
 
-## Presented construction
+## Construction
 
 `hi_presentation_create` creates one caller reference to a canonical
 `PresentationStore`. Supply regular fonts and optional italic, bold and bold-italic
@@ -110,27 +110,26 @@ command capacity are both zero or both positive. DPI is a positive normalized
 rational; strokes use Text's canonical validation. All reserved fields are zero.
 The native hard-limit rule does not change ordinary Zig's existing zero default.
 
-`hi_presentation_cell_size` returns copied regular-font metrics. Pass zero for
-both launch cell dimensions to `hi_create_presented`: the font supplies the one
-canonical PTY/VT/Render lattice. Unpresented `hi_create` still requires explicit
-nonzero dimensions. A presented resize may retain its lattice with a zero pair
-or supply exactly the matching metrics.
+`hi_presentation_cell_size` returns copied regular-font metrics. `hi_create`
+requires a presentation owner and per-Instance config; font metrics supply the
+one canonical PTY/VT/Render lattice. Launch has no independent pixel dimensions.
+Resize may retain its lattice with a zero pair or supply exactly matching metrics.
 
-Every successful presented Instance retains the canonical Store directly.
+Every successful Instance retains the canonical Store directly.
 `hi_presentation_release` drops and clears only the caller handle. It may run
 before the Instances are destroyed; their font/cache references remain live.
 Release accepts an already-null slot. Operations using a caller presentation
 handle serialize against its release. Each Instance still serializes its own
 operations, and an open frame endpoint prevents its checked destruction.
 
-`hi_create_presented` uses Core's `tryInitPresented`: it retains and tries the
+`hi_create` uses Core's `tryInit`: it retains and tries the
 shared font claim before canonical State allocation or PTY launch, and holds that claim
 through the initial projection. A busy claim releases its attempted reference and
 returns `HI_BUSY` with no child. C admission may allocate environment/wrapper
 storage before invoking that Core factory; no C-level busy-before-allocation
 priority is promised. The caller chooses when to retry. Every failure
 unlocks before releasing the Store and unwinds staged native resources; child-side
-effects from a later failure cannot be undone. Existing direct Zig `initPresented`
+effects from a later failure cannot be undone. Existing direct Zig `init`
 preserves its late waiting claim.
 
 C-created Stores use `Io.failing` under a closed operation set: construction and
@@ -155,7 +154,7 @@ its source buffers, creates two real PTYs sharing one Store, releases the caller
 reference early, supplies input and reads actual glyph commands/pixels. It checks
 immutable pixels/commands during producer progress, refusal to destroy with an
 endpoint during and between leases, and continued rendering by the final borrower.
-Core proofs inject every presented-construction allocation failure, check busy
+Core proofs inject every construction allocation failure, check busy
 admission before allocation/launch and verify the existing waiting Zig lane.
 
 ## Artifact and proof
@@ -180,16 +179,12 @@ consumer resolves the child-owned library and installed headers without private
 source imports.
 
 `zig build test:static-embedding` exercises archive composition inside an
-embedder-owned shared library. These proof shims are not installed. Both complete
-default and ReleaseSafe repository graphs pass on the exact stable build.
-The old VT-codec `NondeterministicMemoryUsage` qualifier was corrected by making
-test fault numbering independent of in-place buffer growth; the full VT Safe
-campaign now passes without production encoder changes. Other native platforms
-remain separately qualified.
+embedder-owned shared library. These proof shims are not installed. Other native
+platforms remain separately qualified.
 
 ## Presentation endpoint
 
-The producer opens one native backend endpoint on its existing presented Instance,
+The producer opens one native backend endpoint on its existing Instance,
 publishes a fresh frame, then hands the endpoint to the backend thread. Opening
 starts with empty backend residency and discards unread frames from the previous
 backend. It never transfers the live mutable Instance to that thread.
@@ -206,7 +201,7 @@ Acquire returns copied metadata for the newest complete immutable frame. Command
 and removals are copied in bulk into caller-owned arrays; insufficient capacity
 leaves those arrays untouched. Only the actual leased command extent is written,
 including when the caller supplies a larger capacity. The native contract does not
-impose a maintained host command ceiling on an explicitly larger presented
+impose a maintained host command ceiling on an explicitly larger
 Instance. Acquisition rejects any count above `UINT32_MAX` before advertising a
 frame and leaves no active lease. Upload records are copied, while their pixel spans
 borrow the frame until release, abandon or close. A later producer turn cannot
@@ -223,12 +218,12 @@ Its worker opens/publishes the endpoint and hands it to the UI under the view
 mutex. The UI copies one complete command array and borrows upload pixels. It
 returns frame credit after presentation. Instance and Render own no GUI scheduler.
 
-`zig build test:native-frames` uses a normal public presented Zig Instance and a C
+`zig build test:native-frames` uses public C construction and a C
 peer that includes only the public headers. The peer retains pixels while the
 producer advances, checks capacity/failure atomicity, exercises residency and
 backend replacement, and proves teardown refusal both during and between leases.
-C/C++ layout checks cover the copied envelope and Render-owned records. This proof
-uses Zig construction; the standalone C proof above qualifies foreign construction.
+C/C++ layout checks cover the copied envelope and Render-owned records. Both the
+Zig driver and standalone C consumer use the public C constructor.
 A second real 225×512 terminal
 proof publishes beyond the maintained host command envelope and copies its exact
 advertised extent through C; exact/insufficient/oversized capacities are checked
@@ -301,18 +296,20 @@ resource bounds and atomic head consumption. A stale or mismatched operation lea
 the request live. Accepted byte inputs are copied/serialized during the call.
 Replies do not flush or wait; the caller re-queries service facts and drives I/O.
 
-`hi_service_turn` retains its deterministic headless behavior.
-`hi_service_turn_policy` explicitly selects `HI_SERVICE_HEADLESS` or
+`hi_service_turn` retains its deterministic discard behavior.
+`hi_service_turn_policy` explicitly selects `HI_SERVICE_DISCARD` or
 `HI_SERVICE_RETAIN` for that turn. The existing bounded pressure fallback is
-preserved and reported through `retained_fallback`. Switching back to headless
+preserved and reported through `retained_fallback`. Switching back to discard
 drains pending requests on that same turn; no library authority, worker, clock or
 platform handler is introduced.
 
 Odin Local reads native facts under its terminal-worker claim and uses the shared
 named module helpers. It keeps attention, clipboard, pointer, color and window
 policy, queues, wakeups and diagnostics. Its old local Server-shaped request record
-and big-endian reply handling are retired. The private Odin runtime bundle ABI is
-17; module ABI 1 additions preserve existing native layouts and operations.
+and big-endian reply handling are retired. The private Odin runtime bundle and
+module ABI are independently versioned.
+Module ABI 2 requires presentation at construction and removes launch pixel
+dimensions and the unavailable-presentation status; no compatibility aliases remain.
 
 VT-native proofs cover every canonical request family, option/presence fields,
 payload bounds, FIFO identity and required-versus-requested replies. The foreign
@@ -330,8 +327,8 @@ filtered visible placements and strict terminal-revision guarded RGBA copies.
 The VT header defines the records and ceilings. Shortage reports required counts
 without partial array writes; other failures zero fixed outputs. Copies survive
 Instance destruction. The caller serializes service across the query sequence
-or retries after `HI_CONTEXT_CHANGED`. No presentation owner is required;
-Instance supplies only its canonical const observation. See the
+or retries after `HI_CONTEXT_CHANGED`. The query uses only the Instance's
+canonical const observation; its required renderer remains unchanged. See the
 [VT native contract](../../howl-vt/native.md#copied-graphics) for the shared rules.
 
 
@@ -339,7 +336,8 @@ Instance supplies only its canonical const observation. See the
 
 `hi_output_open` uses the VT-owned immutable logical-output result with the exact
 same cursor, text/open-line, loss, bounds and failure semantics as
-`hvt_output_open`. It needs no presentation owner. Read and release it through
+`hvt_output_open`. It copies canonical VT state without frame acquisition.
+Read and release it through
 `hvt_output_read` and `hvt_output_release` from the exact VT companion.
 The result owns its copied storage; Instance destruction stays unblocked and
 does not invalidate the result. Its spans live until result release, so end their

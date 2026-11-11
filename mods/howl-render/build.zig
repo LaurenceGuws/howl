@@ -116,6 +116,9 @@ pub fn build(b: *std.Build) void {
         renderer,
         source_semantics,
     );
+    const source_vt = b.createModule(.{ .root_source_file = b.path("src/source_vt.zig"), .target = target, .optimize = optimize });
+    source_vt.addImport("howl_vt", vt);
+    source_vt.addImport("source", source_semantics);
     const terminal_vt = terminalVtModule(
         b,
         target,
@@ -123,11 +126,9 @@ pub fn build(b: *std.Build) void {
         renderer,
         source_semantics,
         vt,
+        source_vt,
     );
-    const source_tests_module = b.createModule(.{ .root_source_file = b.path("src/source_vt.zig"), .target = target, .optimize = optimize });
-    source_tests_module.addImport("howl_vt", vt);
-    source_tests_module.addImport("source", source_semantics);
-    const source_tests = b.addTest(.{ .name = "howl-render-source", .root_module = source_tests_module, .use_llvm = false, .use_lld = false });
+    const source_tests = b.addTest(.{ .name = "howl-render-source", .root_module = source_vt, .use_llvm = false, .use_lld = false });
     check.dependOn(&source_tests.step);
     test_step.dependOn(&b.addRunArtifact(source_tests).step);
 
@@ -148,6 +149,7 @@ pub fn build(b: *std.Build) void {
     const background_root = b.createModule(.{ .root_source_file = b.path("test/background.zig"), .target = target, .optimize = optimize, .link_libc = true });
     background_root.addImport("howl_render", module);
     background_root.addImport("howl_vt", vt);
+    background_root.addImport("source_vt", source_vt);
     background_root.addImport("test_fonts", text_dependency.module("howl_text_test_fonts"));
     const background_tests = b.addTest(.{ .name = "howl-render-background", .root_module = background_root, .use_llvm = false, .use_lld = false });
     check.dependOn(&background_tests.step);
@@ -265,6 +267,7 @@ fn terminalVtModule(
     renderer: *std.Build.Module,
     source: *std.Build.Module,
     vt: *std.Build.Module,
+    source_vt: *std.Build.Module,
 ) *std.Build.Module {
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/terminal_vt.zig"),
@@ -274,5 +277,6 @@ fn terminalVtModule(
     terminal.addImport("renderer", renderer);
     terminal.addImport("source", source);
     terminal.addImport("howl_vt", vt);
+    terminal.addImport("source_vt", source_vt);
     return terminal;
 }

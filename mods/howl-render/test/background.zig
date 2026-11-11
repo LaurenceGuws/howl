@@ -53,7 +53,6 @@ test "BG witness reuse equals complete projection across skipped writes invalida
         defer allocator.destroy(left);
         const right = try allocator.create(Output);
         defer allocator.destroy(right);
-        var previous: ?u64 = null;
         const steps = [_][]const u8{
             "\x1b[44m\x1b[2J\x1b[Hblue",
             "\x1b[H\x1b[31mBLUE", // glyph/FG change while BG is unchanged
@@ -81,8 +80,6 @@ test "BG witness reuse equals complete projection across skipped writes invalida
             if (index == steps.len - 1) try vt.resize(grid[0], grid[1]);
             const history_offset: u32 = if (index == 9) 2 else 0;
             const obs = vt.observation();
-            // No glyph row repair hints: this explicitly tests the broad update path.
-            const hint: RR.RowChanges = .{ .base_revision = previous, .rows = null };
             if (index == steps.len - 1) {
                 // Fail after BG staging, then retry with the unchanged accepted base.
                 const bogus = RR.ExternalImageBinding{
@@ -90,9 +87,9 @@ test "BG witness reuse equals complete projection across skipped writes invalida
                     .generation = 1,
                     .resource = .{ .resource = try RR.ResourceId.init(2), .generation = @fromBackingInt(1) },
                 };
-                try std.testing.expectError(error.InvalidImageBinding, RR.updateObservationRows(cached, obs, history_offset, hint, &.{bogus}));
+                try std.testing.expectError(error.InvalidImageBinding, RR.updateObservation(cached, obs, history_offset, &.{bogus}));
             }
-            try RR.updateObservationRows(cached, obs, history_offset, hint, &.{});
+            try RR.updateObservation(cached, obs, history_offset, &.{});
             try RR.updateObservation(full, obs, history_offset, &.{});
             const expected = try left.frame(full);
             const actual = try right.frame(cached);
@@ -101,7 +98,6 @@ test "BG witness reuse equals complete projection across skipped writes invalida
             try std.testing.expectEqual(expected.content_command_count, actual.content_command_count);
             try std.testing.expectEqualDeep(expected.uploads, actual.uploads);
             try std.testing.expectEqualSlices(u8, expected.pixels, actual.pixels);
-            previous = obs.contentSequence();
         }
         // A source rebind without provenance must rebuild even if counters coincide.
         var rebound: VT = undefined;
@@ -110,7 +106,7 @@ test "BG witness reuse equals complete projection across skipped writes invalida
         // zig-audit: acknowledge discard
         // reason: The source-rebinding proof compares complete frames after attaching the new observation.
         _ = try rebound.feed("\x1b[41m\x1b[2J");
-        try RR.updateObservationRows(cached, rebound.observation(), 0, null, &.{});
+        try RR.updateObservation(cached, rebound.observation(), 0, &.{});
         try RR.updateObservation(full, rebound.observation(), 0, &.{});
         try std.testing.expectEqualDeep((try left.frame(full)).commands, (try right.frame(cached)).commands);
     }
@@ -163,14 +159,13 @@ test "compact backgrounds remain between deepest images and negative images and 
     };
     const output = try allocator.create(Output);
     defer allocator.destroy(output);
-    var base: ?u64 = null;
     for (0..2) |step| {
         // zig-audit: acknowledge discard
         // reason: The second frame deliberately changes foreground ink, then verifies stable image depth ordering.
         if (step == 1) _ = try vt.feed("\x1b[H\x1b[31mB");
         const obs = vt.observation();
         stage = "update";
-        try RR.updateObservationRows(core, obs, 0, .{ .base_revision = base }, selected);
+        try RR.updateObservation(core, obs, 0, selected);
         stage = "frame";
         const frame = try RR.frame(core, &residency, .{
             .commands = &output.commands,
@@ -199,7 +194,6 @@ test "compact backgrounds remain between deepest images and negative images and 
         var has_glyph = false;
         for (frame.commands[negative + 1 .. positive]) |cmd| has_glyph = has_glyph or cmd == .alpha_mask;
         try std.testing.expect(has_glyph);
-        base = obs.contentSequence();
     }
 }
 
@@ -586,9 +580,6 @@ test "coloured background rows retain glyphs through sparse edits overflow and r
             defer allocator.destroy(left);
             const right = try allocator.create(Output);
             defer allocator.destroy(right);
-            var generations: [66]u64 = @splat(0);
-            var repairs: [66]bool = @splat(false);
-            var previous: ?u64 = null;
             const steps = [_][]const u8{
                 "\x1b[44m\x1b[2J\x1b[Hfirst\x1b[2;1Hsecond\x1b[3;1Hthird",
                 "\x1b[H\x1b[31mFIRST",
@@ -615,22 +606,15 @@ test "coloured background rows retain glyphs through sparse edits overflow and r
                 if (index == 15) try vt.resize(grid[0] - 1, grid[1] - 3);
                 if (index == 16) try vt.resize(grid[0], grid[1]);
                 const obs = vt.observation();
-                const view = obs.semanticView(0);
-                for (0..view.rows) |row| {
-                    const generation = view.rowGeneration(@intCast(row)).?;
-                    repairs[row] = previous == null or generation != generations[row];
-                    generations[row] = generation;
-                }
-                const hint: RR.RowChanges = .{ .base_revision = previous, .rows = repairs[0..view.rows] };
                 if (index == 3) {
                     const bogus: RR.ExternalImageBinding = .{
                         .image_id = 1,
                         .generation = 1,
                         .resource = .{ .resource = try RR.ResourceId.init(2), .generation = @fromBackingInt(1) },
                     };
-                    try std.testing.expectError(error.InvalidImageBinding, RR.updateObservationRows(cached, obs, 0, hint, &.{bogus}));
+                    try std.testing.expectError(error.InvalidImageBinding, RR.updateObservation(cached, obs, 0, &.{bogus}));
                 }
-                try RR.updateObservationRows(cached, obs, 0, hint, &.{});
+                try RR.updateObservation(cached, obs, 0, &.{});
                 try RR.updateObservation(full, obs, 0, &.{});
                 const expected = try left.frame(full);
                 const actual = try right.frame(cached);
@@ -645,7 +629,6 @@ test "coloured background rows retain glyphs through sparse edits overflow and r
                     for (actual.commands[1..actual.content_command_count]) |command|
                         try std.testing.expect(command != .solid);
                 }
-                previous = obs.contentSequence();
             }
         }
     }
@@ -715,7 +698,6 @@ test "retained row equality preserves drawing identity while canonical cuts and 
     const reference = try allocator.create(Output);
     defer allocator.destroy(reference);
     var content_commands: usize = 0;
-    var previous: ?u64 = null;
     var content: u64 = 0;
     var revision: u64 = 0;
     const bytes = [_][]const u8{
@@ -732,7 +714,7 @@ test "retained row equality preserves drawing identity while canonical cuts and 
         // reason: Frame drawing identity, canonical progress and lasting foreground/background changes are asserted below.
         _ = try vt.feed(feed);
         const observation = vt.observation();
-        try RR.updateObservationRows(owner, observation, 0, .{ .base_revision = previous, .rows = &.{ true, false, false } }, &.{});
+        try RR.updateObservation(owner, observation, 0, &.{});
         const expected = try reference.frame(owner);
         const frame = try RR.frame(owner, &.{}, .{
             .commands = &out.commands,
@@ -752,11 +734,10 @@ test "retained row equality preserves drawing identity while canonical cuts and 
         }
         revision = frame.revision;
         content = frame.content_revision;
-        previous = observation.contentSequence();
     }
     // An explicit atlas reset invalidates the old reuse proof even for equal VT cells.
     try RR.resetCaches(owner);
-    try RR.updateObservationRows(owner, vt.observation(), 0, .{ .base_revision = previous, .rows = &.{ false, false, false } }, &.{});
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
     const reset = try out.frame(owner);
     try std.testing.expect(reset.content_revision > content);
 }
@@ -1029,8 +1010,7 @@ test "height growth repairs reused glyph extents and publishes a complete baseli
     // zig-audit: acknowledge discard
     // reason: Canonical observation revisions and retained frame bytes are asserted below.
     _ = try vt.feed("\x1b[?25lA");
-    const first_sequence = vt.observation().contentSequence();
-    try RR.updateObservationRows(owner, vt.observation(), 0, .{ .base_revision = null, .rows = &.{ true, true, true } }, &.{});
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
     const first = try first_output.frame(owner);
     const held_pixels = try allocator.dupe(u8, first.pixels);
     defer allocator.free(held_pixels);
@@ -1039,20 +1019,14 @@ test "height growth repairs reused glyph extents and publishes a complete baseli
     try std.testing.expect(RR.rowScene(owner) == null);
     const first_size = first.uploads[0].size;
     const resident = [_]RR.Residency{.{ .resource = first.uploads[0].resource, .format = .alpha8, .size = first_size }};
-    try RR.updateObservationRows(owner, vt.observation(), 0, .{
-        .base_revision = first_sequence,
-        .rows = &.{ false, false, false },
-    }, &.{});
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
     try std.testing.expect(RR.rowScene(owner) != null);
     const base = vt.observation().contentSequence();
     // zig-audit: acknowledge discard
     // reason: The new observation must advance provenance before the hinted projection.
     _ = try vt.feed("\x1b[2;1HBCDEFGH");
     try std.testing.expect(vt.observation().contentSequence() != base);
-    try RR.updateObservationRows(owner, vt.observation(), 0, .{
-        .base_revision = base,
-        .rows = &.{ false, true, false },
-    }, &.{});
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
     try std.testing.expect(RR.rowScene(owner) == null);
     const frame = try RR.frame(owner, &resident, .{
         .commands = &next_output.commands,
@@ -1137,4 +1111,161 @@ test "independent colour growth preserves alpha residency and held mixed frames"
     };
     try std.testing.expectEqual(frame.pixels.len, try RR.framePixelBytes(owner, &residency));
     try std.testing.expectEqualSlices(u8, held, first.pixels);
+}
+
+// A revision-relative adapter deliberately has no lifetime/row witness callbacks.
+const RelativeSource = struct {
+    const Native = @import("source_vt").Source;
+    /// Copies small view/presentation handles for one synchronous projection.
+    /// `images` and the SemanticView backing screen remain VT-borrowed until mutation.
+    pub const Snapshot = Native.Snapshot;
+    /// Borrows a live row once per projection pass; history uses copied-cell fallback.
+    pub const Row = Native.Row;
+    /// Borrows one canonical cell only for this synchronous projection.
+    pub const Cell = Native.Cell;
+    /// Owns fallback storage when a projected history row has no live cell slice.
+    pub const CellScratch = Native.CellScratch;
+    /// Copies the canonical terminal palette and dynamic presentation colors.
+    pub const Presentation = Native.Presentation;
+    /// Uses the canonical four-channel terminal color carried by Presentation.
+    pub const PresentationColor = Native.PresentationColor;
+    /// Borrows one coherent canonical image/placement observation.
+    pub const Graphics = Native.Graphics;
+    /// Render owns reuse decisions over non-consuming canonical row identities.
+    pub const supports_incremental = Native.supports_incremental;
+    /// Returns the canonical content identity captured for these repairs.
+    pub const observationRevision = Native.observationRevision;
+    /// Returns the clamped canonical viewport history offset.
+    pub const historyOffset = Native.historyOffset;
+    /// Identifies the canonical active screen for repair provenance.
+    pub const alternateScreen = Native.alternateScreen;
+    /// Native repairs are position-relative and carry no scrolling translation.
+    pub const rowShift = Native.rowShift;
+    /// Returns the declared visible terminal row count.
+    pub const rows = Native.rows;
+    /// Returns the declared physical terminal column count.
+    pub const columns = Native.columns;
+    /// Returns the canonical cursor row in the current visible view.
+    pub const cursorRow = Native.cursorRow;
+    /// Returns the canonical cursor column in the current visible view.
+    pub const cursorColumn = Native.cursorColumn;
+    /// Reports canonical cursor visibility before renderer surface clipping.
+    pub const cursorVisible = Native.cursorVisible;
+    /// Borrows the presentation copy retained by this synchronous adapter snapshot.
+    pub const presentation = Native.presentation;
+    /// Returns the number of physically exposed row records for geometry validation.
+    pub const rowCount = Native.rowCount;
+    /// Maps one validated dense row-record index to its canonical VT row identity.
+    pub const rowAt = Native.rowAt;
+    /// Returns the number of physically exposed cells for one canonical row.
+    pub const rowCellCount = Native.rowCellCount;
+    /// Borrows a live cell or copies a history cell into caller-owned scratch.
+    /// A history borrow lasts only until that scratch is reused.
+    pub const cellAt = Native.cellAt;
+    /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
+    pub const lineGeometry = Native.lineGeometry;
+    /// Borrows/copies one lead cell's complete scalar cluster into caller scratch.
+    /// Continuation and blank cells intentionally expose an empty sequence.
+    pub const cellScalars = Native.cellScalars;
+    /// Copies only rendition bits that directly affect this untimed frame projection.
+    pub const cellStyle = Native.cellStyle;
+    /// Returns the terminal font slot independently of VT's packed field width.
+    pub const cellFont = Native.cellFont;
+    /// Returns the encoded baseline selector independently of VT's enum type.
+    pub const cellBaseline = Native.cellBaseline;
+    /// Returns the encoded underline style independently of VT's enum type.
+    pub const cellUnderlineStyle = Native.cellUnderlineStyle;
+    /// Normalizes one requested cell color role without leaking VT color types.
+    pub const cellColor = Native.cellColor;
+    /// Recognizes Kitty's reserved Unicode placement scalar at the source boundary.
+    pub const isImagePlaceholder = Native.isImagePlaceholder;
+    /// Borrows the coherent VT image/placement view captured for this history cut.
+    pub const graphics = Native.graphics;
+    /// Normalizes canonical cursor geometry without carrying source enum identity.
+    pub const cursorShape = Native.cursorShape;
+    /// Returns every retained canonical image record, including currently hidden images.
+    pub const graphicsImageCount = Native.graphicsImageCount;
+    /// Normalizes one retained VT image into renderer-private identity and extent.
+    pub const graphicsImage = Native.graphicsImage;
+    /// Returns the bounded placement index space for this visible VT cut.
+    pub const graphicsPlacementCount = Native.graphicsPlacementCount;
+    /// Copies one visible physical or virtual placement, skipping absent index slots.
+    pub const graphicsPlacement = Native.graphicsPlacement;
+    /// Reports whether any visible placement currently references one retained image.
+    pub const graphicsImageVisible = Native.graphicsImageVisible;
+
+    /// Names the immediately preceding external snapshot revision.
+    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+        return snapshot.revision - 1;
+    }
+
+    /// Proves unchanged rows only within the same external revision chain.
+    pub fn changedRows(_: *const Snapshot) ?[]const bool {
+        return &.{ false, false, false };
+    }
+};
+
+test "retained row witnesses reject recycled terminal storage and source adapter crossover" {
+    const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    var cfg = fontConfig(font);
+    const full = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+    defer RR.deinit(full);
+    cfg.incremental_row_capacity = 3;
+    cfg.incremental_command_capacity = 32768;
+    const cached = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+    defer RR.deinit(cached);
+    const left = try allocator.create(Output);
+    defer allocator.destroy(left);
+    const right = try allocator.create(Output);
+    defer allocator.destroy(right);
+    var vt: VT = undefined;
+    var prior_identity: u64 = 0;
+    var prior_revision: u64 = 0;
+    var prior_row: u64 = 0;
+    for ([_][]const u8{ "AAA", "BBB" }) |text| {
+        // Reuse exactly the same Terminal storage, dimensions and local counters.
+        try VT.initWithHistoryInto(&vt, allocator, 3, 8, 8);
+        defer vt.deinit();
+        // zig-audit: acknowledge discard
+        // reason: The proof checks coincident local counters and complete frame parity below.
+        _ = try vt.feed(text);
+        const obs = vt.observation();
+        try std.testing.expect(obs.occurrenceIdentity() != prior_identity);
+        if (prior_identity != 0) {
+            try std.testing.expectEqual(prior_revision, obs.contentSequence());
+            try std.testing.expectEqual(prior_row, obs.semanticView(0).rowGeneration(0).?);
+        }
+        prior_identity = obs.occurrenceIdentity();
+        prior_revision = obs.contentSequence();
+        prior_row = obs.semanticView(0).rowGeneration(0).?;
+        try RR.updateObservation(cached, obs, 0, &.{});
+        try RR.updateObservation(cached, obs, 0, &.{});
+        try RR.updateObservation(full, obs, 0, &.{});
+        try std.testing.expectEqualDeep((try left.frame(full)).commands, (try right.frame(cached)).commands);
+        try std.testing.expectEqual(RR.RowSceneKind.patch, RR.rowScene(cached).?.kind);
+        try std.testing.expectEqualSlices(bool, &.{ false, false, false }, RR.rowScene(cached).?.repairs);
+    }
+    try VT.initWithHistoryInto(&vt, allocator, 3, 8, 8);
+    defer vt.deinit();
+    // zig-audit: acknowledge discard
+    // reason: This distinct content tests the boundary between native lifetime witnesses and revision-relative hints.
+    _ = try vt.feed("CCC");
+    const obs = vt.observation();
+    var external: RelativeSource.Snapshot = .{
+        .view = obs.semanticView(0),
+        .colors = obs.presentation(),
+        .images = obs.images(0),
+        .revision = prior_revision + 1,
+    };
+    try render.adapter.updateSource(RelativeSource, cached, &external, &.{});
+    try std.testing.expectEqual(RR.RowSceneKind.baseline, RR.rowScene(cached).?.kind);
+    try RR.updateObservation(full, obs, 0, &.{});
+    try std.testing.expectEqualDeep((try left.frame(full)).commands, (try right.frame(cached)).commands);
+    external.revision += 1;
+    try render.adapter.updateSource(RelativeSource, cached, &external, &.{});
+    try std.testing.expectEqual(RR.RowSceneKind.patch, RR.rowScene(cached).?.kind);
+    try RR.updateObservation(cached, obs, 0, &.{});
+    try std.testing.expectEqual(RR.RowSceneKind.baseline, RR.rowScene(cached).?.kind);
+    try std.testing.expectEqualDeep((try left.frame(full)).commands, (try right.frame(cached)).commands);
 }

@@ -2,8 +2,8 @@
 
 Howl is a small native terminal **module family**. It is not a tmux identity and it
 is not inherently a Server. The smallest useful embedding is `howl-vt` by itself;
-a local shell may compose PTY + VT through `howl-instance` without importing or
-knowing about Session or Server machinery.
+a local shell composes PTY + VT + Render through `howl-instance` without importing
+or knowing about Session or Server machinery.
 
 ## Repository layout and release snapshot
 
@@ -39,12 +39,16 @@ The terminal layers are deliberately narrow:
 | --- | --- |
 | `howl-vt` | terminal parsing, semantic state, history, images, input encoding, replies, consequences |
 | `howl-pty` | platform process-terminal transport and child lifecycle: Linux PTY or Windows ConPTY |
-| `howl-instance` | optional batteries-included composition of **one concrete terminal occurrence**: one platform process-terminal transport + one canonical VT + explicit geometry |
+| `howl-instance` | one concrete terminal occurrence: one platform process-terminal transport + one canonical VT + required Render + explicit geometry |
 | `howl-text` | font metrics, fallback, shaping, source clusters, glyph lookup, bounded alpha rasterization |
 
 An **Instance** is the terminal lifetime. It owns the authoritative rows/columns and
-cell-pixel geometry for that process-terminal/VT pair. It is not a Session, listener, daemon, Server,
+font-derived cell-pixel geometry for that process-terminal/VT/Render composition. It is not a Session, listener, daemon, Server,
 window, pane, or product identity.
+
+The sole Instance path is **PTY → VT → Render → the embedder's GPU backend**.
+Presentation is required at construction. The embedder owns GPU resources, UI,
+window and platform lifecycle; VT and PTY remain independently usable.
 
 Observers and clients may disconnect, stall, or disappear without pacing canonical
 Instance progress. Attaching a client never silently resizes an Instance; geometry is
@@ -58,8 +62,8 @@ Instances orchestration is a separately released consumer in howl-sessions;
 it depends down on Howl and never changes this local composition.
 
 Local howl-app uses a Zig/SDL frontend with its own Instance and immutable
-Render publications. howl-host directly exercises VT observation through
-Text, Render, Vulkan and Wayland without client transport or server routing.
+Render publications. howl-host consumes Instance-owned Render publications
+through Vulkan and Wayland without client transport or server routing.
 
 The former Flutter source remains in hosts/howl-flutter strictly as an
 **inactive, unsupported bring-up reference**. Its native/Dart/iOS build and

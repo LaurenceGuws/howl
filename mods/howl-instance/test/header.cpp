@@ -1,7 +1,7 @@
 #include "howl_instance_native.h"
 static_assert(sizeof(hvt_cell) == 104);
 static_assert(sizeof(hi_service) == 32);
-static_assert(sizeof(hi_launch) == 4 * sizeof(hi_bytes) + 16);
+static_assert(sizeof(hi_launch) == 4 * sizeof(hi_bytes) + 8);
 extern "C" int howl_instance_cpp_header(void) { return hi_abi_version() == HI_ABI_VERSION ? 0 : 1; }
 static_assert(alignof(hvt_cell) == alignof(uint32_t));
 static_assert(offsetof(hvt_cell, scalar_count) == 96);
@@ -12,7 +12,7 @@ static_assert(offsetof(hi_service, exit_kind) == 22);
 static_assert(offsetof(hi_service, sync_trailing_effect) == 25);
 static_assert(offsetof(hi_service, reserved) == 28);
 static_assert(offsetof(hi_launch, rows) == 4 * sizeof(hi_bytes));
-static_assert(offsetof(hi_launch, cell_width) == 4 * sizeof(hi_bytes) + 8);
+static_assert(offsetof(hi_launch, reserved) == 4 * sizeof(hi_bytes) + 6);
 
 static_assert(sizeof(hi_frame_info) == 88);
 static_assert(offsetof(hi_frame_info, command_count) == 40);
@@ -79,22 +79,22 @@ static_assert(alignof(hi_cell_size) == 4);
 static_assert(offsetof(hi_cell_size, width) == 0);
 static_assert(offsetof(hi_cell_size, height) == 2);
 static_assert(offsetof(hi_cell_size, reserved) == 4);
-static_assert(sizeof(hi_presented_config) == 80);
-static_assert(alignof(hi_presented_config) == 8);
-static_assert(offsetof(hi_presented_config, stroke_points) == 0);
-static_assert(offsetof(hi_presented_config, dpi_x_numerator) == 16);
-static_assert(offsetof(hi_presented_config, dpi_x_denominator) == 20);
-static_assert(offsetof(hi_presented_config, dpi_y_numerator) == 24);
-static_assert(offsetof(hi_presented_config, dpi_y_denominator) == 28);
-static_assert(offsetof(hi_presented_config, atlas_width) == 32);
-static_assert(offsetof(hi_presented_config, atlas_height) == 34);
-static_assert(offsetof(hi_presented_config, atlas_gap) == 36);
-static_assert(offsetof(hi_presented_config, incremental_rows) == 38);
-static_assert(offsetof(hi_presented_config, atlas_entries) == 40);
-static_assert(offsetof(hi_presented_config, command_capacity) == 48);
-static_assert(offsetof(hi_presented_config, command_limit) == 56);
-static_assert(offsetof(hi_presented_config, incremental_commands) == 64);
-static_assert(offsetof(hi_presented_config, reserved) == 72);
+static_assert(sizeof(hi_instance_config) == 80);
+static_assert(alignof(hi_instance_config) == 8);
+static_assert(offsetof(hi_instance_config, stroke_points) == 0);
+static_assert(offsetof(hi_instance_config, dpi_x_numerator) == 16);
+static_assert(offsetof(hi_instance_config, dpi_x_denominator) == 20);
+static_assert(offsetof(hi_instance_config, dpi_y_numerator) == 24);
+static_assert(offsetof(hi_instance_config, dpi_y_denominator) == 28);
+static_assert(offsetof(hi_instance_config, atlas_width) == 32);
+static_assert(offsetof(hi_instance_config, atlas_height) == 34);
+static_assert(offsetof(hi_instance_config, atlas_gap) == 36);
+static_assert(offsetof(hi_instance_config, incremental_rows) == 38);
+static_assert(offsetof(hi_instance_config, atlas_entries) == 40);
+static_assert(offsetof(hi_instance_config, command_capacity) == 48);
+static_assert(offsetof(hi_instance_config, command_limit) == 56);
+static_assert(offsetof(hi_instance_config, incremental_commands) == 64);
+static_assert(offsetof(hi_instance_config, reserved) == 72);
 
 using hi_observation_signature = uint32_t(*)(uint32_t,hi_instance *,hvt_observation **);
 static_assert(__is_same(decltype(&hi_observation_open),hi_observation_signature));

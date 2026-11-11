@@ -1,6 +1,6 @@
 .{
     .name = .howl_host,
-    .version = "0.1.6-dev",
+    .version = "0.1.7-dev",
     .fingerprint = 0x0aa0307a698ed104,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
