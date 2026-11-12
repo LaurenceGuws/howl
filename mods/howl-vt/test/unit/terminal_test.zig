@@ -1041,3 +1041,35 @@ test "failed relief preserves caller mutation without admitting pressure event" 
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
 }
+
+test "resize preserves a concentrated history row with external combining scalars" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const terminal = try allocator.create(Terminal);
+    defer allocator.destroy(terminal);
+    try Terminal.initWithHistoryInto(terminal, failing.allocator(), 42, 512, 64);
+    defer terminal.deinit();
+    const grapheme = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\u{0306}\u{0307}\u{0308}";
+    try feed(terminal, "\x1b[?7l");
+    for (0..512) |_| try feed(terminal, grapheme);
+    for (0..42) |_| try feed(terminal, "\r\n");
+    const before = &terminal.screen_state.primary;
+    try std.testing.expectEqual(@as(u32, 1), before.historyCount());
+    for (0..512) |col| try std.testing.expectEqual(@as(u8, 8), before.historyCellAt(0, @intCast(col)).combining_len);
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.resize(42, 511));
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(@as(u32, 1), before.historyCount());
+    try std.testing.expectEqual(@as(u8, 8), before.historyCellAt(0, 511).combining_len);
+    try terminal.resize(42, 511);
+    const after = &terminal.screen_state.primary;
+    try std.testing.expectEqual(@as(u32, 2), after.historyCount());
+    const expected = [_]u32{ 'e', 0x0301, 0x0302, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307, 0x0308 };
+    var scalars: [24]u32 = undefined;
+    for (0..511) |col| {
+        try std.testing.expectEqual(@as(u8, 8), after.historyCellAt(1, @intCast(col)).combining_len);
+        try std.testing.expectEqualSlices(u32, &expected, after.historyCellScalarsAt(1, @intCast(col), &scalars));
+    }
+    try std.testing.expectEqual(@as(u8, 8), after.historyCellAt(0, 0).combining_len);
+    try std.testing.expectEqualSlices(u32, &expected, after.historyCellScalarsAt(0, 0, &scalars));
+}

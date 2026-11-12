@@ -61,9 +61,27 @@ pub const Storage = struct {
         allocator: std.mem.Allocator,
         cell_capacity: usize,
     ) error{ OutOfMemory, InvalidCapacity }!Storage {
+        return initForCopy(allocator, cell_capacity, 0);
+    }
+
+    /// Reserves enough fresh pages to copy the given count of already accepted
+    /// tail scalars in ranges no longer than maximum_tail_scalars. Before a
+    /// first-fit copy spills to a new page, at most maximum_tail_scalars - 1
+    /// slots can remain unused in each preceding page.
+    pub fn initForCopy(
+        allocator: std.mem.Allocator,
+        cell_capacity: usize,
+        tail_scalars: usize,
+    ) error{ OutOfMemory, InvalidCapacity }!Storage {
         if (cell_capacity == 0) return error.InvalidCapacity;
-        const page_count = std.math.divCeil(usize, cell_capacity, page_cells) catch
+        const maximum = std.math.mul(usize, cell_capacity, maximum_tail_scalars) catch
             return error.InvalidCapacity;
+        if (tail_scalars > maximum) return error.InvalidCapacity;
+        const cell_pages = std.math.divCeil(usize, cell_capacity, page_cells) catch
+            return error.InvalidCapacity;
+        const copy_pages = std.math.divCeil(usize, tail_scalars, scalar_slots - maximum_tail_scalars + 1) catch
+            return error.InvalidCapacity;
+        const page_count = @max(cell_pages, copy_pages);
         const total_slots = std.math.mul(usize, page_count, scalar_slots) catch
             return error.InvalidCapacity;
         if (total_slots > std.math.maxInt(u32))
@@ -890,4 +908,40 @@ test "virtual outgoing preflight exactly predicts infallible first fit" {
     var prepared_second = try storage.prepare(&first);
     try std.testing.expectEqual(plans[1], prepared_second.range);
     try prepared_second.commit(11, 0);
+}
+
+test "fresh copy reserves for concentrated accepted tails" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidCapacity, Storage.initForCopy(allocator, 1, maximum_tail_scalars + 1));
+    var storage = try Storage.initForCopy(allocator, 512, 512 * 5);
+    defer storage.deinit();
+    const values = [_]u32{ 1, 2, 3, 4, 5 };
+    for (0..512) |cell| try storage.set(cell, 0, &values);
+    for (0..512) |cell| try std.testing.expectEqualSlices(u32, &values, try storage.tail(cell, testCombiningLen(values.len)));
+}
+
+test "fresh copy packs varied bounded ranges without assuming exact page division" {
+    const allocator = std.testing.allocator;
+    var scalar_count: usize = 0;
+    for (0..512) |cell| scalar_count += 1 + cell % maximum_tail_scalars;
+    var storage = try Storage.initForCopy(allocator, 512, scalar_count);
+    defer storage.deinit();
+    const values: [maximum_tail_scalars]u32 = @splat(7);
+    for (0..512) |cell| {
+        const count = 1 + cell % maximum_tail_scalars;
+        try storage.set(cell, 0, values[0..count]);
+    }
+    for (0..512) |cell| {
+        const count = 1 + cell % maximum_tail_scalars;
+        try std.testing.expectEqualSlices(u32, values[0..count], try storage.tail(cell, testCombiningLen(count)));
+    }
+}
+
+fn initConcentratedCopy(allocator: std.mem.Allocator) !void {
+    var storage = try Storage.initForCopy(allocator, 512, 512 * 5);
+    defer storage.deinit();
+}
+
+test "concentrated copy initialization releases partial allocations" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, initConcentratedCopy, .{});
 }

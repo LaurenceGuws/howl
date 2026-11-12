@@ -4660,70 +4660,11 @@ fn screenColCount(value: u16) u32 {
     return value;
 }
 
-fn cloneLogicalLine(
-    allocator: std.mem.Allocator,
-    cells: []const ScreenCell,
-    scalars: ?*const scalar_storage.Storage,
-    scalar_start: usize,
-) std.mem.Allocator.Error!LogicalLine {
-    var line = LogicalLine{};
-    errdefer line.deinit(allocator);
-    try line.cells.appendSlice(allocator, cells);
-    line.scalars = try cloneLineScalars(
-        allocator,
-        cells,
-        scalars,
-        scalar_start,
-    );
-    return line;
-}
-
 fn cellsHaveExternalScalars(cells: []const ScreenCell) bool {
     for (cells) |cell| {
         if (sidecarCount(cell) != 0) return true;
     }
     return false;
-}
-
-fn cloneLineScalars(
-    allocator: std.mem.Allocator,
-    cells: []const ScreenCell,
-    source: ?*const scalar_storage.Storage,
-    source_start: usize,
-) std.mem.Allocator.Error!?scalar_storage.Storage {
-    if (!cellsHaveExternalScalars(cells)) return null;
-    var result = scalar_storage.Storage.init(
-        allocator,
-        cells.len,
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        // zig-audit: acknowledge unreachable
-        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
-        error.InvalidCapacity => unreachable,
-    };
-    errdefer result.deinit();
-    for (cells, 0..) |cell, index| {
-        if (cell.combining_len <= scalar_storage.inline_scalars - 1)
-            continue;
-        const retained = source orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("accepted scalar owner missing");
-        const tail = acceptedTail(
-            retained,
-            source_start + index,
-            cell.combining_len,
-        );
-        result.set(index, 0, tail) catch |err| switch (err) {
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            error.InvalidRange => @panic("accepted scalar range mismatch"),
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            error.ScalarCapacity => @panic("cloned scalar capacity mismatch"),
-        };
-    }
-    return result;
 }
 
 fn appendLogicalRetainedRow(
@@ -4744,20 +4685,26 @@ fn appendLogicalRetainedRow(
     try candidate.cells.ensureTotalCapacity(allocator, new_len);
     candidate.cells.appendSliceAssumeCapacity(line.cells.items);
 
+    var tail_scalars: usize = 0;
+    for (line.cells.items) |cell| {
+        tail_scalars = std.math.add(usize, tail_scalars, sidecarCount(cell)) catch return error.OutOfMemory;
+    }
     var appended_have_external_scalars = false;
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
         const value = row.cellInfoAt(col);
         candidate.cells.appendAssumeCapacity(value);
-        appended_have_external_scalars = appended_have_external_scalars or
-            sidecarCount(value) != 0;
+        const count = sidecarCount(value);
+        tail_scalars = std.math.add(usize, tail_scalars, count) catch return error.OutOfMemory;
+        appended_have_external_scalars = appended_have_external_scalars or count != 0;
     }
 
     std.debug.assert((line.scalars != null) == cellsHaveExternalScalars(line.cells.items));
     if (line.scalars != null or appended_have_external_scalars) {
-        candidate.scalars = scalar_storage.Storage.init(
+        candidate.scalars = scalar_storage.Storage.initForCopy(
             allocator,
             new_len,
+            tail_scalars,
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             // zig-audit: acknowledge unreachable
