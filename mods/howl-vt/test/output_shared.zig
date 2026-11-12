@@ -349,3 +349,35 @@ test "cached shape cannot exceed the consuming lane scratch" {
     try std.testing.expectError(error.InsufficientGlyphs, owner.flush());
     try std.testing.expectEqualDeep(before, held.snapshot.glyphs[0]);
 }
+
+test "automatic row limit follows a replacement shaping lane" {
+    const Candidate = @import("output_state").State(false);
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const first = try makeStore(threaded.io());
+    defer output.releasePresentationStore(first);
+    const second = try output.initPresentationStore(a, threaded.io(), .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } } } }, .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 1,
+        .raster_bytes = 512 * 512,
+    });
+    defer output.releasePresentationStore(second);
+    const direct = try Candidate.initShared(a, first, .{});
+    defer direct.deinit();
+    try std.testing.expectEqual(@as(usize, 0), direct.config.command_limit);
+    const previous = direct.command_limit;
+    var replacement = try direct.stageWorkingShared(second, .{ .command_limit = direct.config.command_limit }, 24, 80);
+    defer direct.discardWorking(&replacement);
+    direct.commitWorking(&replacement);
+    try std.testing.expectEqual(@as(usize, 0), direct.config.command_limit);
+    try std.testing.expect(direct.command_limit < previous);
+    var back = try direct.stageWorkingShared(first, .{ .command_limit = direct.config.command_limit }, 24, 80);
+    defer direct.discardWorking(&back);
+    direct.commitWorking(&back);
+    try std.testing.expectEqual(previous, direct.command_limit);
+    var explicit = try direct.stageWorkingShared(second, .{ .command_limit = 8 }, 24, 80);
+    defer direct.discardWorking(&explicit);
+    direct.commitWorking(&explicit);
+    try std.testing.expectEqual(@as(usize, 8), direct.config.command_limit);
+    try std.testing.expectEqual(@as(usize, 8), direct.command_limit);
+}

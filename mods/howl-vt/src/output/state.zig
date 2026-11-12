@@ -20,7 +20,7 @@ pub const rows = @import("limits").maximum_rows;
 pub const cols = @import("limits").maximum_columns;
 const private_glyph_capacity = cols * 2;
 
-fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) error{InvalidCommandLimit}!Config {
+fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) error{InvalidCommandLimit}!usize {
     // Individual-cell runs fit the lane's scratch, including cached runs.
     // A contextual run uses a separate full-row lane of at most 2 * cols.
     const glyph_capacity = if (shared) |store|
@@ -30,10 +30,9 @@ fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) erro
     const per_cell = std.math.add(usize, glyph_capacity, 4) catch return error.InvalidCommandLimit;
     const cells = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
     const maximum = std.math.add(usize, cells, private_glyph_capacity) catch return error.InvalidCommandLimit;
-    var result = config;
-    if (result.command_limit == 0) result.command_limit = maximum;
-    if (result.command_limit > maximum) return error.InvalidCommandLimit;
-    return result;
+    if (config.command_limit == 0) return maximum;
+    if (config.command_limit > maximum) return error.InvalidCommandLimit;
+    return config.command_limit;
 }
 /// ASCII warmup fixture used only by explicit proof configuration.
 pub const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -228,6 +227,7 @@ pub fn State(comptime instrumented: bool) type {
         shapes: *cache.ShapeCache,
         raster: []u8,
         config: Config,
+        command_limit: usize,
         shared: ?*support.PresentationStore,
         resources: [3]Resource = @splat(.{}),
         resource_current: u2 = 0,
@@ -339,7 +339,8 @@ pub fn State(comptime instrumented: bool) type {
             self.atlas = atlas;
             self.shapes = shapes;
             self.raster = raster;
-            self.config = try resolveCommandLimit(config, working.shared);
+            self.command_limit = try resolveCommandLimit(config, working.shared);
+            self.config = config;
             self.shared = working.shared;
             self.resources = @splat(.{});
             self.resource_current = 0;
@@ -396,10 +397,10 @@ pub fn State(comptime instrumented: bool) type {
             const next = try prepareWorking(self.allocator, font, config);
             errdefer destroyWorking(self.allocator, next.atlas, next.shapes, next.raster, next.shared);
             try self.validateWorkingGeometry(next.metrics);
-            self.installWorking(next, try resolveCommandLimit(config, next.shared));
+            self.installWorking(next, config, try resolveCommandLimit(config, next.shared));
         }
         /// Prepared replacement owns its new shared claim and private atlas until committed or discarded.
-        pub const Replacement = struct { working: ?Working, config: Config };
+        pub const Replacement = struct { working: ?Working, config: Config, command_limit: usize };
         /// Replacement preparation rejects unsupported target geometry before mutation.
         pub const StageReplaceError = SharedReplaceError || error{UnsupportedDimensions};
 
@@ -416,7 +417,7 @@ pub fn State(comptime instrumented: bool) type {
             // zig-audit: acknowledge discard
             // reason: Checked pixel extents must fit before the canonical resize.
             _ = try std.math.mul(u16, new_rows, next.metrics.line_height);
-            return .{ .working = next, .config = try resolveCommandLimit(local, next.shared) };
+            return .{ .working = next, .config = local, .command_limit = try resolveCommandLimit(local, next.shared) };
         }
         /// Releases an uncommitted replacement without disturbing accepted output.
         pub fn discardWorking(self: *Candidate, replacement: *Replacement) void {
@@ -430,7 +431,7 @@ pub fn State(comptime instrumented: bool) type {
             // reason: A replacement is committed only once after successful staging.
             const next = replacement.working orelse unreachable;
             replacement.working = null;
-            self.installWorking(next, replacement.config);
+            self.installWorking(next, replacement.config, replacement.command_limit);
         }
         /// Replaces a shared lane while retaining the current canonical grid.
         pub fn replaceWorkingShared(self: *Candidate, store: *support.PresentationStore, config: SharedConfig) SharedReplaceError!void {
@@ -452,7 +453,7 @@ pub fn State(comptime instrumented: bool) type {
             // reason: Only overflow matters; geometry is formed after the staged metrics commit.
             _ = try std.math.mul(u16, self.vt.screen_state.primary.rows, metrics.line_height);
         }
-        fn installWorking(self: *Candidate, next: Working, config: Config) void {
+        fn installWorking(self: *Candidate, next: Working, config: Config, command_limit: usize) void {
             // zig-audit: acknowledge catch_unreachable
             // reason: Staged metrics are nonzero; the canonical setter cannot fail or allocate here.
             self.vt.setCellPixelSize(next.metrics.advance_width, next.metrics.line_height) catch unreachable;
@@ -465,6 +466,7 @@ pub fn State(comptime instrumented: bool) type {
             self.shapes = next.shapes;
             self.raster = next.raster;
             self.config = config;
+            self.command_limit = command_limit;
             self.working_cell_width = next.metrics.advance_width;
             self.working_cell_height = next.metrics.line_height;
             self.baseline = next.metrics.baseline;
@@ -538,7 +540,7 @@ pub fn State(comptime instrumented: bool) type {
             if (self.ready or self.leased) return error.OutputAlreadyAccepted;
             const height_limit = if (self.config.atlas.growth) |growth| growth.alpha_height_limit else self.config.atlas.height;
             const pixel_limit = @as(usize, self.config.atlas.width) * height_limit;
-            if (command_capacity > self.config.command_limit) return error.CommandLimit;
+            if (command_capacity > self.command_limit) return error.CommandLimit;
             if (pixel_capacity > pixel_limit) return error.ResourceCapacityLimit;
             for (&self.slots) |*slot| for (&slot.blocks) |*block| {
                 try self.ensureBlock(block, command_capacity);
@@ -553,7 +555,7 @@ pub fn State(comptime instrumented: bool) type {
         }
         fn ensureBlock(self: *Candidate, block: *Block, capacity: usize) !void {
             if (block.commands.len >= capacity) return;
-            if (capacity > self.config.command_limit) return error.CommandLimit;
+            if (capacity > self.command_limit) return error.CommandLimit;
             if (instrumented) self.stats.command_allocation_attempts += 1;
             const commands = try self.allocator.alloc(frame.Command, capacity);
             self.allocator.free(block.commands);
@@ -561,7 +563,7 @@ pub fn State(comptime instrumented: bool) type {
         }
         fn appendCursor(self: *Candidate, block: *Block, command: frame.Command) (std.mem.Allocator.Error || error{CommandLimit})!void {
             if (block.count == block.commands.len) {
-                const capacity = @min(self.config.command_limit, @max(1, block.commands.len * 2));
+                const capacity = @min(self.command_limit, @max(1, block.commands.len * 2));
                 if (capacity == block.commands.len) return error.CommandLimit;
                 block.commands = if (block.commands.len == 0)
                     try self.allocator.alloc(frame.Command, capacity)
@@ -775,7 +777,7 @@ pub fn State(comptime instrumented: bool) type {
                 block.count = 0;
                 block.background_end = 0;
                 block.decoration_end = 0;
-                try self.ensureBlock(block, @min(screen.cols, self.config.command_limit));
+                try self.ensureBlock(block, @min(screen.cols, self.command_limit));
                 const counts = while (true) {
                     const result = glyph_rows.buildSelectedRow(.{
                         .atlas = self.atlas,
@@ -790,9 +792,9 @@ pub fn State(comptime instrumented: bool) type {
                         .full_ascii_rows = if (instrumented) &self.stats.full_ascii_rows else {},
                         .presentation = &presentation,
                         .pending_resource = .{ .resource = try frame.ResourceId.init(1), .generation = @fromBackingInt(1) },
-                    }, self.vt, live_row, history, block.commands[0..@min(block.commands.len, self.config.command_limit)]) catch |err| {
-                        if (err != error.CommandLimit or block.commands.len >= self.config.command_limit) return err;
-                        try self.ensureBlock(block, @min(self.config.command_limit, @max(1, block.commands.len * 2)));
+                    }, self.vt, live_row, history, block.commands[0..@min(block.commands.len, self.command_limit)]) catch |err| {
+                        if (err != error.CommandLimit or block.commands.len >= self.command_limit) return err;
+                        try self.ensureBlock(block, @min(self.command_limit, @max(1, block.commands.len * 2)));
                         continue;
                     };
                     break result;
