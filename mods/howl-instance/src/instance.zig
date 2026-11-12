@@ -424,7 +424,7 @@ pub fn bufferedOutputPending(instance: *const Instance) bool {
     return state.read_start < state.read_end;
 }
 
-/// True while a decoded scalar is waiting for storage before more PTY input.
+/// True while decoded scalar work is waiting for storage before more PTY input.
 pub fn scalarInputBlocked(instance: *const Instance) bool {
     return stateConst(instance).terminal.scalarInputBlocked();
 }
@@ -3974,4 +3974,42 @@ test "pending scalar retries ahead of a reply fenced by paste" {
     try std.testing.expect(finished.changed);
     try std.testing.expectEqual(@as(usize, 0), state.read_end);
     try std.testing.expectEqual(@as(u21, 'X'), terminal(value).semanticView(0).cellAt(0, 511));
+}
+
+test "real PTY REP resumes remaining graphemes once after allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const value = try testInstance(failing.allocator(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf e; i=0; while [ $i -lt 23 ]; do printf '\\314\\201'; i=$((i+1)); done; printf '\\033[500bX'; sleep 30",
+        .rows = 1,
+        .columns = 512,
+        .history_rows = 0,
+    });
+    defer deinit(value);
+    failing.fail_index = failing.alloc_index;
+    var saw_block = false;
+    var completed = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        if (turn.scalar_retry_wait_ms != null) {
+            saw_block = true;
+            failing.fail_index = std.math.maxInt(usize);
+        }
+        if (saw_block and !scalarInputBlocked(value)) {
+            const view = terminal(value).semanticView(0);
+            if (view.cellAt(0, 501) == 'X') {
+                completed = true;
+                break;
+            }
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(saw_block);
+    try std.testing.expect(completed);
+    var expected: [24]u21 = @splat(0x301);
+    expected[0] = 'e';
+    var scalars: [24]u21 = undefined;
+    const view = terminal(value).semanticView(0);
+    for (0..501) |col| try std.testing.expectEqualSlices(u21, &expected, view.cellScalarsAt(0, @intCast(col), &scalars));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 501));
 }

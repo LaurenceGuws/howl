@@ -168,8 +168,8 @@ raw transition and advances once through feed completion.
 
 One feed accepts at most 65,536 bytes and invokes canonical service-boundary feed
 once. A new reply, retained request, synchronized-output release or scalar-storage
-pressure may end the exact consumed prefix. A nonzero `scalar_block` means one
-already-decoded scalar is retained but not applied. The caller advances only by
+pressure may end the exact consumed prefix. A nonzero `scalar_block` means decoded
+scalar work remains retained (a scalar, or remaining REP repetitions). The caller advances only by
 `consumed`, pauses further input, and retries with the unconsumed suffix after
 backoff; an empty feed retries when the blocked scalar ended the input. A retry may
 consume zero bytes while still blocked. `HVT_SCALAR_CAPACITY` is a bound, not a

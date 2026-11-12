@@ -246,8 +246,11 @@ pub const StringCapture = struct {
 
 /// Reports a scalar that cannot yet be retained.
 pub const ScalarBlock = error{ OutOfMemory, ScalarCapacity };
-/// Owns a mapped scalar until it can be retained without replaying bytes.
-pub const PendingScalar = struct { value: u21, failure: ScalarBlock };
+/// Owns decoded scalar work until it can continue without replaying bytes.
+pub const PendingScalar = struct {
+    work: union(enum) { codepoint: u21, repeat: u16 },
+    failure: ScalarBlock,
+};
 
 /// Owns parser allocation and both fragmented-control captures for one terminal lifetime.
 pub const State = struct {
