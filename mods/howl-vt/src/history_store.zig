@@ -471,6 +471,7 @@ pub const Store = struct {
         source: Source,
         shape: Shape,
         reserved: Shape,
+        must_rebind: bool,
         drop_oldest: bool,
         cell_stage: CellStream.Stage,
         attr_stage: AttrStream.Stage,
@@ -657,7 +658,7 @@ pub const Store = struct {
     /// Stages every resource required to append one immutable row.
     pub fn preparePush(self: *Store, source: Source) PrepareError!Prepared {
         const actual = try self.shape(source);
-        return self.preparePushShaped(source, actual, actual);
+        return self.preparePushShaped(source, actual, actual, false);
     }
 
     /// Stages for a row whose cells may only be cleared before admission.
@@ -669,10 +670,10 @@ pub const Store = struct {
         if (source.cells.len != width) return error.InvalidSource;
         const actual = try self.shape(source);
         const upper: Shape = .{ .cells = width, .attrs = width, .scalars = actual.scalars };
-        return self.preparePushShaped(source, actual, upper);
+        return self.preparePushShaped(source, actual, upper, true);
     }
 
-    fn preparePushShaped(self: *Store, source: Source, actual: Shape, upper: Shape) PrepareError!Prepared {
+    fn preparePushShaped(self: *Store, source: Source, actual: Shape, upper: Shape, must_rebind: bool) PrepareError!Prepared {
         if (self.rows.len == 0) return error.Capacity;
         const drop_oldest = self.row_count == self.rows.len;
         if (!self.canAppend(upper, drop_oldest)) return error.Capacity;
@@ -689,6 +690,7 @@ pub const Store = struct {
             .source = source,
             .shape = actual,
             .reserved = upper,
+            .must_rebind = must_rebind,
             .drop_oldest = drop_oldest,
             .cell_stage = cell_stage,
             .attr_stage = attr_stage,
@@ -705,6 +707,7 @@ pub const Store = struct {
         if (!self.canAppend(actual, prepared.drop_oldest)) return error.Capacity;
         prepared.source = source;
         prepared.shape = actual;
+        prepared.must_rebind = false;
     }
 
     /// Releases fresh blocks held by an uncommitted prepared row.
@@ -740,7 +743,7 @@ pub const Store = struct {
 
     /// Commits one fully prepared row allocation-free and infallibly.
     pub fn commitPush(self: *Store, prepared: *Prepared) void {
-        std.debug.assert(!prepared.consumed);
+        std.debug.assert(!prepared.consumed and !prepared.must_rebind);
         var recycled = if (prepared.drop_oldest)
             self.detachOldestForCommit()
         else

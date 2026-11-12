@@ -881,12 +881,14 @@ pub const Screen = struct {
     }
 
     fn commitClearedHistoryRow(self: *Screen, row: u16, prepared: *history_store_mod.Store.Prepared) void {
-        const source = self.historyRowSource(row, false);
+        if (prepared.must_rebind) {
+            const source = self.historyRowSource(row, false);
+            self.history_store.?.rebindCleared(prepared, source) catch
+                // zig-audit: acknowledge panic
+                // reason: The full-row reservation covers every possible cleared row; a mismatch is an internal ownership breach.
+                @panic("cleared history row exceeds its reservation");
+        }
         const store = &self.history_store.?;
-        store.rebindCleared(prepared, source) catch
-            // zig-audit: acknowledge panic
-            // reason: The full-row reservation covers every possible cleared row; a mismatch is an internal ownership breach.
-            @panic("cleared history row exceeds its reservation");
         if (prepared.dropsOldest()) self.recordDroppedProjectedRows(1);
         store.commitPush(prepared);
     }
@@ -3946,9 +3948,12 @@ pub const Screen = struct {
         const full_screen = top == 0 and bounded_bottom == self.rows - 1;
         const full_width = !self.left_right_margin_mode or (self.left_margin == 0 and self.right_margin + 1 == self.cols);
         if (self.history_capacity == 0 or top != 0 or (!full_screen and !full_width)) return null;
-        const source = self.historyRowSource(0, true);
+        // With no multicell clusters, scrolling cannot alter the outgoing row.
+        // A one-row region is different: LF/wrap may change that row's flags.
+        const may_change = self.nonsemantic_clusters_possible or self.cursor.row == 0;
+        const source = self.historyRowSource(0, may_change);
         const store = &self.history_store.?;
-        return store.preparePushForClear(source) catch |failure| switch (failure) {
+        return (if (may_change) store.preparePushForClear(source) else store.preparePush(source)) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Capacity => return error.Capacity,
             // zig-audit: acknowledge panic
@@ -8791,4 +8796,22 @@ test "line feed stages history before resetting wrap or cursor" {
         try std.testing.expectEqual(reference.historyCount(), screen.historyCount());
         for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
     }
+}
+
+test "ordinary line feed reserves the unchanged row without a second shape" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+    var reference = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+    defer reference.deinit(std.testing.allocator);
+    screen.writeText("ABCD");
+    reference.writeText("ABCD");
+    screen.cursor.setPositionByClient(1, 4);
+    reference.cursor.setPositionByClient(1, 4);
+    var prepared = try screen.prepareLineFeed();
+    defer screen.discardLineFeed(&prepared);
+    try std.testing.expect(!prepared.history.?.must_rebind);
+    screen.commitLineFeed(&prepared, false);
+    reference.applyScreen(.line_feed);
+    try std.testing.expectEqual(reference.historyCount(), screen.historyCount());
+    for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
 }
