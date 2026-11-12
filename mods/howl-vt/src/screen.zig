@@ -6293,6 +6293,9 @@ test "projected history scalar pressure preserves accepted ownership and later r
         2,
     );
     defer screen.deinit(std.testing.allocator);
+    // Exercise the transactional failure path with an intentionally tight
+    // history budget; normal history admits every valid per-cell tail.
+    screen.history_store.?.scalars.max_items = scalar_storage.scalar_slots;
     var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
     for (&tail, 0..) |*scalar, index| scalar.* = 0x0400 + @as(u32, @intCast(index));
     const second_row = screen.rowStart(1);

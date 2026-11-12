@@ -502,18 +502,12 @@ pub const Store = struct {
         const max_cells = std.math.mul(usize, row_capacity, columns) catch
             return error.OutOfMemory;
         const rows = allocator.alloc(Row, row_capacity) catch return error.OutOfMemory;
-        const page_count = std.math.divCeil(
-            usize,
-            max_cells,
-            scalar_storage.page_cells,
-        ) catch {
-            allocator.free(rows);
-            return error.OutOfMemory;
-        };
+        // Every retained cell may hold a fully populated accepted grapheme.
+        // Scalar blocks are still allocated lazily as rows arrive.
         const max_scalars = std.math.mul(
             usize,
-            page_count,
-            scalar_storage.scalar_slots,
+            max_cells,
+            scalar_storage.maximum_tail_scalars,
         ) catch {
             allocator.free(rows);
             return error.OutOfMemory;
@@ -1406,4 +1400,36 @@ test "no-scalar history shape counts semantic attribute runs despite padding" {
     });
     defer store.discardPrepared(&runs);
     try std.testing.expectEqual(@as(u16, 3), runs.shape.attrs);
+}
+
+test "history retains the accepted scalar density for every row" {
+    const columns = 102;
+    var cells: [columns]Cell = @splat(cell_values.blank);
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, columns);
+    defer scalars.deinit();
+    const tail: [scalar_storage.maximum_tail_scalars]u32 = @splat(0x301);
+    for (&cells, 0..) |*cell, index| {
+        cell.codepoint = 'e';
+        cell.combining = .{ 0x301, 0x301, 0x301 };
+        cell.combining_len = scalar_storage.maximum_scalars - 1;
+        try scalars.setGrowing(index, 0, &tail);
+    }
+    var store = try Store.init(std.testing.allocator, 2, columns, 0);
+    defer store.deinit();
+    try std.testing.expectEqual(@as(usize, 0), store.scalars.allocated_blocks);
+    const source = Source{ .cells = &cells, .scalars = &scalars, .scalar_start = 0, .wrapped = false, .geometry = .single_width };
+    for (0..2) |_| {
+        var prepared = try store.preparePush(source);
+        store.commitPush(&prepared);
+    }
+    try std.testing.expectEqual(@as(u32, 2), store.count());
+    for (0..2) |row| {
+        for (0..columns) |col| {
+            var output: [scalar_storage.maximum_scalars]u32 = undefined;
+            const got = store.scalarsAtLogical(@intCast(row), @intCast(col), &output);
+            try std.testing.expectEqual(@as(usize, scalar_storage.maximum_scalars), got.len);
+            try std.testing.expectEqual(@as(u32, 'e'), got[0]);
+            for (got[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
+        }
+    }
 }
