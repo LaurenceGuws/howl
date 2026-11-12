@@ -849,9 +849,8 @@ pub const Screen = struct {
     // -------------------------------------------------------------------------
 
     /// Retain one visible row only after all authority and projection allocations succeed.
-    ///
-    /// Allocation failure drops this row while preserving paired retained state for the next scroll.
-    fn storeHistoryRow(self: *Screen, row: u16) void {
+    /// Failure leaves the row and existing history intact for the caller to handle.
+    fn storeHistoryRow(self: *Screen, row: u16) error{ OutOfMemory, Capacity }!void {
         if (self.history_capacity == 0) return;
         const row_start = self.rowStart(row);
         const len = self.visibleRowStateLen(row);
@@ -865,10 +864,8 @@ pub const Screen = struct {
             .wrapped = self.rowWrapped(row),
             .geometry = self.lineGeometry(row),
         }) catch |err| switch (err) {
-            error.OutOfMemory, error.Capacity => {
-                self.recordHistoryLoss();
-                return;
-            },
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Capacity => return error.Capacity,
             // zig-audit: acknowledge panic
             // reason: A live Screen row and its scalar sidecar are canonical internal owners; rejection proves invariant corruption.
             error.InvalidSource => @panic("visible history source invalid"),
@@ -3764,7 +3761,7 @@ pub const Screen = struct {
         const recycled = if (self.row_metadata) |metadata| &metadata[self.row_origin] else null;
         const clear_cols = self.rowScanEnd(0);
         const background_unchanged = if (recycled) |row| row.background.covers(0, clear_cols, 0) else false;
-        self.storeHistoryRow(0);
+        self.storeHistoryRow(0) catch self.recordHistoryLoss();
         self.row_origin = (self.row_origin + 1) % self.rows;
         const bottom_start = self.rowStart(self.rows - 1);
         self.clearScalarCells(bottom_start, clear_cols);
@@ -3934,7 +3931,7 @@ pub const Screen = struct {
         if (top == 0 and left == 0 and right + 1 == self.cols and self.history_capacity != 0) {
             var history_row: u16 = 0;
             while (history_row < amount) : (history_row += 1)
-                self.storeHistoryRow(history_row);
+                self.storeHistoryRow(history_row) catch self.recordHistoryLoss();
             changed = true;
         }
 
@@ -6204,7 +6201,7 @@ test "first projected admission ignores untouched future slots" {
     cell.codepoint = 'P';
     screen.cells.?[@intCast(screen.rowStart(0))] = cell;
 
-    screen.storeHistoryRow(0);
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqual(@as(u21, 'P'), screen.historyRowAt(0, 0));
@@ -6225,7 +6222,7 @@ test "inline combining history round trips without external scalar payload" {
     inline_cell.combining = .{ 0x0300, 0x0301, 0x0302 };
     screen.cells.?[@intCast(screen.rowStart(0))] = inline_cell;
 
-    screen.storeHistoryRow(0);
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqualDeep(inline_cell, screen.historyCellAt(0, 0));
     var cold_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
@@ -6261,7 +6258,7 @@ test "twenty four scalars cross projected history and reflow page boundaries" {
     try screen.scalars.?.set(lead, 0, &tail);
     screen.cells.?[lead] = cell_value;
 
-    screen.storeHistoryRow(0);
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     var projected_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
     const projected = screen.historyCellScalarsAt(
@@ -6327,7 +6324,7 @@ test "projected history scalar pressure preserves accepted ownership and later r
     var light = blank_cell;
     light.codepoint = 'x';
     screen.cells.?[second_row] = light;
-    screen.storeHistoryRow(1);
+    try screen.storeHistoryRow(1);
 
     screen.clearRowRange(1, 0, cols);
     var col: usize = 0;
@@ -6339,7 +6336,7 @@ test "projected history scalar pressure preserves accepted ownership and later r
         try screen.scalars.?.set(second_row + col, 0, tail[0..19]);
         screen.cells.?[second_row + col] = value;
     }
-    screen.storeHistoryRow(1);
+    try screen.storeHistoryRow(1);
     try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
     try std.testing.expectEqual(@as(u32, screen.history_capacity), screen.historyCount());
 
@@ -6373,8 +6370,8 @@ test "projected history scalar pressure preserves accepted ownership and later r
     const before_boundary_total = screen.history_boundary_total;
     const before_boundary_active = screen.history_boundary_active;
 
-    screen.storeHistoryRow(1);
-    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+    try std.testing.expectError(error.Capacity, screen.storeHistoryRow(1));
+    try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
     const after_cells = try copyProjectedHistory(std.testing.allocator, &screen);
     defer std.testing.allocator.free(after_cells);
     try std.testing.expectEqualSlices(ScreenCell, before_cells, after_cells);
@@ -6396,9 +6393,9 @@ test "projected history scalar pressure preserves accepted ownership and later r
     try std.testing.expectEqual(before_boundary_active, screen.history_boundary_active);
 
     try std.testing.expect(screen.clearScrollback());
-    screen.storeHistoryRow(1);
+    try screen.storeHistoryRow(1);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
-    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+    try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
 }
 
 // =============================================================================
@@ -7554,7 +7551,7 @@ test "OSC 66 long cluster round trips through compact history" {
     // Full-grid scrolling deliberately clears non-semantic multicell clusters
     // that would be split by the scroll boundary. Exercise cold storage itself
     // directly here so the store must preserve every rare cell field exactly.
-    screen.storeHistoryRow(0);
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqualDeep(lead, screen.historyCellAt(0, 0));
     try std.testing.expectEqualDeep(continuation, screen.historyCellAt(0, 3));
@@ -7592,7 +7589,7 @@ test "DEC row geometry round trips through compact history" {
 
     screen.writeText("AB");
     try std.testing.expect(screen.applyLineGeometry(.double_width));
-    screen.storeHistoryRow(0);
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.historyLineGeometry(0));
     try std.testing.expectEqual(@as(u21, 'A'), screen.historyRowAt(0, 0));
@@ -7656,14 +7653,19 @@ test "lazy projected history allocation failure loses only incoming row and late
     screen.cells.?[0] = value;
 
     failing.fail_index = failing.alloc_index;
-    screen.storeHistoryRow(0);
+    try std.testing.expectError(error.OutOfMemory, screen.storeHistoryRow(0));
+    try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
+    try std.testing.expectEqual(@as(u32, 'a'), screen.cells.?[0].codepoint);
+    failing.fail_index = failing.alloc_index;
+    screen.scrollUp();
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqual(@as(u32, 0), screen.historyRowBase());
 
     failing.fail_index = std.math.maxInt(usize);
-    screen.storeHistoryRow(0);
+    screen.writeText("a");
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqual(@as(u21, 'a'), screen.historyRowAt(0, 0));
@@ -7711,7 +7713,7 @@ test "projected eviction freezes only the incomplete oldest logical prefix" {
         screen.cells.?[0].codepoint = row.text[0];
         screen.cells.?[1].codepoint = row.text[1];
         screen.setRowWrapped(0, row.wrapped);
-        screen.storeHistoryRow(0);
+        try screen.storeHistoryRow(0);
         switch (index) {
             2 => {
                 try std.testing.expect(screen.history_boundary_active);
@@ -8018,7 +8020,7 @@ test "bulk retained text matches scalar projection across batches ring wrap and 
         cell.codepoint = 0;
         cell.attrs.bg = .indexed(2);
     }
-    screen.storeHistoryRow(0);
+    try screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
 
     for (0..3) |projection| {
@@ -8524,7 +8526,7 @@ test "history restore grows scalar storage for accepted dense row" {
         try screen.scalars.?.setGrowing(source + col, 0, &tail);
         screen.cells.?[source + col] = value;
     }
-    screen.storeHistoryRow(1);
+    try screen.storeHistoryRow(1);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     screen.clearRowRange(1, 0, cols);
     const retained = screen.rowStart(0);
@@ -8567,7 +8569,7 @@ test "history restore reuses all outgoing row scalar ranges without allocating" 
     const bottom = screen.rowStart(1);
     try screen.scalars.?.setGrowing(bottom, 0, &tail);
     screen.cells.?[bottom] = value;
-    screen.storeHistoryRow(1);
+    try screen.storeHistoryRow(1);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     screen.clearRowRange(1, 0, cols);
     const top = screen.rowStart(0);
