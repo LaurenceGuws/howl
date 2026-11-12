@@ -97,6 +97,26 @@ pub const Storage = struct {
         return .{ .allocator = allocator, .ranges = ranges, .pages = pages };
     }
 
+    /// Experimental explicit growth. Existing mutation remains allocation-free;
+    /// callers must arrange safe input failure handling before using this path.
+    /// Successful growth invalidates borrowed page slices, not range identities.
+    pub fn growOnePage(self: *Storage) error{ OutOfMemory, ScalarCapacity }!void {
+        const max_tails = std.math.mul(usize, self.ranges.len, maximum_tail_scalars) catch return error.ScalarCapacity;
+        // First-fit ranges may leave up to maximum_tail_scalars - 1 slots per page.
+        // One extra page permits transactional replacement of an existing range.
+        const full_pages = std.math.divCeil(usize, max_tails, scalar_slots - maximum_tail_scalars + 1) catch return error.ScalarCapacity;
+        const cap = std.math.add(usize, full_pages, 1) catch return error.ScalarCapacity;
+        if (self.pages.len >= cap) return error.ScalarCapacity;
+        const new_count = std.math.add(usize, self.pages.len, 1) catch return error.ScalarCapacity;
+        const slots = std.math.mul(usize, new_count, scalar_slots) catch return error.ScalarCapacity;
+        if (slots > std.math.maxInt(u32)) return error.ScalarCapacity;
+        const replacement = self.allocator.alloc(Page, new_count) catch return error.OutOfMemory;
+        @memcpy(replacement[0..self.pages.len], self.pages);
+        replacement[self.pages.len] = Page.init();
+        self.allocator.free(self.pages);
+        self.pages = replacement;
+    }
+
     /// Releases the complete fixed owner-local cohort.
     pub fn deinit(self: *Storage) void {
         self.allocator.free(self.pages);
@@ -944,4 +964,56 @@ fn initConcentratedCopy(allocator: std.mem.Allocator) !void {
 
 test "concentrated copy initialization releases partial allocations" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, initConcentratedCopy, .{});
+}
+
+test "explicit growth preserves ranges and failed allocation leaves storage intact" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var storage = try Storage.init(failing.allocator(), 512);
+    defer storage.deinit();
+    const values: [maximum_tail_scalars]u32 = @splat(17);
+    var used: usize = 0;
+    while (used < scalar_slots / maximum_tail_scalars) : (used += 1) try storage.set(used, 0, &values);
+    try std.testing.expectError(error.ScalarCapacity, storage.set(used, 0, &values));
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, storage.growOnePage());
+    try std.testing.expectEqual(@as(usize, 1), storage.pages.len);
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(0, testCombiningLen(values.len)));
+    failing.fail_index = std.math.maxInt(usize);
+    try storage.growOnePage();
+    try storage.set(used, 0, &values);
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(0, testCombiningLen(values.len)));
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(used, testCombiningLen(values.len)));
+}
+
+test "explicit bounded growth retains concentrated and diverse tails" {
+    var storage = try Storage.init(std.testing.allocator, 512);
+    defer storage.deinit();
+    var expected: [maximum_tail_scalars]u32 = undefined;
+    for (0..512) |cell| {
+        const count = 1 + cell % maximum_tail_scalars;
+        for (0..count) |i| expected[i] = @intCast(cell * maximum_tail_scalars + i);
+        storage.set(cell, 0, expected[0..count]) catch |failure| switch (failure) {
+            error.ScalarCapacity => {
+                try storage.growOnePage();
+                try storage.set(cell, 0, expected[0..count]);
+            },
+            error.InvalidRange => return failure,
+        };
+    }
+    try std.testing.expect(storage.pages.len > 1);
+    for (0..512) |cell| {
+        const count = 1 + cell % maximum_tail_scalars;
+        for (0..count) |i| expected[i] = @intCast(cell * maximum_tail_scalars + i);
+        try std.testing.expectEqualSlices(u32, expected[0..count], try storage.tail(cell, testCombiningLen(count)));
+    }
+    while (true) storage.growOnePage() catch |failure| switch (failure) {
+        error.ScalarCapacity => break,
+        error.OutOfMemory => return failure,
+    };
+    try std.testing.expectError(error.ScalarCapacity, storage.growOnePage());
+    for (0..512) |cell| {
+        const count = 1 + cell % maximum_tail_scalars;
+        for (0..count) |i| expected[i] = @intCast(cell * maximum_tail_scalars + i);
+        try std.testing.expectEqualSlices(u32, expected[0..count], try storage.tail(cell, testCombiningLen(count)));
+    }
 }
