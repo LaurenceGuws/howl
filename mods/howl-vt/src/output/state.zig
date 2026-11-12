@@ -18,9 +18,6 @@ const support = @import("text_support");
 pub const rows = @import("limits").maximum_rows;
 /// Maximum supported output column count.
 pub const cols = @import("limits").maximum_columns;
-/// Baseline per-column allowance for a background, a double underline, a strike
-/// and one glyph. The automatic bound accounts for the shaping scratch too.
-pub const row_capacity = cols * (1 + 2 + 1 + 1);
 const private_glyph_capacity = cols * 2;
 
 fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) error{InvalidCommandLimit}!Config {

@@ -12,8 +12,6 @@ pub const Stats = state.Stats;
 pub const rows = state.rows;
 /// Maximum supported output column count.
 pub const cols = state.cols;
-/// Bounded final-command capacity per row.
-pub const row_capacity = state.row_capacity;
 /// ASCII warmup fixture used only by explicit proof configuration.
 pub const alphabet = state.alphabet;
 /// Instrumented row emitter used by focused white-box proofs.
