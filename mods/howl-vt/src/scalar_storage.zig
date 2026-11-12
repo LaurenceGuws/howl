@@ -102,7 +102,9 @@ pub const Storage = struct {
     /// Successful growth invalidates borrowed page slices, not range identities.
     pub fn growOnePage(self: *Storage) error{ OutOfMemory, ScalarCapacity }!void {
         const max_tails = std.math.mul(usize, self.ranges.len, maximum_tail_scalars) catch return error.ScalarCapacity;
-        // First-fit ranges may leave up to maximum_tail_scalars - 1 slots per page.
+        // This cap is a deliberately conservative experimental byte budget,
+        // not a proof against fragmentation after arbitrary edits. A full
+        // first-fit page can have holes throughout, not only at its end.
         // One extra page permits transactional replacement of an existing range.
         const full_pages = std.math.divCeil(usize, max_tails, scalar_slots - maximum_tail_scalars + 1) catch return error.ScalarCapacity;
         const cap = std.math.add(usize, full_pages, 1) catch return error.ScalarCapacity;
@@ -1016,4 +1018,22 @@ test "explicit bounded growth retains concentrated and diverse tails" {
         for (0..count) |i| expected[i] = @intCast(cell * maximum_tail_scalars + i);
         try std.testing.expectEqualSlices(u32, expected[0..count], try storage.tail(cell, testCombiningLen(count)));
     }
+}
+
+test "fragmented pool grows without invalidating retained tails" {
+    var storage = try Storage.init(std.testing.allocator, 512);
+    defer storage.deinit();
+    const filler: [19]u32 = @splat(11);
+    for (0..102) |i| {
+        try storage.set(i * 2, 0, &.{7});
+        try storage.set(i * 2 + 1, 0, &filler);
+    }
+    try storage.set(204, 0, &.{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    for (0..102) |i| try storage.clear(i * 2 + 1, testCombiningLen(filler.len));
+    const long: [20]u32 = @splat(99);
+    try std.testing.expectError(error.ScalarCapacity, storage.set(205, 0, &long));
+    try storage.growOnePage();
+    try storage.set(205, 0, &long);
+    for (0..102) |i| try std.testing.expectEqualSlices(u32, &.{7}, try storage.tail(i * 2, testCombiningLen(1)));
+    try std.testing.expectEqualSlices(u32, &long, try storage.tail(205, testCombiningLen(20)));
 }
