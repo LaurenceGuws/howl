@@ -444,7 +444,7 @@ pub const Storage = struct {
         page: usize,
         region: usize,
     } {
-        for (self.pages, 0..) |page, page_index| {
+        for (self.pages, 0..) |*page, page_index| {
             for (page.free_regions[0..page.free_count], 0..) |region, region_index| {
                 if (region.count >= count)
                     return .{ .page = page_index, .region = region_index };
