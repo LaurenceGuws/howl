@@ -24,15 +24,15 @@ pub const row_capacity = cols * (1 + 2 + 1 + 1);
 const private_glyph_capacity = cols * 2;
 
 fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) error{InvalidCommandLimit}!Config {
-    const glyph_capacity = if (shared) |store| blk: {
-        const recipe = support.storeConfig(support.borrowStore(store));
-        // A different borrower can populate the shared cache using a larger
-        // shaping lane, so bound retained runs as well as this lane's scratch.
-        const cached = if (recipe.shape_cache.growth) |growth| growth.glyph_limit else recipe.shape_cache.glyph_capacity;
-        break :blk @max(private_glyph_capacity, recipe.shaped_capacity, cached);
-    } else private_glyph_capacity;
+    // Individual-cell runs fit the lane's scratch, including cached runs.
+    // A contextual run uses a separate full-row lane of at most 2 * cols.
+    const glyph_capacity = if (shared) |store|
+        support.storeConfig(support.borrowStore(store)).shaped_capacity
+    else
+        private_glyph_capacity;
     const per_cell = std.math.add(usize, glyph_capacity, 4) catch return error.InvalidCommandLimit;
-    const maximum = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
+    const cells = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
+    const maximum = std.math.add(usize, cells, private_glyph_capacity) catch return error.InvalidCommandLimit;
     var result = config;
     if (result.command_limit == 0) result.command_limit = maximum;
     if (result.command_limit > maximum) return error.InvalidCommandLimit;

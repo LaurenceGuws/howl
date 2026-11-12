@@ -398,7 +398,11 @@ pub fn Emitter(comptime instrumented: bool) type {
                         }
                     }
                 }
-                if (!contextual) run = try cache.resolveShape(ctx.shapes, style, sequence, clusters, glyphs);
+                if (!contextual) {
+                    run = try cache.resolveShape(ctx.shapes, style, sequence, clusters, glyphs);
+                    // Cache hits obey the same lane bound as freshly shaped runs.
+                    if (run.glyphs.len > glyphs.len) return error.InsufficientGlyphs;
+                }
                 try appendRun(ctx, output, &used, run, contextual, sequence, style, cell, col, row_clip, c.fg);
             }
             if (instrumented) if (uniform) if (ctx.full_ascii_rows) |counter| {
