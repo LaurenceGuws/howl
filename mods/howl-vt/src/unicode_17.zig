@@ -25,6 +25,9 @@ comptime {
     if (data.len != 61224) @compileError("invalid Unicode 17 table extent");
 }
 
+// These class values are encoded by tools/generate_unicode_17.py.
+const GraphemeBreak = enum(u4) { cr = 3, lf = 4, control = 5, extend = 6, _ };
+
 /// Borrows the generated Unicode 17 properties for one validated scalar.
 pub const Properties = struct {
     value: u32,
@@ -59,16 +62,20 @@ pub const Properties = struct {
         return (self.value >> 13) & 0x1f == 29;
     }
 
+    fn graphemeBreak(self: Properties) GraphemeBreak {
+        return @fromBackingInt(@intCast(@as(u4, @truncate(self.value >> 25))));
+    }
+
     /// Reports the generated Grapheme_Cluster_Break Extend class.
     pub fn isGraphemeExtend(self: Properties) bool {
-        return (self.value >> 25) & 0xf == 6;
+        return self.graphemeBreak() == .extend;
     }
 
     /// Extend joins every retained grapheme except after CR, LF or Control.
     /// The generated transition table is exhaustively checked against this fact.
     pub fn extendJoinsAfter(self: Properties, previous: Properties) bool {
-        const last = (previous.value >> 25) & 0xf;
-        return self.isGraphemeExtend() and last != 3 and last != 4 and last != 5;
+        const last = previous.graphemeBreak();
+        return self.isGraphemeExtend() and last != .cr and last != .lf and last != .control;
     }
 
     fn graphemeProperty(self: Properties) u7 {
