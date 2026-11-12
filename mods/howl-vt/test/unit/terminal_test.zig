@@ -1340,3 +1340,26 @@ test "split UTF-8 wide wrap retains the graphic and suffix across history OOM" {
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 2));
     try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 3));
 }
+
+test "split presentation selector retains original grapheme across history OOM" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 1, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AAA☺")).stateChanged());
+    const prefix = try terminal.feedAtServiceBoundary("\xef\xb8", 1);
+    try std.testing.expectEqual(@as(usize, 2), prefix.consumed);
+    failing.fail_index = failing.alloc_index;
+    const blocked = try terminal.feedAtServiceBoundary("\x8fX", 2);
+    try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{0x263a}, terminal.semanticView(0).cellScalarsAt(0, 3, &scalars));
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try terminal.feedAtServiceBoundary("X", 3);
+    try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqualSlices(u21, &.{ 0x263a, 0xfe0f }, terminal.semanticView(0).cellScalarsAt(0, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 2));
+}

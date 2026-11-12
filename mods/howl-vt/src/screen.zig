@@ -3304,7 +3304,7 @@ pub const Screen = struct {
         cp: u21,
         properties: unicode.Properties,
         comptime grow: bool,
-    ) (if (grow) error{ OutOfMemory, ScalarCapacity }!?bool else ?bool) {
+    ) (if (grow) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!?bool else ?bool) {
         const pos = self.previousLeadCellPos() orelse return null;
         const cells = self.cells orelse return null;
         const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
@@ -3339,6 +3339,20 @@ pub const Screen = struct {
             return false;
         }
 
+        // Widening at the right edge can scroll. Reserve before appending the
+        // selector or moving the existing grapheme so retry cannot duplicate it.
+        var history: ?history_store_mod.Store.Prepared = null;
+        if (grow and cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
+            self.auto_wrap and anchor_col == self.cursorRightBoundaryAt(anchor_row, anchor_col) and
+            self.cursor.row == self.scrollBottom())
+        {
+            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Capacity => return error.HistoryCapacity,
+            };
+        }
+        defer self.discardPreparedHistory(&history);
+
         const combining_index = lead_cell.combining_len;
         if (combining_index < lead_cell.combining.len) {
             lead_cell.combining[combining_index] = cp;
@@ -3366,7 +3380,7 @@ pub const Screen = struct {
         lead_cell.combining_len = combining_index + 1;
         var final_width = lead_cell.width;
         if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation) {
-            self.widenPresentation(anchor_row, anchor_col);
+            self.widenPresentation(anchor_row, anchor_col, &history);
             final_width = 2;
         } else if (cp == 0xfe0e and lead_cell.width == 2 and changes_presentation) {
             self.narrowPresentation(anchor_row, anchor_col);
@@ -3386,7 +3400,7 @@ pub const Screen = struct {
         return true;
     }
 
-    fn widenPresentation(self: *Screen, row: u16, col: u16) void {
+    fn widenPresentation(self: *Screen, row: u16, col: u16, history: *?history_store_mod.Store.Prepared) void {
         const right = self.cursorRightBoundaryAt(row, col);
         const cells = self.cells orelse return;
         if (col == right) {
@@ -3431,7 +3445,7 @@ pub const Screen = struct {
             clearAcceptedTail(&self.scalars.?, lead_index, lead.combining_len);
             cells[@intCast(lead_index)] = blank_cell;
             self.setRowWrapped(row, true);
-            self.lineFeed();
+            self.lineFeedWithHistory(history);
             self.cursor.setColByClient(destination_col);
             const destination = self.rowStart(self.cursor.row) + destination_col;
             const continuation = destination + 1;
@@ -3956,7 +3970,7 @@ pub const Screen = struct {
         const right = self.cursorRightBoundary();
         var col = self.cursor.col;
         var scrolls = self.wrap_pending and col == right;
-        if (!scrolls) if (self.cells) |cells| {
+        if (!scrolls and self.nonsemantic_clusters_possible) if (self.cells) |cells| {
             const target = cells[self.rowStart(self.cursor.row) + col];
             if (target.y > 0 and target.width > 0 and target.x < target.width) {
                 const after = col -| target.x + target.width;

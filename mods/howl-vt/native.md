@@ -179,9 +179,9 @@ consume zero bytes while still blocked. `HVT_INPUT_SCALAR_CAPACITY` and
 Resize returns `HVT_BUSY` while blocked; explicit reset discards pending input.
 The caller owns retry scheduling and backoff. Retry covers a non-joining
 graphic or REP that starts at the bottom margin and must scroll, including
-escaping a nonsemantic multicell cluster. Presentation-width changes, chained
-scrolls beginning above the margin, OSC 66 wraps and multi-row scrolling do not
-yet have history-admission retry.
+escaping a nonsemantic multicell cluster. Presentation widening that scrolls at
+the bottom margin also retries. Chained scrolls beginning above the margin,
+OSC 66 wraps and multi-row scrolling do not yet have history-admission retry.
 
 Other canonical feed errors may follow an already-applied prefix. For those,
 failed C progress remains zero and invalid and the caller must not blindly replay
