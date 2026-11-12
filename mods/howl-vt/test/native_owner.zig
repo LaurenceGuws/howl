@@ -578,4 +578,17 @@ test "native service reports pending scalar and exact unconsumed suffix" {
     var scalars: [24]u21 = undefined;
     for (0..511) |col| try std.testing.expectEqualSlices(u21, &expected, view.cellScalarsAt(0, @intCast(col), &scalars));
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 511));
+
+    // Explicit reset cancels pending input instead of applying it to a new screen.
+    const reset_owner = try owner.create(failing.allocator(), &config);
+    defer owner.destroy(reset_owner);
+    failing.fail_index = failing.alloc_index;
+    const pending_before_reset = try owner.feed(reset_owner, payload[0..length], 4);
+    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_OUT_OF_MEMORY), pending_before_reset.scalar_block);
+    owner.reset(reset_owner);
+    failing.fail_index = std.math.maxInt(usize);
+    const after_reset = try owner.feed(reset_owner, "X", 5);
+    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_READY), after_reset.scalar_block);
+    try std.testing.expectEqual(@as(usize, 1), after_reset.consumed);
+    try std.testing.expectEqual(@as(u21, 'X'), owner.observation(reset_owner).semanticView(0).cellAt(0, 0));
 }
