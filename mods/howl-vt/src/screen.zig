@@ -2839,7 +2839,7 @@ pub const Screen = struct {
 
         const right = self.cursorRightBoundary();
         if (graphic.width > right - self.leftBoundary() + 1) return false;
-        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareBottomGraphicScroll(graphic.width) else null;
+        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareGraphicScroll(graphic.width) else null;
         defer self.discardPreparedHistory(&history);
         if (self.wrap_pending) {
             self.wrap_pending = false;
@@ -3190,7 +3190,7 @@ pub const Screen = struct {
         const right = self.cursorRightBoundary();
         const width: u8 = if (properties.width() == 2) 2 else 1;
         if (width > right - self.leftBoundary() + 1) return false;
-        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareBottomGraphicScroll(width) else null;
+        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareGraphicScroll(width) else null;
         defer self.discardPreparedHistory(&history);
         if (self.wrap_pending) {
             self.wrap_pending = false;
@@ -3963,15 +3963,21 @@ pub const Screen = struct {
         prepared.* = null;
     }
 
-    // At the bottom margin, graphic placement can force at most one scroll:
-    // the scroll clears the destination row before placement continues.
-    fn prepareBottomGraphicScroll(self: *Screen, width: u8) error{ OutOfMemory, HistoryCapacity }!?history_store_mod.Store.Prepared {
-        if (self.cursor.row != self.scrollBottom()) return null;
+    // Look past an initial non-scrolling wrap: its destination may be a
+    // multicell continuation that forces a second line feed at the margin.
+    fn prepareGraphicScroll(self: *Screen, width: u8) error{ OutOfMemory, HistoryCapacity }!?history_store_mod.Store.Prepared {
+        const bottom = self.scrollBottom();
         const right = self.cursorRightBoundary();
+        var row = self.cursor.row;
         var col = self.cursor.col;
-        var scrolls = self.wrap_pending and col == right;
+        var scrolls = self.wrap_pending and col == right and row == bottom;
+        if (self.wrap_pending and col == right and row < bottom) {
+            row += 1;
+            col = if (self.left_right_margin_mode) self.left_margin else 0;
+        }
+        if (!scrolls and row != bottom) return null;
         if (!scrolls and self.nonsemantic_clusters_possible) if (self.cells) |cells| {
-            const target = cells[self.rowStart(self.cursor.row) + col];
+            const target = cells[self.rowStart(row) + col];
             if (target.y > 0 and target.width > 0 and target.x < target.width) {
                 const after = col -| target.x + target.width;
                 if (after > right) scrolls = true else col = after;
@@ -3979,7 +3985,7 @@ pub const Screen = struct {
         };
         if (!scrolls and width == 2 and col == right and self.auto_wrap) scrolls = true;
         if (!scrolls) return null;
-        return self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+        return self.prepareScrollHistoryOne(self.scroll_top, bottom) catch |failure| switch (failure) {
             error.OutOfMemory => error.OutOfMemory,
             error.Capacity => error.HistoryCapacity,
         };
@@ -3987,11 +3993,15 @@ pub const Screen = struct {
 
     fn lineFeedWithHistory(self: *Screen, history: *?history_store_mod.Store.Prepared) void {
         if (history.*) |*row| {
-            // zig-audit: acknowledge discard
-            // reason: The caller observes the completed graphic write, not the scroll witness.
-            _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
-            history.* = null;
-        } else self.lineFeed();
+            if (self.cursor.row == self.scrollBottom()) {
+                // zig-audit: acknowledge discard
+                // reason: The caller observes the completed graphic write, not the scroll witness.
+                _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
+                history.* = null;
+                return;
+            }
+        }
+        self.lineFeed();
     }
 
     /// Prepares history before any part of a single-row scroll can mutate.
@@ -8878,4 +8888,37 @@ test "bottom graphic escapes multicell cluster only after history reservation" {
         };
         for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
     }
+}
+
+test "chained graphic scroll reserves history before the first cursor move" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 3, 4, 4);
+    defer screen.deinit(failing.allocator());
+    var reference = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 4, 4);
+    defer reference.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("s=3;X"));
+    try std.testing.expect(reference.writeSizedText("s=3;X"));
+    screen.cursor.setPositionByClient(1, 3);
+    reference.cursor.setPositionByClient(1, 3);
+    try std.testing.expect(screen.writeCodepoint('A'));
+    try std.testing.expect(reference.writeCodepoint('A'));
+    try std.testing.expect(screen.wrap_pending);
+    const before = try std.testing.allocator.dupe(Screen.Cell, screen.cells.?);
+    defer std.testing.allocator.free(before);
+    const cursor = screen.cursor;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, screen.writeCodepointGrowing(0x4e2d));
+    try std.testing.expectEqualSlices(Screen.Cell, before, screen.cells.?);
+    try std.testing.expectEqualDeep(cursor, screen.cursor);
+    try std.testing.expect(screen.wrap_pending);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expect(try screen.writeCodepointGrowing(0x4e2d));
+    try std.testing.expect(reference.writeCodepoint(0x4e2d));
+    try std.testing.expectEqualDeep(reference.cursor, screen.cursor);
+    try std.testing.expectEqual(reference.historyCount(), screen.historyCount());
+    for (0..screen.rows) |row| for (0..screen.cols) |col| {
+        try std.testing.expectEqualDeep(reference.cellInfoAt(@intCast(row), @intCast(col)), screen.cellInfoAt(@intCast(row), @intCast(col)));
+    };
+    for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
 }
