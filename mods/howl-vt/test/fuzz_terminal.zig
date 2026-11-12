@@ -100,6 +100,7 @@ fn feedHostile(terminal: *howl_vt.Terminal, bytes: []const u8) !void {
         error.PropertyLimit,
         error.ReplyLimit,
         error.ParsedEventLimit,
+        error.ScalarCapacity,
         => {
             try std.testing.expect((try terminal.feed("R")).stateChanged());
             return;

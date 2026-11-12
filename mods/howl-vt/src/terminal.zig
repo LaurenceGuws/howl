@@ -3944,6 +3944,7 @@ const TerminalFeedError = error{
     ConsequenceLimit,
     ConsequencePressure,
     OutOfMemory,
+    ScalarCapacity,
     PropertyLimit,
     ReplyLimit,
     ParsedEventLimit,
@@ -4338,7 +4339,7 @@ const TerminalStream = struct {
                 .mutations = .{ .text = true },
             };
         }
-        const changed = self.terminal.screen_state.active().writeCodepoint(mapped);
+        const changed = try self.terminal.screen_state.active().writeCodepointGrowing(mapped);
         return .{
             .changed = changed,
             .mutations = .{ .text = changed },

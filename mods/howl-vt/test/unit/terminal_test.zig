@@ -1073,3 +1073,18 @@ test "resize preserves a concentrated history row with external combining scalar
     try std.testing.expectEqual(@as(u8, 8), after.historyCellAt(0, 0).combining_len);
     try std.testing.expectEqualSlices(u32, &expected, after.historyCellScalarsAt(0, 0, &scalars));
 }
+
+test "terminal input grows scalar storage for dense combining text" {
+    const allocator = std.testing.allocator;
+    const terminal = try allocator.create(Terminal);
+    defer allocator.destroy(terminal);
+    try Terminal.initWithHistoryInto(terminal, allocator, 1, 512, 0);
+    defer terminal.deinit();
+    try feed(terminal, "\x1b[?7l");
+    const grapheme = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\u{0306}\u{0307}\u{0308}";
+    for (0..512) |_| try feed(terminal, grapheme);
+    const screen = &terminal.screen_state.primary;
+    const expected = [_]u32{ 'e', 0x0301, 0x0302, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307, 0x0308 };
+    var scalars: [24]u32 = undefined;
+    for (0..512) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &scalars));
+}
