@@ -58,7 +58,7 @@ then service the owner again, including when no PTY bytes remain buffered.
 Continue servicing pending writes. Do not force a zero timeout solely because
 `buffered_output_pending` is true during this pause. `hi_resize` returns
 `HI_BUSY` without changing geometry while input is blocked; the embedder
-should defer the requested resize and retry after the pause. Scalar and history capacity limits remain reported `HI_RESOURCE_LIMIT`, not indefinitely retried OOM. Explicit LF/NEL and ordinary graphic-wrap history admission retry. Graphic-wrap retry excludes screens that have used nonsemantic multicell clusters; REP/OSC 66 wrap and multi-row scrolling do not yet retry.
+should defer the requested resize and retry after the pause. Scalar and history capacity limits remain reported `HI_RESOURCE_LIMIT`, not indefinitely retried OOM. Explicit LF/NEL and ordinary graphic-wrap history admission retry. Graphic-wrap retry, including REP, excludes screens that have used nonsemantic multicell clusters; OSC 66 wrap and multi-row scrolling do not yet retry.
 
 The Instance ABI version incorporates VT native version 2 and Render native version 1. Changing an incorporated
 record requires coordinated Instance ABI review/versioning; compile-time guards

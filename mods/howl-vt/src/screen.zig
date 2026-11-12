@@ -2797,7 +2797,7 @@ pub const Screen = struct {
     /// Progress for a repeat command that can stop at scalar pressure.
     pub const RepeatProgress = struct {
         completed: u16 = 0,
-        blocked: ?error{ OutOfMemory, ScalarCapacity } = null,
+        blocked: ?error{ OutOfMemory, ScalarCapacity, HistoryCapacity } = null,
     };
 
     /// Repeats until complete or storage pressure; committed repetitions stay applied.
@@ -2816,7 +2816,7 @@ pub const Screen = struct {
         return result;
     }
 
-    fn writeRepeatedGraphic(self: *Screen, graphic: LastGraphic, comptime grow: bool) (if (grow) error{ OutOfMemory, ScalarCapacity }!bool else bool) {
+    fn writeRepeatedGraphic(self: *Screen, graphic: LastGraphic, comptime grow: bool) (if (grow) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!bool else bool) {
         if (self.cols == 0 or self.rows == 0) return false;
         const direct = @min(
             @as(usize, graphic.combining_len),
@@ -2839,11 +2839,13 @@ pub const Screen = struct {
 
         const right = self.cursorRightBoundary();
         if (graphic.width > right - self.leftBoundary() + 1) return false;
+        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareOrdinaryGraphicScroll(graphic.width) else null;
+        defer self.discardPreparedHistory(&history);
         if (self.wrap_pending) {
             self.wrap_pending = false;
             if (self.cursor.col == right) {
                 self.setRowWrapped(self.cursor.row, true);
-                self.lineFeed();
+                self.lineFeedWithHistory(&history);
                 self.cursor.setColByClient(
                     if (self.left_right_margin_mode) self.left_margin else 0,
                 );
@@ -2866,7 +2868,7 @@ pub const Screen = struct {
         if (graphic.width == 2 and self.cursor.col == right) {
             if (self.auto_wrap) {
                 self.setRowWrapped(self.cursor.row, true);
-                self.lineFeed();
+                self.lineFeedWithHistory(&history);
                 self.cursor.setColByClient(
                     if (self.left_right_margin_mode) self.left_margin else 0,
                 );
@@ -3188,28 +3190,13 @@ pub const Screen = struct {
         const right = self.cursorRightBoundary();
         const width: u8 = if (properties.width() == 2) 2 else 1;
         if (width > right - self.leftBoundary() + 1) return false;
-        // Ordinary wrap has at most one scroll. Reserve it before touching wrap
-        // or cursor state; complex multicell layouts still use the old path.
-        var history: ?history_store_mod.Store.Prepared = null;
-        if (grow and !self.nonsemantic_clusters_possible and self.cursor.row == self.scrollBottom() and
-            self.cursor.col == right and (self.wrap_pending or (width == 2 and self.auto_wrap)))
-        {
-            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Capacity => return error.HistoryCapacity,
-            };
-        }
+        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareOrdinaryGraphicScroll(width) else null;
         defer self.discardPreparedHistory(&history);
         if (self.wrap_pending) {
             self.wrap_pending = false;
             if (self.cursor.col == right) {
                 self.setRowWrapped(self.cursor.row, true);
-                if (history) |*row| {
-                    // zig-audit: acknowledge discard
-                    // reason: The caller observes the completed graphic write, not the scroll witness.
-                    _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
-                    history = null;
-                } else self.lineFeed();
+                self.lineFeedWithHistory(&history);
                 self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
             }
         }
@@ -3228,12 +3215,7 @@ pub const Screen = struct {
         if (width == 2 and self.cursor.col == right) {
             if (self.auto_wrap) {
                 self.setRowWrapped(self.cursor.row, true);
-                if (history) |*row| {
-                    // zig-audit: acknowledge discard
-                    // reason: The caller observes the completed graphic write, not the scroll witness.
-                    _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
-                    history = null;
-                } else self.lineFeed();
+                self.lineFeedWithHistory(&history);
                 self.cursor.setColByClient(
                     if (self.left_right_margin_mode) self.left_margin else 0,
                 );
@@ -3965,6 +3947,27 @@ pub const Screen = struct {
     fn discardPreparedHistory(self: *Screen, prepared: *?history_store_mod.Store.Prepared) void {
         if (prepared.*) |*row| self.history_store.?.discardPrepared(row);
         prepared.* = null;
+    }
+
+    // Ordinary graphic placement can force at most one scroll. Reserve before
+    // touching wrap or cursor; complex multicell placement remains separate.
+    fn prepareOrdinaryGraphicScroll(self: *Screen, width: u8) error{ OutOfMemory, HistoryCapacity }!?history_store_mod.Store.Prepared {
+        const right = self.cursorRightBoundary();
+        if (self.nonsemantic_clusters_possible or self.cursor.row != self.scrollBottom() or
+            self.cursor.col != right or !(self.wrap_pending or (width == 2 and self.auto_wrap))) return null;
+        return self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.Capacity => error.HistoryCapacity,
+        };
+    }
+
+    fn lineFeedWithHistory(self: *Screen, history: *?history_store_mod.Store.Prepared) void {
+        if (history.*) |*row| {
+            // zig-audit: acknowledge discard
+            // reason: The caller observes the completed graphic write, not the scroll witness.
+            _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
+            history.* = null;
+        } else self.lineFeed();
     }
 
     /// Prepares history before any part of a single-row scroll can mutate.
