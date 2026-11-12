@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
     output_shared_module.addImport("output_state", output.owner.import_table.get("output_state").?);
     output_shared_module.addImport("howl_vt", vt);
     output_shared_module.addImport("text_support", output.support);
+    output_shared_module.addImport("glyph_cache", output.cache);
     output_shared_module.addImport("howl_text", text);
     output_shared_module.addImport("test_fonts", text_dependency.module("howl_text_test_fonts"));
     const output_shared_tests = b.addTest(.{ .name = "howl-vt-output-shared", .root_module = output_shared_module, .use_llvm = false, .use_lld = false });

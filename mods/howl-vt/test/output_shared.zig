@@ -2,6 +2,8 @@
 const std = @import("std");
 const output = @import("howl_vt_output");
 const support = @import("text_support");
+const cache = @import("glyph_cache");
+const shaped_text = @import("howl_text");
 const a = std.testing.allocator;
 
 fn makeStore(io: std.Io) !*output.PresentationStore {
@@ -316,4 +318,34 @@ test "shared output admits a dense decorated multi-glyph row" {
     defer unpin(owner, held);
     const count = held.snapshot.backgrounds[0].len + held.snapshot.decorations[0].len + held.snapshot.glyphs[0].len;
     try std.testing.expect(count > 512 * 5);
+}
+
+test "cached shape cannot exceed the consuming lane scratch" {
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try output.initPresentationStore(a, threaded.io(), .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } } } }, .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 1,
+        .raster_bytes = 512 * 512,
+    });
+    defer output.releasePresentationStore(store);
+    const owner = try ready(a, store);
+    defer destroy(owner);
+    const held = try owner.hold();
+    defer unpin(owner, held);
+    const before = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
+    defer a.free(before);
+    {
+        support.claim(store);
+        defer support.unclaim(store);
+        const lane = support.work(support.borrowStore(store));
+        const sequence = [_]u32{ 'x', 0x0301, 0x0301, 0x0301, 0x0301 };
+        var clusters: [24]u32 = undefined;
+        var glyphs: [32]shaped_text.Glyph = undefined;
+        const shaped = try cache.resolveShape(lane.shape_cache, .regular, &sequence, &clusters, &glyphs);
+        try std.testing.expect(shaped.glyphs.len > 1);
+    }
+    try owner.feed("\x1b[Hx\u{0301}\u{0301}\u{0301}\u{0301}");
+    try std.testing.expectError(error.InsufficientGlyphs, owner.flush());
+    try std.testing.expectEqualDeep(before, held.snapshot.glyphs[0]);
 }
