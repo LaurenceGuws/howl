@@ -2753,7 +2753,12 @@ pub const Screen = struct {
 
     /// Applies one Unicode scalar and reports exact accepted semantic mutation.
     pub fn writeCodepoint(self: *Screen, codepoint: u21) bool {
-        return self.writeCellDisposition(codepoint);
+        return self.writeCellDisposition(codepoint, false);
+    }
+
+    /// Experimental fallible write; not connected to parser input yet.
+    pub fn writeCodepointGrowing(self: *Screen, codepoint: u21) error{ OutOfMemory, ScalarCapacity }!bool {
+        return self.writeCellDisposition(codepoint, true);
     }
 
     /// Repeat the complete bounded preceding glyph using the current rendition.
@@ -3070,15 +3075,18 @@ pub const Screen = struct {
 
     /// Write one codepoint with Unicode occupancy, insertion, wrapping, dirty, and cursor semantics.
     fn writeCell(self: *Screen, cp: u21) void {
-        if (!self.writeCellDisposition(cp)) return;
+        if (!self.writeCellDisposition(cp, false)) return;
     }
 
-    fn writeCellDisposition(self: *Screen, cp: u21) bool {
+    fn writeCellDisposition(self: *Screen, cp: u21, comptime grow: bool) (if (grow) error{ OutOfMemory, ScalarCapacity }!bool else bool) {
         if (self.cols == 0 or self.rows == 0) return false;
         const properties = unicode.properties(cp);
         if (properties.isInvalid()) return false;
-        if (self.appendGraphemeToLeadCell(cp, properties)) |changed|
-            return changed;
+        const grapheme = if (grow)
+            try self.appendGraphemeToLeadCell(cp, properties, true)
+        else
+            self.appendGraphemeToLeadCell(cp, properties, false);
+        if (grapheme) |changed| return changed;
         if (properties.width() == 0) return false;
 
         const right = self.cursorRightBoundary();
@@ -3195,7 +3203,8 @@ pub const Screen = struct {
         self: *Screen,
         cp: u21,
         properties: unicode.Properties,
-    ) ?bool {
+        comptime grow: bool,
+    ) (if (grow) error{ OutOfMemory, ScalarCapacity }!?bool else ?bool) {
         const pos = self.previousLeadCellPos() orelse return null;
         const cells = self.cells orelse return null;
         const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
@@ -3235,12 +3244,17 @@ pub const Screen = struct {
             );
             @memcpy(candidate[0..old.len], old);
             candidate[old.len] = cp;
-            self.scalars.?.set(
-                idx,
-                lead_cell.combining_len,
-                candidate[0 .. old.len + 1],
-            ) catch
-                return false;
+            if (grow) {
+                self.scalars.?.setGrowing(idx, lead_cell.combining_len, candidate[0 .. old.len + 1]) catch |failure| switch (failure) {
+                    // zig-audit: acknowledge panic
+                    // reason: The existing lead cell and its retained scalar range must agree before appending.
+                    error.InvalidRange => @panic("accepted scalar range mismatch"),
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.ScalarCapacity => return error.ScalarCapacity,
+                };
+            } else {
+                self.scalars.?.set(idx, lead_cell.combining_len, candidate[0 .. old.len + 1]) catch return false;
+            }
         }
         lead_cell.combining_len = combining_index + 1;
         var final_width = lead_cell.width;
@@ -8304,4 +8318,31 @@ test "row-ring rotations keep cell flags and identity in one physical order" {
     try std.testing.expectEqual(@as(u32, 0), empty.rowStart(0));
     try std.testing.expect(!empty.rowWrapped(0));
     try std.testing.expect(empty.rowGeneration(0) == null);
+}
+
+test "experimental growing screen preserves graphemes across allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCells(failing.allocator(), 1, 512);
+    defer screen.deinit(failing.allocator());
+    failing.fail_index = failing.alloc_index;
+    var failed = false;
+    for (0..512) |_| {
+        try std.testing.expect(try screen.writeCodepointGrowing('e'));
+        for (0..8) |_| {
+            const accepted = screen.writeCodepointGrowing(0x301) catch |failure| switch (failure) {
+                error.OutOfMemory => blk: {
+                    try std.testing.expect(!failed);
+                    failed = true;
+                    failing.fail_index = std.math.maxInt(usize);
+                    break :blk try screen.writeCodepointGrowing(0x301);
+                },
+                error.ScalarCapacity => return failure,
+            };
+            try std.testing.expect(accepted);
+        }
+    }
+    try std.testing.expect(failed);
+    const expected = [_]u32{ 'e', 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301 };
+    var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+    for (0..512) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
 }
