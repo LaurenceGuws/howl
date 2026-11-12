@@ -297,3 +297,23 @@ test "shared short scratch preserves long contextual shaping" {
     try std.testing.expectEqualDeep(two.snapshot.glyphs[0], one.snapshot.glyphs[0]);
     try std.testing.expectEqualSlices(u8, two.snapshot.atlas_pixels, one.snapshot.atlas_pixels);
 }
+
+test "shared output admits a dense decorated multi-glyph row" {
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try makeStore(threaded.io());
+    defer output.releasePresentationStore(store);
+    const owner = try output.Terminal.initShared(a, store, .{});
+    defer destroy(owner);
+    try owner.resize(1, 512);
+    try owner.feed("\x1b[?25l\x1b[?7l\x1b[4:2;9m");
+    for (0..512) |col| {
+        try owner.feed(if (col % 2 == 0) "\x1b[41m" else "\x1b[44m");
+        try owner.feed("x\u{0301}\u{0301}\u{0301}\u{0301}");
+    }
+    try owner.flush();
+    const held = try owner.hold();
+    defer unpin(owner, held);
+    const count = held.snapshot.backgrounds[0].len + held.snapshot.decorations[0].len + held.snapshot.glyphs[0].len;
+    try std.testing.expect(count > 512 * 5);
+}

@@ -18,9 +18,26 @@ const support = @import("text_support");
 pub const rows = @import("limits").maximum_rows;
 /// Maximum supported output column count.
 pub const cols = @import("limits").maximum_columns;
-/// Per-column allowance for a background, a double underline, a strike and
-/// one glyph. Multi-glyph clusters can still reach the explicit command limit.
+/// Baseline per-column allowance for a background, a double underline, a strike
+/// and one glyph. The automatic bound accounts for the shaping scratch too.
 pub const row_capacity = cols * (1 + 2 + 1 + 1);
+const private_glyph_capacity = cols * 2;
+
+fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) error{InvalidCommandLimit}!Config {
+    const glyph_capacity = if (shared) |store| blk: {
+        const recipe = support.storeConfig(support.borrowStore(store));
+        // A different borrower can populate the shared cache using a larger
+        // shaping lane, so bound retained runs as well as this lane's scratch.
+        const cached = if (recipe.shape_cache.growth) |growth| growth.glyph_limit else recipe.shape_cache.glyph_capacity;
+        break :blk @max(private_glyph_capacity, recipe.shaped_capacity, cached);
+    } else private_glyph_capacity;
+    const per_cell = std.math.add(usize, glyph_capacity, 4) catch return error.InvalidCommandLimit;
+    const maximum = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
+    var result = config;
+    if (result.command_limit == 0) result.command_limit = maximum;
+    if (result.command_limit > maximum) return error.InvalidCommandLimit;
+    return result;
+}
 /// ASCII warmup fixture used only by explicit proof configuration.
 pub const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 /// Proof-only logical work counters; absent from ordinary state storage.
@@ -97,7 +114,8 @@ pub const Config = struct {
     box_drawing: text.generated.BoxDrawingConfig = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
     atlas: cache.AtlasConfig = .{ .width = 64, .height = 16, .entry_capacity = 16, .growth = .{ .entry_limit = 256, .alpha_height_limit = 512, .color_height_limit = 16 } },
     raster_bytes: usize = 512 * 512,
-    command_limit: usize = row_capacity,
+    /// Zero derives a ceiling from shaping capacities; storage still grows on demand.
+    command_limit: usize = 0,
 };
 const Resource = struct {
     pixels: []u8 = &.{},
@@ -116,13 +134,13 @@ pub const SharedConfig = struct {
     cursor_stroke_pixels: u8 = 2,
     box_drawing: text.generated.BoxDrawingConfig = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
     atlas: cache.AtlasConfig = .{ .width = 64, .height = 16, .entry_capacity = 16, .growth = .{ .entry_limit = 256, .alpha_height_limit = 512, .color_height_limit = 16 } },
-    command_limit: usize = row_capacity,
+    /// Zero derives a ceiling from shaping capacities; storage still grows on demand.
+    command_limit: usize = 0,
     fn internal(self: SharedConfig) Config {
         return .{ .history_capacity = self.history_capacity, .cursor_stroke_pixels = self.cursor_stroke_pixels, .box_drawing = self.box_drawing, .atlas = self.atlas, .command_limit = self.command_limit };
     }
 };
 fn prepareShared(allocator: std.mem.Allocator, store: *support.PresentationStore, config: Config) !Working {
-    if (config.command_limit > row_capacity) return error.InvalidCommandLimit;
     if (config.cursor_stroke_pixels == 0 or config.cursor_stroke_pixels > 16) return error.InvalidCursorStroke;
     try support.retain(store);
     errdefer support.release(store);
@@ -149,7 +167,6 @@ fn destroyWorking(allocator: std.mem.Allocator, atlas: *cache.Atlas, shapes: *ca
     }
 }
 fn prepareWorking(allocator: std.mem.Allocator, font: *text.FontSet, config: Config) !Working {
-    if (config.command_limit > row_capacity) return error.InvalidCommandLimit;
     if (config.cursor_stroke_pixels == 0 or config.cursor_stroke_pixels > 16) return error.InvalidCursorStroke;
     const atlas = try cache.initAtlas(allocator, config.faces orelse .{ .regular = font }, config.box_drawing, config.atlas);
     errdefer cache.deinitAtlas(atlas);
@@ -193,12 +210,12 @@ pub fn State(comptime instrumented: bool) type {
         /// Native initialization and bounded working-cache setup failures.
         pub const InitError = VT.InitError || WorkingError || SharedWorkingError || error{InvalidCommandLimit};
         /// Transactional borrowed-font replacement failures.
-        pub const ReplaceError = WorkingError || error{HistoryCapacityChange};
+        pub const ReplaceError = WorkingError || error{ HistoryCapacityChange, InvalidCommandLimit };
         const SharedWorkingError = @typeInfo(@typeInfo(@TypeOf(prepareShared)).@"fn".return_type.?).error_union.error_set;
         /// Shared reference admission and local atlas setup failures.
         pub const SharedInitError = InitError;
         /// Shared replacement never changes accepted output on failure.
-        pub const SharedReplaceError = SharedWorkingError || error{HistoryCapacityChange};
+        pub const SharedReplaceError = SharedWorkingError || error{ HistoryCapacityChange, InvalidCommandLimit };
         /// Canonical bounded resize failures.
         pub const ResizeError = VT.ResizeError || error{UnsupportedDimensions};
         /// Proof-only eager storage reservation failures.
@@ -292,7 +309,6 @@ pub fn State(comptime instrumented: bool) type {
             return initCanonical(allocator, canonical, false, .{ .shared = store }, config.internal());
         }
         fn initCanonical(allocator: std.mem.Allocator, canonical: *VT, owns_vt: bool, source: Source, config: Config) (InitError || SharedInitError || error{ PixelSizeMismatch, UnsupportedDimensions })!*Candidate {
-            if (config.command_limit > row_capacity) return error.InvalidCommandLimit;
             const screen = &canonical.screen_state.primary;
             if (screen.rows == 0 or screen.rows > rows or screen.cols == 0 or screen.cols > cols) return error.UnsupportedDimensions;
             const self = try allocator.create(Candidate);
@@ -326,7 +342,7 @@ pub fn State(comptime instrumented: bool) type {
             self.atlas = atlas;
             self.shapes = shapes;
             self.raster = raster;
-            self.config = config;
+            self.config = try resolveCommandLimit(config, working.shared);
             self.shared = working.shared;
             self.resources = @splat(.{});
             self.resource_current = 0;
@@ -383,7 +399,7 @@ pub fn State(comptime instrumented: bool) type {
             const next = try prepareWorking(self.allocator, font, config);
             errdefer destroyWorking(self.allocator, next.atlas, next.shapes, next.raster, next.shared);
             try self.validateWorkingGeometry(next.metrics);
-            self.installWorking(next, config);
+            self.installWorking(next, try resolveCommandLimit(config, next.shared));
         }
         /// Prepared replacement owns its new shared claim and private atlas until committed or discarded.
         pub const Replacement = struct { working: ?Working, config: Config };
@@ -403,7 +419,7 @@ pub fn State(comptime instrumented: bool) type {
             // zig-audit: acknowledge discard
             // reason: Checked pixel extents must fit before the canonical resize.
             _ = try std.math.mul(u16, new_rows, next.metrics.line_height);
-            return .{ .working = next, .config = local };
+            return .{ .working = next, .config = try resolveCommandLimit(local, next.shared) };
         }
         /// Releases an uncommitted replacement without disturbing accepted output.
         pub fn discardWorking(self: *Candidate, replacement: *Replacement) void {

@@ -603,3 +603,47 @@ test "dense decorated row fits ordinary command capacity" {
     defer release(owner, held);
     try std.testing.expectEqual(@as(usize, 512), held.snapshot.glyphs[0].len);
 }
+
+test "dense decorated multi-glyph row fits the automatic command bound" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(1, 512);
+    try owner.feed("\x1b[?25l\x1b[?7l\x1b[4:2;9m");
+    for (0..512) |col| {
+        try owner.feed(if (col % 2 == 0) "\x1b[41m" else "\x1b[44m");
+        try owner.feed("x\u{0301}\u{0301}\u{0301}\u{0301}");
+    }
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const count = held.snapshot.backgrounds[0].len + held.snapshot.decorations[0].len + held.snapshot.glyphs[0].len;
+    try std.testing.expect(count > 512 * 5);
+}
+
+test "dense output allocation failure preserves the held frame and retries" {
+    const f = try font(12);
+    defer f.deinit();
+    var failing = std.testing.FailingAllocator.init(a, .{});
+    const owner = try output.Terminal.init(failing.allocator(), f);
+    defer destroy(owner);
+    try owner.resize(1, 512);
+    try owner.feed("\x1b[?25lA");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const before = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
+    defer a.free(before);
+    try owner.feed("\x1b[H\x1b[?7l\x1b[4:2;9m");
+    for (0..512) |col| {
+        try owner.feed(if (col % 2 == 0) "\x1b[41m" else "\x1b[44m");
+        try owner.feed("x\u{0301}\u{0301}\u{0301}\u{0301}");
+    }
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, owner.flush());
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqualDeep(before, held.snapshot.glyphs[0]);
+    try owner.flush();
+    try std.testing.expectEqualDeep(before, held.snapshot.glyphs[0]);
+}
