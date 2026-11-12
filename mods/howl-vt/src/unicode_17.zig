@@ -59,6 +59,18 @@ pub const Properties = struct {
         return (self.value >> 13) & 0x1f == 29;
     }
 
+    /// Reports the generated Grapheme_Cluster_Break Extend class.
+    pub fn isGraphemeExtend(self: Properties) bool {
+        return (self.value >> 25) & 0xf == 6;
+    }
+
+    /// Extend joins every retained grapheme except after CR, LF or Control.
+    /// The generated transition table is exhaustively checked against this fact.
+    pub fn extendJoinsAfter(self: Properties, previous: Properties) bool {
+        const last = (previous.value >> 25) & 0xf;
+        return self.isGraphemeExtend() and last != 3 and last != 4 and last != 5;
+    }
+
     fn graphemeProperty(self: Properties) u7 {
         return @intCast(self.value >> 25);
     }
@@ -163,4 +175,18 @@ fn readTestU32(offset: *usize) u32 {
     );
     offset.* += 4;
     return result;
+}
+
+test "extend shortcut agrees with every generated grapheme state" {
+    for (0..char_property_count) |next_index| {
+        const next: Properties = .{ .value = readU32(char_property_offset + next_index * 4) };
+        for (0..char_property_count) |previous_index| {
+            const previous: Properties = .{ .value = readU32(char_property_offset + previous_index * 4) };
+            if (!next.extendJoinsAfter(previous)) continue;
+            for (0..512) |state_index| {
+                const prior: GraphemeState = .{ .value = @intCast(state_index << 7) };
+                try std.testing.expect(prior.step(previous).step(next).joinsCurrent());
+            }
+        }
+    }
 }

@@ -3294,20 +3294,25 @@ pub const Screen = struct {
         const lead_cell = &cells[@intCast(idx)];
         if (lead_cell.codepoint == 0) return null;
 
-        var state = unicode.GraphemeState{};
         var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
         const accepted = @call(.always_inline, Screen.cellScalarsAt, .{ self, anchor_row, anchor_col, &scalars });
-        for (accepted) |scalar|
-            state = state.step(unicode.properties(@intCast(scalar)));
-        const next = state.step(properties);
-        if (!next.joinsCurrent()) return null;
+        std.debug.assert(accepted.len != 0);
+        var previous: ?unicode.Properties = null;
+        const fast_join = if (properties.isGraphemeExtend()) fast: {
+            previous = unicode.properties(@intCast(accepted[accepted.len - 1]));
+            break :fast properties.extendJoinsAfter(previous.?);
+        } else false;
+        if (!fast_join) {
+            var state = unicode.GraphemeState{};
+            for (accepted) |scalar|
+                state = state.step(unicode.properties(@intCast(scalar)));
+            if (!state.step(properties).joinsCurrent()) return null;
+        }
         if (lead_cell.combining_len + 1 >= scalar_storage.maximum_scalars) {
             if (grow) return error.ScalarCapacity;
             return false;
         }
-        const changes_presentation = accepted.len != 0 and
-            unicode.properties(@intCast(accepted[accepted.len - 1]))
-                .isEmojiPresentationBase();
+        const changes_presentation = (previous orelse unicode.properties(@intCast(accepted[accepted.len - 1]))).isEmojiPresentationBase();
         if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
             self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
         {
