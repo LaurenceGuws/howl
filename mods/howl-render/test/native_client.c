@@ -84,7 +84,7 @@ static int exercise(const char *path,int memory) {
     size_t at=0;
     while (at<sizeof(bytes)-1) {
         hvt_feed_progress progress;
-        CHECK(hvt_feed(vt,(const uint8_t *)bytes+at,sizeof(bytes)-1-at,17,&progress)==HVT_OK && progress.consumed);
+        CHECK(hvt_feed(vt,(const uint8_t *)bytes+at,sizeof(bytes)-1-at,17,&progress)==HVT_OK && progress.scalar_block==HVT_SCALAR_READY && progress.consumed);
         at+=progress.consumed;
     }
     CHECK(hrc_frame_capture(a,0,0,0,&info)==HRC_OK);

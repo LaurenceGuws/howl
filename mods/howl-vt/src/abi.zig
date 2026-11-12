@@ -9,6 +9,7 @@ const Error = owner.Error || native.Error || native.requests.Error || native.gra
 fn failure(err: Error) u32 {
     return switch (err) {
         error.OutOfMemory => c.HVT_OUT_OF_MEMORY,
+        error.ScalarInputPending => c.HVT_BUSY,
         error.InvalidArgument, error.InvalidDimensions, error.InvalidUtf8, error.InvalidText, error.InvalidRange, error.InvalidReplyCount, error.CodepointTooLarge, error.Utf8CannotEncodeSurrogateHalf => c.HVT_INVALID_ARGUMENT,
         error.ResourceLimit, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ReplyLimit, error.ParsedEventLimit, error.ScalarCapacity, error.KeyTextLimit, error.LengthOverflow, error.CoordinateLimit, error.Overflow, error.RequestLimit => c.HVT_RESOURCE_LIMIT,
         error.BufferTooSmall, error.TextLimit => c.HVT_BUFFER_TOO_SMALL,

@@ -167,16 +167,19 @@ raw transition and advances once through feed completion.
 ## Byte progress, time and failures
 
 One feed accepts at most 65,536 bytes and invokes canonical service-boundary feed
-once. Successful nonempty input reports an exact positive consumed prefix.
-A new reply, retained request or synchronized-output release may end it. The
-caller advances by that count, services work and chooses continuation; a pending
-host request adds no facade-level input gate.
+once. A new reply, retained request, synchronized-output release or scalar-storage
+pressure may end the exact consumed prefix. A nonzero `scalar_block` means one
+already-decoded scalar is retained but not applied. The caller advances only by
+`consumed`, pauses further input, and retries with the unconsumed suffix after
+backoff; an empty feed retries when the blocked scalar ended the input. A retry may
+consume zero bytes while still blocked. `HVT_SCALAR_CAPACITY` is a bound, not a
+transient allocation failure. Resize returns `HVT_BUSY` while blocked; explicit
+reset discards the pending scalar. The caller owns retry scheduling and backoff.
 
-A canonical feed error may follow an already-applied prefix. The core does not
-report exact consumed bytes on error, so failed C progress is entirely zero and
-invalid. The caller must not blindly replay that input. Observation, reply/request
-service, explicit RIS and destruction remain available. There is no implicit
-reset, replay, sticky retirement or application recovery policy.
+Other canonical feed errors may follow an already-applied prefix. For those,
+failed C progress remains zero and invalid and the caller must not blindly replay
+input. Observation, reply/request service, explicit reset and destruction remain
+available. There is no implicit whole-buffer rollback or application recovery.
 
 Feed and animation service take caller-monotonic nanoseconds. VT owns image frame
 selection and next-delay facts; the caller owns its clock and next wake.

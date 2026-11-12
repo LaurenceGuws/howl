@@ -55,5 +55,5 @@ int howl_external_vt_abi(void) {
     hvt_release(&value);
     hvt_release(NULL);
     if (hvt_observation_release(&observation)!=HVT_OK || observation) return 29;
-    return result==HVT_OK && copied==HVT_OK && progress.consumed==1 && cell.scalar_count==1 && cell.scalars[0]=='E' && !value ? 0 : 27;
+    return result==HVT_OK && copied==HVT_OK && progress.consumed==1 && progress.scalar_block==HVT_SCALAR_READY && cell.scalar_count==1 && cell.scalars[0]=='E' && !value ? 0 : 27;
 }

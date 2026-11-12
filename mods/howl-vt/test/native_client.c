@@ -25,7 +25,7 @@ _Static_assert(offsetof(hvt_state,alternate_screen)==44,"hvt_state.alternate_scr
 _Static_assert(offsetof(hvt_state,cursor_visible)==45,"hvt_state.cursor_visible");
 _Static_assert(offsetof(hvt_state,synchronized_output)==46,"hvt_state.synchronized_output");
 _Static_assert(offsetof(hvt_state,reserved)==47,"hvt_state.reserved");
-_Static_assert(sizeof(hvt_feed_progress)==32 && _Alignof(hvt_feed_progress)==8,"hvt_feed_progress layout");
+_Static_assert(sizeof(hvt_feed_progress)==40 && _Alignof(hvt_feed_progress)==8,"hvt_feed_progress layout");
 _Static_assert(offsetof(hvt_feed_progress,terminal_revision)==0,"hvt_feed_progress.terminal_revision");
 _Static_assert(offsetof(hvt_feed_progress,content_revision)==8,"hvt_feed_progress.content_revision");
 _Static_assert(offsetof(hvt_feed_progress,consumed)==16,"hvt_feed_progress.consumed");
@@ -34,12 +34,13 @@ _Static_assert(offsetof(hvt_feed_progress,synchronized_ended)==28,"hvt_feed_prog
 _Static_assert(offsetof(hvt_feed_progress,trailing_effect)==29,"hvt_feed_progress.trailing_effect");
 _Static_assert(offsetof(hvt_feed_progress,held)==30,"hvt_feed_progress.held");
 _Static_assert(offsetof(hvt_feed_progress,reserved)==31,"hvt_feed_progress.reserved");
+_Static_assert(offsetof(hvt_feed_progress,scalar_block)==32,"hvt_feed_progress.scalar_block");
 _Static_assert(sizeof(hvt_animation)==8 && _Alignof(hvt_animation)==4,"hvt_animation layout");
 _Static_assert(offsetof(hvt_animation,next_ms)==0,"hvt_animation.next_ms");
 _Static_assert(offsetof(hvt_animation,changed)==4,"hvt_animation.changed");
 _Static_assert(offsetof(hvt_animation,deadline_present)==5,"hvt_animation.deadline_present");
 _Static_assert(offsetof(hvt_animation,reserved)==6,"hvt_animation.reserved");
-_Static_assert(HVT_NATIVE_VERSION==1,"HVT_NATIVE_VERSION");
+_Static_assert(HVT_NATIVE_VERSION==2,"HVT_NATIVE_VERSION");
 _Static_assert(HVT_MAX_SCREEN_CELLS==1048576,"HVT_MAX_SCREEN_CELLS");
 _Static_assert(HVT_MAX_INPUT_BYTES==65536,"HVT_MAX_INPUT_BYTES");
 _Static_assert(HVT_INPUT_BUFFER_BYTES==512,"HVT_INPUT_BUFFER_BYTES");
@@ -72,6 +73,8 @@ static uint32_t feed_all(hvt_terminal *value,const char *bytes) {
         hvt_feed_progress progress={0};
         const uint32_t status=hvt_feed(value,(const uint8_t *)bytes+offset,length-offset,17,&progress);
         if (status!=HVT_OK) return status;
+        if (progress.scalar_block == HVT_SCALAR_OUT_OF_MEMORY) return HVT_OUT_OF_MEMORY;
+        if (progress.scalar_block == HVT_SCALAR_CAPACITY) return HVT_RESOURCE_LIMIT;
         if (!progress.consumed || progress.consumed>length-offset) return HVT_INTERNAL;
         offset+=progress.consumed;
     }

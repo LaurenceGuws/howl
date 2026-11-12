@@ -191,7 +191,7 @@ pub const TryInitError = InitError || error{PresentationBusy};
 /// Reports terminal input encoding, signal, or bounded write admission failure.
 pub const InputError = vt.Terminal.InputError || pty.TermiosSignalError || error{WriteQueueFull};
 /// Reports atomic PTY and VT geometry transition failure.
-pub const ResizeError = pty.ResizeError || vt.Terminal.ResizeError || error{ScalarInputPending};
+pub const ResizeError = pty.ResizeError || vt.Terminal.ResizeError;
 /// Reports PTY, VT, reply, or discard policy progress failure.
 pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.FeedError || vt.Terminal.ClipboardReplyError ||
@@ -1557,11 +1557,10 @@ const State = struct {
             // A retained scalar precedes all unread bytes and may be retried
             // even when a later reply is waiting behind an active paste.
             const bytes = if (pending_scalar) &.{} else self.reads[self.read_start..self.read_end];
-            const progress = try self.terminal.feedAtServiceBoundaryRetainingScalar(
-                bytes,
-                timestamp_ns,
-                if (consequence_policy == .retain) relieveConsequencePressure else null,
-            );
+            const progress = if (consequence_policy == .retain)
+                try self.terminal.feedAtServiceBoundaryRelievingConsequences(bytes, timestamp_ns, relieveConsequencePressure)
+            else
+                try self.terminal.feedAtServiceBoundary(bytes, timestamp_ns);
             std.debug.assert(progress.consumed <= self.read_end - self.read_start);
             self.read_start += progress.consumed;
             viewport_changed.* = viewport_changed.* or progress.summary.mutations.viewport;

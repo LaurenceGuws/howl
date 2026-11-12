@@ -1,12 +1,12 @@
-//! Owns fixed bounded overflow scalars for one ordered cell cohort.
+//! Owns bounded overflow scalars for one ordered cell cohort.
 
 const std = @import("std");
 
-/// Cells qualified by one fixed owner-local scalar page.
+/// Cells qualifying one initially reserved owner-local scalar page.
 pub const page_cells: usize = 4096;
-/// Scalar bytes retained by each fixed owner-local page.
+/// Scalar bytes retained by each owner-local page.
 pub const scalar_bank_bytes: usize = 8 * 1024;
-/// Scalar slots retained by each fixed owner-local page.
+/// Scalar slots retained by each owner-local page.
 pub const scalar_slots: usize = scalar_bank_bytes / @sizeOf(u32);
 /// Scalars retained directly in one lead cell.
 pub const inline_scalars: usize = 4;
@@ -19,7 +19,7 @@ const free_region_limit: usize = scalar_slots + 1;
 /// Names the first scalar slot of one exact bank-contained range.
 ///
 /// Zero is canonical absence. A nonzero value is one plus the absolute slot
-/// across this owner's ordered fixed-bank cohort. The owning lead cell's
+/// across this owner's ordered page cohort. The owning lead cell's
 /// `combining_len` supplies the range length; range metadata never duplicates
 /// that authority.
 pub const Range = enum(u32) {
@@ -45,18 +45,16 @@ const Page = struct {
     }
 };
 
-/// Retains one range record per cell and one 8 KiB scalar bank per 4096 cells.
-///
-/// Allocation occurs only in `init`. Every mutation is bounded and
-/// allocation-free. Ranges may name any bank page owned by this storage, so
-/// moving an accepted cell across a page boundary transfers its range without
-/// requiring fresh scalar capacity.
+/// Retains one range record per cell and initially one 8 KiB scalar bank per
+/// 4096 cells. `set` is allocation-free; `setGrowing` may add a bounded page.
+/// Ranges can name any owner-local page, so moving an accepted cell across a
+/// page boundary transfers its range without fresh scalar capacity.
 pub const Storage = struct {
     allocator: std.mem.Allocator,
     ranges: []Range,
     pages: []Page,
 
-    /// Allocates the exact fixed bank cohort and canonical empty range table.
+    /// Allocates initial banks and the canonical empty range table.
     pub fn init(
         allocator: std.mem.Allocator,
         cell_capacity: usize,
@@ -97,8 +95,7 @@ pub const Storage = struct {
         return .{ .allocator = allocator, .ranges = ranges, .pages = pages };
     }
 
-    /// Experimental explicit growth. Existing mutation remains allocation-free;
-    /// callers must arrange safe input failure handling before using this path.
+    /// Adds one owner-local page within the bounded growth budget.
     /// Successful growth invalidates borrowed page slices, not range identities.
     pub fn growOnePage(self: *Storage) error{ OutOfMemory, ScalarCapacity }!void {
         // A page unable to fit even the largest range has gaps of at most
@@ -123,7 +120,7 @@ pub const Storage = struct {
         self.pages = replacement;
     }
 
-    /// Releases the complete fixed owner-local cohort.
+    /// Releases the complete owner-local cohort.
     pub fn deinit(self: *Storage) void {
         self.allocator.free(self.pages);
         self.allocator.free(self.ranges);
@@ -193,7 +190,7 @@ pub const Storage = struct {
         return self.ranges.len;
     }
 
-    /// Reports whether any fixed scalar bank owns an allocated range.
+    /// Reports whether any scalar bank owns an allocated range.
     ///
     /// Prepared ranges count as allocated until they are released or
     /// committed, so callers may safely skip cell-by-cell tail cleanup only
@@ -295,8 +292,8 @@ pub const Storage = struct {
         try prepared.commit(cell, old_combining_len);
     }
 
-    /// Experimental fallible growth path. The existing `set` contract remains
-    /// allocation-free until terminal input can retain/retry failures safely.
+    /// Replaces a tail, growing only if existing pages cannot accommodate it.
+    /// Allocation failure preserves the old range and accepted values.
     pub fn setGrowing(
         self: *Storage,
         cell: usize,

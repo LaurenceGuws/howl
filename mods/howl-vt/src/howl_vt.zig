@@ -17,11 +17,11 @@ pub const ScalarStorage = scalar_storage.Storage;
 pub const UnicodeProperties = unicode_17.Properties;
 /// Returns pinned Unicode 17 properties for one valid scalar.
 pub const unicodeProperties = unicode_17.properties;
-/// Reports the fixed scalar-storage contract.
+/// Reports scalar-storage layout constants.
 pub const scalar = struct {
-    /// Number of cells qualified by one fixed scalar bank.
+    /// Number of cells qualifying one initially reserved scalar bank.
     pub const page_cells = scalar_storage.page_cells;
-    /// Fixed scalar bytes retained for each owner-local page.
+    /// Scalar bytes retained for each owner-local page.
     pub const bank_bytes = scalar_storage.scalar_bank_bytes;
     /// Scalars retained directly in each lead cell.
     pub const inline_scalars = scalar_storage.inline_scalars;

@@ -1,7 +1,7 @@
 #include "howl_vt_native.h"
 #include <stdio.h>
 #include <stddef.h>
-_Static_assert(HVT_NATIVE_VERSION == 1, "review Dart binding for a new VT ABI");
+_Static_assert(HVT_NATIVE_VERSION == 2, "review Dart binding for a new VT ABI");
 _Static_assert(sizeof(hvt_interaction) == 16, "native interaction layout");
 _Static_assert(offsetof(hvt_interaction, flags) == 8, "flags offset");
 _Static_assert(offsetof(hvt_interaction, mouse_tracking) == 12, "tracking offset");

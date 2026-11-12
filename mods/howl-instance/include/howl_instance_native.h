@@ -11,8 +11,8 @@ extern "C" {
 #if HRC_NATIVE_VERSION != 1u
 #error "Instance ABI v3 incorporates Render native v1; changing its layout requires ABI review/versioning"
 #endif
-#if HVT_NATIVE_VERSION != 1u
-#error "Instance ABI v3 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
+#if HVT_NATIVE_VERSION != 2u
+#error "Instance ABI v3 incorporates VT native v2; changing its layout requires Instance ABI review/versioning"
 #endif
 typedef struct hi_instance hi_instance;
 enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_CONTEXT_CHANGED=9, HI_BUFFER_TOO_SMALL=10, HI_STALE_REQUEST=11, HI_REPLY_REQUIRED=12, HI_REQUEST_MISMATCH=13 };

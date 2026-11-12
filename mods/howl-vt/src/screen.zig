@@ -2756,7 +2756,7 @@ pub const Screen = struct {
         return self.writeCellDisposition(codepoint, false);
     }
 
-    /// Experimental fallible write; not connected to parser input yet.
+    /// Writes a scalar, returning storage pressure without losing the old cell.
     pub fn writeCodepointGrowing(self: *Screen, codepoint: u21) error{ OutOfMemory, ScalarCapacity }!bool {
         return self.writeCellDisposition(codepoint, true);
     }

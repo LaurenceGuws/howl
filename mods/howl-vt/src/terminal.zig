@@ -4059,6 +4059,7 @@ const TerminalStream = struct {
     fn nextGroundPrintableAscii(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
         std.debug.assert(self.terminal.stream_state.parser.groundPrintableAscii(byte));
         const effect = try self.applyPrint(byte);
+        if (self.retain_scalar_failure and self.terminal.scalarInputBlocked()) return effect.mutations;
         std.debug.assert(effect.changed);
         std.debug.assert(effect.mutations.text);
         std.debug.assert(!effect.suppress_owner_fallback);
@@ -4214,6 +4215,10 @@ const TerminalStream = struct {
                 } else {
                     summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
                     consumed += 1;
+                    if (self.terminal.stream_state.pending_scalar) |pending| {
+                        scalar_blocked = pending.failure;
+                        break;
+                    }
                 }
                 continue;
             }
@@ -5224,7 +5229,7 @@ pub const Terminal = struct {
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
-    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity } ||
+    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity, ScalarInputPending } ||
         std.mem.Allocator.Error;
     /// Owns a complete fallible resize candidate bound to one Terminal.
     ///
@@ -6369,18 +6374,17 @@ pub const Terminal = struct {
         return summary;
     }
 
-    /// Applies a nonempty prefix until a reply, host consequence, or synchronized release.
-    ///
-    /// Ordinary bytes may consume the complete slice. A caller that owns child replies or
-    /// host consequences can service pending work or observe the release, then continue at `consumed`.
-    /// This keeps those bounded queues observable between protocol-producing events without
-    /// forcing caller-side byte-at-a-time terminal feeds.
+    /// Applies a prefix until a reply, host consequence, synchronized release,
+    /// or scalar-storage pressure. Continue at the reported `consumed` offset.
+    /// A blocked scalar is retained; retry after backoff with the unread suffix,
+    /// including an empty slice when the scalar ended the previous read. A still
+    /// blocked retry consumes zero bytes. Defer geometry changes until it succeeds.
     pub fn feedAtServiceBoundary(
         self: *Terminal,
         bytes: []const u8,
         timestamp_ns: u64,
     ) FeedError!FeedProgress {
-        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null, false);
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null);
     }
 
     /// Applies a service-boundary feed while allowing a caller-owned policy to
@@ -6397,23 +6401,12 @@ pub const Terminal = struct {
         timestamp_ns: u64,
         relief: ConsequencePressureRelief,
     ) FeedError!FeedProgress {
-        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief, false);
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief);
     }
 
-    /// Reports whether an experimental scalar-retaining feed is waiting.
+    /// Reports whether a service feed retained a scalar awaiting storage.
     pub fn scalarInputBlocked(self: *const Terminal) bool {
         return self.stream_state.pending_scalar != null;
-    }
-
-    /// Experimental scalar-retaining feed. The caller must not mutate the
-    /// terminal while blocked and must retry with the unconsumed suffix.
-    pub fn feedAtServiceBoundaryRetainingScalar(
-        self: *Terminal,
-        bytes: []const u8,
-        timestamp_ns: u64,
-        relief: ?ConsequencePressureRelief,
-    ) FeedError!FeedProgress {
-        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief, true);
     }
 
     fn feedAtServiceBoundaryImpl(
@@ -6421,11 +6414,7 @@ pub const Terminal = struct {
         bytes: []const u8,
         timestamp_ns: u64,
         relief: ?ConsequencePressureRelief,
-        retain_scalar_failure: bool,
     ) FeedError!FeedProgress {
-        if (!retain_scalar_failure) {
-            if (self.stream_state.pending_scalar) |pending| return pending.failure;
-        }
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
@@ -6436,7 +6425,7 @@ pub const Terminal = struct {
             TerminalStream.initRelievingConsequencePressure(self, callback)
         else
             TerminalStream.init(self);
-        stream.retain_scalar_failure = retain_scalar_failure;
+        stream.retain_scalar_failure = true;
         var progress = try stream.nextServiceBoundarySummary(
             bytes,
             replies_before,
@@ -6498,6 +6487,7 @@ pub const Terminal = struct {
         cell_pixels: ?CellPixelSize,
     ) ResizeError!PreparedResize {
         self.requireNoPreparedResize();
+        if (self.scalarInputBlocked()) return error.ScalarInputPending;
         try validateDimensions(rows, cols);
         if (cell_pixels) |cell| {
             if (cell.width == 0 or cell.height == 0) return error.InvalidDimensions;
@@ -6701,6 +6691,7 @@ pub const Terminal = struct {
         self.alternate_savepoint.clear();
         self.charset = .{};
         self.stream_state.parser.resetTextEncoding();
+        self.stream_state.pending_scalar = null;
         self.reply_buffer.resetFraming();
         self.kitty = .{};
         self.locator.reset();
@@ -11546,17 +11537,28 @@ test "terminal occurrence identity survives mutations and rejects storage reuse"
     }
 }
 
-test "experimental scalar retaining feed keeps consequence relief" {
+test "scalar retaining service keeps consequence relief" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 24);
     defer terminal.deinit();
     for (0..32) |_| try std.testing.expect((try terminal.feed("\x07")).stateChanged());
     const old_head = terminal.consequenceHead().?.id();
     service_boundary_test_relieved_id = 0;
-    const progress = try terminal.feedAtServiceBoundaryRetainingScalar("\x07TAIL", 1, serviceBoundaryTestConsumeHead);
+    const progress = try terminal.feedAtServiceBoundaryRelievingConsequences("\x07TAIL", 1, serviceBoundaryTestConsumeHead);
     try std.testing.expect(progress.consequence_pressure_relieved);
     try std.testing.expect(progress.scalar_blocked == null);
     try std.testing.expectEqual(old_head, service_boundary_test_relieved_id);
     try std.testing.expectEqual(@as(usize, 1), progress.consumed);
     try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
     try std.testing.expectEqual(old_head + 1, terminal.consequenceHead().?.id());
+}
+
+test "explicit hard reset discards a pending scalar" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    terminal.stream_state.pending_scalar = .{ .value = 0x301, .failure = error.OutOfMemory };
+    try std.testing.expect(terminal.scalarInputBlocked());
+    terminal.hardReset();
+    try std.testing.expect(!terminal.scalarInputBlocked());
+    try std.testing.expect((try terminal.feed("X")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
 }

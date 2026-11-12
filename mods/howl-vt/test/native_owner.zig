@@ -12,6 +12,8 @@ fn feedAll(value: *owner.Owner, bytes: []const u8) !void {
     var offset: usize = 0;
     while (offset < bytes.len) {
         const progress = try owner.feed(value, bytes[offset..], 17);
+        if (progress.scalar_block == c.HVT_SCALAR_OUT_OF_MEMORY) return error.OutOfMemory;
+        if (progress.scalar_block == c.HVT_SCALAR_CAPACITY) return error.ScalarCapacity;
         try std.testing.expect(progress.consumed > 0 and progress.consumed <= bytes.len - offset);
         offset += progress.consumed;
     }
@@ -543,4 +545,37 @@ test "native RGBA copies survive mutation destruction and reject unrelated reset
     }
     try std.testing.expect(copied.width == 2 and copied.height == 2 and copied.byte_count == 16);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, pixels[0..16]);
+}
+
+test "native service reports pending scalar and exact unconsumed suffix" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const config = c.hvt_config{ .rows = 1, .columns = 512, .history_rows = 0, .reserved = 0, .cell_width = 8, .cell_height = 16 };
+    const value = try owner.create(failing.allocator(), &config);
+    defer owner.destroy(value);
+    const grapheme = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\u{0306}\u{0307}\u{0308}";
+    var payload: [16384]u8 = undefined;
+    var length: usize = 0;
+    for (0..511) |_| {
+        @memcpy(payload[length..][0..grapheme.len], grapheme);
+        length += grapheme.len;
+    }
+    payload[length] = 'X';
+    length += 1;
+    failing.fail_index = failing.alloc_index;
+    const first = try owner.feed(value, payload[0..length], 1);
+    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_OUT_OF_MEMORY), first.scalar_block);
+    try std.testing.expect(first.consumed > 0 and first.consumed < length);
+    try std.testing.expectError(error.ScalarInputPending, owner.resize(value, 1, 511, 8, 16));
+    const stalled = try owner.feed(value, payload[first.consumed..length], 2);
+    try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
+    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_OUT_OF_MEMORY), stalled.scalar_block);
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try owner.feed(value, payload[first.consumed..length], 3);
+    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_READY), resumed.scalar_block);
+    try std.testing.expectEqual(length - first.consumed, resumed.consumed);
+    const view = owner.observation(value).semanticView(0);
+    const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
+    var scalars: [24]u21 = undefined;
+    for (0..511) |col| try std.testing.expectEqualSlices(u21, &expected, view.cellScalarsAt(0, @intCast(col), &scalars));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 511));
 }

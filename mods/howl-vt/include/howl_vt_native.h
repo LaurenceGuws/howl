@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include <stddef.h>
 /* VT-owned native vocabulary, independent of Server framing and Zig enum layout.
- * Version 1. Fixed-width values; unknown tags are rejected before terminal mutation. */
-#define HVT_NATIVE_VERSION 1u
+ * Version 2. Fixed-width values; unknown tags are rejected before terminal mutation. */
+#define HVT_NATIVE_VERSION 2u
 #define HVT_MAXIMUM_CELL_SCALARS 24u
 #define HVT_MAX_SEARCH_QUERY_BYTES 4096u
 enum hvt_named_key {
@@ -237,7 +237,11 @@ enum hvt_status {
     HVT_OK=0, HVT_INVALID_ARGUMENT=1, HVT_VERSION_MISMATCH=2,
     HVT_OUT_OF_MEMORY=3, HVT_RESOURCE_LIMIT=4, HVT_BUFFER_TOO_SMALL=5,
     HVT_STALE_REQUEST=6, HVT_REPLY_REQUIRED=7, HVT_CONTEXT_CHANGED=8,
-    HVT_REQUEST_MISMATCH=9, HVT_INTERNAL=10 /* reserved; not a canonical error catch-all */
+    HVT_REQUEST_MISMATCH=9, HVT_INTERNAL=10, /* reserved; not a canonical error catch-all */
+    HVT_BUSY=11
+};
+enum hvt_scalar_block {
+    HVT_SCALAR_READY=0, HVT_SCALAR_OUT_OF_MEMORY=1, HVT_SCALAR_CAPACITY=2
 };
 enum hvt_mutation {
     HVT_MUTATION_CURSOR=1, HVT_MUTATION_TEXT=2, HVT_MUTATION_VIEWPORT=4,
@@ -262,6 +266,7 @@ typedef struct hvt_feed_progress {
     size_t consumed;
     uint32_t mutations;
     uint8_t synchronized_ended, trailing_effect, held, reserved;
+    uint8_t scalar_block, reserved_scalar[7];
 } hvt_feed_progress;
 typedef struct hvt_animation {
     uint32_t next_ms;
@@ -341,16 +346,20 @@ uint32_t hvt_output_read(const hvt_output *, hvt_output_view *);
 void hvt_output_release(hvt_output **);
 
 
-/* Feed exactly one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
- * On OK, consumed is exact (positive for nonempty input); continue at that offset.
- * Replies, retained requests and synchronized release may end the prefix.
- * Time is caller-supplied monotonic nanoseconds.
- * On failure progress is zero/invalid and a prefix MAY ALREADY HAVE MUTATED VT.
- * Never blindly replay the failed input. Caller chooses observation, draining,
- * explicit reset or destruction; this ABI does not guess consumed or auto-recover. */
+/* Feed one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
+ * On OK, consumed is exact; continue at that offset. If scalar_block is nonzero,
+ * the decoded scalar is retained but not applied. Do not mutate geometry or
+ * replay consumed bytes. After releasing memory pressure, call hvt_feed again
+ * with the unconsumed suffix (or NULL,0 if none). A still-blocked retry may
+ * consume zero bytes: schedule retries with backoff, never busy-spin. A capacity
+ * block is a bound, not a transient allocation failure. Explicit hvt_reset
+ * discards the pending scalar. Replies, retained requests and synchronized release
+ * can also end the prefix. Time is caller-supplied monotonic nanoseconds.
+ * Other failures still report invalid progress after possible partial mutation. */
 uint32_t hvt_feed(hvt_terminal *, const uint8_t *, size_t length,
     uint64_t timestamp_ns, hvt_feed_progress *);
-/* Resize is atomic on failure; history capacity is fixed by construction.
+/* Resize returns HVT_BUSY while a scalar is retained and is atomic on failure;
+ * history capacity is fixed by construction.
  * A zero cell pair preserves current known-or-unknown pixels. A nonzero pair
  * replaces pixels atomically with topology/replies; mixed zero pair is invalid. */
 uint32_t hvt_resize(hvt_terminal *, uint16_t rows, uint16_t columns,

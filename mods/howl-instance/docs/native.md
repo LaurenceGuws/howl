@@ -61,7 +61,7 @@ Continue servicing pending writes. Do not force a zero timeout solely because
 should defer the requested resize and retry after the pause. A scalar-capacity
 limit remains a reported `HI_RESOURCE_LIMIT`, not an indefinitely retried OOM.
 
-The Instance ABI version incorporates VT and Render native version 1. Changing an incorporated
+The Instance ABI version incorporates VT native version 2 and Render native version 1. Changing an incorporated
 record requires coordinated Instance ABI review/versioning; compile-time guards
 reject silent version or scalar-capacity drift.
 

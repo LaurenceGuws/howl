@@ -1,4 +1,4 @@
-// VT-owned version-1 native interaction schema. This is a copied C record,
+// VT-owned native interaction schema, unchanged in VT ABI v2. This is a copied C record,
 // not a wire packet. Library selection and runtime belong to the embedder.
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
