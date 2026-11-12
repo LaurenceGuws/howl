@@ -1110,13 +1110,14 @@ test "split UTF-8 scalar allocation failure currently loses decoder progress" {
             @memcpy(prior[0..before.len], before);
             prior_len = before.len;
             try feed(terminal, "\xcc");
-            _ = terminal.feed("\x81") catch |failure| switch (failure) {
+            const result = terminal.feed("\x81") catch |failure| switch (failure) {
                 error.OutOfMemory => {
                     failed_col = @intCast(col);
                     break :outer;
                 },
                 else => return failure,
             };
+            try std.testing.expect(result.stateChanged());
         }
     }
     const col = failed_col orelse return error.ExpectedAllocationFailure;
