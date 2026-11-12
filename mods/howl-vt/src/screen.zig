@@ -3221,8 +3221,10 @@ pub const Screen = struct {
             state = state.step(unicode.properties(@intCast(scalar)));
         const next = state.step(properties);
         if (!next.joinsCurrent()) return null;
-        if (lead_cell.combining_len + 1 >= scalar_storage.maximum_scalars)
+        if (lead_cell.combining_len + 1 >= scalar_storage.maximum_scalars) {
+            if (grow) return error.ScalarCapacity;
             return false;
+        }
         const changes_presentation = accepted.len != 0 and
             unicode.properties(@intCast(accepted[accepted.len - 1]))
                 .isEmojiPresentationBase();

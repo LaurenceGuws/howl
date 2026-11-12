@@ -10301,7 +10301,7 @@ test "Unicode scalar pressure does not advance terminal semantic identity" {
     try std.testing.expectEqual(@as(usize, 24), before_scalars.len);
 
     len = try std.unicode.utf8Encode(0x0317, &encoded);
-    try std.testing.expect(!(try terminal.feed(encoded[0..len])).stateChanged());
+    try std.testing.expectError(error.ScalarCapacity, terminal.feed(encoded[0..len]));
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
     var after: [24]u21 = undefined;
     try std.testing.expectEqualSlices(

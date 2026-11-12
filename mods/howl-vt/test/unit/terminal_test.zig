@@ -1192,3 +1192,26 @@ test "service feed retains split scalar on allocation failure" {
     try std.testing.expectEqual(@as(u32, 0x301), recovered[prior_len]);
     try std.testing.expectEqual(@as(u32, 'X'), screen.cellScalarsAt(0, col + 1, &actual)[0]);
 }
+
+test "service reports the per-grapheme limit without discarding the pending scalar" {
+    const allocator = std.testing.allocator;
+    const terminal = try allocator.create(Terminal);
+    defer allocator.destroy(terminal);
+    try Terminal.initWithHistoryInto(terminal, allocator, 1, 8, 0);
+    defer terminal.deinit();
+    try feed(terminal, "e");
+    for (0..23) |_| try feed(terminal, "\xcc\x81");
+    const blocked = try terminal.feedAtServiceBoundary("\xcc\x81X", 1);
+    try std.testing.expectEqual(@as(usize, 2), blocked.consumed);
+    try std.testing.expectEqual(error.ScalarCapacity, blocked.scalar_blocked.?);
+    try std.testing.expect(terminal.scalarInputBlocked());
+    var actual: [24]u32 = undefined;
+    try std.testing.expectEqual(@as(usize, 24), terminal.screen_state.primary.cellScalarsAt(0, 0, &actual).len);
+    const stalled = try terminal.feedAtServiceBoundary("X", 2);
+    try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
+    try std.testing.expectEqual(error.ScalarCapacity, stalled.scalar_blocked.?);
+    terminal.hardReset();
+    try std.testing.expect(!terminal.scalarInputBlocked());
+    try feed(terminal, "X");
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+}
