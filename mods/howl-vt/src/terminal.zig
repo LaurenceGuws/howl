@@ -6406,8 +6406,9 @@ pub const Terminal = struct {
         self: *Terminal,
         bytes: []const u8,
         timestamp_ns: u64,
+        relief: ?ConsequencePressureRelief,
     ) FeedError!FeedProgress {
-        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null, true);
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief, true);
     }
 
     fn feedAtServiceBoundaryImpl(
@@ -11538,4 +11539,19 @@ test "terminal occurrence identity survives mutations and rejects storage reuse"
         try terminal.resize(4, 12);
         try std.testing.expectEqual(identity, terminal.observation().occurrenceIdentity());
     }
+}
+
+test "experimental scalar retaining feed keeps consequence relief" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+    defer terminal.deinit();
+    for (0..32) |_| try std.testing.expect((try terminal.feed("\x07")).stateChanged());
+    const old_head = terminal.consequenceHead().?.id();
+    service_boundary_test_relieved_id = 0;
+    const progress = try terminal.feedAtServiceBoundaryRetainingScalar("\x07TAIL", 1, serviceBoundaryTestConsumeHead);
+    try std.testing.expect(progress.consequence_pressure_relieved);
+    try std.testing.expect(progress.scalar_blocked == null);
+    try std.testing.expectEqual(old_head, service_boundary_test_relieved_id);
+    try std.testing.expectEqual(@as(usize, 1), progress.consumed);
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+    try std.testing.expectEqual(old_head + 1, terminal.consequenceHead().?.id());
 }
