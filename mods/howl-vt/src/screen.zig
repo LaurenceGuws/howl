@@ -2949,7 +2949,7 @@ pub const Screen = struct {
     pub const SizedTextProgress = struct {
         next_offset: usize = 0,
         changed: bool = false,
-        blocked: ?error{ OutOfMemory, ScalarCapacity } = null,
+        blocked: ?error{ OutOfMemory, ScalarCapacity, HistoryCapacity } = null,
     };
 
     /// Applies one validated OSC 66 sized-text payload without growing storage.
@@ -3035,7 +3035,7 @@ pub const Screen = struct {
         scalars: []const u21,
         width_cells: u8,
         comptime grow: bool,
-    ) (if (grow) error{ OutOfMemory, ScalarCapacity }!bool else bool) {
+    ) (if (grow) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!bool else bool) {
         std.debug.assert(scalars.len > 0 and
             scalars.len <= scalar_storage.maximum_scalars);
         const physical_width = @as(u16, parsed.scale) * width_cells;
@@ -3056,12 +3056,22 @@ pub const Screen = struct {
                 self.scalars.?.prepare(values) catch return false;
         }
         defer if (prepared_tail) |*prepared| prepared.deinit();
+        var history: ?history_store_mod.Store.Prepared = null;
+        if (grow and height == 1 and self.auto_wrap and
+            self.cursor.row == self.scrollBottom() and self.cursor.col + physical_width - 1 > right)
+        {
+            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Capacity => return error.HistoryCapacity,
+            };
+        }
+        defer self.discardPreparedHistory(&history);
 
         var changed = self.cancelPendingWrap();
         if (self.cursor.col + physical_width - 1 > right) {
             if (self.auto_wrap) {
                 self.setRowWrapped(self.cursor.row, true);
-                self.lineFeed();
+                self.lineFeedWithHistory(&history);
                 self.cursor.setColByClient(left);
                 changed = true;
             } else {
