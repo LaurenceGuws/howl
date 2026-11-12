@@ -8,7 +8,7 @@ Ordinary Zig callers retain the direct Instance API. The separate
 `howl_instance_native` Zig module shares native input validation with host adapters,
 without emitting the artifact's C exports into those hosts.
 
-Version 2 supplies one Linux/x86_64-qualified PTY → VT → Render → embedder GPU path:
+Version 3 supplies one Linux/x86_64-qualified PTY → VT → Render → embedder GPU path:
 create, ordered semantic input, canonical geometry, process-group signals,
 caller-driven bounded service, copied scalar/occupancy observation, and destroy.
 Default service discards consequences with deterministic query replies. Explicit
@@ -51,6 +51,15 @@ threads. Re-query pending-write facts after input; an earlier result is stale.
 Output records are zeroed before later validation/work. Operational service failure
 may follow partial canonical progress; zero output is not a rollback promise.
 The caller handles that failure explicitly rather than inferring a successful cut.
+
+When `scalar_blocked` is set, retain buffered output and do not poll the PTY for
+read readiness. Wait for `scalar_retry_wait_ms` when its presence flag is set,
+then service the owner again, including when no PTY bytes remain buffered.
+Continue servicing pending writes. Do not force a zero timeout solely because
+`buffered_output_pending` is true during this pause. `hi_resize` returns
+`HI_BUSY` without changing geometry while a scalar is blocked; the embedder
+should defer the requested resize and retry after the pause. A scalar-capacity
+limit remains a reported `HI_RESOURCE_LIMIT`, not an indefinitely retried OOM.
 
 The Instance ABI version incorporates VT and Render native version 1. Changing an incorporated
 record requires coordinated Instance ABI review/versioning; compile-time guards

@@ -1,6 +1,6 @@
 #include "howl_instance_native.h"
 static_assert(sizeof(hvt_cell) == 104);
-static_assert(sizeof(hi_service) == 32);
+static_assert(sizeof(hi_service) == 40);
 static_assert(sizeof(hi_launch) == 4 * sizeof(hi_bytes) + 8);
 extern "C" int howl_instance_cpp_header(void) { return hi_abi_version() == HI_ABI_VERSION ? 0 : 1; }
 static_assert(alignof(hvt_cell) == alignof(uint32_t));
@@ -11,6 +11,8 @@ static_assert(offsetof(hi_service, changed) == 16);
 static_assert(offsetof(hi_service, exit_kind) == 22);
 static_assert(offsetof(hi_service, sync_trailing_effect) == 25);
 static_assert(offsetof(hi_service, reserved) == 28);
+static_assert(offsetof(hi_service, scalar_retry_wait_ms) == 32);
+static_assert(offsetof(hi_service, scalar_blocked) == 37);
 static_assert(offsetof(hi_launch, rows) == 4 * sizeof(hi_bytes));
 static_assert(offsetof(hi_launch, reserved) == 4 * sizeof(hi_bytes) + 6);
 

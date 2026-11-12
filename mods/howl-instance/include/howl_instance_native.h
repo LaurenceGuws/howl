@@ -7,12 +7,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define HI_ABI_VERSION 2u
+#define HI_ABI_VERSION 3u
 #if HRC_NATIVE_VERSION != 1u
-#error "Instance ABI v2 incorporates Render native v1; changing its layout requires ABI review/versioning"
+#error "Instance ABI v3 incorporates Render native v1; changing its layout requires ABI review/versioning"
 #endif
 #if HVT_NATIVE_VERSION != 1u
-#error "Instance ABI v2 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
+#error "Instance ABI v3 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
 #endif
 typedef struct hi_instance hi_instance;
 enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_CONTEXT_CHANGED=9, HI_BUFFER_TOO_SMALL=10, HI_STALE_REQUEST=11, HI_REPLY_REQUIRED=12, HI_REQUEST_MISMATCH=13 };
@@ -107,7 +107,10 @@ typedef struct hi_launch {
 } hi_launch;
 /* All fields are initialized on entry when the output pointer is non-null.
  * exit_kind: 0=not observed, 1=normal code, 2=signal.
- * animation_wait_present distinguishes no deadline from a zero-ms deadline.
+ * animation_wait_present and scalar_retry_wait_present distinguish no deadline
+ * from a zero-ms deadline. While scalar_blocked, do not poll for PTY reads or
+ * mutate terminal geometry; service again at scalar_retry_wait_ms. Buffered
+ * output remains retained and must not force a zero-timeout busy loop.
  * descriptor_kind: 1=borrowed POSIX fd; never close it.
  * No clocks, waits, wake sources, graphics backend or host queue are owned by this API. */
 typedef struct hi_service {
@@ -118,6 +121,8 @@ typedef struct hi_service {
     uint8_t buffered_output_pending, animation_wait_present, exit_kind, exit_value;
     uint8_t sync_ended, sync_trailing_effect, retained_fallback, descriptor_kind;
     uint8_t reserved[4];
+    uint32_t scalar_retry_wait_ms;
+    uint8_t scalar_retry_wait_present, scalar_blocked, reserved_retry[2];
 } hi_service;
 /* Live C handles come only from hi_create and are invalid
  * after hi_destroy. Direct Zig Instance pointers are a different opaque family

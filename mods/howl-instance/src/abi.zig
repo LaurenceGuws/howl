@@ -42,7 +42,7 @@ fn status(err: Error) u32 {
         error.WriteFailed, error.WouldBlock, error.EndOfStream, error.ReadFailed, error.NotStarted, error.ForegroundGroupFailed, error.SignalFailed, error.TermiosQueryFailed, error.AlreadyStarted, error.ChildCwdFailed, error.ChildExecFailed, error.ChildSessionFailed, error.ChildStdioFailed, error.ForkFailed, error.LaunchStatusFailed, error.LaunchStatusPipeFailed, error.MasterConfigureFailed, error.OpenPtyFailed, error.ShellUnavailable, error.ResizeFailed, error.Interrupted, error.ChildClosed, error.ObserveFailed, error.StaleClipboardRequest, error.StaleColorPreferenceQuery, error.StaleContainerRequest, error.ContainerReplyMismatch, error.StalePointerShape, error.PointerShapeReplyMismatch => c.HI_OPERATION_FAILED,
         error.InvalidConfig, error.InvalidCapacity, error.InvalidAtlasConfig, error.InvalidShapeCacheConfig => c.HI_INVALID_ARGUMENT,
         error.ResourceLimit, error.PresentationStoreLimit, error.CacheFull, error.AtlasFull, error.GlyphTooLarge, error.BufferTooSmall, error.InsufficientCommands, error.ImageLimit, error.CommandLimit, error.PixelLimit, error.RasterTooLarge, error.TextTooLong, error.GlyphLimit, error.InsufficientShapeBuffer, error.InsufficientGlyphs, error.ShapeSequenceLimit, error.GenerationOverflow, error.RevisionOverflow, error.ResourceIdentityOverflow, error.ResourceGenerationOverflow, error.ArithmeticOverflow => c.HI_RESOURCE_LIMIT,
-        error.PresentationBusy => c.HI_BUSY,
+        error.PresentationBusy, error.ScalarInputPending => c.HI_BUSY,
         error.UnsupportedPixelMode, error.UnsupportedGlyph => c.HI_UNSUPPORTED,
         error.FreeTypeInit, error.FontOpen, error.UnicodeCharmap, error.FontSize, error.HarfBuzzFont, error.InvalidMetrics, error.InvalidFontFaces, error.HarfBuzzBuffer, error.InvalidRaster, error.GlyphLoad, error.GlyphRender, error.InvalidBitmap, error.InvalidPlacement, error.RasterExtentMismatch, error.InvalidShapeResult, error.InvalidGlyphIdentity, error.MissingGlyph, error.InvalidSize, error.InvalidStroke, error.InvalidSurface, error.InvalidRectangle, error.InvalidIdentity, error.InvalidGeneration, error.InvalidPixels, error.FormatMismatch, error.ExtentMismatch, error.AliasedStorage, error.InvalidResidency, error.InvalidView, error.InvalidColor, error.InvalidImageBinding, error.InvalidPresentationGeometry, error.FontSetMismatch, error.MissingExternalResource => c.HI_OPERATION_FAILED,
     };
@@ -290,6 +290,10 @@ pub export fn hi_service_turn_policy(raw: ?*c.hi_instance, policy: u8, readable:
         .sync_trailing_effect = @intFromBool(turn.synchronized_output.trailing_effect),
         .retained_fallback = @intFromBool(turn.retained_consequence_fallback),
         .reserved = @splat(0),
+        .scalar_retry_wait_ms = turn.scalar_retry_wait_ms orelse 0,
+        .scalar_retry_wait_present = @intFromBool(turn.scalar_retry_wait_ms != null),
+        .scalar_blocked = @intFromBool(instance.scalarInputBlocked(value)),
+        .reserved_retry = @splat(0),
     };
     return c.HI_OK;
 }

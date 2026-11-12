@@ -44,15 +44,15 @@ fn runFallible(
         const state = owner.pollState();
         var descriptors = [_]c.pollfd{
             .{
-                .fd = boundary.inputFd(),
+                .fd = if (state.scalar_blocked) -1 else boundary.inputFd(),
                 .events = @intCast(c.POLLIN),
                 .revents = 0,
             },
             .{
-                .fd = state.descriptor,
+                .fd = if (state.scalar_blocked and !state.write_pending) -1 else state.descriptor,
                 .events = @intCast(if (state.descriptor < 0)
                     0
-                else if (state.stream_closed)
+                else if (state.stream_closed or state.scalar_blocked)
                     (if (state.write_pending) c.POLLOUT else 0)
                 else
                     c.POLLIN | c.POLLHUP | (if (state.write_pending) c.POLLOUT else 0)),
@@ -60,7 +60,7 @@ fn runFallible(
             },
         };
         const timeout: c_int = @intCast(@min(
-            if (state.read_pending and !state.write_pending) 0 else state.animation_wait_ms orelse 100,
+            if (state.read_pending and !state.write_pending) 0 else @min(state.animation_wait_ms orelse 100, state.scalar_retry_wait_ms orelse 100),
             @as(u32, 100),
         ));
         const ready = c.poll(&descriptors, descriptors.len, timeout);
@@ -82,7 +82,7 @@ fn runFallible(
             pty_events & (c.POLLIN | c.POLLHUP) != 0;
 
         var consumed: usize = 0;
-        while (consumed < shared.input_capacity) : (consumed += 1) {
+        while (!state.scalar_blocked and consumed < shared.input_capacity) : (consumed += 1) {
             const event = boundary.takeInput() orelse break;
             switch (event) {
                 .focus => |focused| {

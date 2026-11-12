@@ -807,47 +807,57 @@ const State = struct {
         var readable = true;
         var writable = true;
         while (!self.stopRequested()) {
-            while (self.pop()) |work| switch (work) {
-                .intent => |task| {
-                    defer self.releaseTask(task);
-                    try self.apply(task);
-                },
-                .configure => |request| self.applyConfiguration(request),
-                .copy => |request| self.applyCopy(request),
-            };
-            if (self.takeCursor()) |style| {
-                instance.setDefaultCursorStyle(self.value, style);
-                self.gate.pending = true;
-            }
-            if (self.takeColors()) |defaults| {
-                instance.setColorDefaults(self.value, defaults);
-                const preference = desktop.colorPreference(defaults.background);
-                self.preference_pending = self.preference_pending or preference != self.color_preference;
-                self.color_preference = preference;
-                self.gate.pending = true;
-            }
-            if (self.preference_pending) {
-                const sent: ?bool = instance.reportColorSchemePreference(self.value, self.color_preference) catch |failure| switch (failure) {
-                    error.ReplyLimit => null,
-                    else => return failure,
+            // A blocked scalar still targets the current screen and cursor.
+            // Defer queued mutations until it has been applied.
+            const scalar_was_blocked = instance.scalarInputBlocked(self.value);
+            if (!scalar_was_blocked) {
+                while (self.pop()) |work| switch (work) {
+                    .intent => |task| {
+                        defer self.releaseTask(task);
+                        try self.apply(task);
+                    },
+                    .configure => |request| self.applyConfiguration(request),
+                    .copy => |request| self.applyCopy(request),
                 };
-                if (sent != null) self.preference_pending = false;
+                if (self.takeCursor()) |style| {
+                    instance.setDefaultCursorStyle(self.value, style);
+                    self.gate.pending = true;
+                }
+                if (self.takeColors()) |defaults| {
+                    instance.setColorDefaults(self.value, defaults);
+                    const preference = desktop.colorPreference(defaults.background);
+                    self.preference_pending = self.preference_pending or preference != self.color_preference;
+                    self.color_preference = preference;
+                    self.gate.pending = true;
+                }
+                if (self.preference_pending) {
+                    const sent: ?bool = instance.reportColorSchemePreference(self.value, self.color_preference) catch |failure| switch (failure) {
+                        error.ReplyLimit => null,
+                        else => return failure,
+                    };
+                    if (sent != null) self.preference_pending = false;
+                }
             }
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
+            // Queued work received while blocked must not wait for another wake.
+            if (scalar_was_blocked and !instance.scalarInputBlocked(self.value)) continue;
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.gate.waitMs(now),
                 if (self.store_busy and self.visible.load(.acquire) and self.credit.load(.acquire)) @as(i32, 1) else null,
                 if (result.animation_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
+                if (result.scalar_retry_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
-            if (instance.bufferedOutputPending(self.value) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            if (instance.bufferedOutputRunnable(self.value) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            const can_read = !result.stream_closed and !instance.scalarInputBlocked(self.value);
+            const can_write = result.write_pending or instance.writePending(self.value);
             var fds = [_]posix.pollfd{
                 .{
-                    .fd = if (result.stream_closed and !result.write_pending) -1 else try instance.descriptor(self.value),
-                    .events = posix.POLL.IN | posix.POLL.HUP | if (result.write_pending or instance.writePending(self.value)) @as(i16, posix.POLL.OUT) else 0,
+                    .fd = if (!can_read and !can_write) -1 else try instance.descriptor(self.value),
+                    .events = (if (can_read) @as(i16, posix.POLL.IN | posix.POLL.HUP) else 0) | (if (can_write) @as(i16, posix.POLL.OUT) else 0),
                     .revents = 0,
                 },
                 .{ .fd = self.wake_fd, .events = posix.POLL.IN, .revents = 0 },
@@ -856,7 +866,7 @@ const State = struct {
             // reason: Readiness is consumed from each exact revents mask below; the aggregate ready count adds no authority.
             _ = try posix.poll(&fds, timeout);
             if (fds[1].revents & posix.POLL.IN != 0) self.drainWake();
-            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or instance.bufferedOutputPending(self.value);
+            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or instance.bufferedOutputRunnable(self.value);
             writable = fds[0].revents & posix.POLL.OUT != 0;
         }
     }
@@ -1886,4 +1896,97 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     try std.testing.expect(glyph_count != 0);
     try owner.releaseDirectFrame(held);
     pinned = false;
+}
+
+// Test-only allocator that fails exactly the first scalar-pool expansion size.
+const ScalarPressureAllocator = struct {
+    child: std.mem.Allocator,
+    armed: std.atomic.Value(bool) = .init(false),
+    failures: std.atomic.Value(u32) = .init(0),
+
+    fn allocator(self: *ScalarPressureAllocator) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = allocate, .resize = resize, .remap = remap, .free = free } };
+    }
+    // zig-audit: acknowledge anyopaque
+    // reason: The standard allocator vtable passes the concrete test owner as opaque context.
+    fn cast(ctx: *anyopaque) *ScalarPressureAllocator {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This context was created from a live ScalarPressureAllocator.
+        // zig-audit: acknowledge align_cast
+        // reason: Allocator vtable calls preserve the alignment supplied at construction.
+        return @ptrCast(@alignCast(ctx));
+    }
+    // zig-audit: acknowledge anyopaque
+    // reason: The standard allocator vtable supplies the test owner as opaque context.
+    fn allocate(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self = cast(ctx);
+        const ScreenState = @FieldType(instance.Terminal, "screen_state");
+        const Screen = @FieldType(ScreenState, "primary");
+        const Storage = @typeInfo(@FieldType(Screen, "scalars")).optional.child;
+        const Page = @typeInfo(@FieldType(Storage, "pages")).pointer.child;
+        if (len == 2 * @sizeOf(Page) and self.armed.load(.acquire)) {
+            // zig-audit: acknowledge discard
+            // reason: The test only needs the cumulative count, not the previous value.
+            _ = self.failures.fetchAdd(1, .monotonic);
+            return null;
+        }
+        return self.child.rawAlloc(len, alignment, ra);
+    }
+    // zig-audit: acknowledge anyopaque
+    // reason: The standard allocator vtable supplies the test owner as opaque context.
+    fn resize(ctx: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, len: usize, ra: usize) bool {
+        return cast(ctx).child.rawResize(bytes, alignment, len, ra);
+    }
+    // zig-audit: acknowledge anyopaque
+    // reason: The standard allocator vtable supplies the test owner as opaque context.
+    fn remap(ctx: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, len: usize, ra: usize) ?[*]u8 {
+        return cast(ctx).child.rawRemap(bytes, alignment, len, ra);
+    }
+    // zig-audit: acknowledge anyopaque
+    // reason: The standard allocator vtable supplies the test owner as opaque context.
+    fn free(ctx: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        cast(ctx).child.rawFree(bytes, alignment, ra);
+    }
+};
+
+test "direct worker backs off scalar pressure and applies queued resize after recovery" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var pressure = ScalarPressureAllocator{ .child = std.testing.allocator };
+    const owner = try Terminal.createDirect(pressure.allocator(), threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 511 ]; do printf 'e\\314\\201\\314\\202\\314\\203\\314\\204\\314\\205\\314\\206\\314\\207\\314\\210'; i=$((i+1)); done; printf 'X\\033]0;DONE\\007'; sleep 30",
+        .rows = 1,
+        .columns = 512,
+        .history_rows = 0,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    pressure.armed.store(true, .release);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    var saw_failure = false;
+    for (0..5000) |_| {
+        if (pressure.failures.load(.acquire) != 0) {
+            saw_failure = true;
+            break;
+        }
+        if (owner.snapshot().failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(saw_failure);
+    try owner.submit(.{ .resize = .{ .rows = 1, .columns = 512 } });
+    try std.Io.sleep(threaded.io(), .fromMilliseconds(250), .awake);
+    const failures = pressure.failures.load(.acquire);
+    try std.testing.expect(failures >= 2 and failures <= 6);
+    try std.testing.expect(owner.snapshot().failure == null);
+    pressure.armed.store(false, .release);
+    try waitTitle(owner, "DONE");
+    try std.testing.expect(owner.snapshot().failure == null);
+    const state = owner.state();
+    state.mutex.lockUncancelable(state.io);
+    const queued = state.count;
+    state.mutex.unlock(state.io);
+    try std.testing.expectEqual(@as(usize, 0), queued);
 }

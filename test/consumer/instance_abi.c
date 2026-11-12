@@ -1,6 +1,6 @@
 #include "howl_instance_native.h"
 _Static_assert(sizeof(hvt_cell) == 104, "VT scalar record");
-_Static_assert(sizeof(hi_service) == 32, "Instance service record");
+_Static_assert(sizeof(hi_service) == 40, "Instance service record");
 _Static_assert(HVT_KEY_ENTER == 1 && HVT_KEY_KEYPAD_ENTER == 58, "native key vocabulary");
 int howl_external_instance_abi(const uint8_t *font, size_t font_len) {
     hi_instance *instance = 0;

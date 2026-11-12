@@ -13,6 +13,42 @@ static uint64_t now_ns(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0;
     return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
 }
+static struct pollfd service_fd(const hi_service *state) {
+    struct pollfd fd = {state->descriptor, 0, 0};
+    if (!state->scalar_blocked) fd.events |= POLLIN | POLLHUP;
+    if (state->write_pending) fd.events |= POLLOUT;
+    if (!fd.events) fd.fd = -1;
+    return fd;
+}
+static int service_delay(const hi_service *state, int maximum_ms) {
+    if (state->scalar_blocked) {
+        if (state->scalar_retry_wait_present && state->scalar_retry_wait_ms < (uint32_t)maximum_ms)
+            return (int)state->scalar_retry_wait_ms;
+        return maximum_ms;
+    }
+    return state->buffered_output_pending ? 0 : maximum_ms;
+}
+static int scheduling_contract(void) {
+    hi_service state = {0};
+    state.descriptor = 7;
+    state.scalar_blocked = 1;
+    state.scalar_retry_wait_present = 1;
+    state.scalar_retry_wait_ms = 100;
+    state.buffered_output_pending = 1;
+    struct pollfd fd = service_fd(&state);
+    REQUIRE(fd.fd == -1 && fd.events == 0);
+    REQUIRE(service_delay(&state, 1000) == 100);
+    state.write_pending = 1;
+    fd = service_fd(&state);
+    REQUIRE(fd.fd == 7 && fd.events == POLLOUT);
+    state.scalar_retry_wait_ms = 0;
+    REQUIRE(service_delay(&state, 1000) == 0);
+    state.scalar_blocked = 0;
+    fd = service_fd(&state);
+    REQUIRE(fd.fd == 7 && (fd.events & POLLIN) != 0);
+    REQUIRE(service_delay(&state, 1000) == 0);
+    return 0;
+}
 static int text_has(hi_instance *instance, const char *needle) {
     char text[4 * 81 + 1]; size_t at = 0;
     for (uint16_t row = 0; row < 4; ++row) {
@@ -36,12 +72,12 @@ static int retained_requests(hi_presentation *store, const hi_instance_config *c
     REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&owner) == HI_OK);
     hi_service state;
     REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,0,0,now_ns(),&state) == HI_OK);
+    REQUIRE(state.scalar_blocked == 0 && state.scalar_retry_wait_present == 0);
     hvt_request first={0};
     const uint64_t deadline=now_ns()+UINT64_C(5000000000);
     while (now_ns() < deadline) {
-        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
-        if (state.write_pending) fd.events |= POLLOUT;
-        REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10) >= 0);
+        struct pollfd fd = service_fd(&state);
+        REQUIRE(poll(&fd,1,service_delay(&state, 10)) >= 0);
         REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,(fd.revents & (POLLIN|POLLHUP)) != 0,(fd.revents & POLLOUT) != 0,now_ns(),&state) == HI_OK);
         REQUIRE(hi_request_head(owner,&first) == HI_OK);
         if (first.kind != HVT_REQUEST_NONE) break;
@@ -69,9 +105,8 @@ static int retained_requests(hi_presentation *store, const hi_instance_config *c
     REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,0,0,now_ns(),&state) == HI_OK);
     REQUIRE(state.write_pending);
     while (now_ns() < deadline && !state.stream_closed) {
-        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
-        if (state.write_pending) fd.events |= POLLOUT;
-        REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10) >= 0);
+        struct pollfd fd = service_fd(&state);
+        REQUIRE(poll(&fd,1,service_delay(&state, 10)) >= 0);
         REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,(fd.revents & (POLLIN|POLLHUP)) != 0,(fd.revents & POLLOUT) != 0,now_ns(),&state) == HI_OK);
     }
     REQUIRE(state.stream_closed);
@@ -151,9 +186,8 @@ static int copied_graphics(hi_presentation *store, const hi_instance_config *con
     GRAPHICS_REQUIRE(hi_service_turn(owner,0,0,now_ns(),&state)==HI_OK);
     const uint64_t deadline=now_ns()+UINT64_C(5000000000);
     do {
-        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
-        if (state.write_pending) fd.events |= POLLOUT;
-        GRAPHICS_REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10)>=0);
+        struct pollfd fd = service_fd(&state);
+        GRAPHICS_REQUIRE(poll(&fd,1,service_delay(&state, 10))>=0);
         GRAPHICS_REQUIRE(hi_service_turn(owner,(fd.revents & (POLLIN|POLLHUP))!=0,(fd.revents & POLLOUT)!=0,now_ns(),&state)==HI_OK);
         GRAPHICS_REQUIRE(hi_copy_graphics(owner,0,images,2,placements,2,&manifest)==HI_OK);
     } while (!manifest.image_count && now_ns()<deadline);
@@ -196,9 +230,8 @@ static int copied_output(hi_presentation *store, const hi_instance_config *confi
     OUTPUT_REQUIRE(hi_service_turn(owner,0,0,now_ns(),&state)==HI_OK);
     const uint64_t deadline=now_ns()+UINT64_C(5000000000);
     do {
-        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
-        if (state.write_pending) fd.events |= POLLOUT;
-        OUTPUT_REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10)>=0);
+        struct pollfd fd = service_fd(&state);
+        OUTPUT_REQUIRE(poll(&fd,1,service_delay(&state, 10))>=0);
         OUTPUT_REQUIRE(hi_service_turn(owner,(fd.revents & (POLLIN|POLLHUP))!=0,(fd.revents & POLLOUT)!=0,now_ns(),&state)==HI_OK);
         hvt_output_release(&snapshot);
         OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,4,64,&snapshot)==HI_OK);
@@ -283,9 +316,8 @@ static int lifecycle(hi_presentation *store, const hi_instance_config *config, h
     const uint64_t deadline = now_ns() + UINT64_C(5000000000);
     int sent = 0, exited = 0;
     while (now_ns() < deadline) {
-        struct pollfd fd = {state.descriptor, POLLIN | POLLHUP, 0};
-        if (state.write_pending) fd.events |= POLLOUT;
-        int timeout = state.buffered_output_pending ? 0 : 10;
+        struct pollfd fd = service_fd(&state);
+        int timeout = service_delay(&state, 10);
         REQUIRE(poll(&fd,1,timeout) >= 0);
         REQUIRE(hi_service_turn(instance,(fd.revents & (POLLIN|POLLHUP)) != 0,(fd.revents & POLLOUT) != 0,now_ns(),&state) == HI_OK);
         if (!sent && text_has(instance,"READY")) {
@@ -343,8 +375,8 @@ static int lifecycle(hi_presentation *store, const hi_instance_config *config, h
     do {
         REQUIRE(hi_service_turn(instance,1,1,now_ns(),&state) == HI_OK);
         if (state.stream_closed) break;
-        struct pollfd fd = {state.descriptor,POLLIN|POLLHUP,0};
-        REQUIRE(poll(&fd,1,10) >= 0);
+        struct pollfd fd = service_fd(&state);
+        REQUIRE(poll(&fd,1,service_delay(&state, 10)) >= 0);
     } while (now_ns() < occupancy_deadline);
     REQUIRE(state.stream_closed);
     hvt_cell wide_lead, wide_tail, sized_tail;
@@ -375,8 +407,8 @@ static int lifecycle(hi_presentation *store, const hi_instance_config *config, h
     do {
         REQUIRE(hi_service_turn(instance,1,1,now_ns(),&state) == HI_OK);
         if (state.stream_closed) break;
-        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
-        REQUIRE(poll(&fd,1,10) >= 0);
+        struct pollfd fd = service_fd(&state);
+        REQUIRE(poll(&fd,1,service_delay(&state, 10)) >= 0);
     } while (now_ns() < wrap_deadline);
     REQUIRE(state.stream_closed);
     /* A regression to non-progressing traversal must fail this foreign process,
@@ -393,6 +425,7 @@ static int lifecycle(hi_presentation *store, const hi_instance_config *config, h
 
 /* One explicit font fixture is shared by every real lifecycle proof. */
 int main(int argc, char **argv) {
+    if (scheduling_contract() != 0) return 1;
     if (argc != 2) return 1;
     hi_presentation_config fonts={0};
     fonts.fonts[HI_FONT_REGULAR].kind=HI_FONT_PATH;

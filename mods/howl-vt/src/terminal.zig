@@ -6400,6 +6400,11 @@ pub const Terminal = struct {
         return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief, false);
     }
 
+    /// Reports whether an experimental scalar-retaining feed is waiting.
+    pub fn scalarInputBlocked(self: *const Terminal) bool {
+        return self.stream_state.pending_scalar != null;
+    }
+
     /// Experimental scalar-retaining feed. The caller must not mutate the
     /// terminal while blocked and must retry with the unconsumed suffix.
     pub fn feedAtServiceBoundaryRetainingScalar(

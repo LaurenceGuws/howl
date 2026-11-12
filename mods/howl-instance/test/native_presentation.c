@@ -8,7 +8,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Linux/x86_64 version-2 presentation records, including reserved fields. */
+/* Linux/x86_64 presentation records, including reserved fields. */
 _Static_assert(sizeof(hi_font_source) == 40, "presentation layout");
 _Static_assert(_Alignof(hi_font_source) == 8, "presentation layout");
 _Static_assert(offsetof(hi_font_source, kind) == 0, "presentation layout");
@@ -66,9 +66,14 @@ static uint64_t hash_bytes(const void *bytes, size_t count) {
 static int turn(hi_instance *owner) {
     hi_service state;
     if (hi_service_turn(owner,0,0,now_ns(),&state) != HI_OK) return 1;
-    struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
+    struct pollfd fd={state.descriptor,0,0};
+    if (!state.scalar_blocked) fd.events|=POLLIN|POLLHUP;
     if (state.write_pending) fd.events|=POLLOUT;
-    int ready=poll(&fd,1,state.buffered_output_pending ? 0 : 5);
+    if (!fd.events) fd.fd=-1;
+    int timeout=state.scalar_blocked ?
+        (state.scalar_retry_wait_present && state.scalar_retry_wait_ms<5 ? (int)state.scalar_retry_wait_ms : 5) :
+        (state.buffered_output_pending ? 0 : 5);
+    int ready=poll(&fd,1,timeout);
     if (ready < 0) return errno == EINTR ? 0 : 1;
     return hi_service_turn(owner,(fd.revents&(POLLIN|POLLHUP)) != 0,
         (fd.revents&POLLOUT) != 0,now_ns(),&state) != HI_OK;
