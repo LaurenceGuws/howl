@@ -2771,7 +2771,7 @@ pub const Screen = struct {
     }
 
     /// Writes a scalar, returning storage pressure without losing the old cell.
-    pub fn writeCodepointGrowing(self: *Screen, codepoint: u21) error{ OutOfMemory, ScalarCapacity }!bool {
+    pub fn writeCodepointGrowing(self: *Screen, codepoint: u21) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!bool {
         return self.writeCellDisposition(codepoint, true);
     }
 
@@ -3172,7 +3172,7 @@ pub const Screen = struct {
         if (!self.writeCellDisposition(cp, false)) return;
     }
 
-    fn writeCellDisposition(self: *Screen, cp: u21, comptime grow: bool) (if (grow) error{ OutOfMemory, ScalarCapacity }!bool else bool) {
+    fn writeCellDisposition(self: *Screen, cp: u21, comptime grow: bool) (if (grow) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!bool else bool) {
         if (self.cols == 0 or self.rows == 0) return false;
         const properties = unicode.properties(cp);
         if (properties.isInvalid()) return false;
@@ -3186,11 +3186,28 @@ pub const Screen = struct {
         const right = self.cursorRightBoundary();
         const width: u8 = if (properties.width() == 2) 2 else 1;
         if (width > right - self.leftBoundary() + 1) return false;
+        // Ordinary wrap has at most one scroll. Reserve it before touching wrap
+        // or cursor state; complex multicell layouts still use the old path.
+        var history: ?history_store_mod.Store.Prepared = null;
+        if (grow and !self.nonsemantic_clusters_possible and self.cursor.row == self.scrollBottom() and
+            self.cursor.col == right and (self.wrap_pending or (width == 2 and self.auto_wrap)))
+        {
+            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Capacity => return error.HistoryCapacity,
+            };
+        }
+        defer self.discardPreparedHistory(&history);
         if (self.wrap_pending) {
             self.wrap_pending = false;
             if (self.cursor.col == right) {
                 self.setRowWrapped(self.cursor.row, true);
-                self.lineFeed();
+                if (history) |*row| {
+                    // zig-audit: acknowledge discard
+                    // reason: The caller observes the completed graphic write, not the scroll witness.
+                    _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
+                    history = null;
+                } else self.lineFeed();
                 self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
             }
         }
@@ -3209,7 +3226,12 @@ pub const Screen = struct {
         if (width == 2 and self.cursor.col == right) {
             if (self.auto_wrap) {
                 self.setRowWrapped(self.cursor.row, true);
-                self.lineFeed();
+                if (history) |*row| {
+                    // zig-audit: acknowledge discard
+                    // reason: The caller observes the completed graphic write, not the scroll witness.
+                    _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
+                    history = null;
+                } else self.lineFeed();
                 self.cursor.setColByClient(
                     if (self.left_right_margin_mode) self.left_margin else 0,
                 );
@@ -8545,7 +8567,7 @@ test "experimental growing screen preserves graphemes across allocation failure"
                     failing.fail_index = std.math.maxInt(usize);
                     break :blk try screen.writeCodepointGrowing(0x301);
                 },
-                error.ScalarCapacity => return failure,
+                error.ScalarCapacity, error.HistoryCapacity => return failure,
             };
             try std.testing.expect(accepted);
         }

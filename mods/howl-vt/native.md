@@ -170,14 +170,17 @@ One feed accepts at most 65,536 bytes and invokes canonical service-boundary fee
 once. A new reply, retained request, synchronized-output release or input-storage
 pressure may end the exact consumed prefix. A nonzero `input_block` means decoded
 work remains retained: a scalar, remaining REP repetitions, remaining OSC 66
-clusters, or an explicit LF/NEL awaiting history admission. Advance only by
+clusters, an explicit LF/NEL, or an ordinary graphic wrap awaiting history
+admission. Advance only by
 `consumed`, pause further input, and retry the unconsumed suffix after backoff;
 an empty feed retries when the blocked operation ended the input. A retry may
 consume zero bytes while still blocked. `HVT_INPUT_SCALAR_CAPACITY` and
 `HVT_INPUT_HISTORY_CAPACITY` report bounds, not transient allocation failure.
 Resize returns `HVT_BUSY` while blocked; explicit reset discards pending input.
-The caller owns retry scheduling and backoff. Other scrolling paths, including
-implicit wrap and multi-row scrolling, do not yet have history-admission retry.
+The caller owns retry scheduling and backoff. Graphic-wrap retry applies only
+before nonsemantic multicell clusters have been used in the screen. REP/OSC 66
+wraps, complex multicell paths and multi-row scrolling do not yet have
+history-admission retry.
 
 Other canonical feed errors may follow an already-applied prefix. For those,
 failed C progress remains zero and invalid and the caller must not blindly replay

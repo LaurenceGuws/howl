@@ -349,13 +349,15 @@ void hvt_output_release(hvt_output **);
 /* Feed one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
  * On OK, consumed is exact; continue at that offset. If input_block is nonzero,
  * decoded work is retained but not fully applied (including scalar, REP,
- * OSC 66 clusters, or explicit LF/NEL history admission). Do not mutate geometry or
+ * OSC 66 clusters, explicit LF/NEL, or ordinary graphic-wrap history admission).
+ * Do not mutate geometry or
  * replay consumed bytes. After releasing memory pressure, call hvt_feed again
  * with the unconsumed suffix (or NULL,0 if none). A still-blocked retry may
  * consume zero bytes: schedule retries with backoff, never busy-spin. A capacity
  * block is a bound, not a transient allocation failure. Explicit hvt_reset
- * discards the pending input. Implicit wrap and multi-row history admission do
- * not yet have this retry contract. Replies, requests and synchronized release
+ * discards the pending input. Graphic-wrap retry excludes screens that have used
+ * nonsemantic multicell clusters; REP/OSC 66 wrap and multi-row history admission
+ * do not yet have this retry contract. Replies, requests and synchronized release
  * can also end the prefix. Time is caller-supplied monotonic nanoseconds.
  * Other failures still report invalid progress after possible partial mutation. */
 uint32_t hvt_feed(hvt_terminal *, const uint8_t *, size_t length,

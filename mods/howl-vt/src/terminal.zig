@@ -4388,21 +4388,12 @@ const TerminalStream = struct {
         // cannot lower a printable GL byte below 0x20.
         std.debug.assert(cp >= 0x20);
         const mapped = self.mapCodepoint(cp);
-        if (mapped <= 0x7f) {
-            const ascii: [1]u8 = .{@intCast(mapped)};
-            const screen = self.terminal.screen_state.active();
-            if (mapped < 0x7f) {
-                if (!@call(.never_inline, Screen.tryWritePlainAscii, .{ screen, ascii[0] })) {
-                    @branchHint(.unlikely);
-                    screen.writeText(ascii[0..]);
-                }
-            } else {
-                screen.writeText(ascii[0..]);
-            }
-            return .{
-                .changed = true,
-                .mutations = .{ .text = true },
-            };
+        if (mapped < 0x7f and self.terminal.screen_state.active().tryWritePlainAscii(@intCast(mapped))) {
+            return .{ .changed = true, .mutations = .{ .text = true } };
+        }
+        if (mapped == 0x7f) {
+            self.terminal.screen_state.active().writeText(&.{0x7f});
+            return .{ .changed = true, .mutations = .{ .text = true } };
         }
         const changed = self.terminal.screen_state.active().writeCodepointGrowing(mapped) catch |failure| {
             std.debug.assert(self.terminal.stream_state.pending_input == null);
