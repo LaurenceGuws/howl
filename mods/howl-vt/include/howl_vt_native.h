@@ -355,9 +355,10 @@ void hvt_output_release(hvt_output **);
  * with the unconsumed suffix (or NULL,0 if none). A still-blocked retry may
  * consume zero bytes: schedule retries with backoff, never busy-spin. A capacity
  * block is a bound, not a transient allocation failure. Explicit hvt_reset
- * discards the pending input. Graphic-wrap retry excludes screens that have used
- * nonsemantic multicell clusters, including REP; OSC 66 wrap and multi-row
- * history admission do not yet have this retry contract. Replies, requests and synchronized release
+ * discards the pending input. Non-joining graphic/REP placement beginning at the
+ * bottom margin retries its scroll, including multicell escape. Presentation-width
+ * changes, chained scrolls from above, OSC 66 wrap and multi-row history admission
+ * do not yet have this retry contract. Replies, requests and synchronized release
  * can also end the prefix. Time is caller-supplied monotonic nanoseconds.
  * Other failures still report invalid progress after possible partial mutation. */
 uint32_t hvt_feed(hvt_terminal *, const uint8_t *, size_t length,

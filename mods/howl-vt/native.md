@@ -177,10 +177,11 @@ an empty feed retries when the blocked operation ended the input. A retry may
 consume zero bytes while still blocked. `HVT_INPUT_SCALAR_CAPACITY` and
 `HVT_INPUT_HISTORY_CAPACITY` report bounds, not transient allocation failure.
 Resize returns `HVT_BUSY` while blocked; explicit reset discards pending input.
-The caller owns retry scheduling and backoff. Graphic-wrap retry applies only
-before nonsemantic multicell clusters have been used in the screen; this also
-covers REP wraps. OSC 66 wraps, complex multicell paths and multi-row scrolling
-do not yet have history-admission retry.
+The caller owns retry scheduling and backoff. Retry covers a non-joining
+graphic or REP that starts at the bottom margin and must scroll, including
+escaping a nonsemantic multicell cluster. Presentation-width changes, chained
+scrolls beginning above the margin, OSC 66 wraps and multi-row scrolling do not
+yet have history-admission retry.
 
 Other canonical feed errors may follow an already-applied prefix. For those,
 failed C progress remains zero and invalid and the caller must not blindly replay
