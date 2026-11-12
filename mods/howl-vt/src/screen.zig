@@ -3918,26 +3918,72 @@ pub const Screen = struct {
         return self.scrollUpRegionPrepared(top, bottom, count, null);
     }
 
-    /// Prepares history before any part of a single-row scroll can mutate.
-    pub fn tryScrollUpRegionOne(self: *Screen, top: u16, bottom: u16) error{ OutOfMemory, Capacity }!bool {
-        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom)
-            return self.scrollUpRegion(top, bottom, 1);
+    fn prepareScrollHistoryOne(self: *Screen, top: u16, bottom: u16) error{ OutOfMemory, Capacity }!?history_store_mod.Store.Prepared {
+        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return null;
         const bounded_bottom = @min(bottom, self.rows - 1);
         const full_screen = top == 0 and bounded_bottom == self.rows - 1;
         const full_width = !self.left_right_margin_mode or (self.left_margin == 0 and self.right_margin + 1 == self.cols);
-        if (self.history_capacity == 0 or top != 0 or (!full_screen and !full_width))
-            return self.scrollUpRegion(top, bottom, 1);
+        if (self.history_capacity == 0 or top != 0 or (!full_screen and !full_width)) return null;
         const source = self.historyRowSource(0, true);
         const store = &self.history_store.?;
-        var prepared = store.preparePushForClear(source) catch |failure| switch (failure) {
+        return store.preparePushForClear(source) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Capacity => return error.Capacity,
             // zig-audit: acknowledge panic
             // reason: A live full row and its scalar sidecar are canonical internal owners.
             error.InvalidSource => @panic("visible history source invalid"),
         };
-        defer store.discardPrepared(&prepared);
-        return self.scrollUpRegionPrepared(top, bottom, 1, &prepared);
+    }
+
+    fn discardPreparedHistory(self: *Screen, prepared: *?history_store_mod.Store.Prepared) void {
+        if (prepared.*) |*row| self.history_store.?.discardPrepared(row);
+        prepared.* = null;
+    }
+
+    /// Prepares history before any part of a single-row scroll can mutate.
+    pub fn tryScrollUpRegionOne(self: *Screen, top: u16, bottom: u16) error{ OutOfMemory, Capacity }!bool {
+        var prepared = try self.prepareScrollHistoryOne(top, bottom);
+        defer self.discardPreparedHistory(&prepared);
+        return self.scrollUpRegionPrepared(top, bottom, 1, if (prepared) |*row| row else null);
+    }
+
+    /// One synchronously staged line feed. The screen must not mutate until
+    /// commit or discard, including through another history operation.
+    pub const PreparedLineFeed = struct {
+        history: ?history_store_mod.Store.Prepared = null,
+        scrolls: bool,
+        top: u16,
+        bottom: u16,
+    };
+
+    /// Reserves outgoing history before cursor, wrap, cluster or row mutation.
+    pub fn prepareLineFeed(self: *Screen) error{ OutOfMemory, Capacity }!PreparedLineFeed {
+        const bottom = self.scrollBottom();
+        const scrolls = self.rows != 0 and self.cursor.row == bottom;
+        return .{
+            .history = if (scrolls) try self.prepareScrollHistoryOne(self.scroll_top, bottom) else null,
+            .scrolls = scrolls,
+            .top = self.scroll_top,
+            .bottom = bottom,
+        };
+    }
+
+    /// Discards an uncommitted line-feed reservation without changing the grid.
+    pub fn discardLineFeed(self: *Screen, prepared: *PreparedLineFeed) void {
+        self.discardPreparedHistory(&prepared.history);
+    }
+
+    /// Commits an immediately prepared LF or NEL without allocating history.
+    pub fn commitLineFeed(self: *Screen, prepared: *PreparedLineFeed, next_line: bool) void {
+        self.wrap_pending = false;
+        self.setRowWrapped(self.cursor.row, false);
+        if (next_line) self.cursor.setColByClient(0);
+        if (prepared.scrolls) {
+            // zig-audit: acknowledge discard
+            // reason: Line-feed semantics do not depend on the mutation witness.
+            _ = self.scrollUpRegionPrepared(prepared.top, prepared.bottom, 1, if (prepared.history) |*row| row else null);
+        } else self.lineFeed();
+        self.discardLineFeed(prepared);
     }
 
     fn scrollUpRegionPrepared(self: *Screen, top: u16, bottom: u16, count: u16, prepared: ?*history_store_mod.Store.Prepared) bool {
@@ -8686,5 +8732,41 @@ test "single scroll reserves history before cluster clearing and retries" {
                 for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
             }
         } else return error.NoSuccessfulScroll;
+    }
+}
+
+test "line feed stages history before resetting wrap or cursor" {
+    for ([_]bool{ false, true }) |next_line| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 2, 8, 4);
+        defer screen.deinit(failing.allocator());
+        var reference = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+        defer reference.deinit(std.testing.allocator);
+        try std.testing.expect(screen.writeSizedText("s=2:w=2;X"));
+        try std.testing.expect(reference.writeSizedText("s=2:w=2;X"));
+        screen.cursor.setPositionByClient(1, 4);
+        reference.cursor.setPositionByClient(1, 4);
+        screen.wrap_pending = true;
+        reference.wrap_pending = true;
+        const before = try std.testing.allocator.dupe(Screen.Cell, screen.cells.?);
+        defer std.testing.allocator.free(before);
+        const cursor = screen.cursor;
+        failing.fail_index = failing.alloc_index;
+        try std.testing.expectError(error.OutOfMemory, screen.prepareLineFeed());
+        try std.testing.expectEqualSlices(Screen.Cell, before, screen.cells.?);
+        try std.testing.expectEqualDeep(cursor, screen.cursor);
+        try std.testing.expect(screen.wrap_pending);
+        failing.fail_index = std.math.maxInt(usize);
+        var prepared = try screen.prepareLineFeed();
+        defer screen.discardLineFeed(&prepared);
+        screen.commitLineFeed(&prepared, next_line);
+        reference.applyScreen(if (next_line) .next_line else .line_feed);
+        try std.testing.expectEqualDeep(reference.cursor, screen.cursor);
+        try std.testing.expectEqual(reference.wrap_pending, screen.wrap_pending);
+        for (0..screen.rows) |row| for (0..screen.cols) |col| {
+            try std.testing.expectEqualDeep(reference.cellInfoAt(@intCast(row), @intCast(col)), screen.cellInfoAt(@intCast(row), @intCast(col)));
+        };
+        try std.testing.expectEqual(reference.historyCount(), screen.historyCount());
+        for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
     }
 }
