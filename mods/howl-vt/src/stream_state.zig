@@ -244,6 +244,11 @@ pub const StringCapture = struct {
     }
 };
 
+/// Reports a scalar that cannot yet be retained.
+pub const ScalarBlock = error{ OutOfMemory, ScalarCapacity };
+/// Owns a mapped scalar until it can be retained without replaying bytes.
+pub const PendingScalar = struct { value: u21, failure: ScalarBlock };
+
 /// Owns parser allocation and both fragmented-control captures for one terminal lifetime.
 pub const State = struct {
     /// Reports parser-storage allocation failure during terminal construction.
@@ -252,6 +257,7 @@ pub const State = struct {
     parser: parser.Parser,
     dcs: DcsCapture,
     string: StringCapture,
+    pending_scalar: ?PendingScalar = null,
 
     /// Initializes parser storage and inactive fragmented-control captures.
     pub fn init(allocator: std.mem.Allocator) InitError!State {

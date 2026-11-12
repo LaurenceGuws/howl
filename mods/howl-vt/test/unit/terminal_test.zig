@@ -1133,3 +1133,55 @@ test "split UTF-8 scalar allocation failure currently loses decoder progress" {
     try std.testing.expectEqualSlices(u32, prior[0..prior_len], recovered[0..prior_len]);
     try std.testing.expectEqual(@as(u32, 0x301), recovered[prior_len]);
 }
+
+test "experimental service feed retains split scalar on allocation failure" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const terminal = try allocator.create(Terminal);
+    defer allocator.destroy(terminal);
+    try Terminal.initWithHistoryInto(terminal, failing.allocator(), 1, 512, 0);
+    defer terminal.deinit();
+    try feed(terminal, "\x1b[?7l");
+    failing.fail_index = failing.alloc_index;
+    var failed_col: ?u16 = null;
+    var prior: [24]u32 = undefined;
+    var prior_len: usize = 0;
+    outer: for (0..511) |col| {
+        const base = try terminal.feedAtServiceBoundaryRetainingScalar("e", 1);
+        try std.testing.expectEqual(@as(usize, 1), base.consumed);
+        try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), base.scalar_blocked);
+        for (0..8) |_| {
+            const screen = &terminal.screen_state.primary;
+            var buffer: [24]u32 = undefined;
+            const before = screen.cellScalarsAt(0, @intCast(col), &buffer);
+            @memcpy(prior[0..before.len], before);
+            prior_len = before.len;
+            const first = try terminal.feedAtServiceBoundaryRetainingScalar("\xcc", 1);
+            try std.testing.expectEqual(@as(usize, 1), first.consumed);
+            const last = try terminal.feedAtServiceBoundaryRetainingScalar("\x81", 1);
+            try std.testing.expectEqual(@as(usize, 1), last.consumed);
+            if (last.scalar_blocked) |reason| {
+                try std.testing.expectEqual(error.OutOfMemory, reason);
+                failed_col = @intCast(col);
+                break :outer;
+            }
+        }
+    }
+    const col = failed_col orelse return error.ExpectedAllocationFailure;
+    const screen = &terminal.screen_state.primary;
+    var actual: [24]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, prior[0..prior_len], screen.cellScalarsAt(0, col, &actual));
+    const still_blocked = try terminal.feedAtServiceBoundaryRetainingScalar("X", 2);
+    try std.testing.expectEqual(@as(usize, 0), still_blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, still_blocked.scalar_blocked.?);
+    try std.testing.expectError(error.OutOfMemory, terminal.feed("X"));
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try terminal.feedAtServiceBoundaryRetainingScalar("X", 3);
+    try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+    try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), resumed.scalar_blocked);
+    const recovered = screen.cellScalarsAt(0, col, &actual);
+    try std.testing.expectEqual(prior_len + 1, recovered.len);
+    try std.testing.expectEqualSlices(u32, prior[0..prior_len], recovered[0..prior_len]);
+    try std.testing.expectEqual(@as(u32, 0x301), recovered[prior_len]);
+    try std.testing.expectEqual(@as(u32, 'X'), screen.cellScalarsAt(0, col + 1, &actual)[0]);
+}

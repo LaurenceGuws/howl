@@ -3998,6 +3998,7 @@ pub const TerminalFeedSummary = struct {
 pub const TerminalFeedProgress = struct {
     summary: TerminalFeedSummary,
     consumed: usize,
+    scalar_blocked: ?stream_state_mod.ScalarBlock = null,
     /// True when caller policy relieved already-retained consequence pressure
     /// while applying this exact parsed prefix.
     consequence_pressure_relieved: bool = false,
@@ -4011,6 +4012,7 @@ const TerminalStream = struct {
     terminal: *Terminal,
     consequence_pressure_relief: ?ConsequencePressureRelief = null,
     consequence_pressure_relieved: bool = false,
+    retain_scalar_failure: bool = false,
     // Transient feed-local facts, never retained on Terminal or per-byte results.
     synchronized_output: TerminalSynchronizedOutputProgress = .{},
     synchronized_output_held: bool = false,
@@ -4187,7 +4189,22 @@ const TerminalStream = struct {
         const before = MutationObservation.capture(self.terminal);
         defer if (!completed) self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
-        while (consumed < bytes.len) {
+        var scalar_blocked: ?stream_state_mod.ScalarBlock = null;
+        if (self.retain_scalar_failure) {
+            if (self.terminal.stream_state.pending_scalar) |pending| {
+                const changed = self.terminal.screen_state.active().writeCodepointGrowing(pending.value) catch |failure| blocked: {
+                    self.terminal.stream_state.pending_scalar.?.failure = failure;
+                    scalar_blocked = failure;
+                    break :blocked false;
+                };
+                if (scalar_blocked == null) {
+                    self.terminal.stream_state.pending_scalar = null;
+                    summary.mutations.text = changed;
+                    self.synchronized_output.trailing_effect = changed;
+                }
+            }
+        }
+        while (scalar_blocked == null and consumed < bytes.len) {
             const byte = bytes[consumed];
             if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
                 const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
@@ -4208,6 +4225,12 @@ const TerminalStream = struct {
             const mutations = try self.nextSummary(byte);
             summary.mutations.merge(mutations);
             consumed += 1;
+            if (self.retain_scalar_failure) {
+                if (self.terminal.stream_state.pending_scalar) |pending| {
+                    scalar_blocked = pending.failure;
+                    break;
+                }
+            }
             if (self.terminal.reply_buffer.len() != replies_before) break;
             if (self.synchronized_output.ended) break;
             // Retaining a consequence always reports semantic mutation.
@@ -4228,6 +4251,7 @@ const TerminalStream = struct {
         return .{
             .summary = summary,
             .consumed = consumed,
+            .scalar_blocked = scalar_blocked,
             .consequence_pressure_relieved = self.consequence_pressure_relieved,
         };
     }
@@ -4339,7 +4363,12 @@ const TerminalStream = struct {
                 .mutations = .{ .text = true },
             };
         }
-        const changed = try self.terminal.screen_state.active().writeCodepointGrowing(mapped);
+        const changed = self.terminal.screen_state.active().writeCodepointGrowing(mapped) catch |failure| {
+            if (!self.retain_scalar_failure) return failure;
+            std.debug.assert(self.terminal.stream_state.pending_scalar == null);
+            self.terminal.stream_state.pending_scalar = .{ .value = mapped, .failure = failure };
+            return .{ .changed = false };
+        };
         return .{
             .changed = changed,
             .mutations = .{ .text = changed },
@@ -6328,6 +6357,7 @@ pub const Terminal = struct {
     /// absolute-position command is accepted; structural movement remains
     /// untimestamped.
     pub fn feedAt(self: *Terminal, bytes: []const u8, timestamp_ns: u64) FeedError!FeedSummary {
+        if (self.stream_state.pending_scalar) |pending| return pending.failure;
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
@@ -6350,7 +6380,7 @@ pub const Terminal = struct {
         bytes: []const u8,
         timestamp_ns: u64,
     ) FeedError!FeedProgress {
-        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null);
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null, false);
     }
 
     /// Applies a service-boundary feed while allowing a caller-owned policy to
@@ -6367,7 +6397,17 @@ pub const Terminal = struct {
         timestamp_ns: u64,
         relief: ConsequencePressureRelief,
     ) FeedError!FeedProgress {
-        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief);
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief, false);
+    }
+
+    /// Experimental scalar-retaining feed. The caller must not mutate the
+    /// terminal while blocked and must retry with the unconsumed suffix.
+    pub fn feedAtServiceBoundaryRetainingScalar(
+        self: *Terminal,
+        bytes: []const u8,
+        timestamp_ns: u64,
+    ) FeedError!FeedProgress {
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null, true);
     }
 
     fn feedAtServiceBoundaryImpl(
@@ -6375,7 +6415,11 @@ pub const Terminal = struct {
         bytes: []const u8,
         timestamp_ns: u64,
         relief: ?ConsequencePressureRelief,
+        retain_scalar_failure: bool,
     ) FeedError!FeedProgress {
+        if (!retain_scalar_failure) {
+            if (self.stream_state.pending_scalar) |pending| return pending.failure;
+        }
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
@@ -6386,6 +6430,7 @@ pub const Terminal = struct {
             TerminalStream.initRelievingConsequencePressure(self, callback)
         else
             TerminalStream.init(self);
+        stream.retain_scalar_failure = retain_scalar_failure;
         var progress = try stream.nextServiceBoundarySummary(
             bytes,
             replies_before,
