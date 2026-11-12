@@ -101,13 +101,17 @@ pub const Storage = struct {
     /// callers must arrange safe input failure handling before using this path.
     /// Successful growth invalidates borrowed page slices, not range identities.
     pub fn growOnePage(self: *Storage) error{ OutOfMemory, ScalarCapacity }!void {
-        const max_tails = std.math.mul(usize, self.ranges.len, maximum_tail_scalars) catch return error.ScalarCapacity;
-        // This cap is a deliberately conservative experimental byte budget,
-        // not a proof against fragmentation after arbitrary edits. A full
-        // first-fit page can have holes throughout, not only at its end.
-        // One extra page permits transactional replacement of an existing range.
-        const full_pages = std.math.divCeil(usize, max_tails, scalar_slots - maximum_tail_scalars + 1) catch return error.ScalarCapacity;
-        const cap = std.math.add(usize, full_pages, 1) catch return error.ScalarCapacity;
+        // A page unable to fit even the largest range has gaps of at most
+        // maximum_tail_scalars - 1. With n occupied ranges (each at most
+        // maximum_tail_scalars), it holds at most n ranges and n+1 gaps.
+        // Thus each blocked page needs at least this many occupied ranges,
+        // including when free space is fragmented throughout the page.
+        const min_ranges = (scalar_slots - (maximum_tail_scalars - 1) + (2 * maximum_tail_scalars - 2)) / (2 * maximum_tail_scalars - 1);
+        // Budget one retained range per cell, one temporary replacement and
+        // one unblocked page. Multiple externally held Prepared ranges also
+        // consume this budget; callers must handle ScalarCapacity.
+        const max_ranges = std.math.add(usize, self.ranges.len, 1) catch return error.ScalarCapacity;
+        const cap = std.math.add(usize, max_ranges / min_ranges, 1) catch return error.ScalarCapacity;
         if (self.pages.len >= cap) return error.ScalarCapacity;
         const new_count = std.math.add(usize, self.pages.len, 1) catch return error.ScalarCapacity;
         const slots = std.math.mul(usize, new_count, scalar_slots) catch return error.ScalarCapacity;
@@ -1133,4 +1137,32 @@ test "growing set stays allocation free while existing pages fit" {
     try storage.setGrowing(0, 0, &.{ 1, 2, 3 });
     try std.testing.expect(!failing.has_induced_failure);
     try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3 }, try storage.tail(0, testCombiningLen(3)));
+}
+
+test "growth budget admits a heavily fragmented valid page layout" {
+    var storage = try Storage.init(std.testing.allocator, 512);
+    defer storage.deinit();
+    // Seven pages each hold 53 separate 20-scalar tails with 19-slot gaps.
+    // Although 141 cell records remain free, no page can fit one more tail.
+    while (storage.pages.len < 7) try storage.growOnePage();
+    var index: usize = 0;
+    for (storage.pages, 0..) |*page, page_index| {
+        page.* = Page.init();
+        page.free_count = 52;
+        for (0..53) |range_index| {
+            const offset = range_index * 39;
+            @memset(page.scalars[offset..][0..20], 17);
+            storage.ranges[index] = @fromBackingInt(@intCast(page_index * scalar_slots + offset + 1));
+            index += 1;
+            if (range_index < 52) page.free_regions[range_index] = .{ .offset = @intCast(offset + 20), .count = 19 };
+        }
+    }
+    const values: [20]u32 = @splat(29);
+    try storage.setGrowing(index, 0, &values);
+    try std.testing.expectEqual(@as(usize, 8), storage.pages.len);
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(index, testCombiningLen(20)));
+    for (0..index) |cell| {
+        const retained = try storage.tail(cell, testCombiningLen(20));
+        for (retained) |value| try std.testing.expectEqual(@as(u32, 17), value);
+    }
 }
