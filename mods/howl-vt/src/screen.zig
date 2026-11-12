@@ -2772,13 +2772,35 @@ pub const Screen = struct {
         var remaining = @max(count, 1);
         var committed = false;
         while (remaining > 0) : (remaining -= 1) {
-            if (!self.writeRepeatedGraphic(graphic)) break;
+            if (!self.writeRepeatedGraphic(graphic, false)) break;
             committed = true;
         }
         return committed;
     }
 
-    fn writeRepeatedGraphic(self: *Screen, graphic: LastGraphic) bool {
+    /// Progress for a repeat command that can stop at scalar pressure.
+    pub const RepeatProgress = struct {
+        completed: u16 = 0,
+        blocked: ?error{ OutOfMemory, ScalarCapacity } = null,
+    };
+
+    /// Repeats until complete or storage pressure; committed repetitions stay applied.
+    pub fn repeatPrecedingGrowing(self: *Screen, count: u16) RepeatProgress {
+        const graphic = self.last_graphic orelse return .{};
+        const total = @max(count, 1);
+        var result: RepeatProgress = .{};
+        while (result.completed < total) {
+            const accepted = self.writeRepeatedGraphic(graphic, true) catch |failure| {
+                result.blocked = failure;
+                return result;
+            };
+            if (!accepted) return result;
+            result.completed += 1;
+        }
+        return result;
+    }
+
+    fn writeRepeatedGraphic(self: *Screen, graphic: LastGraphic, comptime grow: bool) (if (grow) error{ OutOfMemory, ScalarCapacity }!bool else bool) {
         if (self.cols == 0 or self.rows == 0) return false;
         const direct = @min(
             @as(usize, graphic.combining_len),
@@ -2791,9 +2813,11 @@ pub const Screen = struct {
                 graphic.combining[direct..graphic.combining_len],
                 0..,
             ) |scalar, index| tail[index] = scalar;
-            prepared = self.scalars.?.prepare(
-                tail[0 .. graphic.combining_len - direct],
-            ) catch return false;
+            const values = tail[0 .. graphic.combining_len - direct];
+            prepared = if (grow)
+                try self.scalars.?.prepareGrowing(values)
+            else
+                self.scalars.?.prepare(values) catch return false;
         }
         defer if (prepared) |*range| range.deinit();
 
@@ -8344,6 +8368,30 @@ test "experimental growing screen preserves graphemes across allocation failure"
         }
     }
     try std.testing.expect(failed);
+    const expected = [_]u32{ 'e', 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301 };
+    var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+    for (0..512) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
+}
+
+test "growing REP reports partial progress and resumes without repeating twice" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCells(failing.allocator(), 1, 512);
+    defer screen.deinit(failing.allocator());
+    try std.testing.expect(try screen.writeCodepointGrowing('e'));
+    for (0..8) |_| try std.testing.expect(try screen.writeCodepointGrowing(0x301));
+    failing.fail_index = failing.alloc_index;
+    const partial = screen.repeatPrecedingGrowing(511);
+    try std.testing.expect(partial.completed > 0 and partial.completed < 511);
+    try std.testing.expectEqual(error.OutOfMemory, partial.blocked.?);
+    const held_cursor = screen.cursor;
+    const blocked = screen.repeatPrecedingGrowing(511 - partial.completed);
+    try std.testing.expectEqual(@as(u16, 0), blocked.completed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.blocked.?);
+    try std.testing.expectEqualDeep(held_cursor, screen.cursor);
+    failing.fail_index = std.math.maxInt(usize);
+    const rest = screen.repeatPrecedingGrowing(511 - partial.completed);
+    try std.testing.expectEqual(@as(u16, 511) - partial.completed, rest.completed);
+    try std.testing.expect(rest.blocked == null);
     const expected = [_]u32{ 'e', 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301 };
     var actual: [scalar_storage.maximum_scalars]u32 = undefined;
     for (0..512) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));

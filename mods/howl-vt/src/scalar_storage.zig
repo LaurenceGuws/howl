@@ -344,6 +344,18 @@ pub const Storage = struct {
         };
     }
 
+    /// Prepares a tail, growing on demand without changing existing ranges on failure.
+    pub fn prepareGrowing(self: *Storage, values: []const u32) error{ ScalarCapacity, OutOfMemory }!Prepared {
+        if (values.len == 0 or values.len > maximum_tail_scalars) return error.ScalarCapacity;
+        return self.prepare(values) catch {
+            // Values may borrow the page allocation that growth replaces.
+            var copied: [maximum_tail_scalars]u32 = undefined;
+            @memcpy(copied[0..values.len], values);
+            try self.growOnePage();
+            return self.prepare(copied[0..values.len]);
+        };
+    }
+
     /// Releases one exact cell range and restores canonical zero ownership.
     pub inline fn clear(
         self: *Storage,
