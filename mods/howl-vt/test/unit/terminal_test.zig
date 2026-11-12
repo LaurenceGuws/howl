@@ -1088,3 +1088,47 @@ test "terminal input grows scalar storage for dense combining text" {
     var scalars: [24]u32 = undefined;
     for (0..512) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &scalars));
 }
+
+test "split UTF-8 scalar allocation failure currently loses decoder progress" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const terminal = try allocator.create(Terminal);
+    defer allocator.destroy(terminal);
+    try Terminal.initWithHistoryInto(terminal, failing.allocator(), 1, 512, 0);
+    defer terminal.deinit();
+    try feed(terminal, "\x1b[?7l");
+    failing.fail_index = failing.alloc_index;
+    var failed_col: ?u16 = null;
+    var prior: [24]u32 = undefined;
+    var prior_len: usize = 0;
+    outer: for (0..512) |col| {
+        try feed(terminal, "e");
+        for (0..8) |_| {
+            const screen = &terminal.screen_state.primary;
+            var buffer: [24]u32 = undefined;
+            const before = screen.cellScalarsAt(0, @intCast(col), &buffer);
+            @memcpy(prior[0..before.len], before);
+            prior_len = before.len;
+            try feed(terminal, "\xcc");
+            _ = terminal.feed("\x81") catch |failure| switch (failure) {
+                error.OutOfMemory => {
+                    failed_col = @intCast(col);
+                    break :outer;
+                },
+                else => return failure,
+            };
+        }
+    }
+    const col = failed_col orelse return error.ExpectedAllocationFailure;
+    const screen = &terminal.screen_state.primary;
+    var actual: [24]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, prior[0..prior_len], screen.cellScalarsAt(0, col, &actual));
+    failing.fail_index = std.math.maxInt(usize);
+    try feed(terminal, "\x81");
+    try std.testing.expectEqualSlices(u32, prior[0..prior_len], screen.cellScalarsAt(0, col, &actual));
+    try feed(terminal, "\xcc\x81");
+    const recovered = screen.cellScalarsAt(0, col, &actual);
+    try std.testing.expectEqual(prior_len + 1, recovered.len);
+    try std.testing.expectEqualSlices(u32, prior[0..prior_len], recovered[0..prior_len]);
+    try std.testing.expectEqual(@as(u32, 0x301), recovered[prior_len]);
+}
