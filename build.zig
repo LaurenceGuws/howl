@@ -24,6 +24,8 @@ pub fn build(b: *std.Build) void {
             std.mem.eql(u8, name, "howl_render");
         forward(b, name, child, check, tests, !composition_leaf);
         if (std.mem.eql(u8, name, "howl_render")) {
+            std.debug.assert(child.module("howl_vt_output") == b.modules.get("howl_vt_output").?);
+            std.debug.assert(child.module("howl_vt_output_commands") == b.modules.get("howl_vt_output_commands").?);
             std.debug.assert(child.module("howl_render_native") == b.modules.get("howl_render_native").?);
             // zig-audit: acknowledge panic
             // reason: Forward the child-owned optional module; graph allocation failure is unrecoverable.

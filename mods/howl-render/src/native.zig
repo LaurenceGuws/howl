@@ -1,7 +1,7 @@
 //! Optional Render-owned native schemas and bulk projection.
 //! The renderer and direct local roots never import this foreign-boundary root.
 const std = @import("std");
-const terminal = @import("renderer");
+const terminal = @import("output_commands");
 /// Exact owner header declarations.
 pub const c = @import("render_native_types");
 /// One fixed native resource-upload metadata record.

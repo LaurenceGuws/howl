@@ -189,6 +189,11 @@ const AtlasKey = union(enum) {
         thickness: u16,
         line_height: u16,
     },
+    underline_pattern: struct {
+        width: u16,
+        height: u16,
+        dashed: bool,
+    },
     generated: struct {
         codepoint: u32,
         width: u16,
@@ -1052,6 +1057,23 @@ pub fn resolveSmoothWaveAtlas(
     return cacheAtlas(impl, key, width, height, 0, top, pixels);
 }
 
+/// Resolves one cell-sized dotted or dashed underline into the alpha atlas.
+pub fn resolveUnderlinePatternAtlas(atlas: *Atlas, width: u16, height: u16, dashed: bool, raster_scratch: []u8) AtlasError!AtlasRaster {
+    if (width == 0 or height == 0) return error.InvalidSize;
+    const required = std.math.mul(usize, width, height) catch return error.RasterTooLarge;
+    if (required > raster_scratch.len) return error.BufferTooSmall;
+    const impl = atlasImpl(atlas);
+    const key = AtlasKey{ .underline_pattern = .{ .width = width, .height = height, .dashed = dashed } };
+    if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
+    const pixels = raster_scratch[0..required];
+    const step: usize = if (dashed) 5 else 2;
+    const length: usize = if (dashed) 3 else 1;
+    for (0..height) |y| for (0..width) |x| {
+        pixels[y * width + x] = if (x % step < length) 255 else 0;
+    };
+    return cacheAtlas(impl, key, width, height, 0, 0, pixels);
+}
+
 /// Resolves one implemented code-defined glyph into the fixed alpha atlas.
 /// The Atlas owns the immutable box-drawing raster policy; per-entry identity is
 /// therefore only codepoint, pixel extent, and OSC 66 sizing.
@@ -1128,6 +1150,7 @@ fn atlasIdentity(key: AtlasKey) AtlasIdentity {
     return switch (key) {
         .font => |v| .{ .low = @as(u64, v.glyph_id) | (@as(u64, v.face_index) << 32) | (@as(u64, @backingInt(v.variant)) << 40), .high = @as(u64, v.fit_width) << 32 },
         .smooth_wave => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.thickness) << 16) | (@as(u64, v.line_height) << 32), .high = 1 << 16 },
+        .underline_pattern => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.height) << 16) | (@as(u64, @intFromBool(v.dashed)) << 32), .high = 3 << 16 },
         .generated => |v| .{ .low = @as(u64, v.codepoint) | (@as(u64, v.width) << 32) | (@as(u64, v.height) << 48), .high = (2 << 16) | @as(u64, v.sizing.scale) | (@as(u64, v.sizing.subscale_n) << 8) | (@as(u64, v.sizing.subscale_d) << 12) },
     };
 }
@@ -1170,6 +1193,10 @@ test "atlas lookup matches generic key equality and first match across all varia
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .subscale_n = 1, .subscale_d = 2 } } },
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .subscale_n = 1, .subscale_d = 3 } } },
         .{ .generated = .{ .codepoint = std.math.maxInt(u32), .width = std.math.maxInt(u16), .height = std.math.maxInt(u16), .sizing = .{ .scale = 255, .subscale_n = 14, .subscale_d = 15 } } },
+        .{ .underline_pattern = .{ .width = 10, .height = 1, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .height = 1, .dashed = true } },
+        .{ .underline_pattern = .{ .width = 11, .height = 1, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .height = 2, .dashed = false } },
         .{ .smooth_wave = .{ .width = std.math.maxInt(u16), .thickness = std.math.maxInt(u16), .line_height = std.math.maxInt(u16) } },
         .{ .smooth_wave = .{ .width = 10, .thickness = 1, .line_height = 20 } },
         .{ .smooth_wave = .{ .width = 11, .thickness = 1, .line_height = 20 } },

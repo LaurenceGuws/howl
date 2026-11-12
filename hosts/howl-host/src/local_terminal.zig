@@ -194,7 +194,7 @@ pub const Owner = struct {
 
     /// Borrows the backend-only Render exchange from the local Instance.
     pub fn renderExchange(self: *const Owner) *instance.RenderExchange {
-        return instance.renderExchange(self.value);
+        return instance.renderExchange(self.value).?;
     }
 
     /// Applies one copied font-scale to a physical terminal surface.

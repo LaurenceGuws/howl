@@ -17,7 +17,7 @@ pub const Context = struct {
         return .{ .rows = view.rows, .columns = view.cols, .history_count = view.history_count, .history_row_base = view.history_row_base, .history_offset = view.history_offset, .alternate = view.is_alternate_screen };
     }
     /// Resolves one accepted immutable frame's lattice and history identity.
-    pub fn fromFrame(frame: instance.PublishedFrame) error{InvalidSelection}!Context {
+    pub fn fromFrame(frame: @import("frame_info.zig").Info) error{InvalidSelection}!Context {
         if (frame.cell_size.width == 0 or frame.cell_size.height == 0) return error.InvalidSelection;
         const rows = frame.surface.height / frame.cell_size.height;
         const columns = frame.surface.width / frame.cell_size.width;

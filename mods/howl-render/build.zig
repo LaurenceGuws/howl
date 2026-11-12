@@ -1,4 +1,5 @@
 const std = @import("std");
+const vt_build = @import("howl_vt");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -18,11 +19,12 @@ pub fn build(b: *std.Build) void {
 
     // Always expose the small dependency-free limits contract. The Web wire
     // client uses this without constructing the terminal renderer or text stack.
-    const limits = b.addModule("howl_render_limits", .{
-        .root_source_file = b.path("src/limits.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    const vt_dependency = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
+    const limits = vt_dependency.module("howl_vt_output_limits");
+    const commands = vt_dependency.module("howl_vt_output_commands");
+    exposeModule(b, "howl_render_limits", limits);
+    exposeModule(b, "howl_vt_output_commands", commands);
+    exposeModule(b, "howl_vt_output_limits", limits);
 
     const check = b.step("check", "Compile maintained howl-render proofs");
     const test_step = b.step("test", "Run maintained howl-render proofs");
@@ -70,7 +72,6 @@ pub fn build(b: *std.Build) void {
     module.addImport("limits", limits);
     test_module.addImport("limits", limits);
 
-    const vt_dependency = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const vt = vt_dependency.module("howl_vt");
     const text_dependency = b.dependency("howl_text", .{
         .target = target,
@@ -78,9 +79,32 @@ pub fn build(b: *std.Build) void {
         .bundled = bundled_text,
     });
     const text = text_dependency.module("howl_text");
-    const cache_module = b.createModule(.{ .root_source_file = b.path("src/glyph_cache.zig"), .target = target, .optimize = optimize });
-    cache_module.addImport("howl_text", text);
-    cache_module.addImport("limits", limits);
+    const output = vt_build.addOutputModules(b, vt_dependency.path("."), target, optimize, vt, text, commands, limits);
+    exposeModule(b, "howl_vt_output", output.owner);
+    // VT-owned black-box tests qualify the actual opaque, uninstrumented owner.
+    const output_owner_tests_module = b.createModule(.{ .root_source_file = vt_dependency.path("test/output_owner.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    output_owner_tests_module.addImport("howl_vt_output", output.owner);
+    output_owner_tests_module.addImport("howl_vt", vt);
+    output_owner_tests_module.addImport("howl_text", text);
+    output_owner_tests_module.addImport("test_fonts", text_dependency.module("howl_text_test_fonts"));
+    const output_owner_tests = b.addTest(.{ .name = "howl-vt-output-owner", .root_module = output_owner_tests_module, .use_llvm = false, .use_lld = false });
+    check.dependOn(&output_owner_tests.step);
+    const output_owner_run = b.addRunArtifact(output_owner_tests);
+    test_step.dependOn(&output_owner_run.step);
+    b.step("test:output-owner", "Run VT-owned optional opaque output proofs").dependOn(&output_owner_run.step);
+    const output_shared_module = b.createModule(.{ .root_source_file = vt_dependency.path("test/output_shared.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    output_shared_module.addImport("howl_vt_output", output.owner);
+    output_shared_module.addImport("output_state", output.owner.import_table.get("output_state").?);
+    output_shared_module.addImport("howl_vt", vt);
+    output_shared_module.addImport("text_support", output.support);
+    output_shared_module.addImport("howl_text", text);
+    output_shared_module.addImport("test_fonts", text_dependency.module("howl_text_test_fonts"));
+    const output_shared_tests = b.addTest(.{ .name = "howl-vt-output-shared", .root_module = output_shared_module, .use_llvm = false, .use_lld = false });
+    check.dependOn(&output_shared_tests.step);
+    const output_shared_run = b.addRunArtifact(output_shared_tests);
+    test_step.dependOn(&output_shared_run.step);
+    b.step("test:output-shared", "Run owning shared text support proofs").dependOn(&output_shared_run.step);
+    const cache_module = output.cache;
     const cache_tests = b.addTest(.{ .name = "howl-render-cache", .root_module = cache_module, .use_llvm = false, .use_lld = false });
     check.dependOn(&cache_tests.step);
     test_step.dependOn(&b.addRunArtifact(cache_tests).step);
@@ -100,6 +124,9 @@ pub fn build(b: *std.Build) void {
         limits,
         source_semantics,
         text,
+        cache_module,
+        commands,
+        output.support,
     );
     const cursor_tests = b.addTest(.{
         .name = "howl-render-cursor",
@@ -157,7 +184,7 @@ pub fn build(b: *std.Build) void {
 
     const native_types = b.addTranslateC(.{ .root_source_file = b.path("include/howl_render_native.h"), .target = target, .optimize = optimize });
     const native = b.addModule("howl_render_native", .{ .root_source_file = b.path("src/native.zig"), .target = target, .optimize = optimize });
-    native.addImport("renderer", renderer);
+    native.addImport("output_commands", commands);
     native.addImport("render_native_types", native_types.createModule());
     b.addNamedLazyPath("howl_render_native_header", b.path("include/howl_render_native.h"));
     // Existing native remains the schema/projection leaf. Standalone ownership
@@ -231,6 +258,9 @@ fn rendererModule(
     limits: *std.Build.Module,
     source: *std.Build.Module,
     text: *std.Build.Module,
+    cache: *std.Build.Module,
+    commands: *std.Build.Module,
+    support: *std.Build.Module,
 ) *std.Build.Module {
     const renderer = b.createModule(.{
         .root_source_file = b.path("src/renderer.zig"),
@@ -240,6 +270,9 @@ fn rendererModule(
     renderer.addImport("limits", limits);
     renderer.addImport("source", source);
     renderer.addImport("howl_text", text);
+    renderer.addImport("glyph_cache", cache);
+    renderer.addImport("text_support", support);
+    renderer.addImport("output_commands", commands);
     return renderer;
 }
 
@@ -279,4 +312,10 @@ fn terminalVtModule(
     terminal.addImport("howl_vt", vt);
     terminal.addImport("source_vt", source_vt);
     return terminal;
+}
+
+fn exposeModule(b: *std.Build, name: []const u8, module: *std.Build.Module) void {
+    // zig-audit: acknowledge panic
+    // reason: Build graph allocation failure is unrecoverable while forwarding exact owned modules.
+    b.modules.put(b.allocator, name, module) catch @panic("OOM");
 }

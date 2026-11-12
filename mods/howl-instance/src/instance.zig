@@ -1,11 +1,14 @@
 //! Owns the sole PTY -> VT -> Render composition; the embedder owns GPU submission.
 const std = @import("std");
+const text_support = @import("text_support");
 const pty = @import("howl_pty");
 const vt = @import("howl_vt");
 
 const howl_render = @import("howl_render");
 const publication = @import("instance_publication");
 const terminal_render = howl_render.terminal;
+const direct_output = @import("output_state");
+const DirectOutput = direct_output.State(false);
 
 /// Exact backend-neutral Render package composed by this Instance package.
 pub const render = howl_render;
@@ -111,19 +114,10 @@ pub const ChildExit = pty.ChildExit;
 /// Exact generated box-drawing configuration consumed by Instance-owned Render.
 pub const BoxDrawingConfig = @FieldType(terminal_render.Config, "box_drawing");
 
-/// Selects one owned font source for Instance construction.
-pub const FontConfig = union(enum) {
-    path: text.Config,
-    memory: text.MemoryConfig,
-};
-
-/// Supplies one required regular font and optional style variants.
-pub const FontFamilyConfig = struct {
-    regular: FontConfig,
-    italic: ?FontConfig = null,
-    bold: ?FontConfig = null,
-    bold_italic: ?FontConfig = null,
-};
+/// One owned font source.
+pub const FontConfig = text_support.FontConfig;
+/// Required regular and optional style font recipes.
+pub const FontFamilyConfig = text_support.FontFamilyConfig;
 
 /// Supplies bounded text and renderer policy for one Instance.
 ///
@@ -144,62 +138,22 @@ pub const PresentationConfig = struct {
     incremental_command_capacity: usize = 0,
 };
 
-/// Owns one fixed native font family, shared shape cache and reusable scratch.
-/// Matching terminals borrow this owner; atlases, commands and frames remain local.
-/// Mutable native faces are serialized internally. The supplied Io outlives all
-/// borrowers, including those surviving release of the caller's reference.
-// zig-audit: acknowledge opaque_type
-// reason: Only this module can retain, serialize, and release the native font and Store owner.
-pub const PresentationStore = opaque {};
-/// Reports font, bounded Store, or ownership admission failure.
-pub const PresentationStoreInitError = text.InitError || terminal_render.StoreInitError || error{PresentationStoreLimit};
-
-/// Creates one caller reference for a compatible font recipe and pixel size.
-/// Share the returned pointer through PresentationConfig.text.shared. Construction
-/// copies font sources; the input recipe does not need to survive this call.
-pub fn initPresentationStore(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    fonts: FontFamilyConfig,
-    config: terminal_render.StoreConfig,
-) PresentationStoreInitError!*PresentationStore {
-    const owner = try allocator.create(TextStore);
-    errdefer allocator.destroy(owner);
-    var owned_fonts = try OwnedFonts.init(allocator, fonts);
-    errdefer owned_fonts.deinit();
-    const store = try terminal_render.initStore(allocator, owned_fonts.faces(), config);
-    owner.* = .{ .allocator = allocator, .io = io, .fonts = owned_fonts, .store = store };
-    // zig-audit: acknowledge ptr_cast
-    // reason: The opaque handle preserves the address of this exact allocator-owned TextStore.
-    return @ptrCast(owner);
-}
-
-/// Releases the caller reference. Existing Instances retain the owner
-/// until their renderers retire; the caller must not reuse its released pointer.
-pub fn releasePresentationStore(store: *PresentationStore) void {
-    textStore(store).release();
-}
-
-/// Copies the immutable regular-font lattice without claiming mutable faces.
-/// The caller keeps its Store reference alive throughout this synchronous read.
-pub fn presentationStoreCellSize(store: *PresentationStore) terminal_render.Size {
-    const metrics = terminal_render.storeMetrics(textStore(store).store);
-    return .{ .width = metrics.advance_width, .height = metrics.line_height };
-}
-
-/// Includes the caller's reference and all Instance borrowers. Caller ownership
-/// must remain live; a count of one permits an embedder to retire an idle owner.
-pub fn presentationStoreReferences(store: *PresentationStore) u32 {
-    return textStore(store).references.load(.acquire);
-}
-
-/// Reads shared cache usage under the native-face claim.
-pub fn presentationStoreUsage(store: *PresentationStore) terminal_render.StoreUsage {
-    const owner = textStore(store);
-    owner.mutex.lockUncancelable(owner.io);
-    defer owner.mutex.unlock(owner.io);
-    return terminal_render.storeUsage(owner.store);
-}
+/// Owning shared native family, cache, scratch, references and claim.
+/// Supplied Io outlives all retained borrowers, including after caller release.
+pub const PresentationStore = text_support.PresentationStore;
+/// Owned-font and lane initialization failures.
+pub const PresentationStoreInitError = text_support.PresentationStoreInitError;
+/// Creates a caller reference with copied font sources.
+/// Its Io must remain alive until every retained borrower has retired.
+pub const initPresentationStore = text_support.initPresentationStore;
+/// Releases the caller reference after dependent use finishes.
+pub const releasePresentationStore = text_support.releasePresentationStore;
+/// Copies the immutable regular cell lattice.
+pub const presentationStoreCellSize = text_support.presentationStoreCellSize;
+/// Includes caller and all terminal borrowers for idle collection.
+pub const presentationStoreReferences = text_support.presentationStoreReferences;
+/// Reads shared cache usage under its native-face claim.
+pub const presentationStoreUsage = text_support.presentationStoreUsage;
 
 /// Reports the exact grid and cell lattice chosen for one surface.
 pub const PresentationGeometry = struct {
@@ -242,13 +196,13 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.ColorPreferenceReplyError || vt.Terminal.ContainerReplyError ||
     vt.Terminal.PointerShapeReplyError || error{WriteQueueFull};
 /// Reports Render failure or temporary contention for shared fonts.
-pub const RenderError = terminal_render.Error || error{PresentationBusy};
+pub const RenderError = terminal_render.Error || error{ PresentationBusy, DirectOutputOnly };
 /// Reports publication preparation or bounded exchange failure.
 pub const PublishError = RenderError || std.mem.Allocator.Error || error{PublicationBusy};
 /// Reports transactional font/renderer replacement or canonical geometry failure.
 pub const ReconfigurePresentationError =
     PresentationStoreInitError || terminal_render.InitError || terminal_render.Error ||
-    ResizeError || error{
+    DirectOutput.StageReplaceError || ResizeError || error{
         PublicationCapacityMismatch,
         GenerationOverflow,
     };
@@ -281,7 +235,7 @@ pub fn init(
     launch: Launch,
     presentation: PresentationConfig,
 ) InitError!*Instance {
-    return initMode(false, allocator, inherited_environment, launch, presentation);
+    return initMode(false, false, allocator, inherited_environment, launch, presentation);
 }
 
 /// Tries shared font access before State allocation or child launch.
@@ -292,24 +246,38 @@ pub fn tryInit(
     launch: Launch,
     presentation: PresentationConfig,
 ) TryInitError!*Instance {
-    return initMode(true, allocator, inherited_environment, launch, presentation);
+    return initMode(true, false, allocator, inherited_environment, launch, presentation);
 }
 
-fn initMode(
-    comptime try_claim: bool,
+/// Direct construction can also reject output geometry or fail its setup.
+pub const InitDirectError = InitError || DirectOutput.BorrowedInitError;
+/// Constructs a PTY/VT with direct output without creating the legacy renderer.
+pub fn initDirect(
     allocator: std.mem.Allocator,
     inherited_environment: std.process.Environ,
     launch: Launch,
     presentation: PresentationConfig,
-) (if (try_claim) TryInitError else InitError)!*Instance {
-    const store = try TextStore.acquire(allocator, presentation);
-    errdefer store.release();
+) InitDirectError!*Instance {
+    return initMode(false, true, allocator, inherited_environment, launch, presentation);
+}
+
+fn initMode(
+    comptime try_claim: bool,
+    comptime direct: bool,
+    allocator: std.mem.Allocator,
+    inherited_environment: std.process.Environ,
+    launch: Launch,
+    presentation: PresentationConfig,
+) (if (direct) InitDirectError else if (try_claim) TryInitError else InitError)!*Instance {
+    const store = try acquireTextStore(allocator, presentation);
+    var store_owned = true;
+    errdefer if (store_owned) text_support.release(store);
     if (comptime try_claim) {
-        if (!store.mutex.tryLock()) return error.PresentationBusy;
+        if (!text_support.tryClaim(store)) return error.PresentationBusy;
     }
     // Registered after the release guard: every failure unlocks first.
-    defer if (try_claim) store.mutex.unlock(store.io);
-    const metrics = terminal_render.storeMetrics(store.store);
+    defer if (try_claim) text_support.unclaim(store);
+    const metrics = terminal_render.storeMetrics(text_support.borrowStore(store));
 
     const state = try allocator.create(State);
     errdefer allocator.destroy(state);
@@ -319,13 +287,18 @@ fn initMode(
         state.transport.deinit();
     }
 
-    state.presentation = try PresentationState.initWithStoreMode(
-        try_claim,
-        allocator,
-        store,
-        presentation,
-        state.terminal.observation(),
-    );
+    state.presentation = if (direct)
+        try PresentationState.initDirectWithStore(allocator, store, presentation)
+    else
+        try PresentationState.initWithStoreMode(try_claim, allocator, store, presentation, state.terminal.observation());
+    store_owned = false;
+    errdefer state.presentation.deinit(allocator);
+    if (direct) state.direct = try DirectOutput.initBorrowedShared(allocator, &state.terminal, store, .{
+        .history_capacity = launch.history_rows,
+        .cursor_stroke_pixels = presentation.cursor_stroke_pixels,
+        .box_drawing = presentation.box_drawing,
+        .atlas = presentation.atlas,
+    });
 
     // zig-audit: acknowledge ptr_cast
     // reason: This boundary owns the concrete State allocation and adapts it to the stable opaque Instance handle without changing address or lifetime.
@@ -340,10 +313,82 @@ pub fn deinit(instance: *Instance) void {
     allocator.destroy(state);
 }
 
+/// Direct-output configuration for the existing canonical terminal.
+pub const DirectConfig = direct_output.SharedConfig;
+/// One borrowed direct cut. Copies refer to the same owner-bound pin.
+pub const DirectLease = struct { snapshot: direct_output.Snapshot, owner: *const Instance, occurrence: u64, serial: u64, presentation_generation: u64 };
+
+/// Direct binding failures before any output owner is installed.
+pub const EnableDirectError = DirectOutput.BorrowedInitError || error{ DirectOutputAlreadyEnabled, PublicationBorrowed };
+/// Direct preparation failures, including a missing owner.
+pub const PrepareDirectError = DirectOutput.FlushError || error{DirectOutputDisabled};
+/// Direct pin failures, including a missing owner.
+pub const HoldDirectError = DirectOutput.HoldError || error{ DirectOutputDisabled, LeaseSequenceOverflow };
+/// Direct release failures before changing the pinned output.
+pub const ReleaseDirectError = error{ DirectOutputDisabled, InvalidLease };
+
+/// Binds direct output to this Instance's existing VT and shared font owner.
+/// The caller serializes all VT/output operations, including release, and must
+/// release a held snapshot before Instance destruction. On successful cutover,
+/// the old renderer is retired and cannot receive more publications.
+pub fn enableDirectOutput(instance: *Instance, config: DirectConfig) EnableDirectError!void {
+    const state = stateMut(instance);
+    if (state.direct != null) return error.DirectOutputAlreadyEnabled;
+    const exchange = state.presentation.exchange orelse return error.DirectOutputAlreadyEnabled;
+    if (!publication.canDeinit(exchange)) return error.PublicationBorrowed;
+    const direct = try DirectOutput.initBorrowedShared(state.allocator, &state.terminal, state.presentation.store, config);
+    if (state.presentation.renderer) |renderer| terminal_render.deinit(renderer);
+    state.presentation.renderer = null;
+    publication.discardReady(exchange);
+    publication.deinit(exchange);
+    state.presentation.exchange = null;
+    state.direct = direct;
+}
+
+/// Prepares the latest canonical viewport without changing or waiting on a held cut.
+pub fn prepareDirectOutput(instance: *Instance, history_offset: u32) PrepareDirectError!void {
+    const direct = stateMut(instance).direct orelse return error.DirectOutputDisabled;
+    direct.selectHistoryOffset(history_offset);
+    try direct.flush();
+}
+
+/// Pins the accepted cut. The caller must serialize this transfer with preparation.
+pub fn holdDirectOutput(instance: *Instance) HoldDirectError!DirectLease {
+    const state = stateMut(instance);
+    const direct = state.direct orelse return error.DirectOutputDisabled;
+    if (direct.lease_serial == std.math.maxInt(u64)) return error.LeaseSequenceOverflow;
+    const snapshot = try direct.hold();
+    direct.lease_serial += 1;
+    return .{ .snapshot = snapshot, .owner = instance, .occurrence = state.terminal.observation().occurrenceIdentity(), .serial = direct.lease_serial, .presentation_generation = state.presentation.presentation_generation };
+}
+
+/// Failures when replacing one held cut with the latest accepted cut.
+pub const ReplaceDirectError = HoldDirectError || ReleaseDirectError;
+/// Validates the next pin before releasing the old one, so admission failure preserves it.
+pub fn replaceDirectOutput(instance: *Instance, previous: ?DirectLease) ReplaceDirectError!DirectLease {
+    const direct = stateMut(instance).direct orelse return error.DirectOutputDisabled;
+    if (!direct.ready) return error.NotReady;
+    if (direct.lease_serial == std.math.maxInt(u64)) return error.LeaseSequenceOverflow;
+    if (previous) |lease| {
+        try releaseDirectOutput(instance, lease);
+    } else if (direct.leased) return error.LeaseBusy;
+    return holdDirectOutput(instance);
+}
+
+/// Rejects stale or foreign pins before touching retained output.
+pub fn releaseDirectOutput(instance: *Instance, lease: DirectLease) ReleaseDirectError!void {
+    const state = stateMut(instance);
+    const direct = state.direct orelse return error.DirectOutputDisabled;
+    if (lease.owner != instance or lease.occurrence != state.terminal.observation().occurrenceIdentity() or !direct.leased or lease.serial != direct.lease_serial) return error.InvalidLease;
+    direct.release();
+}
+
 /// Checks native backend/lease lifetimes before any child or owner mutation.
 /// Caller must serialize new endpoint creation and quiesce raw Zig borrowers.
 pub fn tryDeinit(instance: *Instance) error{PublicationBorrowed}!void {
-    if (!publication.canDeinit(stateConst(instance).presentation.exchange)) return error.PublicationBorrowed;
+    const state = stateConst(instance);
+    if (state.presentation.exchange) |exchange| if (!publication.canDeinit(exchange)) return error.PublicationBorrowed;
+    if (state.direct) |direct| if (direct.leased) return error.PublicationBorrowed;
     deinit(instance);
 }
 
@@ -391,12 +436,14 @@ pub fn writePending(instance: *const Instance) bool {
     return stateConst(instance).writes.count != 0;
 }
 
+/// Legacy renderer usage is unavailable after the direct-output cutover.
+pub const RenderUsageError = error{DirectOutputOnly};
 /// Reports current Instance-owned Render usage without exposing mutable Renderer state.
-pub fn renderUsage(instance: *const Instance) terminal_render.Usage {
+pub fn renderUsage(instance: *const Instance) RenderUsageError!terminal_render.Usage {
     const presentation = stateConst(instance).presentation;
-    presentation.store.mutex.lockUncancelable(presentation.store.io);
-    defer presentation.store.mutex.unlock(presentation.store.io);
-    return terminal_render.usage(presentation.renderer);
+    text_support.claim(presentation.store);
+    defer text_support.unclaim(presentation.store);
+    return terminal_render.usage(presentation.renderer orelse return error.DirectOutputOnly);
 }
 
 /// Derives one backend-neutral frame from the current Instance-owned Render state.
@@ -411,7 +458,7 @@ pub fn renderFrame(
     const state = stateMut(instance);
     const presentation = state.presentation;
     try presentation.refresh(state.terminal.observation(), 0);
-    return terminal_render.frame(presentation.renderer, residency, buffers);
+    return terminal_render.frame(presentation.renderer.?, residency, buffers);
 }
 
 /// Reports visible Host-owned terminal-image resources missing from backend residency.
@@ -423,7 +470,7 @@ pub fn missingRenderResources(
     const state = stateMut(instance);
     const presentation = state.presentation;
     try presentation.refresh(state.terminal.observation(), 0);
-    return terminal_render.missingExternalResources(presentation.renderer, residency, output);
+    return terminal_render.missingExternalResources(presentation.renderer.?, residency, output);
 }
 
 /// Borrows the backend-only exchange handle owned by this Instance.
@@ -431,7 +478,7 @@ pub fn missingRenderResources(
 /// The embedding render thread may retain this handle until Instance teardown,
 /// but must not retain the Instance itself. All leases must be released before
 /// the terminal thread destroys the Instance.
-pub fn renderExchange(instance: *const Instance) *RenderExchange {
+pub fn renderExchange(instance: *const Instance) ?*RenderExchange {
     const presentation = stateConst(instance).presentation;
     return presentation.exchange;
 }
@@ -441,13 +488,14 @@ pub fn renderExchange(instance: *const Instance) *RenderExchange {
 /// This affects presentation only. The caller explicitly publishes a new cut.
 pub fn borrowRenderExchange(instance: *Instance) error{PublicationBorrowed}!*RenderExchange {
     const presentation = stateMut(instance).presentation;
-    if (!publication.retainBackend(presentation.exchange)) return error.PublicationBorrowed;
+    const exchange = presentation.exchange orelse return error.PublicationBorrowed;
+    if (!publication.retainBackend(exchange)) return error.PublicationBorrowed;
     // zig-audit: acknowledge discard
     // reason: A replacement backend has no accepted resources; consume old feedback without adopting it.
-    _ = publication.takeLatestResidency(presentation.exchange, presentation.presentation_generation, &presentation.backend_residency);
+    _ = publication.takeLatestResidency(exchange, presentation.presentation_generation, &presentation.backend_residency);
     presentation.backend_residency_count = 0;
-    publication.discardReady(presentation.exchange);
-    return presentation.exchange;
+    publication.discardReady(exchange);
+    return exchange;
 }
 
 /// Releases a registered backend after its last lease, as its final exchange access.
@@ -700,103 +748,25 @@ const WriteQueue = struct {
     }
 };
 
-fn initFont(allocator: std.mem.Allocator, config: FontConfig) text.InitError!*text.FontSet {
-    return switch (config) {
-        .path => |value| text.FontSet.init(allocator, value),
-        .memory => |value| text.FontSet.initMemory(allocator, value),
-    };
-}
-
-const OwnedFonts = struct {
-    regular: *text.FontSet,
-    italic: ?*text.FontSet,
-    bold: ?*text.FontSet,
-    bold_italic: ?*text.FontSet,
-
-    fn init(allocator: std.mem.Allocator, config: FontFamilyConfig) text.InitError!OwnedFonts {
-        const regular = try initFont(allocator, config.regular);
-        errdefer regular.deinit();
-        const italic = if (config.italic) |value| try initFont(allocator, value) else null;
-        errdefer if (italic) |value| value.deinit();
-        const bold = if (config.bold) |value| try initFont(allocator, value) else null;
-        errdefer if (bold) |value| value.deinit();
-        const bold_italic = if (config.bold_italic) |value| try initFont(allocator, value) else null;
-        errdefer if (bold_italic) |value| value.deinit();
-        return .{
-            .regular = regular,
-            .italic = italic,
-            .bold = bold,
-            .bold_italic = bold_italic,
-        };
+const TextStore = PresentationStore;
+fn acquireTextStore(allocator: std.mem.Allocator, config: PresentationConfig) PresentationStoreInitError!*TextStore {
+    switch (config.text) {
+        .private => |fonts| return initPresentationStore(allocator, .failing, fonts, .{
+            .shape_cache = config.shape_cache,
+            .shaped_capacity = config.shaped_capacity,
+            .raster_bytes = config.raster_bytes,
+        }),
+        .shared => |shared| {
+            try text_support.retain(shared);
+            return shared;
+        },
     }
-
-    fn faces(self: *const OwnedFonts) terminal_render.FontFaces {
-        return .{
-            .regular = self.regular,
-            .italic = self.italic,
-            .bold = self.bold,
-            .bold_italic = self.bold_italic,
-        };
-    }
-
-    fn deinit(self: *OwnedFonts) void {
-        if (self.bold_italic) |value| value.deinit();
-        if (self.bold) |value| value.deinit();
-        if (self.italic) |value| value.deinit();
-        self.regular.deinit();
-        self.* = undefined;
-    }
-};
-
-const TextStore = struct {
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    fonts: OwnedFonts,
-    store: *terminal_render.Store,
-    mutex: std.Io.Mutex = .init,
-    references: std.atomic.Value(u32) = .init(1),
-
-    fn acquire(allocator: std.mem.Allocator, config: PresentationConfig) PresentationStoreInitError!*TextStore {
-        switch (config.text) {
-            .private => |fonts| return textStore(try initPresentationStore(allocator, .failing, fonts, .{
-                .shape_cache = config.shape_cache,
-                .shaped_capacity = config.shaped_capacity,
-                .raster_bytes = config.raster_bytes,
-            })),
-            .shared => |shared| {
-                const owner = textStore(shared);
-                var before = owner.references.load(.monotonic);
-                while (true) {
-                    if (before >= 1024) return error.PresentationStoreLimit;
-                    before = owner.references.cmpxchgWeak(before, before + 1, .monotonic, .monotonic) orelse return owner;
-                }
-            },
-        }
-    }
-
-    fn release(self: *TextStore) void {
-        const before = self.references.fetchSub(1, .acq_rel);
-        std.debug.assert(before != 0);
-        if (before != 1) return;
-        terminal_render.deinitStore(self.store);
-        self.fonts.deinit();
-        self.allocator.destroy(self);
-    }
-};
-
-fn textStore(store: *PresentationStore) *TextStore {
-    // zig-audit: acknowledge align_cast
-    // reason: Every public handle originates from this module's aligned TextStore allocation.
-    const aligned: *align(@alignOf(TextStore)) PresentationStore = @alignCast(store);
-    // zig-audit: acknowledge ptr_cast
-    // reason: The opaque handle has the same address and concrete pointee layout as its TextStore owner.
-    return @ptrCast(aligned);
 }
 
 const PresentationState = struct {
-    renderer: *terminal_render.Renderer,
+    renderer: ?*terminal_render.Renderer,
     store: *TextStore,
-    exchange: *publication.Exchange,
+    exchange: ?*publication.Exchange,
     image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
     terminal_revision: ?u64 = null,
@@ -807,6 +777,18 @@ const PresentationState = struct {
     command_capacity: usize,
     command_limit: usize,
     presentation_generation: u64 = 1,
+
+    fn initDirectWithStore(allocator: std.mem.Allocator, store: *TextStore, config: PresentationConfig) std.mem.Allocator.Error!*PresentationState {
+        const state = try allocator.create(PresentationState);
+        state.* = .{
+            .renderer = null,
+            .store = store,
+            .exchange = null,
+            .command_capacity = config.command_capacity,
+            .command_limit = if (config.command_limit == 0) config.command_capacity else config.command_limit,
+        };
+        return state;
+    }
 
     fn initWithStore(
         allocator: std.mem.Allocator,
@@ -824,10 +806,10 @@ const PresentationState = struct {
         config: PresentationConfig,
         observation: *const Terminal.Observation,
     ) (terminal_render.InitError || terminal_render.Error)!*PresentationState {
-        const metrics = terminal_render.storeMetrics(store.store);
+        const metrics = terminal_render.storeMetrics(text_support.borrowStore(store));
         const renderer = try terminal_render.initWithStore(
             allocator,
-            store.store,
+            text_support.borrowStore(store),
             .{
                 .cell_size = .{
                     .width = metrics.advance_width,
@@ -867,22 +849,22 @@ const PresentationState = struct {
         };
         // Ordinary construction keeps its existing late waiting claim.
         // The try factory already holds this claim from before child launch.
-        if (!claimed) store.mutex.lockUncancelable(store.io);
-        defer if (!claimed) store.mutex.unlock(store.io);
+        if (!claimed) text_support.claim(store);
+        defer if (!claimed) text_support.unclaim(store);
         try state.refreshClaimed(observation, 0);
         return state;
     }
 
     fn deinit(self: *PresentationState, allocator: std.mem.Allocator) void {
-        publication.deinit(self.exchange);
-        terminal_render.deinit(self.renderer);
-        self.store.release();
+        if (self.exchange) |exchange| publication.deinit(exchange);
+        if (self.renderer) |renderer| terminal_render.deinit(renderer);
+        text_support.release(self.store);
         self.* = undefined;
         allocator.destroy(self);
     }
 
     fn cellSize(self: *const PresentationState) terminal_render.Size {
-        const metrics = terminal_render.storeMetrics(self.store.store);
+        const metrics = terminal_render.storeMetrics(text_support.borrowStore(self.store));
         return .{ .width = metrics.advance_width, .height = metrics.line_height };
     }
 
@@ -891,6 +873,7 @@ const PresentationState = struct {
         observation: *const Terminal.Observation,
         history_offset: u32,
     ) RenderError!void {
+        const renderer = self.renderer orelse return error.DirectOutputOnly;
         const revision = observation.semanticSequence();
         const view = observation.semanticView(history_offset);
         if (self.terminal_revision != null and
@@ -902,7 +885,7 @@ const PresentationState = struct {
             if (self.content_revision == content_revision and
                 self.terminal_history_offset == view.history_offset)
             {
-                terminal_render.updateObservationCursor(self.renderer, observation, view.history_offset) catch |failure| switch (failure) {
+                terminal_render.updateObservationCursor(renderer, observation, view.history_offset) catch |failure| switch (failure) {
                     error.InvalidView => break :reuse,
                     else => return failure,
                 };
@@ -910,8 +893,8 @@ const PresentationState = struct {
                 return;
             }
         }
-        if (!self.store.mutex.tryLock()) return error.PresentationBusy;
-        defer self.store.mutex.unlock(self.store.io);
+        if (!text_support.tryClaim(self.store)) return error.PresentationBusy;
+        defer text_support.unclaim(self.store);
         try self.refreshClaimed(observation, view.history_offset);
     }
 
@@ -926,13 +909,13 @@ const PresentationState = struct {
         var candidate: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const bindings = try terminal_render.planObservationImageBindings(
             self.image_bindings[0..self.image_binding_count],
-            terminal_render.usage(self.renderer),
+            terminal_render.usage(self.renderer.?),
             observation,
             view.history_offset,
             &candidate,
         );
         try terminal_render.updateObservation(
-            self.renderer,
+            self.renderer.?,
             observation,
             view.history_offset,
             bindings,
@@ -951,7 +934,7 @@ const PresentationState = struct {
     ) PublishError!void {
         try self.refresh(observation, history_offset);
         if (publication.takeLatestResidency(
-            self.exchange,
+            self.exchange.?,
             self.presentation_generation,
             &self.backend_residency,
         )) |accepted|
@@ -959,7 +942,7 @@ const PresentationState = struct {
 
         var missing_storage: [terminal_render.maximum_external_images]terminal_render.FrameExternalResource = undefined;
         const missing = try terminal_render.missingExternalResources(
-            self.renderer,
+            self.renderer.?,
             self.backend_residency[0..self.backend_residency_count],
             &missing_storage,
         );
@@ -1009,13 +992,13 @@ const PresentationState = struct {
             });
         }
 
-        var writer = publication.beginWrite(self.exchange) orelse
+        var writer = publication.beginWrite(self.exchange.?) orelse
             return error.PublicationBusy;
         defer writer.abort();
         const pixel_capacity = std.math.add(
             usize,
             external_pixel_count,
-            try terminal_render.framePixelBytes(self.renderer, prospective[0..prospective_count]),
+            try terminal_render.framePixelBytes(self.renderer.?, prospective[0..prospective_count]),
         ) catch return error.ArithmeticOverflow;
         const pixels = try writer.pixelStorage(pixel_capacity);
         const uploads = writer.uploadStorage();
@@ -1044,7 +1027,7 @@ const PresentationState = struct {
 
         const frame = while (true) {
             const current = terminal_render.frame(
-                self.renderer,
+                self.renderer.?,
                 prospective[0..prospective_count],
                 .{
                     .retained_content = writer.retainedContent(self.presentation_generation),
@@ -1158,6 +1141,7 @@ const State = struct {
     transport: pty.Owned,
     terminal: vt.Terminal,
     presentation: *PresentationState,
+    direct: ?*DirectOutput = null,
     writes: WriteQueue = .{},
     paste: Paste = .{},
     reads: [read_buffer_bytes]u8 = undefined,
@@ -1203,6 +1187,7 @@ const State = struct {
 
         self.allocator = allocator;
         self.transport = transport;
+        self.direct = null;
         self.writes = .{};
         self.paste = .{};
         self.read_start = 0;
@@ -1223,6 +1208,7 @@ const State = struct {
     }
 
     fn deinit(self: *State) void {
+        if (self.direct) |direct| direct.deinit();
         self.presentation.deinit(self.allocator);
         self.terminal.deinit();
         self.transport.deinit();
@@ -1246,10 +1232,10 @@ const State = struct {
         if (config.command_capacity != presentation.command_capacity)
             return error.PublicationCapacityMismatch;
 
-        const store = try TextStore.acquire(self.allocator, config);
+        const store = try acquireTextStore(self.allocator, config);
         var store_live = true;
-        defer if (store_live) store.release();
-        const metrics = terminal_render.storeMetrics(store.store);
+        defer if (store_live) text_support.release(store);
+        const metrics = terminal_render.storeMetrics(text_support.borrowStore(store));
         const cell_size = terminal_render.Size{
             .width = metrics.advance_width,
             .height = metrics.line_height,
@@ -1265,9 +1251,36 @@ const State = struct {
                 break :choose .{ rows, columns };
             },
         };
+        var direct_replacement: ?DirectOutput.Replacement = null;
+        if (self.direct) |direct| {
+            direct_replacement = try direct.stageWorkingShared(store, .{
+                .history_capacity = direct.config.history_capacity,
+                .cursor_stroke_pixels = config.cursor_stroke_pixels,
+                .box_drawing = config.box_drawing,
+                .atlas = config.atlas,
+                .command_limit = direct.config.command_limit,
+            }, rows, columns);
+        }
+        defer if (direct_replacement) |*replacement| self.direct.?.discardWorking(replacement);
+
+        if (presentation.renderer == null) {
+            const next_generation = std.math.add(u64, presentation.presentation_generation, 1) catch return error.GenerationOverflow;
+            const previous_cell = self.terminal.cellPixelSize().?;
+            const current = self.terminal.semanticView(0);
+            if (current.rows != rows or current.cols != columns or previous_cell.width != cell_size.width or previous_cell.height != cell_size.height) {
+                try self.resizeGeometry(rows, columns, .{ .width = cell_size.width, .height = cell_size.height });
+            }
+            if (direct_replacement) |*replacement| self.direct.?.commitWorking(replacement);
+            text_support.release(presentation.store);
+            presentation.store = store;
+            store_live = false;
+            presentation.presentation_generation = next_generation;
+            return .{ .cell_size = cell_size, .rows = rows, .columns = columns };
+        }
+
         const renderer = try terminal_render.initWithStore(
             self.allocator,
-            store.store,
+            text_support.borrowStore(store),
             .{
                 .cell_size = cell_size,
                 .box_drawing = config.box_drawing,
@@ -1290,8 +1303,8 @@ const State = struct {
         const old_content_revision = observation.contentSequence();
         var candidate_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const bindings = prepare: {
-            store.mutex.lockUncancelable(store.io);
-            defer store.mutex.unlock(store.io);
+            text_support.claim(store);
+            defer text_support.unclaim(store);
             const planned = try terminal_render.planObservationImageBindings(
                 &.{},
                 terminal_render.usage(renderer),
@@ -1327,8 +1340,9 @@ const State = struct {
             );
         }
 
-        terminal_render.deinit(presentation.renderer);
-        presentation.store.release();
+        if (direct_replacement) |*replacement| self.direct.?.commitWorking(replacement);
+        terminal_render.deinit(presentation.renderer.?);
+        text_support.release(presentation.store);
         presentation.renderer = renderer;
         renderer_live = false;
         presentation.store = store;
@@ -1667,21 +1681,114 @@ fn transferReplies(machine: *vt.Terminal, queue: *WriteQueue) error{WriteQueueFu
     machine.consumeReplyBytes(bytes.len) catch unreachable;
 }
 
-fn flushWrites(owner: *pty.Owned, queue: *WriteQueue) pty.WriteError!void {
+// zig-audit: acknowledge anytype
+// reason: Production specializes directly for PTY Owned; deterministic writer proofs exercise partial/error outcomes without runtime dispatch.
+fn flushWrites(owner: anytype, queue: *WriteQueue) pty.WriteError!void {
     var calls: usize = 0;
     var written: usize = 0;
-    while (calls < write_calls_per_turn and written < write_bytes_per_turn and queue.count != 0) {
+    // Compact once, including when a later write blocks or fails.
+    defer if (written != 0) queue.consume(written);
+    while (calls < write_calls_per_turn and written < write_bytes_per_turn and written < queue.count) {
         calls += 1;
-        const budget = @min(queue.count, write_bytes_per_turn - written);
-        const accepted = owner.write(queue.bytes[0..budget]) catch |failure| switch (failure) {
+        const budget = @min(queue.count - written, write_bytes_per_turn - written);
+        const accepted = owner.write(queue.bytes[written..][0..budget]) catch |failure| switch (failure) {
             error.Interrupted => continue,
             error.WouldBlock => return,
             else => return failure,
         };
         std.debug.assert(accepted <= budget);
-        queue.consume(accepted);
         written += accepted;
     }
+}
+
+test "write flush preserves exact suffix on partial writes and every exit" {
+    const Writer = struct {
+        steps: []const pty.WriteError!usize,
+        calls: usize = 0,
+        received: [10]u8 = undefined,
+        count: usize = 0,
+
+        fn write(self: *@This(), bytes: []const u8) pty.WriteError!usize {
+            std.debug.assert(self.calls < self.steps.len);
+            const step = self.steps[self.calls];
+            self.calls += 1;
+            const accepted = try step;
+            std.debug.assert(accepted <= bytes.len);
+            @memcpy(self.received[self.count..][0..accepted], bytes[0..accepted]);
+            self.count += accepted;
+            return accepted;
+        }
+    };
+    const Case = struct {
+        steps: []const pty.WriteError!usize,
+        written: usize,
+        failure: ?pty.WriteError = null,
+    };
+    const payload = "0123456789";
+    const cases = [_]Case{
+        .{ .steps = &.{ 2, 1, 3, error.WouldBlock }, .written = 6 },
+        .{ .steps = &.{ 2, error.ChildClosed }, .written = 2, .failure = error.ChildClosed },
+        .{ .steps = &.{ 2, error.WriteFailed }, .written = 2, .failure = error.WriteFailed },
+        .{ .steps = &.{error.NotStarted}, .written = 0, .failure = error.NotStarted },
+        .{ .steps = &.{ error.Interrupted, 2, error.WouldBlock }, .written = 2 },
+        .{ .steps = &.{error.WouldBlock}, .written = 0 },
+        .{ .steps = &.{ error.Interrupted, error.Interrupted, error.Interrupted, error.Interrupted }, .written = 0 },
+        .{ .steps = &.{ 0, 2, 2, 2 }, .written = 6 },
+        .{ .steps = &.{ 1, 1, 1, 1 }, .written = 4 },
+        .{ .steps = &.{10}, .written = 10 },
+    };
+    for (cases) |case| {
+        var queue: WriteQueue = .{};
+        try queue.append(payload);
+        var writer: Writer = .{ .steps = case.steps };
+        if (case.failure) |failure| {
+            try std.testing.expectError(failure, flushWrites(&writer, &queue));
+        } else try flushWrites(&writer, &queue);
+        try std.testing.expectEqual(case.steps.len, writer.calls);
+        try std.testing.expectEqual(case.written, writer.count);
+        try std.testing.expectEqualStrings(payload[0..case.written], writer.received[0..writer.count]);
+        try std.testing.expectEqualStrings(payload[case.written..], queue.bytes[0..queue.count]);
+        try std.testing.expectEqual(write_queue_bytes - payload.len + case.written, queue.remaining());
+        try queue.append("later");
+        try std.testing.expectEqualStrings("later", queue.bytes[queue.count - 5 .. queue.count]);
+    }
+    var empty: WriteQueue = .{};
+    var writer: Writer = .{ .steps = &.{} };
+    try flushWrites(&writer, &empty);
+    try std.testing.expectEqual(@as(usize, 0), writer.calls);
+}
+
+test "full outbox keeps byte order across the call budget and later append" {
+    const Writer = struct {
+        expected: []const u8,
+        received: usize = 0,
+        calls: usize = 0,
+        matched: bool = true,
+
+        fn write(self: *@This(), bytes: []const u8) pty.WriteError!usize {
+            const accepted = @min(bytes.len, write_queue_bytes / write_calls_per_turn - 1);
+            self.matched = self.matched and std.mem.eql(u8, self.expected[self.received..][0..accepted], bytes[0..accepted]);
+            self.received += accepted;
+            self.calls += 1;
+            return accepted;
+        }
+    };
+    var expected: [write_queue_bytes + 5]u8 = undefined;
+    for (expected[0..write_queue_bytes], 0..) |*byte, index| byte.* = @intCast(index % 251);
+    @memcpy(expected[write_queue_bytes..], "later");
+    var queue: WriteQueue = .{};
+    try queue.append(expected[0..write_queue_bytes]);
+    var writer: Writer = .{ .expected = &expected };
+    try flushWrites(&writer, &queue);
+    try std.testing.expectEqual(@as(usize, write_calls_per_turn), writer.calls);
+    try std.testing.expectEqual(@as(usize, 4), queue.count);
+    try std.testing.expectEqualSlices(u8, expected[write_queue_bytes - 4 .. write_queue_bytes], queue.bytes[0..queue.count]);
+    try queue.append("later");
+    try flushWrites(&writer, &queue);
+    try std.testing.expectEqual(@as(usize, 5), writer.calls);
+    try std.testing.expectEqual(expected.len, writer.received);
+    try std.testing.expect(writer.matched);
+    try std.testing.expectEqual(@as(usize, 0), queue.count);
 }
 
 fn inputAdmissionBytes(event: Input) error{WriteQueueFull}!usize {
@@ -2548,7 +2655,7 @@ test "Instance owns direct VT to Render progression" {
     try std.testing.expectEqual(expected_metrics.advance_width, pixels.width);
     try std.testing.expectEqual(expected_metrics.line_height, pixels.height);
 
-    const before = renderUsage(instance);
+    const before = try renderUsage(instance);
     try serviceUntilContains(instance, "DIRECT_RENDER");
 
     var uploads: [terminal_render.maximum_frame_resources]terminal_render.FrameResourceUpload = undefined;
@@ -2561,7 +2668,7 @@ test "Instance owns direct VT to Render progression" {
         .commands = &commands,
         .pixels = &frame_pixels,
     });
-    const after = renderUsage(instance);
+    const after = try renderUsage(instance);
     try std.testing.expect(after.revision > before.revision);
     try std.testing.expect(frame.commands.len != 0);
     try std.testing.expectEqual(after.revision, frame.revision);
@@ -2612,7 +2719,7 @@ test "publication grows frame command storage to configured limit" {
     try std.testing.expect((try state.terminal.feed("ABCDEFGH")).stateChanged());
     try publishRender(instance);
 
-    const exchange = renderExchange(instance);
+    const exchange = renderExchange(instance).?;
     var lease = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
     defer lease.abandon();
     try std.testing.expect(lease.value.commands.len > 1);
@@ -2664,7 +2771,7 @@ test "publication owns canonical VT image bytes and consumes residency feedback"
     )).stateChanged());
 
     try publishRender(instance);
-    const exchange = renderExchange(instance);
+    const exchange = renderExchange(instance).?;
     var lease = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
 
     var rgba_upload: ?terminal_render.FrameResourceUpload = null;
@@ -2753,9 +2860,23 @@ test "presentation reconfigure invalidates late old-generation residency" {
     defer deinit(instance);
 
     try serviceUntilContains(instance, "A");
+    const direct_instance = try initDirect(std.testing.allocator, std.testing.environ, .{ .shell = "/bin/sh", .command = "printf '\\033[6 qA'; sleep 30", .rows = 2, .columns = 8, .history_rows = 8 }, base_config);
+    defer deinit(direct_instance);
+    try serviceUntilContains(direct_instance, "A");
+    try std.testing.expect(stateConst(direct_instance).presentation.renderer == null);
+    try std.testing.expect(stateConst(direct_instance).presentation.exchange == null);
+    try std.testing.expectError(error.DirectOutputOnly, renderUsage(direct_instance));
+    try prepareDirectOutput(direct_instance, 0);
+    const direct_old = try holdDirectOutput(direct_instance);
+    var direct_pinned = true;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The held direct lease remains valid until explicitly released below.
+    defer if (direct_pinned) releaseDirectOutput(direct_instance, direct_old) catch unreachable;
+    const old_cell = direct_old.snapshot.cell_width;
+    try std.testing.expectEqual(@as(u16, 2), direct_old.snapshot.cursor.?.solid.rect.width);
     // A refresh failure after allocation must unwind the staged owner only once.
-    const staged_store = try TextStore.acquire(std.testing.allocator, base_config);
-    defer staged_store.release();
+    const staged_store = try acquireTextStore(std.testing.allocator, base_config);
+    defer text_support.release(staged_store);
     var limited = base_config;
     limited.command_capacity = 1;
     try std.testing.expectError(error.CommandLimit, PresentationState.initWithStore(
@@ -2765,7 +2886,7 @@ test "presentation reconfigure invalidates late old-generation residency" {
         terminal(instance),
     ));
     try publishRender(instance);
-    const exchange = renderExchange(instance);
+    const exchange = renderExchange(instance).?;
     var old = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
     try std.testing.expectEqual(@as(u64, 1), old.value.presentation_generation);
 
@@ -2785,6 +2906,20 @@ test "presentation reconfigure invalidates late old-generation residency" {
 
     var next_config = base_config;
     next_config.text = .{ .private = .{ .regular = .{ .path = second_font } } };
+    next_config.cursor_stroke_pixels = 5;
+    try std.testing.expectError(error.UnsupportedDimensions, reconfigurePresentationGeometry(direct_instance, next_config, 193, 8));
+    try std.testing.expectEqual(@as(u16, 2), terminal(direct_instance).semanticView(0).rows);
+    try std.testing.expectEqual(old_cell, direct_old.snapshot.cell_width);
+    const direct_cell = try reconfigurePresentation(direct_instance, next_config);
+    try prepareDirectOutput(direct_instance, 0);
+    try std.testing.expectEqual(old_cell, direct_old.snapshot.cell_width);
+    try releaseDirectOutput(direct_instance, direct_old);
+    direct_pinned = false;
+    const direct_new = try holdDirectOutput(direct_instance);
+    try std.testing.expectEqual(direct_cell.width, direct_new.snapshot.cell_width);
+    try std.testing.expectEqual(direct_cell.height, direct_new.snapshot.cell_height);
+    try std.testing.expectEqual(@as(u16, 5), direct_new.snapshot.cursor.?.solid.rect.width);
+    try releaseDirectOutput(direct_instance, direct_new);
     const next_cell = try reconfigurePresentation(instance, next_config);
     const canonical_cell = terminal(instance).cellPixelSize() orelse
         return error.MissingCellPixels;
@@ -2915,16 +3050,16 @@ test "resident glyphs publish into a cold slot without allocating pixel scratch"
         .raster_bytes = 512 * 512,
         .command_capacity = 256,
     };
-    const fonts = try TextStore.acquire(allocator, config);
+    const fonts = try acquireTextStore(allocator, config);
     const state = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
-        fonts.release();
+        text_support.release(fonts);
         return failure;
     };
     defer state.deinit(allocator);
     const cell = state.cellSize();
     try canonical.setCellPixelSize(cell.width, cell.height);
     try state.publish(canonical.observation(), 0);
-    var held = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+    var held = acquirePublishedFrame(state.exchange.?) orelse return error.MissingPublication;
     defer held.abandon();
     try std.testing.expectEqual(@as(usize, 1), held.value.uploads.len);
     try std.testing.expectEqual(@as(usize, 512 * 512), held.value.pixels.len);
@@ -2939,7 +3074,7 @@ test "resident glyphs publish into a cold slot without allocating pixel scratch"
     try state.publish(canonical.observation(), 0);
     try std.testing.expectEqualSlices(u8, saved, held.value.pixels);
     try held.release(&truth);
-    var cached = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+    var cached = acquirePublishedFrame(state.exchange.?) orelse return error.MissingPublication;
     defer cached.abandon();
     try std.testing.expectEqual(@as(usize, 0), cached.value.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), cached.value.pixels.len);
@@ -2949,7 +3084,7 @@ test "resident glyphs publish into a cold slot without allocating pixel scratch"
     failing.fail_index = std.math.maxInt(usize);
     failing.resize_fail_index = std.math.maxInt(usize);
     try state.publish(canonical.observation(), 0);
-    var restored = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+    var restored = acquirePublishedFrame(state.exchange.?) orelse return error.MissingPublication;
     defer restored.abandon();
     try std.testing.expectEqual(@as(usize, 1), restored.value.uploads.len);
     try std.testing.expectEqualSlices(u8, saved, restored.value.pixels);
@@ -2957,7 +3092,7 @@ test "resident glyphs publish into a cold slot without allocating pixel scratch"
     try state.publish(canonical.observation(), 0);
     try std.testing.expectEqualSlices(u8, saved, restored.value.pixels);
     restored.abandon();
-    var image = acquirePublishedFrame(state.exchange) orelse return error.MissingPublication;
+    var image = acquirePublishedFrame(state.exchange.?) orelse return error.MissingPublication;
     defer image.abandon();
     try std.testing.expectEqual(@as(usize, 2), image.value.uploads.len);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, image.value.pixels[0..4]);
@@ -2985,15 +3120,18 @@ test "cursor and content cuts agree with complete projection across native mutat
         .incremental_row_capacity = 4,
         .incremental_command_capacity = 256,
     };
-    const fonts = try TextStore.acquire(allocator, config);
+    const fonts = try acquireTextStore(allocator, config);
     const candidate = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
-        fonts.release();
+        text_support.release(fonts);
         return failure;
     };
     defer candidate.deinit(allocator);
     const cell = candidate.cellSize();
     try canonical.setCellPixelSize(cell.width, cell.height);
-    const baseline = try terminal_render.initPrivate(allocator, candidate.store.fonts.faces(), .{
+    const reference_font = try text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } });
+    defer reference_font.deinit();
+    const reference_faces = terminal_render.FontFaces{ .regular = reference_font };
+    const baseline = try terminal_render.initPrivate(allocator, reference_faces, .{
         .cell_size = candidate.cellSize(),
         .box_drawing = config.box_drawing,
         .shape_cache = config.shape_cache,
@@ -3050,7 +3188,7 @@ test "cursor and content cuts agree with complete projection across native mutat
         .{ .bytes = "\x1b_Ga=d,d=A,q=2;\x1b\\" },
     };
     try candidate.publish(canonical.observation(), 0);
-    var held = acquirePublishedFrame(candidate.exchange) orelse return error.MissingPublication;
+    var held = acquirePublishedFrame(candidate.exchange.?) orelse return error.MissingPublication;
     defer held.abandon();
     const held_commands = try allocator.dupe(terminal_render.Command, held.value.commands);
     defer allocator.free(held_commands);
@@ -3059,51 +3197,51 @@ test "cursor and content cuts agree with complete projection across native mutat
     for (cuts) |cut| {
         const old_history = candidate.terminal_history_offset;
         const old_content = canonical.contentSequence();
-        const old_render = terminal_render.usage(candidate.renderer).content_revision;
+        const old_render = terminal_render.usage(candidate.renderer.?).content_revision;
         try std.testing.expect((try canonical.feed(cut.bytes)).stateChanged());
         try candidate.publish(canonical.observation(), cut.history);
         if (canonical.contentSequence() == old_content and cut.history == old_history)
-            try std.testing.expectEqual(old_render, terminal_render.usage(candidate.renderer).content_revision);
+            try std.testing.expectEqual(old_render, terminal_render.usage(candidate.renderer.?).content_revision);
         var bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const images = try terminal_render.planObservationImageBindings(baseline_bindings[0..baseline_binding_count], terminal_render.usage(baseline), canonical.observation(), cut.history, &bindings);
         try terminal_render.updateObservation(baseline, canonical.observation(), cut.history, images);
         @memcpy(baseline_bindings[0..images.len], images);
         baseline_binding_count = images.len;
         if (std.mem.eql(u8, cut.bytes, "\x1b[2;2HZ")) {
-            const scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+            const scene = terminal_render.rowScene(candidate.renderer.?) orelse return error.MissingRowScene;
             try std.testing.expectEqual(terminal_render.RowSceneKind.patch, scene.kind);
             try std.testing.expect(scene.repairs[1]);
             try std.testing.expect(!scene.repairs[0] and !scene.repairs[2] and !scene.repairs[3]);
         }
         if (std.mem.eql(u8, cut.bytes, "\x1b[1;2HX\x1b[3;2HY")) {
-            const scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+            const scene = terminal_render.rowScene(candidate.renderer.?) orelse return error.MissingRowScene;
             try std.testing.expectEqual(terminal_render.RowSceneKind.patch, scene.kind);
         }
         if (std.mem.eql(u8, cut.bytes, "\x1b[1;3HJ\x1b[2;3HK\x1b[3;3HL"))
-            try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
+            try std.testing.expect(terminal_render.rowScene(candidate.renderer.?) == null);
         if (std.mem.eql(u8, cut.bytes, "\x1b[4;2H\x1b[4mU\x1b[0m") or
             std.mem.eql(u8, cut.bytes, "\x1b[4;2H\x1b[7mV\x1b[0m") or
             std.mem.eql(u8, cut.bytes, "\x1b[4;2H\x1b[41mB\x1b[0m") or
             std.mem.eql(u8, cut.bytes, "\x1b[4;1H\x1b#6"))
-            try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
-        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+            try std.testing.expect(terminal_render.rowScene(candidate.renderer.?) == null);
+        try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
     }
     try std.testing.expectEqualDeep(held_commands, held.value.commands);
     held.abandon();
     // A complete leased frame must match the full projection after both free
     // slots have warmed their content prefixes and then only the cursor moves.
-    const content_revision = terminal_render.usage(candidate.renderer).content_revision;
+    const content_revision = terminal_render.usage(candidate.renderer.?).content_revision;
     for ([_][]const u8{
         "\x1b[1;2H", "\x1b[2;2H", "\x1b[2;3H", "\x1b[3;4H",
         "\x1b[?25l", "\x1b[?25h", "\x1b[3 q",  "\x1b[0 q",
     }) |bytes| {
         try std.testing.expect((try canonical.feed(bytes)).stateChanged());
         try candidate.publish(canonical.observation(), 0);
-        try std.testing.expectEqual(content_revision, terminal_render.usage(candidate.renderer).content_revision);
+        try std.testing.expectEqual(content_revision, terminal_render.usage(candidate.renderer.?).content_revision);
         try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-        var latest = acquirePublishedFrame(candidate.exchange) orelse return error.MissingPublication;
+        var latest = acquirePublishedFrame(candidate.exchange.?) orelse return error.MissingPublication;
         defer latest.abandon();
-        try expectPresentationCommandsEqual(candidate.renderer, baseline, latest.value.commands);
+        try expectPresentationCommandsEqual(candidate.renderer.?, baseline, latest.value.commands);
     }
 
     // A same-size return after two resizes cannot alias older row identities.
@@ -3111,22 +3249,22 @@ test "cursor and content cuts agree with complete projection across native mutat
     try canonical.resize(4, 8);
     try candidate.refresh(canonical.observation(), 0);
     try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-    try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+    try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
     // An externally reset renderer cannot reuse an older private base.
-    try terminal_render.resetCaches(candidate.renderer);
+    try terminal_render.resetCaches(candidate.renderer.?);
     try terminal_render.resetCaches(baseline);
     try std.testing.expect((try canonical.feed("\x1b[3;2H")).stateChanged());
     try candidate.refresh(canonical.observation(), 0);
     try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-    try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+    try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
 
     var small = try Terminal.init(allocator, 2, 4);
     defer small.deinit();
     var limited_config = config;
     limited_config.command_capacity = 1;
-    const limited_fonts = try TextStore.acquire(allocator, limited_config);
+    const limited_fonts = try acquireTextStore(allocator, limited_config);
     const limited = PresentationState.initWithStore(allocator, limited_fonts, limited_config, small.observation()) catch |failure| {
-        limited_fonts.release();
+        text_support.release(limited_fonts);
         return failure;
     };
     defer limited.deinit(allocator);
@@ -3135,7 +3273,7 @@ test "cursor and content cuts agree with complete projection across native mutat
     try std.testing.expect((try small.feed("\r\x1b[2K\x1b[2;1H")).stateChanged());
     try limited.refresh(small.observation(), 0);
     try terminal_render.updateObservation(baseline, small.observation(), 0, &.{});
-    try expectPresentationCommandsEqual(limited.renderer, baseline, null);
+    try expectPresentationCommandsEqual(limited.renderer.?, baseline, null);
 }
 
 fn expectPresentationCommandsEqual(candidate: *terminal_render.Renderer, baseline: *terminal_render.Renderer, published: ?[]const terminal_render.Command) !void {
@@ -3210,33 +3348,33 @@ test "shared text owner survives caller release and isolates cache pressure, sta
 
     const one = stateMut(first).presentation;
     const two = stateMut(second).presentation;
-    var held = acquirePublishedFrame(one.exchange) orelse return error.MissingPublication;
+    var held = acquirePublishedFrame(one.exchange.?) orelse return error.MissingPublication;
     defer held.abandon();
     var saved: [256]terminal_render.Command = undefined;
     const commands = held.value.commands;
     @memcpy(saved[0..commands.len], commands);
-    const first_usage = renderUsage(first);
+    const first_usage = try renderUsage(first);
     // A terminal atlas reset must not flush process shaping or its neighbour.
-    try terminal_render.resetCaches(two.renderer);
+    try terminal_render.resetCaches(two.renderer.?);
     try std.testing.expectEqualDeep(warm, presentationStoreUsage(shared));
     for ([_][]const u8{ "\r\x1b[2KB", "\r\x1b[2KC", "\r\x1b[2KD", "\r\x1b[2KE", "\r\x1b[2KF" }) |bytes| {
         try std.testing.expect((try stateMut(second).terminal.feed(bytes)).stateChanged());
         try publishRender(second);
     }
-    const after = renderUsage(first);
+    const after = try renderUsage(first);
     try std.testing.expectEqual(first_usage.resource_generation, after.resource_generation);
     try std.testing.expectEqual(first_usage.atlas_entries, after.atlas_entries);
     try std.testing.expectEqualDeep(saved[0..commands.len], commands);
     try std.testing.expect(presentationStoreUsage(shared).shape.entries <= 4);
 
-    const owner = textStore(shared);
-    owner.references.store(1024, .monotonic);
+    const owner = shared;
+    text_support.setReferenceCountForTest(owner, 1024);
     try std.testing.expectError(error.PresentationStoreLimit, init(a, std.testing.environ, launch, config));
-    try std.testing.expectEqual(@as(u32, 1024), owner.references.load(.monotonic));
-    owner.references.store(3, .monotonic);
-    owner.mutex.lockUncancelable(owner.io);
+    try std.testing.expectEqual(@as(u32, 1024), presentationStoreReferences(owner));
+    text_support.setReferenceCountForTest(owner, 3);
+    text_support.claim(owner);
     {
-        defer owner.mutex.unlock(owner.io);
+        defer text_support.unclaim(owner);
         // Cursor-only work requires no shared text claim.
         try std.testing.expect((try stateMut(first).terminal.feed("\x1b[2;2H")).stateChanged());
         try publishRender(first);
@@ -3294,15 +3432,18 @@ test "row cache budgets preserve complete frames across fixed-buffer fallback an
             .incremental_row_capacity = 4,
             .incremental_command_capacity = budget,
         };
-        const fonts = try TextStore.acquire(allocator, config);
+        const fonts = try acquireTextStore(allocator, config);
         const candidate = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
-            fonts.release();
+            text_support.release(fonts);
             return failure;
         };
         defer candidate.deinit(allocator);
         const cell = candidate.cellSize();
         try canonical.setCellPixelSize(cell.width, cell.height);
-        const baseline = try terminal_render.initPrivate(allocator, candidate.store.fonts.faces(), .{
+        const reference_font = try text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } });
+        defer reference_font.deinit();
+        const reference_faces = terminal_render.FontFaces{ .regular = reference_font };
+        const baseline = try terminal_render.initPrivate(allocator, reference_faces, .{
             .cell_size = cell,
             .box_drawing = config.box_drawing,
             .shape_cache = config.shape_cache,
@@ -3316,16 +3457,16 @@ test "row cache budgets preserve complete frames across fixed-buffer fallback an
         try std.testing.expect((try canonical.feed("\x1b[?25lABCD")).stateChanged());
         try candidate.publish(canonical.observation(), 0);
         try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
-        const initial_scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+        try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
+        const initial_scene = terminal_render.rowScene(candidate.renderer.?) orelse return error.MissingRowScene;
         try std.testing.expectEqual(@as(usize, 4), initial_scene.commands.len);
-        try std.testing.expect(terminal_render.usage(candidate.renderer).command_capacity <= config.command_limit);
+        try std.testing.expect(terminal_render.usage(candidate.renderer.?).command_capacity <= config.command_limit);
         if (budget == 4) try std.testing.checkAllAllocationFailures(
             allocator,
             rowCommandBufferAllocationProof,
-            .{ candidate.store.fonts.faces(), cell, config },
+            .{ reference_faces, cell, config },
         );
-        var held = acquirePublishedFrame(candidate.exchange) orelse return error.MissingPublication;
+        var held = acquirePublishedFrame(candidate.exchange.?) orelse return error.MissingPublication;
         defer held.abandon();
         const held_commands = try allocator.dupe(terminal_render.Command, held.value.commands);
         defer allocator.free(held_commands);
@@ -3337,23 +3478,23 @@ test "row cache budgets preserve complete frames across fixed-buffer fallback an
             try std.testing.expect((try canonical.feed(bytes)).stateChanged());
             try candidate.publish(canonical.observation(), 0);
             try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-            try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
-            try std.testing.expect(terminal_render.usage(candidate.renderer).command_capacity <= config.command_limit);
+            try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
+            try std.testing.expect(terminal_render.usage(candidate.renderer.?).command_capacity <= config.command_limit);
             if (index < 2) {
-                try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
+                try std.testing.expect(terminal_render.rowScene(candidate.renderer.?) == null);
             } else {
-                const scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+                const scene = terminal_render.rowScene(candidate.renderer.?) orelse return error.MissingRowScene;
                 try std.testing.expect(scene.commands.len <= budget);
                 if (index != 0) try std.testing.expectEqual(@as(usize, 4), scene.commands.len);
             }
         }
-        const primed = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+        const primed = terminal_render.rowScene(candidate.renderer.?) orelse return error.MissingRowScene;
         try std.testing.expectEqual(terminal_render.RowSceneKind.baseline, primed.kind);
         try std.testing.expect((try canonical.feed("\x1b[1;3HY")).stateChanged());
         try candidate.publish(canonical.observation(), 0);
         try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
-        const patched = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+        try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
+        const patched = terminal_render.rowScene(candidate.renderer.?) orelse return error.MissingRowScene;
         try std.testing.expectEqual(terminal_render.RowSceneKind.patch, patched.kind);
         try std.testing.expect(patched.repairs[0]);
         try std.testing.expect(!patched.repairs[1] and !patched.repairs[2] and !patched.repairs[3]);
@@ -3363,12 +3504,12 @@ test "row cache budgets preserve complete frames across fixed-buffer fallback an
         try std.testing.expectError(error.CommandLimit, candidate.refresh(canonical.observation(), 0));
         // Match failed atlas work before comparing exact resource generations.
         try std.testing.expectError(error.CommandLimit, terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{}));
-        try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
+        try std.testing.expect(terminal_render.rowScene(candidate.renderer.?) == null);
         try std.testing.expect((try canonical.feed("\x1b[2J\x1b[HABCD")).stateChanged());
         try candidate.publish(canonical.observation(), 0);
         try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
-        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
-        try std.testing.expect(terminal_render.rowScene(candidate.renderer) != null);
+        try expectPresentationCommandsEqual(candidate.renderer.?, baseline, null);
+        try std.testing.expect(terminal_render.rowScene(candidate.renderer.?) != null);
         try std.testing.expectEqualDeep(held_commands, held.value.commands);
     }
 }
@@ -3442,31 +3583,31 @@ fn foreignConstructionStore(allocator: std.mem.Allocator, io: std.Io) !*Presenta
 test "try construction admission precedes allocation and restores references and claims" {
     const store = try foreignConstructionStore(std.testing.allocator, .failing);
     defer releasePresentationStore(store);
-    const owner = textStore(store);
+    const owner = store;
     var config = foreignConstructionConfig(store);
     const launch = Launch{ .shell = "/bin/sh", .command = "exec sleep 30", .rows = 2, .columns = 4, .history_rows = 0 };
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expect(owner.mutex.tryLock());
+    try std.testing.expect(text_support.tryClaim(owner));
     var held = true;
-    defer if (held) owner.mutex.unlock(owner.io);
+    defer if (held) text_support.unclaim(owner);
     for (0..32) |_| {
         try std.testing.expectError(error.PresentationBusy, tryInit(failing.allocator(), std.testing.environ, launch, config));
         try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
         try std.testing.expect(!failing.has_induced_failure);
     }
-    owner.mutex.unlock(owner.io);
+    text_support.unclaim(owner);
     held = false;
     try std.testing.expectError(error.OutOfMemory, tryInit(failing.allocator(), std.testing.environ, launch, config));
     try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
-    try std.testing.expect(owner.mutex.tryLock());
-    owner.mutex.unlock(owner.io);
+    try std.testing.expect(text_support.tryClaim(owner));
+    text_support.unclaim(owner);
     // Atlas validation occurs after State/PTY startup; this forces a
     // deterministic late failure even when the initial VT is blank.
     config.atlas.width = 0;
     try std.testing.expectError(error.InvalidAtlasConfig, tryInit(std.testing.allocator, std.testing.environ, launch, config));
     try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
-    try std.testing.expect(owner.mutex.tryLock());
-    owner.mutex.unlock(owner.io);
+    try std.testing.expect(text_support.tryClaim(owner));
+    text_support.unclaim(owner);
     config.atlas.width = 128;
     const value = try tryInit(std.testing.allocator, std.testing.environ, launch, config);
     try std.testing.expectEqual(@as(u32, 2), presentationStoreReferences(store));
@@ -3483,9 +3624,9 @@ fn tryPresentedAllocationProof(allocator: std.mem.Allocator, store: *Presentatio
         .history_rows = 0,
     }, foreignConstructionConfig(store)) catch |failure| {
         try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
-        const owner = textStore(store);
-        try std.testing.expect(owner.mutex.tryLock());
-        owner.mutex.unlock(owner.io);
+        const owner = store;
+        try std.testing.expect(text_support.tryClaim(owner));
+        text_support.unclaim(owner);
         return failure;
     };
     deinit(value);
@@ -3504,7 +3645,7 @@ test "ordinary construction keeps its waiting shared font lane" {
     const io = threaded.io();
     const store = try foreignConstructionStore(std.testing.allocator, io);
     defer releasePresentationStore(store);
-    const owner = textStore(store);
+    const owner = store;
     const Context = struct {
         store: *PresentationStore,
         done: std.atomic.Value(bool) = .init(false),
@@ -3525,26 +3666,28 @@ test "ordinary construction keeps its waiting shared font lane" {
         }
     };
     var context = Context{ .store = store };
-    try std.testing.expect(owner.mutex.tryLock());
+    try std.testing.expect(text_support.tryClaim(owner));
     var held = true;
     const worker = std.Thread.spawn(.{}, Context.run, .{&context}) catch |failure| {
-        owner.mutex.unlock(io);
+        text_support.unclaim(owner);
         return failure;
     };
     var joined = false;
     defer {
-        if (held) owner.mutex.unlock(io);
+        if (held) text_support.unclaim(owner);
         if (!joined) worker.join();
         if (context.result) |value| deinit(value);
     }
-    for (0..5000) |_| {
-        if (owner.mutex.state.load(.acquire) == .contended) break;
+    const wait_started = std.Io.Clock.awake.now(io);
+    while (!text_support.claimContendedForTest(owner)) {
         if (context.done.load(.acquire)) return error.DidNotWait;
-        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
-    } else return error.Timeout;
+        if (wait_started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds() >= 5 * std.time.ns_per_s)
+            return error.Timeout;
+        std.atomic.spinLoopHint();
+    }
     try std.testing.expect(!context.done.load(.acquire));
     try std.testing.expectEqual(@as(u32, 2), presentationStoreReferences(store));
-    owner.mutex.unlock(io);
+    text_support.unclaim(owner);
     held = false;
     worker.join();
     joined = true;
@@ -3555,4 +3698,83 @@ test "ordinary construction keeps its waiting shared font lane" {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test "Instance and optional output share one real native claim without recursive locking" {
+    const output = @import("howl_vt_output");
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const shared = try foreignConstructionStore(allocator, threaded.io());
+    defer releasePresentationStore(shared);
+    const launch = Launch{ .shell = "/bin/sh", .command = "exec sleep 30", .rows = 2, .columns = 4, .history_rows = 0 };
+    const instance = try tryInit(allocator, std.testing.environ, launch, foreignConstructionConfig(shared));
+    defer deinit(instance);
+    const direct = try output.Terminal.initShared(allocator, shared, .{});
+    defer {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: This test releases every optional-output lease before teardown.
+        direct.deinit() catch unreachable;
+    }
+    try direct.feed("\x1b[?25lA");
+    try direct.flush();
+    try std.testing.expectEqual(@as(u32, 3), presentationStoreReferences(shared));
+    text_support.claim(shared);
+    var claimed = true;
+    defer if (claimed) text_support.unclaim(shared);
+    // Busy try-construction cannot even allocate State, hence cannot launch a child.
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    try std.testing.expectError(error.PresentationBusy, tryInit(failing.allocator(), std.testing.environ, launch, foreignConstructionConfig(shared)));
+    try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
+    try std.testing.expectEqual(@as(u32, 3), presentationStoreReferences(shared));
+    // Existing Instance cursor/no-op cuts and the new owner's matching paths do not claim.
+    try publishRender(instance);
+    try std.testing.expect((try stateMut(instance).terminal.feed("\x1b[2;2H")).stateChanged());
+    try publishRender(instance);
+    try direct.feed("\x1b[2;2H");
+    try direct.flush();
+    try std.testing.expect((try stateMut(instance).terminal.feed("B")).stateChanged());
+    try std.testing.expectError(error.PresentationBusy, publishRender(instance));
+    try direct.feed("B");
+    try std.testing.expectError(error.PresentationBusy, direct.flush());
+    try direct.feed("\x1b[2;2HC");
+    text_support.unclaim(shared);
+    claimed = false;
+    try publishRender(instance);
+    try direct.flush();
+    try std.testing.expectEqual(@as(u21, 'C'), direct.observation().semanticView(0).cellAt(1, 1));
+    const held = try direct.hold();
+    defer {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The held lease belongs to this exact live optional owner.
+        direct.release(held) catch unreachable;
+    }
+    try std.testing.expect(held.snapshot.glyphs[1].len != 0);
+}
+
+test "direct output follows the Instance PTY using its one canonical VT" {
+    const instance = try testInstance(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033[?25lDIRECT_PTY'; sleep 30",
+        .rows = 2,
+        .columns = 16,
+        .history_rows = 16,
+    });
+    defer deinit(instance);
+    try enableDirectOutput(instance, .{ .history_capacity = 16 });
+    try std.testing.expectError(error.DirectOutputAlreadyEnabled, enableDirectOutput(instance, .{ .history_capacity = 16 }));
+    try std.testing.expectError(error.DirectOutputOnly, renderUsage(instance));
+    try std.testing.expectError(error.DirectOutputOnly, publishRender(instance));
+    try std.testing.expectError(error.PublicationBorrowed, borrowRenderExchange(instance));
+    try serviceUntilContains(instance, "DIRECT_PTY");
+    try prepareDirectOutput(instance, 0);
+    const held = try holdDirectOutput(instance);
+    try std.testing.expectError(error.PublicationBorrowed, tryDeinit(instance));
+    try std.testing.expectEqual(@as(u21, 'D'), terminal(instance).semanticView(0).cellAt(0, 0));
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+    try std.testing.expectEqual(@as(u16, 16), held.snapshot.cols);
+    try releaseDirectOutput(instance, held);
+    const next = try holdDirectOutput(instance);
+    try std.testing.expectError(error.InvalidLease, releaseDirectOutput(instance, held));
+    try releaseDirectOutput(instance, next);
 }

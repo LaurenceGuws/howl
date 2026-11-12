@@ -10,7 +10,8 @@ const source_semantics = @import("source");
 const limits = @import("limits");
 const frame_vocabulary = @import("frame.zig");
 const generated = text.generated;
-const glyph_cache = @import("glyph_cache.zig");
+const glyph_cache = @import("glyph_cache");
+const text_support = @import("text_support");
 
 /// Re-exports terminal-local alpha-atlas bounds used by Renderer configuration.
 pub const AtlasConfig = glyph_cache.AtlasConfig;
@@ -111,26 +112,12 @@ pub const maximum_frame_resources: usize = maximum_external_images + 2;
 // reason: Renderer intentionally hides the allocator-owned Impl layout so callers can mutate presentation state only through bounded renderer operations.
 pub const Renderer = opaque {};
 
-/// Process render knowledge shared by externally serialized terminal renderers.
-///
-/// FontFaces remain caller-owned and must
-/// outlive the Store. The Store owns retained shaping knowledge and reusable
-/// shape/raster scratch. Callers must serialize mutable Store use.
-// zig-audit: acknowledge opaque_type
-// reason: Store intentionally hides the allocator-owned StoreImpl layout so shared shaping state remains bounded and externally serialized.
-pub const Store = opaque {};
-
-/// Bounds reusable process render knowledge for one exact font/raster lane.
-pub const StoreConfig = struct {
-    shape_cache: ShapeCacheConfig,
-    shaped_capacity: usize,
-    raster_bytes: usize,
-};
-
-/// Reports retained shared process-render knowledge without terminal-local state.
-pub const StoreUsage = struct {
-    shape: ShapeCacheUsage,
-};
+/// Borrowed native text lane; callers serialize use and retain its fonts.
+pub const Store = text_support.Store;
+/// Shared lane capacity recipe.
+pub const StoreConfig = text_support.StoreConfig;
+/// Shared lane usage counters.
+pub const StoreUsage = text_support.StoreUsage;
 
 /// Reports terminal-local cache, command-storage, revision, and resource identity state.
 pub const Usage = struct {
@@ -214,11 +201,8 @@ pub const InitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasIni
     InvalidFontFaces,
 };
 
-/// Reports allocation, shaping-cache construction, configuration, or font-family failure during Store initialization.
-pub const StoreInitError = std.mem.Allocator.Error || ShapeCacheInitError || error{
-    InvalidConfig,
-    InvalidFontFaces,
-};
+/// Borrowed native lane construction failures.
+pub const StoreInitError = text_support.StoreInitError;
 
 /// Reports semantic projection, bounded cache/storage, resource-publication, or frame-production failure.
 pub const Error = AtlasError || ShapeCacheError || frame_vocabulary.Error || error{
@@ -489,16 +473,6 @@ const Impl = struct {
     cursor: ?Cursor = null,
 };
 
-const StoreImpl = struct {
-    allocator: std.mem.Allocator,
-    fonts: FontFaces,
-    config: StoreConfig,
-    shape_cache: *ShapeCache,
-    clusters: []u32,
-    shaped: []text.Glyph,
-    raster: []u8,
-};
-
 const PublishedImage = struct {
     image_id: u32,
     generation: u64,
@@ -526,79 +500,16 @@ fn storeConfigFromRenderer(config: Config) StoreConfig {
     };
 }
 
-fn validateStoreConfig(config: StoreConfig) error{InvalidConfig}!void {
-    if (config.shaped_capacity == 0 or config.raster_bytes == 0 or
-        config.shape_cache.entry_capacity == 0 or
-        config.shape_cache.scalar_capacity == 0 or
-        config.shape_cache.glyph_capacity == 0 or
-        config.shape_cache.max_sequence_scalars == 0)
-        return error.InvalidConfig;
-}
-
-/// Allocates one process render lane for one exact caller-owned font recipe.
-/// Mutable Store operations are externally serialized.
-pub fn initStore(
-    allocator: std.mem.Allocator,
-    fonts: FontFaces,
-    config: StoreConfig,
-) StoreInitError!*Store {
-    try validateStoreConfig(config);
-    if (!fonts.terminalMetricsCompatible()) return error.InvalidFontFaces;
-
-    const impl = try allocator.create(StoreImpl);
-    errdefer allocator.destroy(impl);
-    const shape_cache = try glyph_cache.initShapeCache(allocator, fonts, config.shape_cache);
-    errdefer glyph_cache.deinitShapeCache(shape_cache);
-    const clusters = try allocator.alloc(u32, @intCast(config.shape_cache.max_sequence_scalars));
-    errdefer allocator.free(clusters);
-    const shaped = try allocator.alloc(text.Glyph, config.shaped_capacity);
-    errdefer allocator.free(shaped);
-    const raster = try allocator.alloc(u8, config.raster_bytes);
-    errdefer allocator.free(raster);
-    impl.* = .{
-        .allocator = allocator,
-        .fonts = fonts,
-        .config = config,
-        .shape_cache = shape_cache,
-        .clusters = clusters,
-        .shaped = shaped,
-        .raster = raster,
-    };
-    // zig-audit: acknowledge ptr_cast
-    // reason: Store is the opaque handle for this exact allocator-owned StoreImpl allocation and preserves its address.
-    return @ptrCast(impl);
-}
-
-/// Releases one process render lane. No Renderer may still borrow it.
-pub fn deinitStore(owner: *Store) void {
-    const impl = storeImpl(owner);
-    const allocator = impl.allocator;
-    const shape_cache = impl.shape_cache;
-    const clusters = impl.clusters;
-    const shaped = impl.shaped;
-    const raster = impl.raster;
-    impl.* = undefined;
-    allocator.free(raster);
-    allocator.free(shaped);
-    allocator.free(clusters);
-    glyph_cache.deinitShapeCache(shape_cache);
-    allocator.destroy(impl);
-}
-
-/// Returns exact metrics for this Store's fixed font/raster lane.
-pub fn storeMetrics(owner: *const Store) Metrics {
-    return constStoreImpl(owner).fonts.metrics();
-}
-
-/// Reports retained process-shared cache usage.
-pub fn storeUsage(owner: *const Store) StoreUsage {
-    return .{ .shape = glyph_cache.shapeCacheUsage(constStoreImpl(owner).shape_cache) };
-}
-
-/// Forgets shared shaping knowledge without invalidating terminal-local atlases.
-pub fn resetStore(owner: *Store) void {
-    glyph_cache.resetShapeCache(storeImpl(owner).shape_cache);
-}
+/// Creates an externally serialized borrowed-font lane.
+pub const initStore = text_support.initStore;
+/// Destroys a lane after all borrowing renderers retire.
+pub const deinitStore = text_support.deinitStore;
+/// Copies the lane's immutable regular font lattice.
+pub const storeMetrics = text_support.storeMetrics;
+/// Reports shared shape-cache usage under caller serialization.
+pub const storeUsage = text_support.storeUsage;
+/// Resets shared shaping knowledge under caller serialization.
+pub const resetStore = text_support.resetStore;
 
 /// Allocates a private Store and one terminal Renderer. For matching terminals,
 /// create one Store and use initWithStore so native shaping knowledge is shared.
@@ -638,8 +549,7 @@ pub fn initWithStore(
         !validCommandBounds(config) or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidConfig;
-    const store_impl = storeImpl(store);
-    if (!std.meta.eql(store_impl.config, storeConfigFromRenderer(config)))
+    if (!std.meta.eql(text_support.storeConfig(store), storeConfigFromRenderer(config)))
         return error.InvalidConfig;
     return initWithStoreInner(allocator, store, null, config);
 }
@@ -658,13 +568,11 @@ fn initWithStoreInner(
     owned_store: ?*Store,
     config: Config,
 ) InitError!*Renderer {
-    const store_impl = storeImpl(store);
-
     const impl = try allocator.create(Impl);
     errdefer allocator.destroy(impl);
-    const atlas = try glyph_cache.initAtlas(
+    const atlas = try text_support.initAtlasFromStore(
         allocator,
-        store_impl.fonts,
+        store,
         config.box_drawing,
         config.atlas,
     );
@@ -849,7 +757,7 @@ fn updateInnerOnce(
     changed_rows: ?[]const bool,
 ) Error!void {
     const impl = rendererImpl(owner);
-    const store = storeImpl(impl.store);
+    const store = text_support.work(impl.store);
     impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
     errdefer impl.retained_rows.backgrounds_ready = false;
@@ -2258,11 +2166,14 @@ fn planIncrementalRows(
     if (shift >= rows or repairs.len != rows or
         !sameIncrementalCellPresentation(Source, impl, Source.presentation(snapshot)))
         return null;
-    var repair_count: usize = 0;
-    for (repairs) |repair| if (repair) {
-        repair_count += 1;
-    };
-    if (repair_count > rowReuseLimit(rows)) return null;
+    // Native repairs already passed this limit in sourceChangedRows.
+    if (comptime !@hasDecl(Source, "rowGeneration")) {
+        var repair_count: usize = 0;
+        for (repairs) |repair| if (repair) {
+            repair_count += 1;
+        };
+        if (repair_count > rowReuseLimit(rows)) return null;
+    }
     if (shift != 0) {
         const exposed_first = @as(usize, rows - shift);
         for (repairs[exposed_first..]) |repair| if (!repair) return null;
@@ -3410,22 +3321,6 @@ fn constRendererImpl(content: *const Renderer) *const Impl {
     // reason: Every borrowed Renderer originates from an Impl allocation in initWithStoreInner at the same address.
     // zig-audit: acknowledge align_cast
     // reason: The originating Impl allocation guarantees the concrete alignment recovered here.
-    return @ptrCast(@alignCast(content));
-}
-
-fn storeImpl(content: *Store) *StoreImpl {
-    // zig-audit: acknowledge ptr_cast
-    // reason: Every mutable Store originates from a StoreImpl allocation in initStore at the same address.
-    // zig-audit: acknowledge align_cast
-    // reason: The originating StoreImpl allocation guarantees the concrete alignment recovered here.
-    return @ptrCast(@alignCast(content));
-}
-
-fn constStoreImpl(content: *const Store) *const StoreImpl {
-    // zig-audit: acknowledge ptr_cast
-    // reason: Every borrowed Store originates from a StoreImpl allocation in initStore at the same address.
-    // zig-audit: acknowledge align_cast
-    // reason: The originating StoreImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(content));
 }
 

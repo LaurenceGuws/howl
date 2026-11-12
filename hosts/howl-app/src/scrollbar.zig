@@ -9,7 +9,7 @@ pub const Bar = struct {
     count: u32,
 
     /// Derives a bounded overlay from the accepted frame without changing canonical columns.
-    pub fn fromFrame(rect: layout.Rect, frame: instance.PublishedFrame, scale: f32) ?Bar {
+    pub fn fromFrame(rect: layout.Rect, frame: @import("frame_info.zig").Info, scale: f32) ?Bar {
         if (frame.alternate_screen or frame.history_count == 0 or frame.cell_size.height == 0 or !std.math.isFinite(scale) or scale <= 0 or rect.width <= 0 or rect.height <= 0) return null;
         const rows = frame.surface.height / frame.cell_size.height;
         if (rows == 0 or frame.history_offset > frame.history_count) return null;
@@ -36,7 +36,7 @@ pub const Bar = struct {
 };
 
 test "scrollbar endpoints fractional geometry bounded capture and alternate suppression" {
-    var frame: instance.PublishedFrame = undefined;
+    var frame: @import("frame_info.zig").Info = undefined;
     frame.alternate_screen = false;
     frame.history_count = 100;
     frame.history_offset = 50;

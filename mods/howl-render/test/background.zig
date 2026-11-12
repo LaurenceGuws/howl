@@ -1114,96 +1114,100 @@ test "independent colour growth preserves alpha residency and held mixed frames"
 }
 
 // A revision-relative adapter deliberately has no lifetime/row witness callbacks.
-const RelativeSource = struct {
-    const Native = @import("source_vt").Source;
-    /// Copies small view/presentation handles for one synchronous projection.
-    /// `images` and the SemanticView backing screen remain VT-borrowed until mutation.
-    pub const Snapshot = Native.Snapshot;
-    /// Borrows a live row once per projection pass; history uses copied-cell fallback.
-    pub const Row = Native.Row;
-    /// Borrows one canonical cell only for this synchronous projection.
-    pub const Cell = Native.Cell;
-    /// Owns fallback storage when a projected history row has no live cell slice.
-    pub const CellScratch = Native.CellScratch;
-    /// Copies the canonical terminal palette and dynamic presentation colors.
-    pub const Presentation = Native.Presentation;
-    /// Uses the canonical four-channel terminal color carried by Presentation.
-    pub const PresentationColor = Native.PresentationColor;
-    /// Borrows one coherent canonical image/placement observation.
-    pub const Graphics = Native.Graphics;
-    /// Render owns reuse decisions over non-consuming canonical row identities.
-    pub const supports_incremental = Native.supports_incremental;
-    /// Returns the canonical content identity captured for these repairs.
-    pub const observationRevision = Native.observationRevision;
-    /// Returns the clamped canonical viewport history offset.
-    pub const historyOffset = Native.historyOffset;
-    /// Identifies the canonical active screen for repair provenance.
-    pub const alternateScreen = Native.alternateScreen;
-    /// Native repairs are position-relative and carry no scrolling translation.
-    pub const rowShift = Native.rowShift;
-    /// Returns the declared visible terminal row count.
-    pub const rows = Native.rows;
-    /// Returns the declared physical terminal column count.
-    pub const columns = Native.columns;
-    /// Returns the canonical cursor row in the current visible view.
-    pub const cursorRow = Native.cursorRow;
-    /// Returns the canonical cursor column in the current visible view.
-    pub const cursorColumn = Native.cursorColumn;
-    /// Reports canonical cursor visibility before renderer surface clipping.
-    pub const cursorVisible = Native.cursorVisible;
-    /// Borrows the presentation copy retained by this synchronous adapter snapshot.
-    pub const presentation = Native.presentation;
-    /// Returns the number of physically exposed row records for geometry validation.
-    pub const rowCount = Native.rowCount;
-    /// Maps one validated dense row-record index to its canonical VT row identity.
-    pub const rowAt = Native.rowAt;
-    /// Returns the number of physically exposed cells for one canonical row.
-    pub const rowCellCount = Native.rowCellCount;
-    /// Borrows a live cell or copies a history cell into caller-owned scratch.
-    /// A history borrow lasts only until that scratch is reused.
-    pub const cellAt = Native.cellAt;
-    /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
-    pub const lineGeometry = Native.lineGeometry;
-    /// Borrows/copies one lead cell's complete scalar cluster into caller scratch.
-    /// Continuation and blank cells intentionally expose an empty sequence.
-    pub const cellScalars = Native.cellScalars;
-    /// Copies only rendition bits that directly affect this untimed frame projection.
-    pub const cellStyle = Native.cellStyle;
-    /// Returns the terminal font slot independently of VT's packed field width.
-    pub const cellFont = Native.cellFont;
-    /// Returns the encoded baseline selector independently of VT's enum type.
-    pub const cellBaseline = Native.cellBaseline;
-    /// Returns the encoded underline style independently of VT's enum type.
-    pub const cellUnderlineStyle = Native.cellUnderlineStyle;
-    /// Normalizes one requested cell color role without leaking VT color types.
-    pub const cellColor = Native.cellColor;
-    /// Recognizes Kitty's reserved Unicode placement scalar at the source boundary.
-    pub const isImagePlaceholder = Native.isImagePlaceholder;
-    /// Borrows the coherent VT image/placement view captured for this history cut.
-    pub const graphics = Native.graphics;
-    /// Normalizes canonical cursor geometry without carrying source enum identity.
-    pub const cursorShape = Native.cursorShape;
-    /// Returns every retained canonical image record, including currently hidden images.
-    pub const graphicsImageCount = Native.graphicsImageCount;
-    /// Normalizes one retained VT image into renderer-private identity and extent.
-    pub const graphicsImage = Native.graphicsImage;
-    /// Returns the bounded placement index space for this visible VT cut.
-    pub const graphicsPlacementCount = Native.graphicsPlacementCount;
-    /// Copies one visible physical or virtual placement, skipping absent index slots.
-    pub const graphicsPlacement = Native.graphicsPlacement;
-    /// Reports whether any visible placement currently references one retained image.
-    pub const graphicsImageVisible = Native.graphicsImageVisible;
+const RelativeSource = RelativeRepairSource(.{ false, false, false });
 
-    /// Names the immediately preceding external snapshot revision.
-    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
-        return snapshot.revision - 1;
-    }
+fn RelativeRepairSource(comptime repairs: [3]bool) type {
+    return struct {
+        const Native = @import("source_vt").Source;
+        /// Copies small view/presentation handles for one synchronous projection.
+        /// `images` and the SemanticView backing screen remain VT-borrowed until mutation.
+        pub const Snapshot = Native.Snapshot;
+        /// Borrows a live row once per projection pass; history uses copied-cell fallback.
+        pub const Row = Native.Row;
+        /// Borrows one canonical cell only for this synchronous projection.
+        pub const Cell = Native.Cell;
+        /// Owns fallback storage when a projected history row has no live cell slice.
+        pub const CellScratch = Native.CellScratch;
+        /// Copies the canonical terminal palette and dynamic presentation colors.
+        pub const Presentation = Native.Presentation;
+        /// Uses the canonical four-channel terminal color carried by Presentation.
+        pub const PresentationColor = Native.PresentationColor;
+        /// Borrows one coherent canonical image/placement observation.
+        pub const Graphics = Native.Graphics;
+        /// Render owns reuse decisions over non-consuming canonical row identities.
+        pub const supports_incremental = Native.supports_incremental;
+        /// Returns the canonical content identity captured for these repairs.
+        pub const observationRevision = Native.observationRevision;
+        /// Returns the clamped canonical viewport history offset.
+        pub const historyOffset = Native.historyOffset;
+        /// Identifies the canonical active screen for repair provenance.
+        pub const alternateScreen = Native.alternateScreen;
+        /// Native repairs are position-relative and carry no scrolling translation.
+        pub const rowShift = Native.rowShift;
+        /// Returns the declared visible terminal row count.
+        pub const rows = Native.rows;
+        /// Returns the declared physical terminal column count.
+        pub const columns = Native.columns;
+        /// Returns the canonical cursor row in the current visible view.
+        pub const cursorRow = Native.cursorRow;
+        /// Returns the canonical cursor column in the current visible view.
+        pub const cursorColumn = Native.cursorColumn;
+        /// Reports canonical cursor visibility before renderer surface clipping.
+        pub const cursorVisible = Native.cursorVisible;
+        /// Borrows the presentation copy retained by this synchronous adapter snapshot.
+        pub const presentation = Native.presentation;
+        /// Returns the number of physically exposed row records for geometry validation.
+        pub const rowCount = Native.rowCount;
+        /// Maps one validated dense row-record index to its canonical VT row identity.
+        pub const rowAt = Native.rowAt;
+        /// Returns the number of physically exposed cells for one canonical row.
+        pub const rowCellCount = Native.rowCellCount;
+        /// Borrows a live cell or copies a history cell into caller-owned scratch.
+        /// A history borrow lasts only until that scratch is reused.
+        pub const cellAt = Native.cellAt;
+        /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
+        pub const lineGeometry = Native.lineGeometry;
+        /// Borrows/copies one lead cell's complete scalar cluster into caller scratch.
+        /// Continuation and blank cells intentionally expose an empty sequence.
+        pub const cellScalars = Native.cellScalars;
+        /// Copies only rendition bits that directly affect this untimed frame projection.
+        pub const cellStyle = Native.cellStyle;
+        /// Returns the terminal font slot independently of VT's packed field width.
+        pub const cellFont = Native.cellFont;
+        /// Returns the encoded baseline selector independently of VT's enum type.
+        pub const cellBaseline = Native.cellBaseline;
+        /// Returns the encoded underline style independently of VT's enum type.
+        pub const cellUnderlineStyle = Native.cellUnderlineStyle;
+        /// Normalizes one requested cell color role without leaking VT color types.
+        pub const cellColor = Native.cellColor;
+        /// Recognizes Kitty's reserved Unicode placement scalar at the source boundary.
+        pub const isImagePlaceholder = Native.isImagePlaceholder;
+        /// Borrows the coherent VT image/placement view captured for this history cut.
+        pub const graphics = Native.graphics;
+        /// Normalizes canonical cursor geometry without carrying source enum identity.
+        pub const cursorShape = Native.cursorShape;
+        /// Returns every retained canonical image record, including currently hidden images.
+        pub const graphicsImageCount = Native.graphicsImageCount;
+        /// Normalizes one retained VT image into renderer-private identity and extent.
+        pub const graphicsImage = Native.graphicsImage;
+        /// Returns the bounded placement index space for this visible VT cut.
+        pub const graphicsPlacementCount = Native.graphicsPlacementCount;
+        /// Copies one visible physical or virtual placement, skipping absent index slots.
+        pub const graphicsPlacement = Native.graphicsPlacement;
+        /// Reports whether any visible placement currently references one retained image.
+        pub const graphicsImageVisible = Native.graphicsImageVisible;
 
-    /// Proves unchanged rows only within the same external revision chain.
-    pub fn changedRows(_: *const Snapshot) ?[]const bool {
-        return &.{ false, false, false };
-    }
-};
+        /// Names the immediately preceding external snapshot revision.
+        pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+            return snapshot.revision - 1;
+        }
+
+        /// Proves unchanged rows only within the same external revision chain.
+        pub fn changedRows(_: *const Snapshot) ?[]const bool {
+            return &repairs;
+        }
+    };
+}
 
 test "retained row witnesses reject recycled terminal storage and source adapter crossover" {
     const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
@@ -1268,4 +1272,61 @@ test "retained row witnesses reject recycled terminal storage and source adapter
     try RR.updateObservation(cached, obs, 0, &.{});
     try std.testing.expectEqual(RR.RowSceneKind.baseline, RR.rowScene(cached).?.kind);
     try std.testing.expectEqualDeep((try left.frame(full)).commands, (try right.frame(cached)).commands);
+}
+
+test "native and revision-relative repairs keep the two-thirds reuse boundary" {
+    const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    const left = try allocator.create(Output);
+    defer allocator.destroy(left);
+    const right = try allocator.create(Output);
+    defer allocator.destroy(right);
+    inline for (.{ false, true }) |relative| {
+        inline for (1..4) |repair_count| {
+            const repairs = [3]bool{ true, repair_count >= 2, repair_count >= 3 };
+            const Source = RelativeRepairSource(repairs);
+            var vt: VT = undefined;
+            try VT.initWithHistoryInto(&vt, allocator, 3, 8, 0);
+            defer vt.deinit();
+            // zig-audit: acknowledge discard
+            // reason: Prime every glyph so atlas growth does not mask row-repair admission.
+            _ = try vt.feed("\x1b[1;1HABC\x1b[2;1HABC\x1b[3;1HABC");
+            var cfg = fontConfig(font);
+            const full = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+            defer RR.deinit(full);
+            cfg.incremental_row_capacity = 3;
+            cfg.incremental_command_capacity = 32768;
+            const cached = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+            defer RR.deinit(cached);
+            for (0..2) |step| {
+                if (step == 1) {
+                    for (([_][]const u8{ "\x1b[1;1HB", "\x1b[2;1HC", "\x1b[3;1HA" })[0..repair_count]) |bytes| {
+                        // zig-audit: acknowledge discard
+                        // reason: The proof checks retained-row admission and complete frame parity below.
+                        _ = try vt.feed(bytes);
+                    }
+                }
+                const obs = vt.observation();
+                if (relative) {
+                    const external: Source.Snapshot = .{
+                        .view = obs.semanticView(0),
+                        .colors = obs.presentation(),
+                        .images = obs.images(0),
+                        .revision = step + 1,
+                    };
+                    try render.adapter.updateSource(Source, cached, &external, &.{});
+                } else try RR.updateObservation(cached, obs, 0, &.{});
+                try RR.updateObservation(full, obs, 0, &.{});
+                try std.testing.expectEqualDeep((try left.frame(full)).commands, (try right.frame(cached)).commands);
+                if (step == 1) {
+                    if (repair_count <= 2) {
+                        try std.testing.expectEqual(RR.RowSceneKind.patch, RR.rowScene(cached).?.kind);
+                        try std.testing.expectEqualSlices(bool, &repairs, RR.rowScene(cached).?.repairs);
+                    } else if (relative) {
+                        try std.testing.expectEqual(RR.RowSceneKind.baseline, RR.rowScene(cached).?.kind);
+                    } else try std.testing.expect(RR.rowScene(cached) == null);
+                }
+            }
+        }
+    }
 }

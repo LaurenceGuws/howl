@@ -3,6 +3,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // Pure optional-output leaves: no Text or canonical Terminal import.
+    // zig-audit: acknowledge discard
+    // reason: The named pure module remains registered for consumers; no local handle is needed.
+    _ = b.addModule("howl_vt_output_commands", .{ .root_source_file = b.path("src/output/commands.zig"), .target = target, .optimize = optimize });
+    // zig-audit: acknowledge discard
+    // reason: The named pure module remains registered for consumers; no local handle is needed.
+    _ = b.addModule("howl_vt_output_limits", .{ .root_source_file = b.path("src/output/limits.zig"), .target = target, .optimize = optimize });
     // Other terminal consumers must share VT's exact OSC 52 validation grammar.
     // Export only this pure leaf; canonical VT never acquires a client dependency.
     const clipboard_grammar = b.addModule("vt_clipboard_grammar", .{
@@ -50,6 +57,14 @@ pub fn build(b: *std.Build) void {
     audit.dependOn(&zig_audit.step);
     check.dependOn(audit);
     const test_step = b.step("test", "Run every owned VT proof");
+
+    // Pure final vocabulary/validation proofs never load Text or the optional owner.
+    for ([_][]const u8{ "commands", "validation", "limits" }) |leaf| {
+        const leaf_module = b.createModule(.{ .root_source_file = b.path(b.fmt("src/output/{s}.zig", .{leaf})), .target = target, .optimize = optimize });
+        const leaf_tests = b.addTest(.{ .name = b.fmt("howl-vt-output-{s}", .{leaf}), .root_module = leaf_module, .use_llvm = false, .use_lld = false });
+        check.dependOn(&leaf_tests.step);
+        test_step.dependOn(&b.addRunArtifact(leaf_tests).step);
+    }
 
     const foreign_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     foreign_root.linkLibrary(abi);
@@ -205,4 +220,47 @@ pub fn build(b: *std.Build) void {
     b.step("benchmark", "Run the VT benchmark").dependOn(&run_benchmark.step);
 
     b.default_step = check;
+}
+
+/// Builds the optional direct owner using exact caller-selected module identities.
+/// Plain VT construction never calls this factory or acquires a Text dependency.
+pub fn addOutputModules(b: *std.Build, package_root: std.Build.LazyPath, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, vt: *std.Build.Module, text: *std.Build.Module, commands: *std.Build.Module, limits: *std.Build.Module) struct { owner: *std.Build.Module, cache: *std.Build.Module, testing: *std.Build.Module, glyphs: *std.Build.Module, support: *std.Build.Module } {
+    const cache = b.createModule(.{ .root_source_file = package_root.path(b, "src/output/glyph_cache.zig"), .target = target, .optimize = optimize });
+    cache.addImport("howl_text", text);
+    cache.addImport("limits", limits);
+    const support = b.createModule(.{ .root_source_file = package_root.path(b, "src/output/text_support.zig"), .target = target, .optimize = optimize });
+    support.addImport("howl_text", text);
+    support.addImport("glyph_cache", cache);
+    support.addImport("frame", commands);
+    const glyphs = b.createModule(.{ .root_source_file = package_root.path(b, "src/output/glyph_rows.zig"), .target = target, .optimize = optimize });
+    glyphs.addImport("howl_vt", vt);
+    glyphs.addImport("howl_text", text);
+    glyphs.addImport("glyph_cache", cache);
+    glyphs.addImport("frame", commands);
+    glyphs.addImport("limits", limits);
+    const state = b.createModule(.{ .root_source_file = package_root.path(b, "src/output/state.zig"), .target = target, .optimize = optimize });
+    state.addImport("howl_vt", vt);
+    state.addImport("howl_text", text);
+    state.addImport("glyph_cache", cache);
+    state.addImport("frame", commands);
+    state.addImport("limits", limits);
+    state.addImport("glyph_rows", glyphs);
+    state.addImport("text_support", support);
+    const owner = b.createModule(.{ .root_source_file = package_root.path(b, "src/output/owner.zig"), .target = target, .optimize = optimize });
+    owner.addImport("output_state", state);
+    owner.addImport("text_support", support);
+    owner.addImport("howl_vt", vt);
+    owner.addImport("howl_text", text);
+    owner.addImport("glyph_cache", cache);
+    owner.addImport("frame", commands);
+    owner.addImport("limits", limits);
+    return .{ .owner = owner, .cache = cache, .testing = addOutputTestingModule(b, package_root, target, optimize, owner), .glyphs = glyphs, .support = support };
+}
+
+/// White-box proof root over the same implementation object; never root-exported.
+pub fn addOutputTestingModule(b: *std.Build, package_root: std.Build.LazyPath, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, owner: *std.Build.Module) *std.Build.Module {
+    const testing = b.createModule(.{ .root_source_file = package_root.path(b, "src/output/testing.zig"), .target = target, .optimize = optimize });
+    testing.addImport("output_state", owner.import_table.get("output_state").?);
+    testing.addImport("glyph_rows", owner.import_table.get("output_state").?.import_table.get("glyph_rows").?);
+    return testing;
 }

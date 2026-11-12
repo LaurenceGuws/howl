@@ -37,6 +37,9 @@ pub fn build(b: *std.Build) void {
     module.addImport("howl_vt", vt.module("howl_vt"));
     module.addImport("howl_render", render.module("howl_render"));
     module.addImport("instance_publication", publication);
+    const support = render.module("howl_vt_output").import_table.get("text_support").?;
+    module.addImport("text_support", support);
+    module.addImport("output_state", render.module("howl_vt_output").import_table.get("output_state").?);
 
     // Expose the exact composition modules rather than asking embedders to
     // instantiate sibling copies with independent type identity.
@@ -46,6 +49,9 @@ pub fn build(b: *std.Build) void {
     exposeModule(b, "howl_render", render.module("howl_render"));
     exposeModule(b, "howl_render_native", render.module("howl_render_native"));
     exposeModule(b, "howl_render_limits", render.module("howl_render_limits"));
+    exposeModule(b, "howl_vt_output", render.module("howl_vt_output"));
+    exposeModule(b, "howl_vt_output_commands", render.module("howl_vt_output_commands"));
+    exposeModule(b, "howl_vt_output_limits", render.module("howl_vt_output_limits"));
     exposeModule(b, "howl_text", text.module("howl_text"));
     exposeModule(b, "howl_text_test_fonts", text.module("howl_text_test_fonts"));
 
@@ -87,6 +93,9 @@ pub fn build(b: *std.Build) void {
     test_root.addImport("howl_vt", vt.module("howl_vt"));
     test_root.addImport("howl_render", render.module("howl_render"));
     test_root.addImport("instance_publication", publication);
+    test_root.addImport("text_support", support);
+    test_root.addImport("howl_vt_output", render.module("howl_vt_output"));
+    test_root.addImport("output_state", render.module("howl_vt_output").import_table.get("output_state").?);
     test_root.addImport("test_fonts", text.module("howl_text_test_fonts"));
     const tests = b.addTest(.{
         .name = "howl-instance",

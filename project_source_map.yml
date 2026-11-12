@@ -15,6 +15,15 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  howl-vt-output: >-
+    Optional VT-owned opaque direct output owner under mods/howl-vt/src/output,
+    selected by addOutputModules with exact VT/Text/commands/limits module identities.
+    One private instrumented core serves white-box proofs; default owner compiles
+    instrumentation out and never exposes mutable VT. Final vocabulary/validation
+    and limits are pure leaves. Render keeps substantive Input/projection/CursorRows
+    and consumes the same single glyph cache. Bounded geometry/history, borrowed
+    private font families, one immutable lease; no app migration, shared Store claim,
+    new ABI or scheduler. See mods/howl-vt/src/output/README.md.
   howl-vt-native: >-
     Optional howl_vt_native root owns versioned foreign input vocabulary, C and Odin
     definitions, an SDK-only Dart interaction binding and actual C-to-Dart layout proof,

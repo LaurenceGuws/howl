@@ -18,6 +18,8 @@ pub const Shape = enum {
     }
 };
 
+const FrameInfo = @import("frame_info.zig").Info;
+
 /// Off preserves steady presentation; application follows DECSCUSR/DEC blink intent.
 pub const Policy = enum { off, application, always };
 /// Saved host timing only; VT and Render own no blink clock.
@@ -47,10 +49,10 @@ pub const Blink = struct {
     }
 
     /// Returns whether to compose the existing cursor suffix and its next exact phase deadline.
-    pub fn update(self: *Blink, now: u64, frame: instance.PublishedFrame, focused: bool, options: Options) bool {
+    pub fn update(self: *Blink, now: u64, frame: FrameInfo, focused: bool, options: Options) bool {
         std.debug.assert(options.valid());
         if (!focused or options.policy == .off or (options.policy == .application and !frame.cursor_blink) or
-            frame.commands.len == frame.content_command_count)
+            !frame.has_cursor_command)
         {
             self.reset();
             return true;
@@ -138,7 +140,7 @@ pub const Motion = struct {
     placement: [4]f32 = @splat(0),
     surface: instance.render.terminal.Size = .{ .width = 1, .height = 1 },
     cell_size: instance.render.terminal.Size = .{ .width = 1, .height = 1 },
-    style: ?@TypeOf(@as(instance.render.terminal.CursorOverlay, undefined).shape) = null,
+    style: ?@TypeOf(@as(@import("frame_info.zig").Cursor, undefined).shape) = null,
     samples: [trail_limit]Sample = undefined,
     sample_count: u8 = 0,
     last_rect: ?Rect = null,
@@ -152,7 +154,7 @@ pub const Motion = struct {
     }
 
     /// Samples current position before retargeting. Null uses the canonical suffix.
-    pub fn update(self: *Motion, now: u64, frame: instance.PublishedFrame, focused: bool, options: MotionOptions, placement: [4]f32) ?Visual {
+    pub fn update(self: *Motion, now: u64, frame: FrameInfo, focused: bool, options: MotionOptions, placement: [4]f32) ?Visual {
         std.debug.assert(options.valid());
         const overlay = frame.cursor orelse {
             self.reset();
@@ -271,7 +273,7 @@ test "blink phases use deadlines, ignore content refresh and reset on movement o
     try std.testing.expectEqual(@as(?u64, 600), blink.deadline);
     try std.testing.expect(blink.update(599, frame, true, .{ .policy = .application }));
     try std.testing.expect(!blink.update(600, frame, true, .{ .policy = .application }));
-    frame.revision += 1; // Background output must not pin the cursor in its on phase.
+    // Background output does not change the cursor view.
     try std.testing.expect(!blink.update(900, frame, true, .{ .policy = .application }));
     try std.testing.expect(blink.update(1100, frame, true, .{ .policy = .application }));
     try std.testing.expect(!blink.update(2600, frame, true, .{ .policy = .application }));
@@ -294,33 +296,22 @@ test "blink phases use deadlines, ignore content refresh and reset on movement o
     try std.testing.expect(blink.deadline != null);
     try std.testing.expect(blink.update(4100, frame, true, .{ .policy = .off }));
     try std.testing.expect(blink.deadline == null);
-    frame.commands = &.{};
+    frame.has_cursor_command = false;
     try std.testing.expect(blink.update(4200, frame, true, .{ .policy = .always }));
     try std.testing.expect(blink.deadline == null);
 }
 
-fn testFrame() instance.PublishedFrame {
-    const command: instance.render.terminal.Command = .{ .solid = .{
-        .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 },
-        .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 },
-    } };
+fn testFrame() FrameInfo {
     return .{
-        .sequence = 1,
-        .presentation_generation = 1,
-        .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .alternate_screen = false,
-        .surface = .{ .width = 10, .height = 20 },
-        .cell_size = .{ .width = 10, .height = 20 },
-        .commands = &.{command},
-        .uploads = &.{},
-        .removals = &.{},
-        .pixels = &.{},
+        .cursor = null,
         .cursor_blink = true,
         .cursor_movement = 99,
+        .presentation_generation = 1,
+        .alternate_screen = false,
+        .history_offset = 0,
+        .surface = .{ .width = 10, .height = 20 },
+        .cell_size = .{ .width = 10, .height = 20 },
+        .has_cursor_command = true,
     };
 }
 
@@ -336,7 +327,6 @@ test "configured cadence stops steadily at idle deadline and resumes only on act
     try std.testing.expectEqual(@as(?u64, 550), blink.deadline);
     try std.testing.expect(blink.update(550, frame, true, options));
     try std.testing.expectEqual(null, blink.deadline);
-    frame.revision += 1;
     try std.testing.expect(blink.update(1000, frame, true, options));
     try std.testing.expectEqual(null, blink.deadline);
     frame.cursor_movement += 1;
@@ -363,7 +353,7 @@ test "configured cadence stops steadily at idle deadline and resumes only on act
 test "motion retargets continuously and retires its exact completion deadline" {
     var frame = testFrame();
     frame.surface = .{ .width = 200, .height = 100 };
-    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .shape = .block };
     var motion: Motion = .{};
     const options: MotionOptions = .{ .enabled = true };
     const placement: [4]f32 = .{ 0, 0, 200, 100 };
@@ -374,7 +364,7 @@ test "motion retargets continuously and retires its exact completion deadline" {
     var rect = motion.update(100, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(i32, 0), rect.x);
     try std.testing.expectEqual(@as(?u64, 116), motion.deadline);
-    frame.revision += 1; // Content refresh must not restart an ongoing flight.
+    // Content refresh does not change the cursor view.
     rect = motion.update(140, frame, true, options, placement).?.rect;
     try std.testing.expectEqual(@as(i32, 40), rect.x);
     try std.testing.expectEqual(@as(i32, 20), rect.y);
@@ -397,7 +387,7 @@ test "motion retargets continuously and retires its exact completion deadline" {
 test "motion snaps across focus viewport geometry style preference and clock changes" {
     var frame = testFrame();
     frame.surface = .{ .width = 200, .height = 100 };
-    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .bar, .color_resource = null };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .shape = .bar };
     const placement: [4]f32 = .{ 0, 0, 200, 100 };
     for (0..12) |change| {
         var motion: Motion = .{};
@@ -442,7 +432,7 @@ test "motion snaps across focus viewport geometry style preference and clock cha
 test "easing samples its closed curve and reverses from the current visual point" {
     var frame = testFrame();
     frame.surface = .{ .width = 200, .height = 100 };
-    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .shape = .block };
     var motion: Motion = .{};
     const options: MotionOptions = .{ .enabled = true, .easing = .ease_out };
     const placement: [4]f32 = .{ 0, 0, 200, 100 };
@@ -469,7 +459,7 @@ test "easing samples its closed curve and reverses from the current visual point
 test "stretch stays within one cursor extent and collapses at exact completion" {
     var frame = testFrame();
     frame.surface = .{ .width = 200, .height = 100 };
-    frame.cursor = .{ .rect = .{ .x = 80, .y = 40, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    frame.cursor = .{ .rect = .{ .x = 80, .y = 40, .width = 10, .height = 20 }, .shape = .block };
     const options: MotionOptions = .{ .enabled = true, .effect = .stretch };
     const placement: [4]f32 = .{ 0, 0, 200, 100 };
     for ([_][2]i32{ .{ 0, 0 }, .{ 160, 80 }, .{ 0, 80 }, .{ 160, 0 } }) |target| {
@@ -494,7 +484,7 @@ test "stretch stays within one cursor extent and collapses at exact completion" 
 test "four trail samples fade out finitely and exact last expiry retires the timer" {
     var frame = testFrame();
     frame.surface = .{ .width = 200, .height = 100 };
-    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .block, .color_resource = null };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .shape = .block };
     var motion: Motion = .{};
     const options: MotionOptions = .{ .enabled = true, .effect = .trail };
     const placement: [4]f32 = .{ 0, 0, 200, 100 };
@@ -522,7 +512,7 @@ test "four trail samples fade out finitely and exact last expiry retires the tim
 test "rapid effect retargeting stays bounded visibility clears tails and live colors preserve motion" {
     var frame = testFrame();
     frame.surface = .{ .width = 200, .height = 100 };
-    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 }, .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .shape = .bar, .color_resource = null };
+    frame.cursor = .{ .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .shape = .bar };
     const placement: [4]f32 = .{ 0, 0, 200, 100 };
     for ([_]Easing{ .linear, .ease_out }) |curve| for ([_]Effect{ .none, .stretch, .trail }) |effect| {
         var motion: Motion = .{};
@@ -544,8 +534,6 @@ test "rapid effect retargeting stays bounded visibility clears tails and live co
         try std.testing.expectEqual(null, motion.update(7511, cut, true, options, placement));
         cut.cursor.?.rect.x = if (cut.cursor.?.rect.x == 0) 160 else 0;
         try std.testing.expect(motion.update(7512, cut, true, options, placement) != null);
-        cut.cursor.?.text_color.g = 1;
-        cut.cursor.?.color.r = 100;
         // Colors naturally change across inverse/styled cells; latest frame colors
         // compose over the same ongoing visual flight rather than pinning it.
         try std.testing.expect(motion.update(7513, cut, true, options, placement) != null);

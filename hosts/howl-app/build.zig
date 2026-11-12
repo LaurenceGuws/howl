@@ -24,6 +24,7 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("desktop", translation.createModule());
     root.addImport("howl_instance", instance.module("howl_instance"));
+    root.addImport("howl_vt_output", instance.module("howl_vt_output"));
     root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
     root.linkSystemLibrary("SDL3", .{});
     root.linkSystemLibrary("SDL3_ttf", .{});

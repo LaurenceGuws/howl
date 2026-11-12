@@ -114,3 +114,36 @@ test "root forwards one Render owner schema and exact source identity through re
     const font = @import("howl_text_test_fonts").primary_font;
     try std.testing.expectEqual(@as(c_int, 0), howl_external_render_abi(font.ptr, font.len));
 }
+
+// The optional owner is selected explicitly; plain VT has no output dependency.
+test "optional VT output shares exact final vocabulary through root" {
+    const output = @import("howl_vt_output");
+    const commands = @import("howl_vt_output_commands");
+    try std.testing.expect(@typeInfo(output.Terminal) == .@"opaque");
+    try std.testing.expect(output.commands.Command == commands.Command);
+    try std.testing.expect(output.commands.Command == render.terminal.Command);
+    try std.testing.expect(output.commands.ResourceRef == render.terminal.ResourceRef);
+    try std.testing.expect(output.commands.Rect == render.terminal.Rect);
+    try std.testing.expect(output.commands.FrameResourceUpload == render.terminal.FrameResourceUpload);
+    try std.testing.expect(output.PresentationStore == instance.PresentationStore);
+    try std.testing.expect(output.StoreConfig == render.terminal.StoreConfig);
+    try std.testing.expect(output.FontFamilyConfig == instance.FontFamilyConfig);
+    try std.testing.expect(!@hasDecl(output, "text_support"));
+    try std.testing.expect(!@hasDecl(output.PresentationStore, "claim"));
+    try std.testing.expect(!@hasDecl(output.PresentationStore, "borrowStore"));
+    try std.testing.expect(!@hasDecl(output, "State"));
+    try std.testing.expect(!@hasDecl(output, "testing"));
+    try std.testing.expect(!@hasDecl(vt, "output"));
+    const fonts = @import("howl_text_test_fonts");
+    const font = try text.FontSet.init(std.testing.allocator, .{ .primary = fonts.primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    const terminal = try output.Terminal.init(std.testing.allocator, font);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The proof releases its sole lease before owner teardown.
+    defer terminal.deinit() catch unreachable;
+    try terminal.feed("\x1b[?25lRoot");
+    try terminal.flush();
+    const lease = try terminal.hold();
+    try std.testing.expect(lease.snapshot.glyphs[0].len != 0);
+    try terminal.release(lease);
+}
