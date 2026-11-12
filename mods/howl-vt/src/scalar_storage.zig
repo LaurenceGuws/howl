@@ -291,6 +291,28 @@ pub const Storage = struct {
         try prepared.commit(cell, old_combining_len);
     }
 
+    /// Experimental fallible growth path. The existing `set` contract remains
+    /// allocation-free until terminal input can retain/retry failures safely.
+    pub fn setGrowing(
+        self: *Storage,
+        cell: usize,
+        old_combining_len: u8,
+        values: []const u32,
+    ) error{ InvalidRange, ScalarCapacity, OutOfMemory }!void {
+        if (values.len == 0 or values.len > maximum_tail_scalars)
+            return error.ScalarCapacity;
+        self.set(cell, old_combining_len, values) catch |failure| switch (failure) {
+            error.InvalidRange => return failure,
+            error.ScalarCapacity => {
+                // Values may borrow the old page array, which growth replaces.
+                var copied: [maximum_tail_scalars]u32 = undefined;
+                @memcpy(copied[0..values.len], values);
+                try self.growOnePage();
+                try self.set(cell, old_combining_len, copied[0..values.len]);
+            },
+        };
+    }
+
     /// Reserves and initializes one exact range before any caller mutation.
     pub fn prepare(
         self: *Storage,
@@ -1036,4 +1058,79 @@ test "fragmented pool grows without invalidating retained tails" {
     try storage.set(205, 0, &long);
     for (0..102) |i| try std.testing.expectEqualSlices(u32, &.{7}, try storage.tail(i * 2, testCombiningLen(1)));
     try std.testing.expectEqualSlices(u32, &long, try storage.tail(205, testCombiningLen(20)));
+}
+
+test "bounded page growth survives deterministic scalar churn" {
+    const cells = 256;
+    var storage = try Storage.init(std.testing.allocator, cells);
+    defer storage.deinit();
+    var lengths: [cells]u8 = @splat(0);
+    var random: u64 = 0x82719fed103;
+    for (0..30000) |turn| {
+        random = random *% 6364136223846793005 +% 1442695040888963407;
+        const cell: usize = @intCast((random >> 16) % cells);
+        const old = lengths[cell];
+        const old_combining = if (old == 0) 0 else testCombiningLen(old);
+        if ((random >> 40) % 5 == 0) {
+            try storage.clear(cell, old_combining);
+            lengths[cell] = 0;
+        } else {
+            const count: usize = @intCast(1 + ((random >> 32) % maximum_tail_scalars));
+            var values: [maximum_tail_scalars]u32 = undefined;
+            @memset(values[0..count], @intCast(cell + 1));
+            storage.set(cell, old_combining, values[0..count]) catch |failure| switch (failure) {
+                error.ScalarCapacity => {
+                    try storage.growOnePage();
+                    try storage.set(cell, old_combining, values[0..count]);
+                },
+                error.InvalidRange => return failure,
+            };
+            lengths[cell] = @intCast(count);
+        }
+        if (turn % 97 == 0) {
+            for (lengths, 0..) |length, i| {
+                if (length == 0) continue;
+                const actual = try storage.tail(i, testCombiningLen(length));
+                try std.testing.expectEqual(@as(usize, length), actual.len);
+                for (actual) |value| try std.testing.expectEqual(@as(u32, @intCast(i + 1)), value);
+            }
+        }
+    }
+}
+
+test "fallible growing set preserves old tails on out of memory" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var storage = try Storage.init(failing.allocator(), 512);
+    defer storage.deinit();
+    const values: [20]u32 = @splat(7);
+    for (0..102) |cell| try storage.set(cell, 0, &values);
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, storage.setGrowing(102, 0, &values));
+    try std.testing.expectEqual(@as(usize, 1), storage.pages.len);
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(0, testCombiningLen(20)));
+    try std.testing.expectEqual(@as(usize, 0), (try storage.tail(102, 0)).len);
+    failing.fail_index = std.math.maxInt(usize);
+    try storage.setGrowing(102, 0, &values);
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(102, testCombiningLen(20)));
+}
+
+test "fallible growing set preserves values borrowed from a relocated page" {
+    var storage = try Storage.init(std.testing.allocator, 512);
+    defer storage.deinit();
+    const values: [20]u32 = @splat(17);
+    for (0..102) |cell| try storage.set(cell, 0, &values);
+    const borrowed = try storage.tail(0, testCombiningLen(20));
+    try storage.setGrowing(102, 0, borrowed);
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(102, testCombiningLen(20)));
+    try std.testing.expectEqualSlices(u32, &values, try storage.tail(0, testCombiningLen(20)));
+}
+
+test "growing set stays allocation free while existing pages fit" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var storage = try Storage.init(failing.allocator(), 512);
+    defer storage.deinit();
+    failing.fail_index = failing.alloc_index;
+    try storage.setGrowing(0, 0, &.{ 1, 2, 3 });
+    try std.testing.expect(!failing.has_induced_failure);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3 }, try storage.tail(0, testCombiningLen(3)));
 }
