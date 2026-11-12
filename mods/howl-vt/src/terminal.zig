@@ -3608,26 +3608,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         => return applySemanticEvent(vt, event),
 
         .line_feed, .next_line => {
-            const active = vt.screen_state.active();
-            const scrolls = active.cursor.row == active.scrollBottom();
-            const history_scroll = !vt.screen_state.alt_active and active.scroll_top == 0 and
-                active.scrollBottom() == active.rows - 1;
-            if (!vt.screen_state.alt_active) {
-                vt.screen_state.primary.finalizeOutputLine();
-            }
-            active.applyScreen(
-                if (event == .next_line or vt.modes.newline_mode) .next_line else .line_feed,
-            );
-            if (scrolls and !history_scroll) {
-                const graphics_changed = vt.graphics.scroll(
-                    graphicsBank(vt),
-                    graphicsScreenOrigin(vt) + active.scroll_top,
-                    graphicsScreenOrigin(vt) + active.scrollBottom(),
-                    1,
-                    true,
-                );
-                std.debug.assert(!graphics_changed or vt.graphics.generation() != 0);
-            }
+            const next_line = event == .next_line or vt.modes.newline_mode;
+            applyInputLineFeed(vt, next_line) catch |failure| {
+                std.debug.assert(vt.stream_state.pending_input == null);
+                vt.stream_state.pending_input = .{ .work = .{ .line_feed = next_line }, .failure = failure };
+                return false;
+            };
         },
         .backspace => return vt.screen_state.active().backspace(vt.modes.reverse_wraparound_mode),
         .clear_buffer => return vt.clearBuffer(),
@@ -3899,6 +3885,32 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
     return true;
 }
 
+// A parsed LF/NEL is retried as one operation: history allocation happens
+// before logical-line, cursor, wrap, graphics, or cell state can change.
+fn applyInputLineFeed(vt: *Terminal, next_line: bool) error{ OutOfMemory, HistoryCapacity }!void {
+    const active = vt.screen_state.active();
+    var prepared = active.prepareLineFeed() catch |failure| switch (failure) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Capacity => return error.HistoryCapacity,
+    };
+    defer active.discardLineFeed(&prepared);
+    const scrolls = prepared.scrolls;
+    const history_scroll = !vt.screen_state.alt_active and active.scroll_top == 0 and
+        active.scrollBottom() == active.rows - 1;
+    if (!vt.screen_state.alt_active) vt.screen_state.primary.finalizeOutputLine();
+    active.commitLineFeed(&prepared, next_line);
+    if (scrolls and !history_scroll) {
+        const changed = vt.graphics.scroll(
+            graphicsBank(vt),
+            graphicsScreenOrigin(vt) + active.scroll_top,
+            graphicsScreenOrigin(vt) + active.scrollBottom(),
+            1,
+            true,
+        );
+        std.debug.assert(!changed or vt.graphics.generation() != 0);
+    }
+}
+
 fn graphicsBank(vt: *const Terminal) graphics_mod.Bank {
     return if (vt.screen_state.alt_active) .alternate else .primary;
 }
@@ -3945,6 +3957,7 @@ const TerminalFeedError = error{
     ConsequencePressure,
     OutOfMemory,
     ScalarCapacity,
+    HistoryCapacity,
     PropertyLimit,
     ReplyLimit,
     ParsedEventLimit,
@@ -4198,6 +4211,14 @@ const TerminalStream = struct {
                     self.terminal.stream_state.pending_input.?.failure = failure;
                     input_blocked = failure;
                     break :blocked false;
+                },
+                .line_feed => |next_line| resumed: {
+                    applyInputLineFeed(self.terminal, next_line) catch |failure| {
+                        self.terminal.stream_state.pending_input.?.failure = failure;
+                        input_blocked = failure;
+                        break :resumed false;
+                    };
+                    break :resumed true;
                 },
                 .repeat => |remaining| repeated: {
                     const progress = self.terminal.screen_state.active().repeatPrecedingGrowing(remaining);
@@ -6398,7 +6419,7 @@ pub const Terminal = struct {
         self.stream_state.deinit();
     }
 
-    /// Applies a borrowed byte slice and reports mutation. A scalar-storage
+    /// Applies a borrowed byte slice and reports mutation. Input-storage
     /// failure retains decoded work but does not report the consumed prefix;
     /// use service-boundary feed when exact continuation is required. Other
     /// failures reset transient parser state.
@@ -6424,8 +6445,8 @@ pub const Terminal = struct {
     }
 
     /// Applies a prefix until a reply, host consequence, synchronized release,
-    /// or scalar-storage pressure. Continue at the reported `consumed` offset.
-    /// Blocked scalar work is retained; retry after backoff with the unread suffix,
+    /// or input-storage pressure. Continue at the reported `consumed` offset.
+    /// Blocked work is retained; retry after backoff with the unread suffix,
     /// including an empty slice when the operation ended the previous read. A still
     /// blocked retry consumes zero bytes. Defer geometry changes until it succeeds.
     pub fn feedAtServiceBoundary(
@@ -6453,7 +6474,7 @@ pub const Terminal = struct {
         return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief);
     }
 
-    /// Reports whether input retained scalar work awaiting storage.
+    /// Reports whether input retained work awaiting storage.
     pub fn inputBlocked(self: *const Terminal) bool {
         return self.stream_state.pending_input != null;
     }

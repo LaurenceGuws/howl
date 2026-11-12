@@ -167,27 +167,31 @@ test "logical output finalization is allocation-free after initialization" {
     failing.fail_index = std.math.maxInt(usize);
 }
 
-test "lazy history backing OOM reports loss and terminal execution continues" {
+test "line feed retains history and unread input across OOM" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
     defer terminal.deinit();
-
+    const input = "AAAA\r\nBBBB\r\nC";
     failing.fail_index = failing.alloc_index;
-    const lost = try terminal.feed("AAAA\r\nBBBB\r\n");
-    try std.testing.expect(lost.stateChanged());
-    try std.testing.expect(lost.historyLost());
-    try std.testing.expect(failing.has_induced_failure);
+    const blocked = try terminal.feedAtServiceBoundary(input, 1);
+    try std.testing.expectEqual(@as(usize, input.len - 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    try std.testing.expect(!blocked.summary.historyLost());
     try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
-
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 0));
+    const stalled = try terminal.feedAtServiceBoundary(input[blocked.consumed..], 2);
+    try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, stalled.input_blocked.?);
     failing.fail_index = std.math.maxInt(usize);
-    const recovered = try terminal.feed("CCCC\r\n");
-    try std.testing.expect(recovered.stateChanged());
-    try std.testing.expect(!recovered.historyLost());
+    const recovered = try terminal.feedAtServiceBoundary(input[blocked.consumed..], 3);
+    try std.testing.expectEqual(@as(usize, 1), recovered.consumed);
+    try std.testing.expect(recovered.input_blocked == null);
+    try std.testing.expect(!recovered.summary.historyLost());
     try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
-
-    const printable = try terminal.feed("X");
-    try std.testing.expect(printable.stateChanged());
-    try std.testing.expect(!printable.historyLost());
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(1).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
 }
 
 test "warm lazy history turnover is allocation free at stable payload shape" {
@@ -1289,4 +1293,26 @@ test "OSC 66 service resumes from the retained parser payload under scalar press
         for (0..450) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
         try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 450));
     }
+}
+
+test "fragmented NEL retries history once without consuming its suffix" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AAAA\r\nBBBB")).stateChanged());
+    const prefix = try terminal.feedAtServiceBoundary("\x1b", 1);
+    try std.testing.expectEqual(@as(usize, 1), prefix.consumed);
+    failing.fail_index = failing.alloc_index;
+    const blocked = try terminal.feedAtServiceBoundary("EC", 2);
+    try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    try std.testing.expect(!blocked.summary.historyLost());
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try terminal.feedAtServiceBoundary("C", 3);
+    try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(1).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
 }

@@ -167,15 +167,17 @@ raw transition and advances once through feed completion.
 ## Byte progress, time and failures
 
 One feed accepts at most 65,536 bytes and invokes canonical service-boundary feed
-once. A new reply, retained request, synchronized-output release or scalar-storage
+once. A new reply, retained request, synchronized-output release or input-storage
 pressure may end the exact consumed prefix. A nonzero `input_block` means decoded
-scalar work remains retained (a scalar, remaining REP repetitions, or remaining
-OSC 66 clusters). The caller advances only by
-`consumed`, pauses further input, and retries with the unconsumed suffix after
-backoff; an empty feed retries when the blocked scalar ended the input. A retry may
-consume zero bytes while still blocked. `HVT_INPUT_SCALAR_CAPACITY` is a bound, not a
-transient allocation failure. Resize returns `HVT_BUSY` while blocked; explicit
-reset discards the pending scalar. The caller owns retry scheduling and backoff.
+work remains retained: a scalar, remaining REP repetitions, remaining OSC 66
+clusters, or an explicit LF/NEL awaiting history admission. Advance only by
+`consumed`, pause further input, and retry the unconsumed suffix after backoff;
+an empty feed retries when the blocked operation ended the input. A retry may
+consume zero bytes while still blocked. `HVT_INPUT_SCALAR_CAPACITY` and
+`HVT_INPUT_HISTORY_CAPACITY` report bounds, not transient allocation failure.
+Resize returns `HVT_BUSY` while blocked; explicit reset discards pending input.
+The caller owns retry scheduling and backoff. Other scrolling paths, including
+implicit wrap and multi-row scrolling, do not yet have history-admission retry.
 
 Other canonical feed errors may follow an already-applied prefix. For those,
 failed C progress remains zero and invalid and the caller must not blindly replay

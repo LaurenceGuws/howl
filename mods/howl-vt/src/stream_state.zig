@@ -244,13 +244,13 @@ pub const StringCapture = struct {
     }
 };
 
-/// Reports a scalar that cannot yet be retained.
-pub const InputBlock = error{ OutOfMemory, ScalarCapacity };
-/// Owns decoded scalar work until it can continue without replaying bytes.
+/// Reports an input operation that cannot yet be retained.
+pub const InputBlock = error{ OutOfMemory, ScalarCapacity, HistoryCapacity };
+/// Owns decoded work until it can continue without replaying bytes.
 pub const PendingInput = struct {
     // Sized payload borrows the OSC parser buffer. No parser input may run
     // until the pending operation completes or is explicitly reset.
-    work: union(enum) { codepoint: u21, repeat: u16, sized_text: struct { payload: []const u8, offset: usize } },
+    work: union(enum) { codepoint: u21, repeat: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: bool },
     failure: InputBlock,
 };
 

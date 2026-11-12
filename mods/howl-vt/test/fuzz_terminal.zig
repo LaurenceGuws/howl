@@ -105,7 +105,7 @@ fn feedHostile(terminal: *howl_vt.Terminal, bytes: []const u8) !void {
             try std.testing.expect((try terminal.feed("R")).stateChanged());
             return;
         },
-        error.OutOfMemory => return err,
+        error.OutOfMemory, error.HistoryCapacity => return err,
     };
     std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }

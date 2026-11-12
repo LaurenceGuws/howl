@@ -11,7 +11,7 @@ fn failure(err: Error) u32 {
         error.OutOfMemory => c.HVT_OUT_OF_MEMORY,
         error.InputPending => c.HVT_BUSY,
         error.InvalidArgument, error.InvalidDimensions, error.InvalidUtf8, error.InvalidText, error.InvalidRange, error.InvalidReplyCount, error.CodepointTooLarge, error.Utf8CannotEncodeSurrogateHalf => c.HVT_INVALID_ARGUMENT,
-        error.ResourceLimit, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ReplyLimit, error.ParsedEventLimit, error.ScalarCapacity, error.KeyTextLimit, error.LengthOverflow, error.CoordinateLimit, error.Overflow, error.RequestLimit => c.HVT_RESOURCE_LIMIT,
+        error.ResourceLimit, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ReplyLimit, error.ParsedEventLimit, error.ScalarCapacity, error.HistoryCapacity, error.KeyTextLimit, error.LengthOverflow, error.CoordinateLimit, error.Overflow, error.RequestLimit => c.HVT_RESOURCE_LIMIT,
         error.BufferTooSmall, error.TextLimit => c.HVT_BUFFER_TOO_SMALL,
         error.StaleRequest, error.StaleConsequence, error.StaleClipboardRequest, error.StalePointerShape, error.StaleColorPreferenceQuery, error.StaleContainerRequest => c.HVT_STALE_REQUEST,
         error.ReplyRequired => c.HVT_REPLY_REQUIRED,

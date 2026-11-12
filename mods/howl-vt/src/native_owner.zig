@@ -141,6 +141,7 @@ pub fn feed(value: *Owner, bytes: []const u8, timestamp: u64) Error!c.hvt_feed_p
         .input_block = if (progress.input_blocked) |failure| switch (failure) {
             error.OutOfMemory => c.HVT_INPUT_OUT_OF_MEMORY,
             error.ScalarCapacity => c.HVT_INPUT_SCALAR_CAPACITY,
+            error.HistoryCapacity => c.HVT_INPUT_HISTORY_CAPACITY,
         } else c.HVT_INPUT_READY,
         .reserved_input = @splat(0),
     };
