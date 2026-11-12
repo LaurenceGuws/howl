@@ -2815,3 +2815,24 @@ test "ordinary SGR final preserves canonical parameters guarded states and pendi
     const failure = direct.takeStringControlFailed() orelse return error.MissingFailure;
     try std.testing.expect(failure == error.OutOfMemory);
 }
+
+test "OSC 66 terminators emit one isolated dispatch phase" {
+    for ([_][]const u8{ "\x1b]66;s=1;e\x07", "\x1b]66;s=1;e\x1b\\", "\x1b]66;s=1;e\x9c" }) |bytes| {
+        var parser = try Parser.init(std.testing.allocator);
+        defer parser.deinit();
+        for (bytes[0 .. bytes.len - 1]) |byte| {
+            const phases = parser.next(byte);
+            for (phases) |phase| try std.testing.expect(phase == null);
+        }
+        const phases = parser.next(bytes[bytes.len - 1]);
+        var dispatches: usize = 0;
+        for (phases) |phase| {
+            if (phase) |action| {
+                try std.testing.expect(action == .osc_dispatch);
+                try std.testing.expect(action.osc_dispatch == .kitty_text_size);
+                dispatches += 1;
+            }
+        }
+        try std.testing.expectEqual(@as(usize, 1), dispatches);
+    }
+}

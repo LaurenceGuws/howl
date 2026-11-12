@@ -1246,3 +1246,47 @@ test "service resumes a partially applied REP without replaying earlier repetiti
     for (0..501) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 501));
 }
+
+test "OSC 66 service resumes from the retained parser payload under scalar pressure" {
+    for ([_][]const u8{ "\x07", "\x1b\\", "\x9c" }) |terminator| {
+        const allocator = std.testing.allocator;
+        var failing = std.testing.FailingAllocator.init(allocator, .{});
+        const terminal = try allocator.create(Terminal);
+        defer allocator.destroy(terminal);
+        try Terminal.initWithHistoryInto(terminal, failing.allocator(), 1, 512, 0);
+        defer terminal.deinit();
+        const cluster = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\u{0306}\u{0307}\u{0308}";
+        var payload: [8192]u8 = undefined;
+        const header = "\x1b]66;s=1;";
+        @memcpy(payload[0..header.len], header);
+        var length: usize = header.len;
+        for (0..450) |_| {
+            @memcpy(payload[length..][0..cluster.len], cluster);
+            length += cluster.len;
+        }
+        @memcpy(payload[length..][0..terminator.len], terminator);
+        length += terminator.len;
+        // All OSC capture allocation occurs before the scalar failure is armed.
+        try feed(terminal, payload[0 .. length - 1]);
+        failing.fail_index = failing.alloc_index;
+        const last = payload[length - 1];
+        const suffix = [_]u8{ last, 'X' };
+        const blocked = try terminal.feedAtServiceBoundary(&suffix, 1);
+        try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+        try std.testing.expectEqual(error.OutOfMemory, blocked.scalar_blocked.?);
+        try std.testing.expect(blocked.summary.stateChanged());
+        try std.testing.expectError(error.ScalarInputPending, terminal.resize(1, 511));
+        const still_blocked = try terminal.feedAtServiceBoundary(suffix[1..], 2);
+        try std.testing.expectEqual(@as(usize, 0), still_blocked.consumed);
+        try std.testing.expectEqual(error.OutOfMemory, still_blocked.scalar_blocked.?);
+        failing.fail_index = std.math.maxInt(usize);
+        const resumed = try terminal.feedAtServiceBoundary(suffix[1..], 3);
+        try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+        try std.testing.expect(resumed.scalar_blocked == null);
+        const expected = [_]u32{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
+        var actual: [24]u32 = undefined;
+        const screen = &terminal.screen_state.primary;
+        for (0..450) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 450));
+    }
+}

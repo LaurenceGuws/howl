@@ -807,7 +807,7 @@ const State = struct {
         var readable = true;
         var writable = true;
         while (!self.stopRequested()) {
-            // A blocked scalar still targets the current screen and cursor.
+            // Blocked scalar work still targets the current screen and cursor.
             // Defer queued mutations until it has been applied.
             const scalar_was_blocked = instance.scalarInputBlocked(self.value);
             if (!scalar_was_blocked) {

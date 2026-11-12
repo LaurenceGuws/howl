@@ -248,7 +248,9 @@ pub const StringCapture = struct {
 pub const ScalarBlock = error{ OutOfMemory, ScalarCapacity };
 /// Owns decoded scalar work until it can continue without replaying bytes.
 pub const PendingScalar = struct {
-    work: union(enum) { codepoint: u21, repeat: u16 },
+    // Sized payload borrows the OSC parser buffer. No parser input may run
+    // until the pending operation completes or is explicitly reset.
+    work: union(enum) { codepoint: u21, repeat: u16, sized_text: struct { payload: []const u8, offset: usize } },
     failure: ScalarBlock,
 };
 

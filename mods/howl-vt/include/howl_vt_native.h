@@ -349,7 +349,7 @@ void hvt_output_release(hvt_output **);
 /* Feed one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
  * On OK, consumed is exact; continue at that offset. If scalar_block is nonzero,
  * decoded scalar work is retained but not fully applied (including remaining
- * REP operations). Do not mutate geometry or
+ * REP operations or OSC 66 clusters). Do not mutate geometry or
  * replay consumed bytes. After releasing memory pressure, call hvt_feed again
  * with the unconsumed suffix (or NULL,0 if none). A still-blocked retry may
  * consume zero bytes: schedule retries with backoff, never busy-spin. A capacity

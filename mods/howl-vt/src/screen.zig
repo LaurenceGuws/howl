@@ -2927,36 +2927,88 @@ pub const Screen = struct {
         return true;
     }
 
-    /// Applies one validated OSC 66 sized-text payload.
+    /// Progress within the text portion of a validated OSC 66 payload.
+    pub const SizedTextProgress = struct {
+        next_offset: usize = 0,
+        changed: bool = false,
+        blocked: ?error{ OutOfMemory, ScalarCapacity } = null,
+    };
+
+    /// Applies one validated OSC 66 sized-text payload without growing storage.
     pub fn writeSizedText(self: *Screen, payload: []const u8) bool {
-        const parsed = sized_text.parse(payload) orelse return false;
-        var changed = false;
-        var iterator = std.unicode.Utf8View.initUnchecked(parsed.text).iterator();
+        return self.writeSizedTextFrom(payload, 0, false).changed;
+    }
+
+    /// Applies sized clusters from a retained payload until storage pressure.
+    pub fn writeSizedTextGrowing(self: *Screen, payload: []const u8, offset: usize) SizedTextProgress {
+        return self.writeSizedTextFrom(payload, offset, true);
+    }
+
+    fn writeSizedTextFrom(self: *Screen, payload: []const u8, offset: usize, comptime grow: bool) SizedTextProgress {
+        const parsed = sized_text.parse(payload) orelse return .{};
+        std.debug.assert(offset <= parsed.text.len);
+        var result: SizedTextProgress = .{ .next_offset = offset };
+        if (offset == parsed.text.len) return result;
+        var iterator = std.unicode.Utf8View.initUnchecked(parsed.text[offset..]).iterator();
         if (parsed.width != 0) {
             var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
             var count: u8 = 0;
             while (iterator.nextCodepoint()) |cp| {
                 if (sized_text.isIgnoredCodepoint(cp)) continue;
-                scalars[count] = @intCast(cp);
+                scalars[count] = cp;
                 count += 1;
             }
-            if (count != 0) changed = self.writeSizedCluster(parsed, scalars[0..count], parsed.width);
-            return changed;
+            if (count != 0) {
+                result.changed = if (grow)
+                    self.writeSizedCluster(parsed, scalars[0..count], parsed.width, true) catch |failure| {
+                        result.blocked = failure;
+                        return result;
+                    }
+                else
+                    self.writeSizedCluster(parsed, scalars[0..count], parsed.width, false);
+            }
+            result.next_offset = parsed.text.len;
+            return result;
         }
 
         var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
         var count: u8 = 0;
-        while (iterator.nextCodepoint()) |cp| {
+        var cluster_start = offset;
+        while (true) {
+            const byte_start = offset + iterator.i;
+            const cp = iterator.nextCodepoint() orelse break;
             if (sized_text.isIgnoredCodepoint(cp)) continue;
             if (count != 0 and !sized_text.isTrailingCombiningCodepoint(cp)) {
-                changed = self.writeSizedCluster(parsed, scalars[0..count], 1) or changed;
+                const changed = if (grow)
+                    self.writeSizedCluster(parsed, scalars[0..count], 1, true) catch |failure| {
+                        result.next_offset = cluster_start;
+                        result.blocked = failure;
+                        return result;
+                    }
+                else
+                    self.writeSizedCluster(parsed, scalars[0..count], 1, false);
+                result.changed = changed or result.changed;
                 count = 0;
+                cluster_start = byte_start;
+            } else if (count == 0) {
+                cluster_start = byte_start;
             }
-            scalars[count] = @intCast(cp);
+            scalars[count] = cp;
             count += 1;
         }
-        if (count != 0) changed = self.writeSizedCluster(parsed, scalars[0..count], 1) or changed;
-        return changed;
+        if (count != 0) {
+            const changed = if (grow)
+                self.writeSizedCluster(parsed, scalars[0..count], 1, true) catch |failure| {
+                    result.next_offset = cluster_start;
+                    result.blocked = failure;
+                    return result;
+                }
+            else
+                self.writeSizedCluster(parsed, scalars[0..count], 1, false);
+            result.changed = changed or result.changed;
+        }
+        result.next_offset = parsed.text.len;
+        return result;
     }
 
     fn writeSizedCluster(
@@ -2964,7 +3016,8 @@ pub const Screen = struct {
         parsed: sized_text.Value,
         scalars: []const u21,
         width_cells: u8,
-    ) bool {
+        comptime grow: bool,
+    ) (if (grow) error{ OutOfMemory, ScalarCapacity }!bool else bool) {
         std.debug.assert(scalars.len > 0 and
             scalars.len <= scalar_storage.maximum_scalars);
         const physical_width = @as(u16, parsed.scale) * width_cells;
@@ -2978,8 +3031,11 @@ pub const Screen = struct {
         if (scalars.len > 1 + @as(usize, 3)) {
             var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
             for (scalars[4..], 0..) |cp, index| tail[index] = cp;
-            prepared_tail = self.scalars.?.prepare(tail[0 .. scalars.len - 4]) catch
-                return false;
+            const values = tail[0 .. scalars.len - 4];
+            prepared_tail = if (grow)
+                try self.scalars.?.prepareGrowing(values)
+            else
+                self.scalars.?.prepare(values) catch return false;
         }
         defer if (prepared_tail) |*prepared| prepared.deinit();
 
@@ -8395,4 +8451,35 @@ test "growing REP reports partial progress and resumes without repeating twice" 
     const expected = [_]u32{ 'e', 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301 };
     var actual: [scalar_storage.maximum_scalars]u32 = undefined;
     for (0..512) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
+}
+
+test "growing OSC 66 resumes at the first uncommitted cluster" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCells(failing.allocator(), 1, 512);
+    defer screen.deinit(failing.allocator());
+    const cluster = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\u{0306}\u{0307}\u{0308}";
+    var payload: [8192]u8 = undefined;
+    @memcpy(payload[0..4], "s=1;");
+    var length: usize = 4;
+    for (0..450) |_| {
+        @memcpy(payload[length..][0..cluster.len], cluster);
+        length += cluster.len;
+    }
+    failing.fail_index = failing.alloc_index;
+    const partial = screen.writeSizedTextGrowing(payload[0..length], 0);
+    try std.testing.expectEqual(error.OutOfMemory, partial.blocked.?);
+    try std.testing.expect(partial.changed and partial.next_offset > 0 and partial.next_offset < length - 4);
+    const held_cursor = screen.cursor;
+    const still_blocked = screen.writeSizedTextGrowing(payload[0..length], partial.next_offset);
+    try std.testing.expectEqual(error.OutOfMemory, still_blocked.blocked.?);
+    try std.testing.expectEqual(partial.next_offset, still_blocked.next_offset);
+    try std.testing.expect(!still_blocked.changed);
+    try std.testing.expectEqualDeep(held_cursor, screen.cursor);
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = screen.writeSizedTextGrowing(payload[0..length], partial.next_offset);
+    try std.testing.expect(resumed.blocked == null);
+    try std.testing.expectEqual(length - 4, resumed.next_offset);
+    const expected = [_]u32{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
+    var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+    for (0..450) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
 }

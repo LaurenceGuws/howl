@@ -4013,3 +4013,50 @@ test "real PTY REP resumes remaining graphemes once after allocation failure" {
     for (0..501) |col| try std.testing.expectEqualSlices(u21, &expected, view.cellScalarsAt(0, @intCast(col), &scalars));
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 501));
 }
+
+test "real PTY OSC 66 resumes its retained payload after allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const value = try testInstance(failing.allocator(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]66;s=1;'; i=0; while [ $i -lt 450 ]; do printf 'e\\314\\201\\314\\202\\314\\203\\314\\204\\314\\205\\314\\206\\314\\207\\314\\210'; i=$((i+1)); done; read line; printf '\\007X'; sleep 30",
+        .rows = 1,
+        .columns = 512,
+        .history_rows = 0,
+    });
+    defer deinit(value);
+    const state = stateMut(value);
+    var captured = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        try std.testing.expect(turn.scalar_retry_wait_ms == null);
+        if (state.terminal.stream_state.parser.osc.buffer.items.len == 4 + 450 * 17) {
+            captured = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(captured);
+    failing.fail_index = failing.alloc_index;
+    try state.input(.{ .bytes = "GO\n" });
+    var saw_block = false;
+    var completed = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        if (turn.scalar_retry_wait_ms != null) {
+            saw_block = true;
+            failing.fail_index = std.math.maxInt(usize);
+        }
+        if (saw_block and !scalarInputBlocked(value) and terminal(value).semanticView(0).cellAt(0, 450) == 'X') {
+            completed = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(saw_block);
+    try std.testing.expect(completed);
+    const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
+    var scalars: [24]u21 = undefined;
+    const view = terminal(value).semanticView(0);
+    for (0..450) |col| try std.testing.expectEqualSlices(u21, &expected, view.cellScalarsAt(0, @intCast(col), &scalars));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 450));
+}

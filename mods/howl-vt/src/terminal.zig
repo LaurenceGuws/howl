@@ -4208,6 +4208,15 @@ const TerminalStream = struct {
                     }
                     break :repeated progress.completed != 0;
                 },
+                .sized_text => |sized| written: {
+                    const progress = self.terminal.screen_state.active().writeSizedTextGrowing(sized.payload, sized.offset);
+                    if (progress.blocked) |failure| {
+                        self.terminal.stream_state.pending_scalar.?.work = .{ .sized_text = .{ .payload = sized.payload, .offset = progress.next_offset } };
+                        self.terminal.stream_state.pending_scalar.?.failure = failure;
+                        scalar_blocked = failure;
+                    }
+                    break :written progress.changed;
+                },
             };
             summary.mutations.text = changed;
             self.synchronized_output.trailing_effect = changed;
@@ -4476,6 +4485,22 @@ const TerminalStream = struct {
     }
 
     fn applyEvent(self: *TerminalStream, event: parser_mod.Event) TerminalFeedError!EventEffect {
+        if (event == .osc and event.osc == .kitty_text_size) {
+            if (routeParserEvent(event)) |semantic| {
+                if (semantic == .text_size) {
+                    const payload = semantic.text_size.payload;
+                    const progress = self.terminal.screen_state.active().writeSizedTextGrowing(payload, 0);
+                    if (progress.blocked) |failure| {
+                        std.debug.assert(self.terminal.stream_state.pending_scalar == null);
+                        self.terminal.stream_state.pending_scalar = .{
+                            .work = .{ .sized_text = .{ .payload = payload, .offset = progress.next_offset } },
+                            .failure = failure,
+                        };
+                    }
+                    return .{ .changed = progress.changed, .mutations = .{ .text = progress.changed } };
+                }
+            }
+        }
         if (event == .style_change and event.style_change.final == 'b') {
             if (routeParserEvent(event)) |semantic| {
                 if (semantic == .repeat_preceding) {
@@ -6400,8 +6425,8 @@ pub const Terminal = struct {
 
     /// Applies a prefix until a reply, host consequence, synchronized release,
     /// or scalar-storage pressure. Continue at the reported `consumed` offset.
-    /// A blocked scalar is retained; retry after backoff with the unread suffix,
-    /// including an empty slice when the scalar ended the previous read. A still
+    /// Blocked scalar work is retained; retry after backoff with the unread suffix,
+    /// including an empty slice when the operation ended the previous read. A still
     /// blocked retry consumes zero bytes. Defer geometry changes until it succeeds.
     pub fn feedAtServiceBoundary(
         self: *Terminal,
