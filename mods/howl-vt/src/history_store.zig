@@ -470,6 +470,7 @@ pub const Store = struct {
     pub const Prepared = struct {
         source: Source,
         shape: Shape,
+        reserved: Shape,
         drop_oldest: bool,
         cell_stage: CellStream.Stage,
         attr_stage: AttrStream.Stage,
@@ -653,29 +654,57 @@ pub const Store = struct {
             scalars_after + shape_value.scalars <= self.scalars.max_items;
     }
 
-    /// Stages every resource required to append one row without mutating retained history.
+    /// Stages every resource required to append one immutable row.
     pub fn preparePush(self: *Store, source: Source) PrepareError!Prepared {
+        const actual = try self.shape(source);
+        return self.preparePushShaped(source, actual, actual);
+    }
+
+    /// Stages for a row whose cells may only be cleared before admission.
+    /// Source must cover the full semantic row, including cells not currently
+    /// retained. Clearing can split attribute runs but cannot add scalar tails.
+    /// No other operation may mutate this store until rebind and commit/discard.
+    pub fn preparePushForClear(self: *Store, source: Source) PrepareError!Prepared {
+        const width = self.semanticColumns(source.geometry);
+        if (source.cells.len != width) return error.InvalidSource;
+        const actual = try self.shape(source);
+        const upper: Shape = .{ .cells = width, .attrs = width, .scalars = actual.scalars };
+        return self.preparePushShaped(source, actual, upper);
+    }
+
+    fn preparePushShaped(self: *Store, source: Source, actual: Shape, upper: Shape) PrepareError!Prepared {
         if (self.rows.len == 0) return error.Capacity;
-        const shape_value = try self.shape(source);
         const drop_oldest = self.row_count == self.rows.len;
-        if (!self.canAppend(shape_value, drop_oldest)) return error.Capacity;
+        if (!self.canAppend(upper, drop_oldest)) return error.Capacity;
 
         const outgoing = if (drop_oldest) self.rowAtLogical(0) else null;
-        var cell_stage = try self.cells.prepareAppend(shape_value.cells, if (outgoing) |row| row.cell_count else 0);
+        var cell_stage = try self.cells.prepareAppend(upper.cells, if (outgoing) |row| row.cell_count else 0);
         errdefer self.cells.discardStage(&cell_stage);
-        var attr_stage = try self.attrs.prepareAppend(shape_value.attrs, if (outgoing) |row| row.attr_count else 0);
+        var attr_stage = try self.attrs.prepareAppend(upper.attrs, if (outgoing) |row| row.attr_count else 0);
         errdefer self.attrs.discardStage(&attr_stage);
-        var scalar_stage = try self.scalars.prepareAppend(shape_value.scalars, if (outgoing) |row| row.scalar_count else 0);
+        var scalar_stage = try self.scalars.prepareAppend(upper.scalars, if (outgoing) |row| row.scalar_count else 0);
         errdefer self.scalars.discardStage(&scalar_stage);
 
         return .{
             .source = source,
-            .shape = shape_value,
+            .shape = actual,
+            .reserved = upper,
             .drop_oldest = drop_oldest,
             .cell_stage = cell_stage,
             .attr_stage = attr_stage,
             .scalar_stage = scalar_stage,
         };
+    }
+
+    /// Revalidates a cleared row without allocation or history mutation.
+    pub fn rebindCleared(self: *Store, prepared: *Prepared, source: Source) PrepareError!void {
+        std.debug.assert(!prepared.consumed);
+        const actual = try self.shape(source);
+        if (actual.cells > prepared.reserved.cells or actual.attrs > prepared.reserved.attrs or
+            actual.scalars > prepared.reserved.scalars) return error.InvalidSource;
+        if (!self.canAppend(actual, prepared.drop_oldest)) return error.Capacity;
+        prepared.source = source;
+        prepared.shape = actual;
     }
 
     /// Releases fresh blocks held by an uncommitted prepared row.
@@ -1432,4 +1461,69 @@ test "history retains the accepted scalar density for every row" {
             for (got[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
         }
     }
+}
+
+test "prepared clearing reserves attribute splits before mutation" {
+    const columns = 8;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var cells: [columns]Cell = @splat(cell_values.blank);
+    for (&cells) |*cell| {
+        cell.codepoint = 'x';
+        cell.attrs.bold = true;
+    }
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, columns);
+    defer scalars.deinit();
+    var store = try Store.init(failing.allocator(), 2, columns, 0);
+    defer store.deinit();
+    const source: Source = .{ .cells = &cells, .scalars = &scalars, .scalar_start = 0, .wrapped = false, .geometry = .single_width };
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, store.preparePushForClear(source));
+    try std.testing.expectEqual(@as(u32, 0), store.count());
+    for (cells) |cell| try std.testing.expectEqual(@as(u32, 'x'), cell.codepoint);
+    failing.fail_index = std.math.maxInt(usize);
+    var prepared = try store.preparePushForClear(source);
+    defer store.discardPrepared(&prepared);
+    for (&cells, 0..) |*cell, index| if (index % 2 == 1) {
+        cell.* = cell_values.blank;
+    };
+    // No allocation may occur once the caller has started changing the row.
+    failing.fail_index = failing.alloc_index;
+    var cleared = source;
+    cleared.cells = &cells;
+    try store.rebindCleared(&prepared, cleared);
+    store.commitPush(&prepared);
+    try std.testing.expectEqual(@as(u32, 1), store.count());
+    for (cells, 0..) |expected, index| try std.testing.expectEqualDeep(expected, store.cellAtLogical(0, @intCast(index)));
+}
+
+test "prepared clearing reuses space when history is full" {
+    const columns = 8;
+    var cells: [columns]Cell = @splat(cell_values.blank);
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, columns);
+    defer scalars.deinit();
+    var store = try Store.init(std.testing.allocator, 2, columns, 0);
+    defer store.deinit();
+    const source: Source = .{ .cells = &cells, .scalars = &scalars, .scalar_start = 0, .wrapped = false, .geometry = .single_width };
+    for (0..2) |row| {
+        for (&cells, 0..) |*cell, index| {
+            cell.codepoint = @intCast('a' + row);
+            cell.attrs.bold = index % 2 == 0;
+        }
+        var initial = try store.preparePush(source);
+        store.commitPush(&initial);
+    }
+    for (&cells) |*cell| {
+        cell.codepoint = 'z';
+        cell.attrs.bold = true;
+    }
+    var prepared = try store.preparePushForClear(source);
+    defer store.discardPrepared(&prepared);
+    try std.testing.expect(prepared.dropsOldest());
+    for (&cells, 0..) |*cell, index| if (index % 2 == 1) {
+        cell.* = cell_values.blank;
+    };
+    try store.rebindCleared(&prepared, source);
+    store.commitPush(&prepared);
+    try std.testing.expectEqual(@as(u32, 2), store.count());
+    for (cells, 0..) |expected, index| try std.testing.expectEqualDeep(expected, store.cellAtRecency(0, @intCast(index)));
 }

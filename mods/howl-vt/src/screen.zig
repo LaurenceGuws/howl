@@ -852,18 +852,9 @@ pub const Screen = struct {
     /// Failure leaves the row and existing history intact for the caller to handle.
     fn storeHistoryRow(self: *Screen, row: u16) error{ OutOfMemory, Capacity }!void {
         if (self.history_capacity == 0) return;
-        const row_start = self.rowStart(row);
-        const len = self.visibleRowStateLen(row);
-        const incoming = self.cells.?[row_start..][0..len];
+        const source = self.historyRowSource(row, false);
         const store = if (self.history_store) |*value| value else return;
-        var prepared = store.preparePush(.{
-            .generation = self.rowGeneration(row) orelse 0,
-            .cells = incoming,
-            .scalars = &self.scalars.?,
-            .scalar_start = row_start,
-            .wrapped = self.rowWrapped(row),
-            .geometry = self.lineGeometry(row),
-        }) catch |err| switch (err) {
+        var prepared = store.preparePush(source) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Capacity => return error.Capacity,
             // zig-audit: acknowledge panic
@@ -872,6 +863,32 @@ pub const Screen = struct {
         };
         if (prepared.dropsOldest()) self.recordDroppedProjectedRows(1);
         store.commitPush(&prepared);
+    }
+
+    // The full semantic row is required when reserving before cluster clearing;
+    // the actual retained extent is selected again after that clearing.
+    fn historyRowSource(self: *const Screen, row: u16, full: bool) history_store_mod.Source {
+        const start = self.rowStart(row);
+        const len = if (full) self.lineColumnCount(row) else self.visibleRowStateLen(row);
+        return .{
+            .generation = self.rowGeneration(row) orelse 0,
+            .cells = self.cells.?[start..][0..len],
+            .scalars = &self.scalars.?,
+            .scalar_start = start,
+            .wrapped = self.rowWrapped(row),
+            .geometry = self.lineGeometry(row),
+        };
+    }
+
+    fn commitClearedHistoryRow(self: *Screen, row: u16, prepared: *history_store_mod.Store.Prepared) void {
+        const source = self.historyRowSource(row, false);
+        const store = &self.history_store.?;
+        store.rebindCleared(prepared, source) catch
+            // zig-audit: acknowledge panic
+            // reason: The full-row reservation covers every possible cleared row; a mismatch is an internal ownership breach.
+            @panic("cleared history row exceeds its reservation");
+        if (prepared.dropsOldest()) self.recordDroppedProjectedRows(1);
+        store.commitPush(prepared);
     }
 
     fn recordHistoryLoss(self: *Screen) void {
@@ -3755,13 +3772,17 @@ pub const Screen = struct {
     }
 
     fn scrollUp(self: *Screen) void {
+        self.scrollUpPrepared(null);
+    }
+
+    fn scrollUpPrepared(self: *Screen, prepared: ?*history_store_mod.Store.Prepared) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
         // The outgoing physical row becomes the cleared bottom row after rotation.
         const recycled = if (self.row_metadata) |metadata| &metadata[self.row_origin] else null;
         const clear_cols = self.rowScanEnd(0);
         const background_unchanged = if (recycled) |row| row.background.covers(0, clear_cols, 0) else false;
-        self.storeHistoryRow(0) catch self.recordHistoryLoss();
+        if (prepared) |row| self.commitClearedHistoryRow(0, row) else self.storeHistoryRow(0) catch self.recordHistoryLoss();
         self.row_origin = (self.row_origin + 1) % self.rows;
         const bottom_start = self.rowStart(self.rows - 1);
         self.clearScalarCells(bottom_start, clear_cols);
@@ -3894,6 +3915,32 @@ pub const Screen = struct {
     /// Scroll an ordered region upward by at most its bounded row count.
     /// Returns exact cell, row, history, damage, or pending-wrap mutation.
     pub fn scrollUpRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
+        return self.scrollUpRegionPrepared(top, bottom, count, null);
+    }
+
+    /// Prepares history before any part of a single-row scroll can mutate.
+    pub fn tryScrollUpRegionOne(self: *Screen, top: u16, bottom: u16) error{ OutOfMemory, Capacity }!bool {
+        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom)
+            return self.scrollUpRegion(top, bottom, 1);
+        const bounded_bottom = @min(bottom, self.rows - 1);
+        const full_screen = top == 0 and bounded_bottom == self.rows - 1;
+        const full_width = !self.left_right_margin_mode or (self.left_margin == 0 and self.right_margin + 1 == self.cols);
+        if (self.history_capacity == 0 or top != 0 or (!full_screen and !full_width))
+            return self.scrollUpRegion(top, bottom, 1);
+        const source = self.historyRowSource(0, true);
+        const store = &self.history_store.?;
+        var prepared = store.preparePushForClear(source) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Capacity => return error.Capacity,
+            // zig-audit: acknowledge panic
+            // reason: A live full row and its scalar sidecar are canonical internal owners.
+            error.InvalidSource => @panic("visible history source invalid"),
+        };
+        defer store.discardPrepared(&prepared);
+        return self.scrollUpRegionPrepared(top, bottom, 1, &prepared);
+    }
+
+    fn scrollUpRegionPrepared(self: *Screen, top: u16, bottom: u16, count: u16, prepared: ?*history_store_mod.Store.Prepared) bool {
         var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return changed;
         const bounded_bottom = @min(bottom, self.rows - 1);
@@ -3915,7 +3962,10 @@ pub const Screen = struct {
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
-            while (remaining > 0) : (remaining -= 1) self.scrollUp();
+            while (remaining > 0) : (remaining -= 1) {
+                self.scrollUpPrepared(prepared);
+                std.debug.assert(prepared == null or remaining == 1);
+            }
             // scrollUp refreshes every recycled physical row, including across
             // multiple partial operations between independent observations.
             return true;
@@ -3930,8 +3980,12 @@ pub const Screen = struct {
         // above the physical screen bottom.
         if (top == 0 and left == 0 and right + 1 == self.cols and self.history_capacity != 0) {
             var history_row: u16 = 0;
-            while (history_row < amount) : (history_row += 1)
-                self.storeHistoryRow(history_row) catch self.recordHistoryLoss();
+            while (history_row < amount) : (history_row += 1) {
+                if (prepared) |row| {
+                    std.debug.assert(amount == 1 and history_row == 0);
+                    self.commitClearedHistoryRow(history_row, row);
+                } else self.storeHistoryRow(history_row) catch self.recordHistoryLoss();
+            }
             changed = true;
         }
 
@@ -8587,4 +8641,50 @@ test "history restore reuses all outgoing row scalar ranges without allocating" 
     try std.testing.expectEqual(@as(usize, scalar_storage.maximum_scalars), restored.len);
     try std.testing.expectEqual(@as(u32, 'e'), restored[0]);
     for (restored[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
+}
+
+test "single scroll reserves history before cluster clearing and retries" {
+    for ([_]u16{ 1, 2 }) |bottom| {
+        var failures: usize = 0;
+        for (0..8) |offset| {
+            var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+            var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 3, 8, 4);
+            defer screen.deinit(failing.allocator());
+            var reference = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 8, 4);
+            defer reference.deinit(std.testing.allocator);
+            try std.testing.expect(screen.writeSizedText("s=2:w=2;X\u{0301}\u{0301}\u{0301}\u{0301}"));
+            try std.testing.expect(reference.writeSizedText("s=2:w=2;X\u{0301}\u{0301}\u{0301}\u{0301}"));
+            screen.current_attrs.bold = true;
+            reference.current_attrs.bold = true;
+            screen.wrap_pending = true;
+            reference.wrap_pending = true;
+            const before = try std.testing.allocator.dupe(Screen.Cell, screen.cells.?);
+            defer std.testing.allocator.free(before);
+            const cursor = screen.cursor;
+            failing.fail_index = failing.alloc_index + offset;
+            const attempt = screen.tryScrollUpRegionOne(0, bottom);
+            if (attempt) |changed| {
+                failing.fail_index = std.math.maxInt(usize);
+                try std.testing.expect(changed);
+                try std.testing.expect(failures >= 3);
+                break;
+            } else |err| {
+                try std.testing.expectEqual(error.OutOfMemory, err);
+                failures += 1;
+                try std.testing.expectEqualSlices(Screen.Cell, before, screen.cells.?);
+                try std.testing.expectEqualDeep(cursor, screen.cursor);
+                try std.testing.expect(screen.wrap_pending);
+                try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+                try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
+                failing.fail_index = std.math.maxInt(usize);
+                try std.testing.expect(try screen.tryScrollUpRegionOne(0, bottom));
+                try std.testing.expect(reference.scrollUpRegion(0, bottom, 1));
+                for (0..screen.rows) |row| for (0..screen.cols) |col| {
+                    try std.testing.expectEqualDeep(reference.cellInfoAt(@intCast(row), @intCast(col)), screen.cellInfoAt(@intCast(row), @intCast(col)));
+                };
+                try std.testing.expectEqual(reference.historyCount(), screen.historyCount());
+                for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
+            }
+        } else return error.NoSuccessfulScroll;
+    }
 }
