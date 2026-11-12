@@ -3998,7 +3998,7 @@ pub const TerminalFeedSummary = struct {
 pub const TerminalFeedProgress = struct {
     summary: TerminalFeedSummary,
     consumed: usize,
-    scalar_blocked: ?stream_state_mod.ScalarBlock = null,
+    input_blocked: ?stream_state_mod.InputBlock = null,
     /// True when caller policy relieved already-retained consequence pressure
     /// while applying this exact parsed prefix.
     consequence_pressure_relieved: bool = false,
@@ -4058,7 +4058,7 @@ const TerminalStream = struct {
     fn nextGroundPrintableAscii(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
         std.debug.assert(self.terminal.stream_state.parser.groundPrintableAscii(byte));
         const effect = try self.applyPrint(byte);
-        if (self.terminal.scalarInputBlocked()) return effect.mutations;
+        if (self.terminal.inputBlocked()) return effect.mutations;
         std.debug.assert(effect.changed);
         std.debug.assert(effect.mutations.text);
         std.debug.assert(!effect.suppress_owner_fallback);
@@ -4154,7 +4154,7 @@ const TerminalStream = struct {
                 } else {
                     summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
                     consumed += 1;
-                    if (self.terminal.stream_state.pending_scalar) |pending| return pending.failure;
+                    if (self.terminal.stream_state.pending_input) |pending| return pending.failure;
                 }
                 continue;
             }
@@ -4165,7 +4165,7 @@ const TerminalStream = struct {
             }
             summary.mutations.merge(try self.nextSummary(byte));
             consumed += 1;
-            if (self.terminal.stream_state.pending_scalar) |pending| return pending.failure;
+            if (self.terminal.stream_state.pending_input) |pending| return pending.failure;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
         if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
@@ -4191,38 +4191,38 @@ const TerminalStream = struct {
         const before = MutationObservation.capture(self.terminal);
         defer if (!completed) self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
-        var scalar_blocked: ?stream_state_mod.ScalarBlock = null;
-        if (self.terminal.stream_state.pending_scalar) |pending| {
+        var input_blocked: ?stream_state_mod.InputBlock = null;
+        if (self.terminal.stream_state.pending_input) |pending| {
             const changed = switch (pending.work) {
                 .codepoint => |value| self.terminal.screen_state.active().writeCodepointGrowing(value) catch |failure| blocked: {
-                    self.terminal.stream_state.pending_scalar.?.failure = failure;
-                    scalar_blocked = failure;
+                    self.terminal.stream_state.pending_input.?.failure = failure;
+                    input_blocked = failure;
                     break :blocked false;
                 },
                 .repeat => |remaining| repeated: {
                     const progress = self.terminal.screen_state.active().repeatPrecedingGrowing(remaining);
                     if (progress.blocked) |failure| {
-                        self.terminal.stream_state.pending_scalar.?.work = .{ .repeat = remaining - progress.completed };
-                        self.terminal.stream_state.pending_scalar.?.failure = failure;
-                        scalar_blocked = failure;
+                        self.terminal.stream_state.pending_input.?.work = .{ .repeat = remaining - progress.completed };
+                        self.terminal.stream_state.pending_input.?.failure = failure;
+                        input_blocked = failure;
                     }
                     break :repeated progress.completed != 0;
                 },
                 .sized_text => |sized| written: {
                     const progress = self.terminal.screen_state.active().writeSizedTextGrowing(sized.payload, sized.offset);
                     if (progress.blocked) |failure| {
-                        self.terminal.stream_state.pending_scalar.?.work = .{ .sized_text = .{ .payload = sized.payload, .offset = progress.next_offset } };
-                        self.terminal.stream_state.pending_scalar.?.failure = failure;
-                        scalar_blocked = failure;
+                        self.terminal.stream_state.pending_input.?.work = .{ .sized_text = .{ .payload = sized.payload, .offset = progress.next_offset } };
+                        self.terminal.stream_state.pending_input.?.failure = failure;
+                        input_blocked = failure;
                     }
                     break :written progress.changed;
                 },
             };
             summary.mutations.text = changed;
             self.synchronized_output.trailing_effect = changed;
-            if (scalar_blocked == null) self.terminal.stream_state.pending_scalar = null;
+            if (input_blocked == null) self.terminal.stream_state.pending_input = null;
         }
-        while (scalar_blocked == null and consumed < bytes.len) {
+        while (input_blocked == null and consumed < bytes.len) {
             const byte = bytes[consumed];
             if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
                 const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
@@ -4232,8 +4232,8 @@ const TerminalStream = struct {
                 } else {
                     summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
                     consumed += 1;
-                    if (self.terminal.stream_state.pending_scalar) |pending| {
-                        scalar_blocked = pending.failure;
+                    if (self.terminal.stream_state.pending_input) |pending| {
+                        input_blocked = pending.failure;
                         break;
                     }
                 }
@@ -4247,8 +4247,8 @@ const TerminalStream = struct {
             const mutations = try self.nextSummary(byte);
             summary.mutations.merge(mutations);
             consumed += 1;
-            if (self.terminal.stream_state.pending_scalar) |pending| {
-                scalar_blocked = pending.failure;
+            if (self.terminal.stream_state.pending_input) |pending| {
+                input_blocked = pending.failure;
                 break;
             }
             if (self.terminal.reply_buffer.len() != replies_before) break;
@@ -4271,7 +4271,7 @@ const TerminalStream = struct {
         return .{
             .summary = summary,
             .consumed = consumed,
-            .scalar_blocked = scalar_blocked,
+            .input_blocked = input_blocked,
             .consequence_pressure_relieved = self.consequence_pressure_relieved,
         };
     }
@@ -4384,8 +4384,8 @@ const TerminalStream = struct {
             };
         }
         const changed = self.terminal.screen_state.active().writeCodepointGrowing(mapped) catch |failure| {
-            std.debug.assert(self.terminal.stream_state.pending_scalar == null);
-            self.terminal.stream_state.pending_scalar = .{ .work = .{ .codepoint = mapped }, .failure = failure };
+            std.debug.assert(self.terminal.stream_state.pending_input == null);
+            self.terminal.stream_state.pending_input = .{ .work = .{ .codepoint = mapped }, .failure = failure };
             return .{ .changed = false };
         };
         return .{
@@ -4491,8 +4491,8 @@ const TerminalStream = struct {
                     const payload = semantic.text_size.payload;
                     const progress = self.terminal.screen_state.active().writeSizedTextGrowing(payload, 0);
                     if (progress.blocked) |failure| {
-                        std.debug.assert(self.terminal.stream_state.pending_scalar == null);
-                        self.terminal.stream_state.pending_scalar = .{
+                        std.debug.assert(self.terminal.stream_state.pending_input == null);
+                        self.terminal.stream_state.pending_input = .{
                             .work = .{ .sized_text = .{ .payload = payload, .offset = progress.next_offset } },
                             .failure = failure,
                         };
@@ -4507,8 +4507,8 @@ const TerminalStream = struct {
                     const requested = @max(semantic.repeat_preceding, 1);
                     const progress = self.terminal.screen_state.active().repeatPrecedingGrowing(requested);
                     if (progress.blocked) |failure| {
-                        std.debug.assert(self.terminal.stream_state.pending_scalar == null);
-                        self.terminal.stream_state.pending_scalar = .{
+                        std.debug.assert(self.terminal.stream_state.pending_input == null);
+                        self.terminal.stream_state.pending_input = .{
                             .work = .{ .repeat = requested - progress.completed },
                             .failure = failure,
                         };
@@ -5275,7 +5275,7 @@ pub const Terminal = struct {
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
-    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity, ScalarInputPending } ||
+    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity, InputPending } ||
         std.mem.Allocator.Error;
     /// Owns a complete fallible resize candidate bound to one Terminal.
     ///
@@ -6411,7 +6411,7 @@ pub const Terminal = struct {
     /// absolute-position command is accepted; structural movement remains
     /// untimestamped.
     pub fn feedAt(self: *Terminal, bytes: []const u8, timestamp_ns: u64) FeedError!FeedSummary {
-        if (self.stream_state.pending_scalar) |pending| return pending.failure;
+        if (self.stream_state.pending_input) |pending| return pending.failure;
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
@@ -6454,8 +6454,8 @@ pub const Terminal = struct {
     }
 
     /// Reports whether input retained scalar work awaiting storage.
-    pub fn scalarInputBlocked(self: *const Terminal) bool {
-        return self.stream_state.pending_scalar != null;
+    pub fn inputBlocked(self: *const Terminal) bool {
+        return self.stream_state.pending_input != null;
     }
 
     fn feedAtServiceBoundaryImpl(
@@ -6535,7 +6535,7 @@ pub const Terminal = struct {
         cell_pixels: ?CellPixelSize,
     ) ResizeError!PreparedResize {
         self.requireNoPreparedResize();
-        if (self.scalarInputBlocked()) return error.ScalarInputPending;
+        if (self.inputBlocked()) return error.InputPending;
         try validateDimensions(rows, cols);
         if (cell_pixels) |cell| {
             if (cell.width == 0 or cell.height == 0) return error.InvalidDimensions;
@@ -6739,7 +6739,7 @@ pub const Terminal = struct {
         self.alternate_savepoint.clear();
         self.charset = .{};
         self.stream_state.parser.resetTextEncoding();
-        self.stream_state.pending_scalar = null;
+        self.stream_state.pending_input = null;
         self.reply_buffer.resetFraming();
         self.kitty = .{};
         self.locator.reset();
@@ -11593,7 +11593,7 @@ test "scalar retaining service keeps consequence relief" {
     service_boundary_test_relieved_id = 0;
     const progress = try terminal.feedAtServiceBoundaryRelievingConsequences("\x07TAIL", 1, serviceBoundaryTestConsumeHead);
     try std.testing.expect(progress.consequence_pressure_relieved);
-    try std.testing.expect(progress.scalar_blocked == null);
+    try std.testing.expect(progress.input_blocked == null);
     try std.testing.expectEqual(old_head, service_boundary_test_relieved_id);
     try std.testing.expectEqual(@as(usize, 1), progress.consumed);
     try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
@@ -11603,10 +11603,10 @@ test "scalar retaining service keeps consequence relief" {
 test "explicit hard reset discards a pending scalar" {
     var terminal = try Terminal.init(std.testing.allocator, 1, 8);
     defer terminal.deinit();
-    terminal.stream_state.pending_scalar = .{ .work = .{ .codepoint = 0x301 }, .failure = error.OutOfMemory };
-    try std.testing.expect(terminal.scalarInputBlocked());
+    terminal.stream_state.pending_input = .{ .work = .{ .codepoint = 0x301 }, .failure = error.OutOfMemory };
+    try std.testing.expect(terminal.inputBlocked());
     terminal.hardReset();
-    try std.testing.expect(!terminal.scalarInputBlocked());
+    try std.testing.expect(!terminal.inputBlocked());
     try std.testing.expect((try terminal.feed("X")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
 }

@@ -33,7 +33,7 @@ static_assert(offsetof(hvt_feed_progress,synchronized_ended)==28);
 static_assert(offsetof(hvt_feed_progress,trailing_effect)==29);
 static_assert(offsetof(hvt_feed_progress,held)==30);
 static_assert(offsetof(hvt_feed_progress,reserved)==31);
-static_assert(offsetof(hvt_feed_progress,scalar_block)==32);
+static_assert(offsetof(hvt_feed_progress,input_block)==32);
 static_assert(sizeof(hvt_animation)==8 && alignof(hvt_animation)==4);
 static_assert(offsetof(hvt_animation,next_ms)==0);
 static_assert(offsetof(hvt_animation,changed)==4);

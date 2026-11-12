@@ -34,7 +34,7 @@ _Static_assert(offsetof(hvt_feed_progress,synchronized_ended)==28,"hvt_feed_prog
 _Static_assert(offsetof(hvt_feed_progress,trailing_effect)==29,"hvt_feed_progress.trailing_effect");
 _Static_assert(offsetof(hvt_feed_progress,held)==30,"hvt_feed_progress.held");
 _Static_assert(offsetof(hvt_feed_progress,reserved)==31,"hvt_feed_progress.reserved");
-_Static_assert(offsetof(hvt_feed_progress,scalar_block)==32,"hvt_feed_progress.scalar_block");
+_Static_assert(offsetof(hvt_feed_progress,input_block)==32,"hvt_feed_progress.input_block");
 _Static_assert(sizeof(hvt_animation)==8 && _Alignof(hvt_animation)==4,"hvt_animation layout");
 _Static_assert(offsetof(hvt_animation,next_ms)==0,"hvt_animation.next_ms");
 _Static_assert(offsetof(hvt_animation,changed)==4,"hvt_animation.changed");
@@ -73,8 +73,8 @@ static uint32_t feed_all(hvt_terminal *value,const char *bytes) {
         hvt_feed_progress progress={0};
         const uint32_t status=hvt_feed(value,(const uint8_t *)bytes+offset,length-offset,17,&progress);
         if (status!=HVT_OK) return status;
-        if (progress.scalar_block == HVT_SCALAR_OUT_OF_MEMORY) return HVT_OUT_OF_MEMORY;
-        if (progress.scalar_block == HVT_SCALAR_CAPACITY) return HVT_RESOURCE_LIMIT;
+        if (progress.input_block == HVT_INPUT_OUT_OF_MEMORY) return HVT_OUT_OF_MEMORY;
+        if (progress.input_block == HVT_INPUT_SCALAR_CAPACITY) return HVT_RESOURCE_LIMIT;
         if (!progress.consumed || progress.consumed>length-offset) return HVT_INTERNAL;
         offset+=progress.consumed;
     }

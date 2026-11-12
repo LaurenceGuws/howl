@@ -59,7 +59,7 @@ const read_calls_per_turn: u8 = 8;
 const write_bytes_per_turn: usize = 64 * 1024;
 const write_calls_per_turn: usize = 4;
 // Avoid a busy loop while a temporarily unavailable scalar page is retried.
-const scalar_retry_ns: u64 = 100 * std.time.ns_per_ms;
+const input_retry_ns: u64 = 100 * std.time.ns_per_ms;
 
 /// Opaque handle to one canonical PTY + VT lifetime owner.
 // zig-audit: acknowledge opaque_type
@@ -225,7 +225,7 @@ pub const Service = struct {
     /// Milliseconds until the next retained terminal-animation boundary.
     animation_wait_ms: ?u32,
     /// Milliseconds until a blocked scalar allocation may be retried.
-    scalar_retry_wait_ms: ?u32 = null,
+    input_retry_wait_ms: ?u32 = null,
 };
 
 /// Constructs one PTY -> VT -> Render owner on one caller-serialized thread.
@@ -425,8 +425,8 @@ pub fn bufferedOutputPending(instance: *const Instance) bool {
 }
 
 /// True while decoded scalar work is waiting for storage before more PTY input.
-pub fn scalarInputBlocked(instance: *const Instance) bool {
-    return stateConst(instance).terminal.scalarInputBlocked();
+pub fn inputBlocked(instance: *const Instance) bool {
+    return stateConst(instance).terminal.inputBlocked();
 }
 
 /// True when retained child output can progress without another PTY write
@@ -1156,7 +1156,7 @@ const State = struct {
     reads: [read_buffer_bytes]u8 = undefined,
     read_start: usize = 0,
     read_end: usize = 0,
-    scalar_retry_at: ?u64 = null,
+    input_retry_at: ?u64 = null,
     child_exit: ?ChildExit = null,
     stream_closed: bool = false,
 
@@ -1202,7 +1202,7 @@ const State = struct {
         self.paste = .{};
         self.read_start = 0;
         self.read_end = 0;
-        self.scalar_retry_at = null;
+        self.input_retry_at = null;
         self.child_exit = null;
         self.stream_closed = false;
         try vt.Terminal.initWithHistoryInto(
@@ -1239,7 +1239,7 @@ const State = struct {
         config: PresentationConfig,
         target: PresentationTarget,
     ) ReconfigurePresentationError!PresentationGeometry {
-        if (self.terminal.scalarInputBlocked()) return error.ScalarInputPending;
+        if (self.terminal.inputBlocked()) return error.InputPending;
         const presentation = self.presentation;
         if (config.command_capacity != presentation.command_capacity)
             return error.PublicationCapacityMismatch;
@@ -1445,7 +1445,7 @@ const State = struct {
     }
 
     fn resizeGeometry(self: *State, rows: u16, columns: u16, cell: vt.Terminal.CellPixelSize) ResizeError!void {
-        if (self.terminal.scalarInputBlocked()) return error.ScalarInputPending;
+        if (self.terminal.inputBlocked()) return error.InputPending;
         const width = try ptyPixelExtent(columns, cell.width);
         const height = try ptyPixelExtent(rows, cell.height);
         var prepared = try self.terminal.prepareResizeGeometry(rows, columns, cell);
@@ -1456,7 +1456,7 @@ const State = struct {
 
     fn outputRunnable(self: *const State) bool {
         const replies = self.terminal.replyBytes().len;
-        return self.scalar_retry_at == null and self.read_start < self.read_end and
+        return self.input_retry_at == null and self.read_start < self.read_end and
             (replies == 0 or (self.paste.token == null and replies <= self.writes.remaining()));
     }
 
@@ -1473,7 +1473,7 @@ const State = struct {
         var retained_consequence_fallback = false;
         if (consequence_policy == .discard) try self.drainConsequences();
         if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
-        if (!self.terminal.scalarInputBlocked()) {
+        if (!self.terminal.inputBlocked()) {
             self.collectReplies() catch |failure| switch (failure) {
                 error.WriteQueueFull => return self.serviceResult(
                     revision_before,
@@ -1491,7 +1491,7 @@ const State = struct {
             &synchronized_output,
             &retained_consequence_fallback,
         );
-        if (self.scalar_retry_at == null and self.terminal.replyBytes().len == 0 and
+        if (self.input_retry_at == null and self.terminal.replyBytes().len == 0 and
             self.read_start == self.read_end and readable and !self.stream_closed)
         {
             var read_calls: u8 = 0;
@@ -1546,17 +1546,17 @@ const State = struct {
         synchronized_output: *Terminal.SynchronizedOutputProgress,
         retained_consequence_fallback: *bool,
     ) ServiceError!void {
-        if (self.scalar_retry_at) |deadline| if (timestamp_ns < deadline) return;
-        while (self.read_start < self.read_end or self.terminal.scalarInputBlocked()) {
-            const pending_scalar = self.terminal.scalarInputBlocked();
-            if (!pending_scalar) {
+        if (self.input_retry_at) |deadline| if (timestamp_ns < deadline) return;
+        while (self.read_start < self.read_end or self.terminal.inputBlocked()) {
+            const pending_input = self.terminal.inputBlocked();
+            if (!pending_input) {
                 self.collectReplies() catch |failure| switch (failure) {
                     error.WriteQueueFull => return,
                 };
             }
             // A retained scalar precedes all unread bytes and may be retried
             // even when a later reply is waiting behind an active paste.
-            const bytes = if (pending_scalar) &.{} else self.reads[self.read_start..self.read_end];
+            const bytes = if (pending_input) &.{} else self.reads[self.read_start..self.read_end];
             const progress = if (consequence_policy == .retain)
                 try self.terminal.feedAtServiceBoundaryRelievingConsequences(bytes, timestamp_ns, relieveConsequencePressure)
             else
@@ -1568,12 +1568,12 @@ const State = struct {
             retained_consequence_fallback.* =
                 retained_consequence_fallback.* or progress.consequence_pressure_relieved;
             std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
-            if (progress.scalar_blocked) |failure| {
+            if (progress.input_blocked) |failure| {
                 if (failure == error.ScalarCapacity) return error.ScalarCapacity;
-                self.scalar_retry_at = timestamp_ns +| scalar_retry_ns;
+                self.input_retry_at = timestamp_ns +| input_retry_ns;
                 return;
             }
-            self.scalar_retry_at = null;
+            self.input_retry_at = null;
             if (consequence_policy == .discard) try self.drainConsequences();
             self.collectReplies() catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
@@ -1608,7 +1608,7 @@ const State = struct {
             .child_exit = self.child_exit,
             .write_pending = self.writes.count != 0,
             .animation_wait_ms = animation.next_ms,
-            .scalar_retry_wait_ms = if (self.scalar_retry_at) |deadline| retry: {
+            .input_retry_wait_ms = if (self.input_retry_at) |deadline| retry: {
                 const remaining = deadline -| timestamp_ns;
                 const ms = remaining / std.time.ns_per_ms + @intFromBool(remaining % std.time.ns_per_ms != 0);
                 break :retry @intCast(@min(ms, std.math.maxInt(u32)));
@@ -1902,7 +1902,7 @@ fn pasteTestState() !State {
     state.paste = .{};
     state.read_start = 0;
     state.read_end = 0;
-    state.scalar_retry_at = null;
+    state.input_retry_at = null;
     return state;
 }
 
@@ -3829,22 +3829,22 @@ test "scalar allocation pressure retains PTY suffix and retries without spinning
     state.read_end = used;
     failing.fail_index = failing.alloc_index;
     const blocked = try state.service(false, false, 1, .discard);
-    try std.testing.expectEqual(@as(?u32, 100), blocked.scalar_retry_wait_ms);
-    try std.testing.expect(scalarInputBlocked(value));
+    try std.testing.expectEqual(@as(?u32, 100), blocked.input_retry_wait_ms);
+    try std.testing.expect(inputBlocked(value));
     try std.testing.expect(state.read_start > 0 and state.read_start < state.read_end);
     try std.testing.expect(!bufferedOutputRunnable(value));
-    try std.testing.expectError(error.ScalarInputPending, resize(value, 1, 511));
+    try std.testing.expectError(error.InputPending, resize(value, 1, 511));
     const held_start = state.read_start;
-    const still_blocked = try state.service(false, false, scalar_retry_ns + 1, .discard);
-    try std.testing.expectEqual(@as(?u32, 100), still_blocked.scalar_retry_wait_ms);
+    const still_blocked = try state.service(false, false, input_retry_ns + 1, .discard);
+    try std.testing.expectEqual(@as(?u32, 100), still_blocked.input_retry_wait_ms);
     try std.testing.expectEqual(held_start, state.read_start);
     failing.fail_index = std.math.maxInt(usize);
-    const early = try state.service(false, false, 2 * scalar_retry_ns, .discard);
-    try std.testing.expectEqual(@as(?u32, 1), early.scalar_retry_wait_ms);
+    const early = try state.service(false, false, 2 * input_retry_ns, .discard);
+    try std.testing.expectEqual(@as(?u32, 1), early.input_retry_wait_ms);
     try std.testing.expectEqual(held_start, state.read_start);
-    const resumed = try state.service(false, false, 2 * scalar_retry_ns + 1, .discard);
-    try std.testing.expectEqual(@as(?u32, null), resumed.scalar_retry_wait_ms);
-    try std.testing.expect(!scalarInputBlocked(value));
+    const resumed = try state.service(false, false, 2 * input_retry_ns + 1, .discard);
+    try std.testing.expectEqual(@as(?u32, null), resumed.input_retry_wait_ms);
+    try std.testing.expect(!inputBlocked(value));
     try std.testing.expectEqual(@as(usize, 0), state.read_end);
     const view = terminal(value).semanticView(0);
     const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
@@ -3881,14 +3881,14 @@ test "scalar retry runs when failure consumes the final PTY byte" {
     state.read_end = 2;
     failing.fail_index = failing.alloc_index;
     const blocked = try state.service(false, false, 10, .discard);
-    try std.testing.expectEqual(@as(?u32, 100), blocked.scalar_retry_wait_ms);
+    try std.testing.expectEqual(@as(?u32, 100), blocked.input_retry_wait_ms);
     try std.testing.expectEqual(state.read_end, state.read_start);
-    try std.testing.expect(scalarInputBlocked(value));
+    try std.testing.expect(inputBlocked(value));
     failing.fail_index = std.math.maxInt(usize);
-    const resumed = try state.service(false, false, 10 + scalar_retry_ns, .discard);
-    try std.testing.expectEqual(@as(?u32, null), resumed.scalar_retry_wait_ms);
+    const resumed = try state.service(false, false, 10 + input_retry_ns, .discard);
+    try std.testing.expectEqual(@as(?u32, null), resumed.input_retry_wait_ms);
     try std.testing.expect(resumed.changed);
-    try std.testing.expect(!scalarInputBlocked(value));
+    try std.testing.expect(!inputBlocked(value));
     try std.testing.expectEqual(@as(usize, 0), state.read_start);
     try std.testing.expectEqual(@as(usize, 0), state.read_end);
     const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304 };
@@ -3912,11 +3912,11 @@ test "real PTY output resumes after transient scalar allocation failure" {
     var completed = false;
     for (0..3000) |attempt| {
         const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
-        if (turn.scalar_retry_wait_ms != null) {
+        if (turn.input_retry_wait_ms != null) {
             saw_block = true;
             failing.fail_index = std.math.maxInt(usize);
         }
-        if (saw_block and !scalarInputBlocked(value)) {
+        if (saw_block and !inputBlocked(value)) {
             const view = terminal(value).semanticView(0);
             if (view.cellAt(0, 511) == 'X') {
                 completed = true;
@@ -3959,18 +3959,18 @@ test "pending scalar retries ahead of a reply fenced by paste" {
     state.read_end = used;
     failing.fail_index = failing.alloc_index;
     const blocked = try state.service(false, false, 1, .retain);
-    try std.testing.expectEqual(@as(?u32, 100), blocked.scalar_retry_wait_ms);
+    try std.testing.expectEqual(@as(?u32, 100), blocked.input_retry_wait_ms);
     const held_start = state.read_start;
     failing.fail_index = std.math.maxInt(usize);
     try std.testing.expect(try state.terminal.replyClipboard(request, ""));
     try std.testing.expect(state.terminal.replyBytes().len != 0);
-    const scalar_resumed = try state.service(false, false, 1 + scalar_retry_ns, .retain);
-    try std.testing.expectEqual(@as(?u32, null), scalar_resumed.scalar_retry_wait_ms);
-    try std.testing.expect(!scalarInputBlocked(value));
+    const scalar_resumed = try state.service(false, false, 1 + input_retry_ns, .retain);
+    try std.testing.expectEqual(@as(?u32, null), scalar_resumed.input_retry_wait_ms);
+    try std.testing.expect(!inputBlocked(value));
     try std.testing.expectEqual(held_start, state.read_start);
     try std.testing.expect(!state.outputRunnable());
     try state.cancelPaste(paste);
-    const finished = try state.service(false, false, 2 + scalar_retry_ns, .retain);
+    const finished = try state.service(false, false, 2 + input_retry_ns, .retain);
     try std.testing.expect(finished.changed);
     try std.testing.expectEqual(@as(usize, 0), state.read_end);
     try std.testing.expectEqual(@as(u21, 'X'), terminal(value).semanticView(0).cellAt(0, 511));
@@ -3991,11 +3991,11 @@ test "real PTY REP resumes remaining graphemes once after allocation failure" {
     var completed = false;
     for (0..3000) |attempt| {
         const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
-        if (turn.scalar_retry_wait_ms != null) {
+        if (turn.input_retry_wait_ms != null) {
             saw_block = true;
             failing.fail_index = std.math.maxInt(usize);
         }
-        if (saw_block and !scalarInputBlocked(value)) {
+        if (saw_block and !inputBlocked(value)) {
             const view = terminal(value).semanticView(0);
             if (view.cellAt(0, 501) == 'X') {
                 completed = true;
@@ -4028,7 +4028,7 @@ test "real PTY OSC 66 resumes its retained payload after allocation failure" {
     var captured = false;
     for (0..3000) |attempt| {
         const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
-        try std.testing.expect(turn.scalar_retry_wait_ms == null);
+        try std.testing.expect(turn.input_retry_wait_ms == null);
         if (state.terminal.stream_state.parser.osc.buffer.items.len == 4 + 450 * 17) {
             captured = true;
             break;
@@ -4042,11 +4042,11 @@ test "real PTY OSC 66 resumes its retained payload after allocation failure" {
     var completed = false;
     for (0..3000) |attempt| {
         const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
-        if (turn.scalar_retry_wait_ms != null) {
+        if (turn.input_retry_wait_ms != null) {
             saw_block = true;
             failing.fail_index = std.math.maxInt(usize);
         }
-        if (saw_block and !scalarInputBlocked(value) and terminal(value).semanticView(0).cellAt(0, 450) == 'X') {
+        if (saw_block and !inputBlocked(value) and terminal(value).semanticView(0).cellAt(0, 450) == 'X') {
             completed = true;
             break;
         }

@@ -107,9 +107,9 @@ typedef struct hi_launch {
 } hi_launch;
 /* All fields are initialized on entry when the output pointer is non-null.
  * exit_kind: 0=not observed, 1=normal code, 2=signal.
- * animation_wait_present and scalar_retry_wait_present distinguish no deadline
- * from a zero-ms deadline. While scalar_blocked, do not poll for PTY reads or
- * mutate terminal geometry; service again at scalar_retry_wait_ms. Buffered
+ * animation_wait_present and input_retry_wait_present distinguish no deadline
+ * from a zero-ms deadline. While input_blocked, do not poll for PTY reads or
+ * mutate terminal geometry; service again at input_retry_wait_ms. Buffered
  * output remains retained and must not force a zero-timeout busy loop.
  * descriptor_kind: 1=borrowed POSIX fd; never close it.
  * No clocks, waits, wake sources, graphics backend or host queue are owned by this API. */
@@ -121,8 +121,8 @@ typedef struct hi_service {
     uint8_t buffered_output_pending, animation_wait_present, exit_kind, exit_value;
     uint8_t sync_ended, sync_trailing_effect, retained_fallback, descriptor_kind;
     uint8_t reserved[4];
-    uint32_t scalar_retry_wait_ms;
-    uint8_t scalar_retry_wait_present, scalar_blocked, reserved_retry[2];
+    uint32_t input_retry_wait_ms;
+    uint8_t input_retry_wait_present, input_blocked, reserved_retry[2];
 } hi_service;
 /* Live C handles come only from hi_create and are invalid
  * after hi_destroy. Direct Zig Instance pointers are a different opaque family

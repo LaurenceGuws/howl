@@ -89,10 +89,10 @@ Explicit signals and geometry remain separately available.
 Poll writable readiness while `writePending`. Use `bufferedOutputRunnable` to
 schedule immediate buffered output: `bufferedOutputPending` reports storage
 only and may be waiting for reply space, paste completion, or scalar storage.
-When `scalarInputBlocked` is true, suppress PTY read polling and wait for the
-service result's `scalar_retry_wait_ms` before retrying, even if no bytes remain
+When `inputBlocked` is true, suppress PTY read polling and wait for the
+service result's `input_retry_wait_ms` before retrying, even if no bytes remain
 buffered. Defer geometry changes until the pending scalar is applied; resizing
-returns `ScalarInputPending` while blocked. The foreign interface exposes atomic
+returns `InputPending` while blocked. The foreign interface exposes atomic
 paste; streaming adds no wire operation.
 
 ## Native foreign interface

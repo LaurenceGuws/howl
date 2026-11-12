@@ -52,8 +52,8 @@ Output records are zeroed before later validation/work. Operational service fail
 may follow partial canonical progress; zero output is not a rollback promise.
 The caller handles that failure explicitly rather than inferring a successful cut.
 
-When `scalar_blocked` is set, retain buffered output and do not poll the PTY for
-read readiness. Wait for `scalar_retry_wait_ms` when its presence flag is set,
+When `input_blocked` is set, retain buffered output and do not poll the PTY for
+read readiness. Wait for `input_retry_wait_ms` when its presence flag is set,
 then service the owner again, including when no PTY bytes remain buffered.
 Continue servicing pending writes. Do not force a zero timeout solely because
 `buffered_output_pending` is true during this pause. `hi_resize` returns

@@ -809,7 +809,7 @@ const State = struct {
         while (!self.stopRequested()) {
             // Blocked scalar work still targets the current screen and cursor.
             // Defer queued mutations until it has been applied.
-            const scalar_was_blocked = instance.scalarInputBlocked(self.value);
+            const scalar_was_blocked = instance.inputBlocked(self.value);
             if (!scalar_was_blocked) {
                 while (self.pop()) |work| switch (work) {
                     .intent => |task| {
@@ -841,18 +841,18 @@ const State = struct {
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
             // Queued work received while blocked must not wait for another wake.
-            if (scalar_was_blocked and !instance.scalarInputBlocked(self.value)) continue;
+            if (scalar_was_blocked and !instance.inputBlocked(self.value)) continue;
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.gate.waitMs(now),
                 if (self.store_busy and self.visible.load(.acquire) and self.credit.load(.acquire)) @as(i32, 1) else null,
                 if (result.animation_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
-                if (result.scalar_retry_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
+                if (result.input_retry_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
             if (instance.bufferedOutputRunnable(self.value) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
-            const can_read = !result.stream_closed and !instance.scalarInputBlocked(self.value);
+            const can_read = !result.stream_closed and !instance.inputBlocked(self.value);
             const can_write = result.write_pending or instance.writePending(self.value);
             var fds = [_]posix.pollfd{
                 .{

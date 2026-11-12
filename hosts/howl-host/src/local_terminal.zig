@@ -66,8 +66,8 @@ pub const PollState = struct {
     stream_closed: bool,
     write_pending: bool,
     read_pending: bool,
-    scalar_blocked: bool,
-    scalar_retry_wait_ms: ?u32,
+    input_blocked: bool,
+    input_retry_wait_ms: ?u32,
     animation_wait_ms: ?u32,
 };
 
@@ -89,7 +89,7 @@ pub const Owner = struct {
     child_exit: ?instance.ChildExit = null,
     write_pending: bool = false,
     animation_wait_ms: ?u32 = null,
-    scalar_retry_wait_ms: ?u32 = null,
+    input_retry_wait_ms: ?u32 = null,
     publication: Publication,
     font: presentation.FontPaths,
     history: scrollback.State = .{},
@@ -139,8 +139,8 @@ pub const Owner = struct {
             .stream_closed = self.stream_closed,
             .write_pending = self.write_pending,
             .read_pending = instance.bufferedOutputRunnable(self.value),
-            .scalar_blocked = instance.scalarInputBlocked(self.value),
-            .scalar_retry_wait_ms = self.scalar_retry_wait_ms,
+            .input_blocked = instance.inputBlocked(self.value),
+            .input_retry_wait_ms = self.input_retry_wait_ms,
             .animation_wait_ms = self.animation_wait_ms,
         };
     }
@@ -183,7 +183,7 @@ pub const Owner = struct {
         if (serviced.child_exit) |value| self.child_exit = value;
         self.write_pending = serviced.write_pending;
         self.animation_wait_ms = serviced.animation_wait_ms;
-        self.scalar_retry_wait_ms = serviced.scalar_retry_wait_ms;
+        self.input_retry_wait_ms = serviced.input_retry_wait_ms;
         if ((publish or lifecycle_changed) and
             !self.history.active())
         {

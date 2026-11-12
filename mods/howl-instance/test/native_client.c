@@ -15,15 +15,15 @@ static uint64_t now_ns(void) {
 }
 static struct pollfd service_fd(const hi_service *state) {
     struct pollfd fd = {state->descriptor, 0, 0};
-    if (!state->scalar_blocked) fd.events |= POLLIN | POLLHUP;
+    if (!state->input_blocked) fd.events |= POLLIN | POLLHUP;
     if (state->write_pending) fd.events |= POLLOUT;
     if (!fd.events) fd.fd = -1;
     return fd;
 }
 static int service_delay(const hi_service *state, int maximum_ms) {
-    if (state->scalar_blocked) {
-        if (state->scalar_retry_wait_present && state->scalar_retry_wait_ms < (uint32_t)maximum_ms)
-            return (int)state->scalar_retry_wait_ms;
+    if (state->input_blocked) {
+        if (state->input_retry_wait_present && state->input_retry_wait_ms < (uint32_t)maximum_ms)
+            return (int)state->input_retry_wait_ms;
         return maximum_ms;
     }
     return state->buffered_output_pending ? 0 : maximum_ms;
@@ -31,9 +31,9 @@ static int service_delay(const hi_service *state, int maximum_ms) {
 static int scheduling_contract(void) {
     hi_service state = {0};
     state.descriptor = 7;
-    state.scalar_blocked = 1;
-    state.scalar_retry_wait_present = 1;
-    state.scalar_retry_wait_ms = 100;
+    state.input_blocked = 1;
+    state.input_retry_wait_present = 1;
+    state.input_retry_wait_ms = 100;
     state.buffered_output_pending = 1;
     struct pollfd fd = service_fd(&state);
     REQUIRE(fd.fd == -1 && fd.events == 0);
@@ -41,9 +41,9 @@ static int scheduling_contract(void) {
     state.write_pending = 1;
     fd = service_fd(&state);
     REQUIRE(fd.fd == 7 && fd.events == POLLOUT);
-    state.scalar_retry_wait_ms = 0;
+    state.input_retry_wait_ms = 0;
     REQUIRE(service_delay(&state, 1000) == 0);
-    state.scalar_blocked = 0;
+    state.input_blocked = 0;
     fd = service_fd(&state);
     REQUIRE(fd.fd == 7 && (fd.events & POLLIN) != 0);
     REQUIRE(service_delay(&state, 1000) == 0);
@@ -72,7 +72,7 @@ static int retained_requests(hi_presentation *store, const hi_instance_config *c
     REQUIRE(hi_create(HI_ABI_VERSION,&launch,store,config,&owner) == HI_OK);
     hi_service state;
     REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,0,0,now_ns(),&state) == HI_OK);
-    REQUIRE(state.scalar_blocked == 0 && state.scalar_retry_wait_present == 0);
+    REQUIRE(state.input_blocked == 0 && state.input_retry_wait_present == 0);
     hvt_request first={0};
     const uint64_t deadline=now_ns()+UINT64_C(5000000000);
     while (now_ns() < deadline) {

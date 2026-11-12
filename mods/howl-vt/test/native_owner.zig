@@ -12,8 +12,8 @@ fn feedAll(value: *owner.Owner, bytes: []const u8) !void {
     var offset: usize = 0;
     while (offset < bytes.len) {
         const progress = try owner.feed(value, bytes[offset..], 17);
-        if (progress.scalar_block == c.HVT_SCALAR_OUT_OF_MEMORY) return error.OutOfMemory;
-        if (progress.scalar_block == c.HVT_SCALAR_CAPACITY) return error.ScalarCapacity;
+        if (progress.input_block == c.HVT_INPUT_OUT_OF_MEMORY) return error.OutOfMemory;
+        if (progress.input_block == c.HVT_INPUT_SCALAR_CAPACITY) return error.ScalarCapacity;
         try std.testing.expect(progress.consumed > 0 and progress.consumed <= bytes.len - offset);
         offset += progress.consumed;
     }
@@ -563,15 +563,15 @@ test "native service reports pending scalar and exact unconsumed suffix" {
     length += 1;
     failing.fail_index = failing.alloc_index;
     const first = try owner.feed(value, payload[0..length], 1);
-    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_OUT_OF_MEMORY), first.scalar_block);
+    try std.testing.expectEqual(@as(u8, c.HVT_INPUT_OUT_OF_MEMORY), first.input_block);
     try std.testing.expect(first.consumed > 0 and first.consumed < length);
-    try std.testing.expectError(error.ScalarInputPending, owner.resize(value, 1, 511, 8, 16));
+    try std.testing.expectError(error.InputPending, owner.resize(value, 1, 511, 8, 16));
     const stalled = try owner.feed(value, payload[first.consumed..length], 2);
     try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
-    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_OUT_OF_MEMORY), stalled.scalar_block);
+    try std.testing.expectEqual(@as(u8, c.HVT_INPUT_OUT_OF_MEMORY), stalled.input_block);
     failing.fail_index = std.math.maxInt(usize);
     const resumed = try owner.feed(value, payload[first.consumed..length], 3);
-    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_READY), resumed.scalar_block);
+    try std.testing.expectEqual(@as(u8, c.HVT_INPUT_READY), resumed.input_block);
     try std.testing.expectEqual(length - first.consumed, resumed.consumed);
     const view = owner.observation(value).semanticView(0);
     const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
@@ -584,11 +584,11 @@ test "native service reports pending scalar and exact unconsumed suffix" {
     defer owner.destroy(reset_owner);
     failing.fail_index = failing.alloc_index;
     const pending_before_reset = try owner.feed(reset_owner, payload[0..length], 4);
-    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_OUT_OF_MEMORY), pending_before_reset.scalar_block);
+    try std.testing.expectEqual(@as(u8, c.HVT_INPUT_OUT_OF_MEMORY), pending_before_reset.input_block);
     owner.reset(reset_owner);
     failing.fail_index = std.math.maxInt(usize);
     const after_reset = try owner.feed(reset_owner, "X", 5);
-    try std.testing.expectEqual(@as(u8, c.HVT_SCALAR_READY), after_reset.scalar_block);
+    try std.testing.expectEqual(@as(u8, c.HVT_INPUT_READY), after_reset.input_block);
     try std.testing.expectEqual(@as(usize, 1), after_reset.consumed);
     try std.testing.expectEqual(@as(u21, 'X'), owner.observation(reset_owner).semanticView(0).cellAt(0, 0));
 }

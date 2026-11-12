@@ -245,13 +245,13 @@ pub const StringCapture = struct {
 };
 
 /// Reports a scalar that cannot yet be retained.
-pub const ScalarBlock = error{ OutOfMemory, ScalarCapacity };
+pub const InputBlock = error{ OutOfMemory, ScalarCapacity };
 /// Owns decoded scalar work until it can continue without replaying bytes.
-pub const PendingScalar = struct {
+pub const PendingInput = struct {
     // Sized payload borrows the OSC parser buffer. No parser input may run
     // until the pending operation completes or is explicitly reset.
     work: union(enum) { codepoint: u21, repeat: u16, sized_text: struct { payload: []const u8, offset: usize } },
-    failure: ScalarBlock,
+    failure: InputBlock,
 };
 
 /// Owns parser allocation and both fragmented-control captures for one terminal lifetime.
@@ -262,7 +262,7 @@ pub const State = struct {
     parser: parser.Parser,
     dcs: DcsCapture,
     string: StringCapture,
-    pending_scalar: ?PendingScalar = null,
+    pending_input: ?PendingInput = null,
 
     /// Initializes parser storage and inactive fragmented-control captures.
     pub fn init(allocator: std.mem.Allocator) InitError!State {

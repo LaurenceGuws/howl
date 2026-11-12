@@ -67,11 +67,11 @@ static int turn(hi_instance *owner) {
     hi_service state;
     if (hi_service_turn(owner,0,0,now_ns(),&state) != HI_OK) return 1;
     struct pollfd fd={state.descriptor,0,0};
-    if (!state.scalar_blocked) fd.events|=POLLIN|POLLHUP;
+    if (!state.input_blocked) fd.events|=POLLIN|POLLHUP;
     if (state.write_pending) fd.events|=POLLOUT;
     if (!fd.events) fd.fd=-1;
-    int timeout=state.scalar_blocked ?
-        (state.scalar_retry_wait_present && state.scalar_retry_wait_ms<5 ? (int)state.scalar_retry_wait_ms : 5) :
+    int timeout=state.input_blocked ?
+        (state.input_retry_wait_present && state.input_retry_wait_ms<5 ? (int)state.input_retry_wait_ms : 5) :
         (state.buffered_output_pending ? 0 : 5);
     int ready=poll(&fd,1,timeout);
     if (ready < 0) return errno == EINTR ? 0 : 1;

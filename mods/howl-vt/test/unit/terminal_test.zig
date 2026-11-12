@@ -1128,7 +1128,7 @@ test "whole-slice feed retains a split scalar after allocation failure" {
     try std.testing.expectError(error.OutOfMemory, terminal.feed("\x81"));
     const progress = try terminal.feedAtServiceBoundary("", 1);
     try std.testing.expectEqual(@as(usize, 0), progress.consumed);
-    try std.testing.expect(progress.scalar_blocked == null);
+    try std.testing.expect(progress.input_blocked == null);
     const recovered = screen.cellScalarsAt(0, col, &actual);
     try std.testing.expectEqual(prior_len + 1, recovered.len);
     try std.testing.expectEqualSlices(u32, prior[0..prior_len], recovered[0..prior_len]);
@@ -1150,7 +1150,7 @@ test "service feed retains split scalar on allocation failure" {
     outer: for (0..511) |col| {
         const base = try terminal.feedAtServiceBoundary("e", 1);
         try std.testing.expectEqual(@as(usize, 1), base.consumed);
-        try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), base.scalar_blocked);
+        try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), base.input_blocked);
         for (0..8) |_| {
             const screen = &terminal.screen_state.primary;
             var buffer: [24]u32 = undefined;
@@ -1161,7 +1161,7 @@ test "service feed retains split scalar on allocation failure" {
             try std.testing.expectEqual(@as(usize, 1), first.consumed);
             const last = try terminal.feedAtServiceBoundary("\x81", 1);
             try std.testing.expectEqual(@as(usize, 1), last.consumed);
-            if (last.scalar_blocked) |reason| {
+            if (last.input_blocked) |reason| {
                 try std.testing.expectEqual(error.OutOfMemory, reason);
                 failed_col = @intCast(col);
                 break :outer;
@@ -1174,19 +1174,19 @@ test "service feed retains split scalar on allocation failure" {
     try std.testing.expectEqualSlices(u32, prior[0..prior_len], screen.cellScalarsAt(0, col, &actual));
     const still_blocked = try terminal.feedAtServiceBoundary("X", 2);
     try std.testing.expectEqual(@as(usize, 0), still_blocked.consumed);
-    try std.testing.expectEqual(error.OutOfMemory, still_blocked.scalar_blocked.?);
+    try std.testing.expectEqual(error.OutOfMemory, still_blocked.input_blocked.?);
     try std.testing.expectError(error.OutOfMemory, terminal.feed("X"));
-    try std.testing.expectError(error.ScalarInputPending, terminal.resize(1, 511));
+    try std.testing.expectError(error.InputPending, terminal.resize(1, 511));
     failing.fail_index = std.math.maxInt(usize);
     // The failed scalar may have ended exactly at the PTY read boundary.
     // Retrying with no new bytes must still commit it once.
     const resumed = try terminal.feedAtServiceBoundary("", 3);
     try std.testing.expectEqual(@as(usize, 0), resumed.consumed);
-    try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), resumed.scalar_blocked);
+    try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), resumed.input_blocked);
     try std.testing.expect(resumed.summary.stateChanged());
     const following = try terminal.feedAtServiceBoundary("X", 4);
     try std.testing.expectEqual(@as(usize, 1), following.consumed);
-    try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), following.scalar_blocked);
+    try std.testing.expectEqual(@as(?error{ OutOfMemory, ScalarCapacity }, null), following.input_blocked);
     const recovered = screen.cellScalarsAt(0, col, &actual);
     try std.testing.expectEqual(prior_len + 1, recovered.len);
     try std.testing.expectEqualSlices(u32, prior[0..prior_len], recovered[0..prior_len]);
@@ -1204,15 +1204,15 @@ test "service reports the per-grapheme limit without discarding the pending scal
     for (0..23) |_| try feed(terminal, "\xcc\x81");
     const blocked = try terminal.feedAtServiceBoundary("\xcc\x81X", 1);
     try std.testing.expectEqual(@as(usize, 2), blocked.consumed);
-    try std.testing.expectEqual(error.ScalarCapacity, blocked.scalar_blocked.?);
-    try std.testing.expect(terminal.scalarInputBlocked());
+    try std.testing.expectEqual(error.ScalarCapacity, blocked.input_blocked.?);
+    try std.testing.expect(terminal.inputBlocked());
     var actual: [24]u32 = undefined;
     try std.testing.expectEqual(@as(usize, 24), terminal.screen_state.primary.cellScalarsAt(0, 0, &actual).len);
     const stalled = try terminal.feedAtServiceBoundary("X", 2);
     try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
-    try std.testing.expectEqual(error.ScalarCapacity, stalled.scalar_blocked.?);
+    try std.testing.expectEqual(error.ScalarCapacity, stalled.input_blocked.?);
     terminal.hardReset();
-    try std.testing.expect(!terminal.scalarInputBlocked());
+    try std.testing.expect(!terminal.inputBlocked());
     try feed(terminal, "X");
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
 }
@@ -1230,15 +1230,15 @@ test "service resumes a partially applied REP without replaying earlier repetiti
     const bytes = "\x1b[500bX";
     const partial = try terminal.feedAtServiceBoundary(bytes, 1);
     try std.testing.expectEqual(bytes.len - 1, partial.consumed);
-    try std.testing.expectEqual(error.OutOfMemory, partial.scalar_blocked.?);
+    try std.testing.expectEqual(error.OutOfMemory, partial.input_blocked.?);
     try std.testing.expect(partial.summary.stateChanged());
     const held = try terminal.feedAtServiceBoundary(bytes[partial.consumed..], 2);
     try std.testing.expectEqual(@as(usize, 0), held.consumed);
-    try std.testing.expectEqual(error.OutOfMemory, held.scalar_blocked.?);
+    try std.testing.expectEqual(error.OutOfMemory, held.input_blocked.?);
     failing.fail_index = std.math.maxInt(usize);
     const resumed = try terminal.feedAtServiceBoundary(bytes[partial.consumed..], 3);
     try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
-    try std.testing.expect(resumed.scalar_blocked == null);
+    try std.testing.expect(resumed.input_blocked == null);
     var expected: [24]u32 = @splat(0x301);
     expected[0] = 'e';
     var actual: [24]u32 = undefined;
@@ -1273,16 +1273,16 @@ test "OSC 66 service resumes from the retained parser payload under scalar press
         const suffix = [_]u8{ last, 'X' };
         const blocked = try terminal.feedAtServiceBoundary(&suffix, 1);
         try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
-        try std.testing.expectEqual(error.OutOfMemory, blocked.scalar_blocked.?);
+        try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
         try std.testing.expect(blocked.summary.stateChanged());
-        try std.testing.expectError(error.ScalarInputPending, terminal.resize(1, 511));
+        try std.testing.expectError(error.InputPending, terminal.resize(1, 511));
         const still_blocked = try terminal.feedAtServiceBoundary(suffix[1..], 2);
         try std.testing.expectEqual(@as(usize, 0), still_blocked.consumed);
-        try std.testing.expectEqual(error.OutOfMemory, still_blocked.scalar_blocked.?);
+        try std.testing.expectEqual(error.OutOfMemory, still_blocked.input_blocked.?);
         failing.fail_index = std.math.maxInt(usize);
         const resumed = try terminal.feedAtServiceBoundary(suffix[1..], 3);
         try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
-        try std.testing.expect(resumed.scalar_blocked == null);
+        try std.testing.expect(resumed.input_blocked == null);
         const expected = [_]u32{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
         var actual: [24]u32 = undefined;
         const screen = &terminal.screen_state.primary;

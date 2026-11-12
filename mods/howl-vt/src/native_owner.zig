@@ -138,11 +138,11 @@ pub fn feed(value: *Owner, bytes: []const u8, timestamp: u64) Error!c.hvt_feed_p
         .trailing_effect = @intFromBool(progress.summary.synchronized_output.trailing_effect),
         .held = @intFromBool(terminal.synchronizedOutput()),
         .reserved = 0,
-        .scalar_block = if (progress.scalar_blocked) |failure| switch (failure) {
-            error.OutOfMemory => c.HVT_SCALAR_OUT_OF_MEMORY,
-            error.ScalarCapacity => c.HVT_SCALAR_CAPACITY,
-        } else c.HVT_SCALAR_READY,
-        .reserved_scalar = @splat(0),
+        .input_block = if (progress.input_blocked) |failure| switch (failure) {
+            error.OutOfMemory => c.HVT_INPUT_OUT_OF_MEMORY,
+            error.ScalarCapacity => c.HVT_INPUT_SCALAR_CAPACITY,
+        } else c.HVT_INPUT_READY,
+        .reserved_input = @splat(0),
     };
 }
 

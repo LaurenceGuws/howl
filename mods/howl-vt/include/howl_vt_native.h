@@ -240,8 +240,8 @@ enum hvt_status {
     HVT_REQUEST_MISMATCH=9, HVT_INTERNAL=10, /* reserved; not a canonical error catch-all */
     HVT_BUSY=11
 };
-enum hvt_scalar_block {
-    HVT_SCALAR_READY=0, HVT_SCALAR_OUT_OF_MEMORY=1, HVT_SCALAR_CAPACITY=2
+enum hvt_input_block {
+    HVT_INPUT_READY=0, HVT_INPUT_OUT_OF_MEMORY=1, HVT_INPUT_SCALAR_CAPACITY=2
 };
 enum hvt_mutation {
     HVT_MUTATION_CURSOR=1, HVT_MUTATION_TEXT=2, HVT_MUTATION_VIEWPORT=4,
@@ -266,7 +266,7 @@ typedef struct hvt_feed_progress {
     size_t consumed;
     uint32_t mutations;
     uint8_t synchronized_ended, trailing_effect, held, reserved;
-    uint8_t scalar_block, reserved_scalar[7];
+    uint8_t input_block, reserved_input[7];
 } hvt_feed_progress;
 typedef struct hvt_animation {
     uint32_t next_ms;
@@ -347,7 +347,7 @@ void hvt_output_release(hvt_output **);
 
 
 /* Feed one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
- * On OK, consumed is exact; continue at that offset. If scalar_block is nonzero,
+ * On OK, consumed is exact; continue at that offset. If input_block is nonzero,
  * decoded scalar work is retained but not fully applied (including remaining
  * REP operations or OSC 66 clusters). Do not mutate geometry or
  * replay consumed bytes. After releasing memory pressure, call hvt_feed again
