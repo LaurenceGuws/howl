@@ -4075,13 +4075,25 @@ pub const Screen = struct {
                 // zig-audit: acknowledge panic
                 // reason: Accepted cold history must decode the exact scalar count owned by its canonical lead cell.
                 @panic("accepted cold history scalar mismatch");
-            plans[col] = visible_scalars.planFirstFit(
-                count,
-                released,
-                outgoing,
-                plans[0..col],
-                incoming[0..col],
-            ) catch return false;
+            while (true) {
+                plans[col] = visible_scalars.planFirstFit(
+                    count,
+                    released,
+                    outgoing,
+                    plans[0..col],
+                    incoming[0..col],
+                ) catch |err| switch (err) {
+                    error.InvalidRange => return false,
+                    error.ScalarCapacity => {
+                        // Planning has not changed cells or history. Add a
+                        // page and retry this range; failure leaves the row
+                        // available for a later restore attempt.
+                        visible_scalars.growOnePage() catch return false;
+                        continue;
+                    },
+                };
+                break;
+            }
         }
         return true;
     }
@@ -8485,4 +8497,49 @@ test "growing OSC 66 resumes at the first uncommitted cluster" {
     const expected = [_]u32{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306, 0x307, 0x308 };
     var actual: [scalar_storage.maximum_scalars]u32 = undefined;
     for (0..450) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
+}
+
+test "history restore grows scalar storage for accepted dense row" {
+    const cols: u16 = 102;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 2, cols, 2);
+    defer screen.deinit(failing.allocator());
+    const tail: [scalar_storage.maximum_tail_scalars]u32 = @splat(0x301);
+    var value = blank_cell;
+    value.codepoint = 'e';
+    value.combining = .{ 0x301, 0x301, 0x301 };
+    value.combining_len = scalar_storage.maximum_scalars - 1;
+    const source = screen.rowStart(1);
+    for (0..cols) |col| {
+        try screen.scalars.?.setGrowing(source + col, 0, &tail);
+        screen.cells.?[source + col] = value;
+    }
+    screen.storeHistoryRow(1);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    screen.clearRowRange(1, 0, cols);
+    const retained = screen.rowStart(0);
+    for (0..100) |col| {
+        try screen.scalars.?.setGrowing(retained + col, 0, &tail);
+        screen.cells.?[retained + col] = value;
+    }
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expect(!screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    for (0..100) |col| {
+        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+        const actual = screen.cellScalarsAt(0, @intCast(col), &scalars);
+        try std.testing.expectEqual(@as(usize, scalar_storage.maximum_scalars), actual.len);
+        try std.testing.expectEqual(@as(u32, 'e'), actual[0]);
+        for (actual[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
+    }
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    for (0..cols) |col| {
+        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+        const actual = screen.cellScalarsAt(0, @intCast(col), &scalars);
+        try std.testing.expectEqual(@as(usize, scalar_storage.maximum_scalars), actual.len);
+        try std.testing.expectEqual(@as(u32, 'e'), actual[0]);
+        for (actual[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
+    }
 }
