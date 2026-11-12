@@ -4058,14 +4058,19 @@ pub const Screen = struct {
         if (released + self.cols > visible.len)
             return false;
         @memset(plans, .none);
+        // Every outgoing cell will be released together before restoration.
+        // Include the whole row in every plan, not just earlier columns.
         var col: usize = 0;
         while (col < self.cols) : (col += 1) {
             outgoing[col] = visible[released + col].combining_len;
-            incoming[col] = self.historyCellAt(0, @intCast(col)).combining_len;
             if (!visible_scalars.validRange(released + col, outgoing[col]))
                 // zig-audit: acknowledge panic
                 // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("accepted history restore scalar mismatch");
+        }
+        col = 0;
+        while (col < self.cols) : (col += 1) {
+            incoming[col] = self.historyCellAt(0, @intCast(col)).combining_len;
             const count = @as(usize, incoming[col]) -|
                 (scalar_storage.inline_scalars - 1);
             if (count == 0) continue;
@@ -8542,4 +8547,37 @@ test "history restore grows scalar storage for accepted dense row" {
         try std.testing.expectEqual(@as(u32, 'e'), actual[0]);
         for (actual[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
     }
+}
+
+test "history restore reuses all outgoing row scalar ranges without allocating" {
+    const cols: u16 = 102;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 2, cols, 2);
+    defer screen.deinit(failing.allocator());
+    const tail: [scalar_storage.maximum_tail_scalars]u32 = @splat(0x301);
+    var value = blank_cell;
+    value.codepoint = 'e';
+    value.combining = .{ 0x301, 0x301, 0x301 };
+    value.combining_len = scalar_storage.maximum_scalars - 1;
+    const bottom = screen.rowStart(1);
+    try screen.scalars.?.setGrowing(bottom, 0, &tail);
+    screen.cells.?[bottom] = value;
+    screen.storeHistoryRow(1);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    screen.clearRowRange(1, 0, cols);
+    const top = screen.rowStart(0);
+    for (0..101) |col| {
+        try screen.scalars.?.setGrowing(top + col, 0, &tail);
+        screen.cells.?[top + col] = value;
+    }
+    try screen.scalars.?.setGrowing(bottom + 101, 0, &tail);
+    screen.cells.?[bottom + 101] = value;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+    const restored = screen.cellScalarsAt(0, 0, &actual);
+    try std.testing.expectEqual(@as(usize, scalar_storage.maximum_scalars), restored.len);
+    try std.testing.expectEqual(@as(u32, 'e'), restored[0]);
+    for (restored[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
 }
