@@ -8922,3 +8922,117 @@ test "chained graphic scroll reserves history before the first cursor move" {
     };
     for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.historyCellAt(0, @intCast(col)), screen.historyCellAt(0, @intCast(col)));
 }
+
+test "single-row scroll sequence matches bulk scroll across multicell boundaries" {
+    const Case = struct { top: u16, bottom: u16, count: u16, cluster_row: u16, partial_width: bool };
+    const cases = [_]Case{
+        .{ .top = 0, .bottom = 4, .count = 2, .cluster_row = 0, .partial_width = false },
+        .{ .top = 0, .bottom = 4, .count = 3, .cluster_row = 2, .partial_width = false },
+        .{ .top = 0, .bottom = 3, .count = 2, .cluster_row = 2, .partial_width = false },
+        .{ .top = 1, .bottom = 4, .count = 2, .cluster_row = 1, .partial_width = false },
+        .{ .top = 0, .bottom = 4, .count = 2, .cluster_row = 1, .partial_width = true },
+    };
+    for (cases) |case| {
+        var bulk = try Screen.initWithCellsAndHistory(std.testing.allocator, 5, 8, 8);
+        defer bulk.deinit(std.testing.allocator);
+        var single = try Screen.initWithCellsAndHistory(std.testing.allocator, 5, 8, 8);
+        defer single.deinit(std.testing.allocator);
+        for ([_]*Screen{ &bulk, &single }) |screen| {
+            for (0..5) |row| {
+                screen.cursor.setPositionByClient(@intCast(row), 0);
+                screen.wrap_pending = false;
+                screen.writeText("abcdef");
+            }
+            screen.cursor.setPositionByClient(case.cluster_row, 2);
+            screen.wrap_pending = false;
+            try std.testing.expect(screen.writeSizedText("s=2;X"));
+            if (case.partial_width) {
+                screen.left_right_margin_mode = true;
+                screen.left_margin = 1;
+                screen.right_margin = 6;
+            }
+            screen.cursor.setPositionByClient(4, 0);
+            screen.wrap_pending = false;
+        }
+        try std.testing.expect(bulk.scrollUpRegion(case.top, case.bottom, case.count));
+        for (0..case.count) |_| try std.testing.expect(try single.tryScrollUpRegionOne(case.top, case.bottom));
+        try std.testing.expectEqual(bulk.historyCount(), single.historyCount());
+        try std.testing.expectEqualDeep(bulk.cursor, single.cursor);
+        for (0..bulk.rows) |row| {
+            try std.testing.expectEqual(bulk.rowWrapped(@intCast(row)), single.rowWrapped(@intCast(row)));
+            for (0..bulk.cols) |col| try std.testing.expectEqualDeep(bulk.cellInfoAt(@intCast(row), @intCast(col)), single.cellInfoAt(@intCast(row), @intCast(col)));
+        }
+        for (0..bulk.historyCount()) |offset| for (0..bulk.cols) |col| try std.testing.expectEqualDeep(bulk.historyCellAt(@intCast(offset), @intCast(col)), single.historyCellAt(@intCast(offset), @intCast(col)));
+    }
+}
+
+test "repeated single scroll matches bulk across seeded small grids" {
+    var random = std.Random.DefaultPrng.init(0x756e6966696564);
+    for (0..256) |case_index| {
+        const top = random.random().uintLessThan(u16, 4);
+        const bottom = top + random.random().uintLessThan(u16, 4 - top);
+        const count = 1 + random.random().uintLessThan(u16, bottom - top + 1);
+        const scale: u16 = if (random.random().boolean()) 2 else 3;
+        const cluster_row = random.random().uintLessThan(u16, 5 - scale);
+        const cluster_col = random.random().uintLessThan(u16, 7 - scale);
+        const partial = random.random().boolean();
+        var bulk = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 6, 8);
+        defer bulk.deinit(std.testing.allocator);
+        var single = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 6, 8);
+        defer single.deinit(std.testing.allocator);
+        for ([_]*Screen{ &bulk, &single }) |screen| {
+            for (0..4) |row| {
+                screen.cursor.setPositionByClient(@intCast(row), 0);
+                screen.wrap_pending = false;
+                screen.current_attrs.bold = row % 2 == 0;
+                screen.writeText("abcde");
+            }
+            screen.cursor.setPositionByClient(cluster_row, cluster_col);
+            screen.wrap_pending = false;
+            try std.testing.expect(screen.writeSizedText(if (scale == 2) "s=2;X\u{0301}\u{0302}\u{0303}\u{0304}" else "s=3;X\u{0301}\u{0302}\u{0303}\u{0304}"));
+            if (partial) {
+                screen.left_right_margin_mode = true;
+                screen.left_margin = 1;
+                screen.right_margin = 4;
+            }
+            for (0..4) |row| screen.setRowWrapped(@intCast(row), (row + case_index) % 2 == 0);
+            screen.cursor.setPositionByClient(3, 0);
+            screen.wrap_pending = false;
+        }
+        // zig-audit: acknowledge discard
+        // reason: The oracle compares resulting cells and history, not this witness.
+        _ = bulk.scrollUpRegion(top, bottom, count);
+        for (0..count) |_| {
+            // zig-audit: acknowledge discard
+            // reason: The oracle compares resulting cells and history, not this witness.
+            _ = try single.tryScrollUpRegionOne(top, bottom);
+        }
+        std.testing.expectEqual(bulk.historyCount(), single.historyCount()) catch |err| {
+            std.debug.print("scroll case {d}: top={d} bottom={d} count={d} cluster={d},{d} scale={d} partial={}\\n", .{ case_index, top, bottom, count, cluster_row, cluster_col, scale, partial });
+            return err;
+        };
+        for (0..bulk.rows) |row| {
+            try std.testing.expectEqual(bulk.rowWrapped(@intCast(row)), single.rowWrapped(@intCast(row)));
+            try std.testing.expectEqual(bulk.lineGeometry(@intCast(row)), single.lineGeometry(@intCast(row)));
+            for (0..bulk.cols) |col| {
+                std.testing.expectEqualDeep(bulk.cellInfoAt(@intCast(row), @intCast(col)), single.cellInfoAt(@intCast(row), @intCast(col))) catch |err| {
+                    std.debug.print("scroll case {d}: top={d} bottom={d} count={d} cluster={d},{d} scale={d} partial={} at {d},{d}\\n", .{ case_index, top, bottom, count, cluster_row, cluster_col, scale, partial, row, col });
+                    return err;
+                };
+                var expected: [scalar_storage.maximum_scalars]u32 = undefined;
+                var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+                try std.testing.expectEqualSlices(u32, bulk.cellScalarsAt(@intCast(row), @intCast(col), &expected), single.cellScalarsAt(@intCast(row), @intCast(col), &actual));
+            }
+        }
+        for (0..bulk.historyCount()) |offset| {
+            try std.testing.expectEqual(bulk.historyRowWrapped(@intCast(offset)), single.historyRowWrapped(@intCast(offset)));
+            try std.testing.expectEqual(bulk.historyLineGeometry(@intCast(offset)), single.historyLineGeometry(@intCast(offset)));
+            for (0..bulk.cols) |col| {
+                try std.testing.expectEqualDeep(bulk.historyCellAt(@intCast(offset), @intCast(col)), single.historyCellAt(@intCast(offset), @intCast(col)));
+                var expected: [scalar_storage.maximum_scalars]u32 = undefined;
+                var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+                try std.testing.expectEqualSlices(u32, bulk.historyCellScalarsAt(@intCast(offset), @intCast(col), &expected), single.historyCellScalarsAt(@intCast(offset), @intCast(col), &actual));
+            }
+        }
+    }
+}
