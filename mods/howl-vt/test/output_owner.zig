@@ -39,7 +39,7 @@ test "public owner holds exact bytes across unsupported input retry and font rep
     const commands = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
     defer a.free(commands);
     try std.testing.expect(commands.len > 0 and pixels.len > 0);
-    try owner.feed("\x1b[H\x1b]66;s=2;X\x1b\\");
+    try owner.feed("\x1b[H\x1b]66;s=2:n=1:d=2;X\x1b\\");
     try std.testing.expectError(error.UnsupportedScene, owner.flush());
     try std.testing.expectEqual(@as(u21, 'X'), owner.observation().semanticView(0).cellAt(0, 0));
     try owner.feed("\x1b[0m\x1b[2J\x1b[HY");
@@ -685,4 +685,28 @@ test "single-row explicit-width OSC 66 remains drawable in history" {
     try std.testing.expectEqual(@as(u32, 1), held.snapshot.history_offset);
     try std.testing.expectEqual(@as(u21, 'X'), owner.observation().semanticView(1).cellAt(0, 0));
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+}
+
+test "scaled row strips repair together while a prior frame is held" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[H\x1b]66;s=2;X\x07");
+    try owner.flush();
+    const old = try owner.hold();
+    defer release(owner, old);
+    try std.testing.expect(old.snapshot.glyphs[0].len != 0);
+    try std.testing.expect(old.snapshot.glyphs[1].len != 0);
+    const top = try a.dupe(output.commands.Command, old.snapshot.glyphs[0]);
+    defer a.free(top);
+    const bottom = try a.dupe(output.commands.Command, old.snapshot.glyphs[1]);
+    defer a.free(bottom);
+    try owner.feed("\x1b[2;1H\x1b[2KZ");
+    try owner.flush();
+    try std.testing.expectEqualSlices(output.commands.Command, top, old.snapshot.glyphs[0]);
+    try std.testing.expectEqualSlices(output.commands.Command, bottom, old.snapshot.glyphs[1]);
+    try std.testing.expectEqual(@as(u21, 0), owner.observation().semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Z'), owner.observation().semanticView(0).cellAt(1, 0));
 }

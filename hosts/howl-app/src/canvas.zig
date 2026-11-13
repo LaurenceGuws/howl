@@ -1539,7 +1539,7 @@ test "VT block cursor final commands paint fill and ink through Canvas" {
     try std.testing.expect(fill != 0 and ink != 0);
 }
 
-test "direct color glyph, explicit-width multi-glyph text and block cursor match native software Canvas" {
+fn expectDirectNativeCanvasParity(input: []const u8) !void {
     const output = @import("howl_vt_output");
     const a = std.testing.allocator;
     const font = try instance.text.FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
@@ -1550,8 +1550,8 @@ test "direct color glyph, explicit-width multi-glyph text and block cursor match
     // zig-audit: acknowledge catch_unreachable
     // reason: The single direct lease below is released before teardown.
     defer direct.deinit() catch unreachable;
-    try direct.resize(4, 12);
-    try direct.feed("M😀\x1b[2;1H\x1b]66;s=1:w=2;WWW\x07\x1b[3;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H");
+    try direct.resize(8, 12);
+    try direct.feed(input);
     try direct.flush();
     const lease = try direct.hold();
     // zig-audit: acknowledge catch_unreachable
@@ -1562,10 +1562,10 @@ test "direct color glyph, explicit-width multi-glyph text and block cursor match
 
     const vt = try a.create(instance.Terminal);
     defer a.destroy(vt);
-    try instance.Terminal.initWithHistoryInto(vt, a, 4, 12, 0);
+    try instance.Terminal.initWithHistoryInto(vt, a, 8, 12, 0);
     defer vt.deinit();
     try vt.setCellPixelSize(metrics.advance_width, metrics.line_height);
-    try std.testing.expect((try vt.feed("M😀\x1b[2;1H\x1b]66;s=1:w=2;WWW\x07\x1b[3;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H")).stateChanged());
+    try std.testing.expect((try vt.feed(input)).stateChanged());
     const native = try render.initPrivate(a, .{ .regular = font }, .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
@@ -1584,7 +1584,7 @@ test "direct color glyph, explicit-width multi-glyph text and block cursor match
     defer a.free(pixels);
     const old = try render.frame(native, &.{}, .{ .uploads = &uploads, .removals = &removals, .commands = &commands, .pixels = pixels });
     const context = try selection.Context.fromFrame(@import("frame_info.zig").Info.fromSnapshot(&snap, 1, 1));
-    try std.testing.expectEqual(@as(u16, 4), context.rows);
+    try std.testing.expectEqual(@as(u16, 8), context.rows);
     try std.testing.expectEqual(@as(u16, 12), context.columns);
     const cursor_view = @import("frame_info.zig").Info.fromSnapshot(&snap, 1, 1);
     try std.testing.expectEqualDeep(old.cursor.?.rect, cursor_view.cursor.?.rect);
@@ -1678,6 +1678,11 @@ test "direct color glyph, explicit-width multi-glyph text and block cursor match
     try first.applySnapshotResources(first_renderer, 2, &snap);
     try std.testing.expectEqual(@as(usize, 2), first.count);
     try std.testing.expectEqual(@as(u64, 2), first.generation);
+}
+
+test "direct sized text and block cursor match native software Canvas" {
+    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=1:w=2;WWW\x07\x1b[3;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H");
+    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=2;X\x07\x1b[5;1H\x1b]66;s=3;e\u{0301}\x07\x1b[1;2H");
 }
 
 test "direct worker retained Canvas matches its complete direct cut" {

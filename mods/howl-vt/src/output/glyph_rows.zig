@@ -90,12 +90,13 @@ pub fn Emitter(comptime instrumented: bool) type {
             return true;
         }
         fn validate(cell: VT.Cell) !void {
-            if (cell.height != 1 or cell.y != 0 or cell.subscale_n != 0 or cell.subscale_d != 0 or
+            if (cell.height == 0 or cell.y >= cell.height or cell.subscale_n != 0 or cell.subscale_d != 0 or
                 cell.vertical_align != 0 or cell.horizontal_align != 0)
                 return error.UnsupportedScene;
             if (cell.semantic_width) {
-                if (cell.width != 2 or cell.x > 1) return error.UnsupportedScene;
-            } else if (cell.width == 0 or cell.x >= cell.width) return error.UnsupportedScene;
+                if (cell.height != 1 or cell.width != 2 or cell.x > 1) return error.UnsupportedScene;
+            } else if (cell.width == 0 or cell.x >= cell.width or cell.width % cell.height != 0) return error.UnsupportedScene;
+            if (cell.height > 1 and (cell.attrs.underline or cell.attrs.strikethrough)) return error.UnsupportedScene;
             if (cell.codepoint == 0x10eeee) return error.UnsupportedScene;
         }
         fn solid(counter: if (instrumented) ?*u64 else void, output: []frame.Command, used: *usize, rect: frame.Rect, clip: frame.Rect, color: frame.Color) !void {
@@ -269,17 +270,27 @@ pub fn Emitter(comptime instrumented: bool) type {
             const shared_style = if (uniform) variant(span.attrs) else undefined;
             if (!uniform) for (cells, 0..) |cell, col| {
                 try validate(cell);
+                if (cell.height > 1) {
+                    if (history != null or cell.y > logical_row or screen.lineGeometry(logical_row) != .single_width or
+                        @as(u32, logical_row - cell.y) + cell.height > screen.rows or
+                        (cell.y != 0 and (cell.codepoint != 0 or cell.combining_len != 0)))
+                        return error.UnsupportedScene;
+                    const origin = screen.cellInfoAt(logical_row - cell.y, @intCast(col -| cell.x));
+                    if (cell.x > col or origin.x != 0 or origin.y != 0 or origin.width != cell.width or
+                        origin.height != cell.height or origin.semantic_width or
+                        !std.meta.eql(origin.attrs, cell.attrs)) return error.UnsupportedScene;
+                }
                 if (cell.width > 1) {
                     if (cell.x > col) return error.UnsupportedScene;
                     const start = col - cell.x;
                     const end = start + cell.width;
                     if (end > columns) return error.UnsupportedScene;
                     const lead = cells[start];
-                    if (lead.x != 0 or lead.width != cell.width or lead.height != 1 or
-                        lead.semantic_width != cell.semantic_width) return error.UnsupportedScene;
+                    if (lead.x != 0 or lead.width != cell.width or lead.height != cell.height or
+                        lead.y != cell.y or lead.semantic_width != cell.semantic_width) return error.UnsupportedScene;
                     if (cell.x == 0) for (cells[start + 1 .. end], 1..) |tail, x| {
-                        if (tail.x != x or tail.width != cell.width or tail.height != 1 or
-                            tail.y != 0 or tail.semantic_width != cell.semantic_width or
+                        if (tail.x != x or tail.width != cell.width or tail.height != cell.height or
+                            tail.y != cell.y or tail.semantic_width != cell.semantic_width or
                             tail.codepoint != 0 or tail.combining_len != 0) return error.UnsupportedScene;
                     };
                 }
@@ -329,6 +340,16 @@ pub fn Emitter(comptime instrumented: bool) type {
                 column += 1;
                 const cell = cells[col];
                 if (cell.x != 0 or cell.attrs.invisible) continue;
+                if (cell.height > 1) {
+                    const lead_row = logical_row - cell.y;
+                    const lead = screen.cellInfoAt(lead_row, @intCast(col));
+                    const sequence = screen.cellScalarsAt(lead_row, @intCast(col), &scalars);
+                    if (sequence.len != 0 and !(sequence.len == 1 and sequence[0] == ' ')) {
+                        const c = try colors(lead, p);
+                        try appendScaled(ctx, output, &used, sequence, variant(lead.attrs), lead, col, cell.y, row_clip, c.fg);
+                    }
+                    continue;
+                }
                 const sequence = if (cell.combining_len == 0) blk: {
                     scalars[0] = cell.codepoint;
                     break :blk scalars[0..@as(usize, if (cell.codepoint == 0) 0 else 1)];
@@ -439,6 +460,49 @@ pub fn Emitter(comptime instrumented: bool) type {
             try appendRun(ctx, output, used, run, true, operators[0..1], style, cell, col, row_clip, color);
             return true;
         }
+        // Project a live scaled cluster into one row-local strip. Retaining
+        // strips independently lets the VT's existing row generations drive repair.
+        fn appendScaled(ctx: Context, output: []frame.Command, used: *usize, sequence: []const u32, style: cache.FontVariant, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, color: frame.Color) BuildError!void {
+            if (sequence.len == 1 and (text.generated.classify(sequence[0]) != null or
+                (sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or
+                (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff))) return error.UnsupportedScene;
+            const run = try cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?);
+            if (run.glyphs.len > ctx.shaped.?.len) return error.InsufficientGlyphs;
+            const scale: i64 = cell.height;
+            const x: i32 = @intCast(col * ctx.cell_width);
+            const y: i32 = -@as(i32, row_offset) * @as(i32, ctx.cell_height);
+            const allocation: frame.Rect = .{ .x = x, .y = y, .width = ctx.cell_width * cell.width, .height = ctx.cell_height * cell.height };
+            const strip = (try frame.intersectRects(allocation, row_clip)) orelse return;
+            var pen_x: i64 = @as(i64, x) * 64;
+            var pen_y: i64 = 0;
+            for (run.glyphs) |g| {
+                const raster = try cache.resolveFontAtlas(ctx.atlas, style, run.face_index, g.id, ctx.raster, null, 0);
+                if (raster.format != .alpha8) return error.UnsupportedScene;
+                if (raster.width != 0 and raster.height != 0) {
+                    const raw_x = @divFloor(pen_x + g.x_offset, 64) + raster.left;
+                    const raw_y = @as(i64, ctx.baseline) + @divFloor(pen_y - g.y_offset, 64) - raster.top;
+                    const destination: frame.Rect = .{
+                        .x = std.math.cast(i32, @as(i64, x) + (raw_x - x) * scale) orelse return error.ArithmeticOverflow,
+                        .y = std.math.cast(i32, @as(i64, y) + raw_y * scale) orelse return error.ArithmeticOverflow,
+                        .width = std.math.mul(u16, raster.width, cell.height) catch return error.ArithmeticOverflow,
+                        .height = std.math.mul(u16, raster.height, cell.height) catch return error.ArithmeticOverflow,
+                    };
+                    if (try frame.intersectRects(destination, strip)) |clip| {
+                        const size = cache.atlasSize(ctx.atlas);
+                        try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
+                            .destination = destination,
+                            .clip = clip,
+                            .color = color,
+                            .cursor_component = true,
+                            .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                        } });
+                    }
+                }
+                pen_x += g.x_advance;
+                pen_y += g.y_advance;
+            }
+        }
+
         fn appendRun(
             ctx: Context,
             output: []frame.Command,
