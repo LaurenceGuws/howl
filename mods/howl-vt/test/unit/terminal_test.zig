@@ -1525,3 +1525,14 @@ test "multi-row OSC 66 resumes after a wrap and partial history admission" {
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 3));
 }
+
+test "full-width scroll preserves one-row sized clusters in history and on screen" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=1:w=3;X\x07\x1b[3;1H\x1b]66;s=1:w=3;Y\x07\x1b[S");
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(1).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u8, 3), terminal.semanticView(1).cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 3), terminal.semanticView(0).cellInfoAt(1, 0).width);
+}

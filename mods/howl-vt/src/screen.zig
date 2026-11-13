@@ -4081,17 +4081,21 @@ pub const Screen = struct {
         const region_len: u16 = bounded_bottom - top + 1;
         const amount = @min(count, region_len);
         if (amount == 0) return changed;
+        const full_width = !self.left_right_margin_mode or
+            (self.left_margin == 0 and self.right_margin + 1 == self.cols);
         changed = self.clearNonSemanticClustersIntersecting(
             top,
             top + amount,
             0,
             self.cols,
+            full_width,
         ) or changed;
         changed = self.clearNonSemanticClustersIntersecting(
             bounded_bottom,
             bounded_bottom + 1,
             0,
             self.cols,
+            full_width,
         ) or changed;
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
@@ -4850,6 +4854,7 @@ pub const Screen = struct {
         bottom_exclusive: u16,
         left: u16,
         right_exclusive: u16,
+        preserve_single_row: bool,
     ) bool {
         if (!self.nonsemantic_clusters_possible) return false;
         const cells = self.cells orelse return false;
@@ -4861,6 +4866,8 @@ pub const Screen = struct {
             for (boundary, left..) |*cell, col| {
                 if (cell.width == 1 and cell.height == 1 and cell.x == 0 and cell.y == 0)
                     continue;
+                // A full-width row move cannot split a one-row cluster.
+                if (preserve_single_row and cell.height == 1) continue;
                 if (isSemanticWideCell(cell.*)) continue;
                 changed = self.clearClusterAt(row, @intCast(col), false) or changed;
             }
@@ -7753,7 +7760,7 @@ test "OSC 66 long cluster round trips through compact history" {
 
     // zig-audit: acknowledge discard
     // reason: This test invokes the structural cleanup only to establish a blank restore target; its mutation boolean is not under test.
-    _ = screen.clearNonSemanticClustersIntersecting(0, 2, 0, screen.cols);
+    _ = screen.clearNonSemanticClustersIntersecting(0, 2, 0, screen.cols, false);
     try std.testing.expect(screen.scrollDownFromHistory(1));
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqualDeep(lead, screen.cellInfoAt(0, 0));
