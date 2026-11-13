@@ -1990,3 +1990,66 @@ test "direct worker backs off scalar pressure and applies queued resize after re
     state.mutex.unlock(state.io);
     try std.testing.expectEqual(@as(usize, 0), queued);
 }
+
+test "direct worker recovers on a clean alternate screen with primary image retained" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.createDirect(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'READY\\033]0;READY\\007'; read line; printf '\\033_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\\033\\\\\\033]0;IMAGE\\007'; read line; printf '\\033[?1049hALT\\033]0;ALT\\007'; read line; printf '\\033[?1049l\\033]0;PRIMARY\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    var first: ?instance.DirectLease = null;
+    for (0..5000) |_| {
+        first = try owner.replaceDirectFrame(null, null);
+        if (first != null) break;
+        if (owner.snapshot().presentation_failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    var held = first orelse return error.Timeout;
+    var pinned = true;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test releases the one pinned direct lease before worker teardown.
+    defer if (pinned) owner.releaseDirectFrame(held) catch unreachable;
+    const initial = held.snapshot.terminal_revision;
+    const original = held.snapshot.glyphs[0][0];
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "IMAGE");
+    owner.requestFrame();
+    for (0..5000) |_| {
+        if (owner.snapshot().presentation_failure != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expectEqual(@as(?PresentationFailure, error.UnsupportedScene), owner.snapshot().presentation_failure);
+    try std.testing.expectEqualDeep(original, held.snapshot.glyphs[0][0]);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "ALT");
+    owner.requestFrame();
+    var next: ?instance.DirectLease = null;
+    for (0..5000) |_| {
+        next = try owner.replaceDirectFrame(&held, null);
+        if (next != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    held = next orelse return error.Timeout;
+    try std.testing.expect(held.snapshot.alternate);
+    try std.testing.expect(held.snapshot.terminal_revision > initial);
+    try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "PRIMARY");
+    owner.requestFrame();
+    for (0..5000) |_| {
+        if (owner.snapshot().presentation_failure != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expectEqual(@as(?PresentationFailure, error.UnsupportedScene), owner.snapshot().presentation_failure);
+    try std.testing.expect(held.snapshot.alternate);
+    try owner.releaseDirectFrame(held);
+    pinned = false;
+}
