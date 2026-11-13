@@ -821,3 +821,20 @@ test "alternate image does not block a clean primary screen" {
     try std.testing.expectError(error.UnsupportedScene, owner.flush());
     try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
 }
+
+test "an inactive placement does not hide an active placement" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\\x1b[?47hALT\x1b_Ga=T,f=32,s=1,v=1,i=57,C=1,q=2;/wAA/w==\x1b\\");
+    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try owner.feed("\x1b_Ga=d,d=i,i=57,q=2\x1b\\");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expect(held.snapshot.alternate);
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+    try owner.feed("\x1b[?47l");
+    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+}
