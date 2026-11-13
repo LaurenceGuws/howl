@@ -1689,6 +1689,7 @@ fn expectDirectNativeCanvasParity(input: []const u8) !void {
 test "direct sized text and block cursor match native software Canvas" {
     try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=1:w=2;WWW\x07\x1b[3;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H");
     try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b[4;9m\x1b]66;s=2;X\x07\x1b[0m\x1b[2;4H\x1b[4:4m\x1b]66;s=2:n=2:d=3:h=2:v=2;I\x07\x1b[0m\x1b[2;10H\x1b[4:5m\x1b]66;s=2:n=1:d=2:h=1:v=1;I\x07\x1b[0m\x1b[2;8H\x1b]66;s=1:n=1:d=2:h=1:v=1;W\x07\x1b[5;1H\x1b[4:2;9m\x1b]66;s=3;e\u{0301}\x07\x1b[0m\x1b[5;4H\x1b[4:3m\x1b]66;s=2:n=2:d=3:h=2:v=2;I\x07\x1b[0m\x1b[5;7H\x1b]66;s=2:n=1:d=2:h=2:v=2;X\x07\x1b[5;10H\x1b]66;s=2:n=2:d=3:h=1:v=1;W\x07\x1b[7;10H\x1b]66;s=2;─\x07\x1b[1;2H");
+    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=2;😀\x07\x1b[2;6H\x1b]66;s=2:n=1:d=2:h=2:v=2;😀\x07\x1b[1;2H");
     try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=2:n=2:d=3:h=2:v=2;┼\x07\x1b[2;4H\x1b]66;s=3;█\x07\x1b[2;8H\x1b]66;s=2;⣿\x07\x1b[6;1H\x1b]66;s=2;\u{e0b0}\x07\x1b[1;2H");
 }
 

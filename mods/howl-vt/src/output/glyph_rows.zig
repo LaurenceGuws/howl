@@ -586,7 +586,6 @@ pub fn Emitter(comptime instrumented: bool) type {
             var pen_y: i64 = 0;
             for (run.glyphs) |g| {
                 const raster = try cache.resolveFontAtlas(ctx.atlas, style, run.face_index, g.id, ctx.raster, null, 0);
-                if (raster.format != .alpha8) return error.UnsupportedScene;
                 if (raster.width != 0 and raster.height != 0) {
                     const raw_x = @divFloor(pen_x + g.x_offset, 64) + raster.left;
                     const raw_y = @as(i64, ctx.baseline) + @divFloor(pen_y - g.y_offset, 64) - raster.top;
@@ -596,7 +595,17 @@ pub fn Emitter(comptime instrumented: bool) type {
                         .width = raster.width,
                         .height = raster.height,
                     });
-                    if (try frame.intersectRects(destination, strip)) |clip| {
+                    if (raster.format == .rgba8) {
+                        const fitted = fitColor(destination, sizing.allocation);
+                        if (try frame.intersectRects(fitted, strip)) |clip| {
+                            const size = cache.colorAtlasSize(ctx.atlas);
+                            try append(ctx.command_bytes_written, output, used, .{ .rgba = .{
+                                .destination = fitted,
+                                .clip = clip,
+                                .resource = .{ .resource = ctx.pending_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                            } });
+                        }
+                    } else if (try frame.intersectRects(destination, strip)) |clip| {
                         const size = cache.atlasSize(ctx.atlas);
                         try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
                             .destination = destination,
