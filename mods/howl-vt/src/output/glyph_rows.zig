@@ -577,24 +577,29 @@ pub fn Emitter(comptime instrumented: bool) type {
                 }
                 return;
             }
-            if (sequence.len == 1 and ((sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or
-                (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff))) return error.UnsupportedScene;
             const run = try cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?);
             if (run.glyphs.len > ctx.shaped.?.len) return error.InsufficientGlyphs;
+            const bounded_symbol = sequence.len == 1 and run.glyphs.len == 1 and
+                ((sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff));
             const x = sizing.allocation.x;
             var pen_x: i64 = @as(i64, x) * 64;
             var pen_y: i64 = 0;
             for (run.glyphs) |g| {
-                const raster = try cache.resolveFontAtlas(ctx.atlas, style, run.face_index, g.id, ctx.raster, null, 0);
+                const raster = try cache.resolveFontAtlas(ctx.atlas, style, run.face_index, g.id, ctx.raster, null, if (bounded_symbol) sizing.allocation.width else 0);
                 if (raster.width != 0 and raster.height != 0) {
                     const raw_x = @divFloor(pen_x + g.x_offset, 64) + raster.left;
                     const raw_y = @as(i64, ctx.baseline) + @divFloor(pen_y - g.y_offset, 64) - raster.top;
-                    const destination = try sizing.transform(.{
+                    var destination = try sizing.transform(.{
                         .x = std.math.cast(i32, raw_x) orelse return error.ArithmeticOverflow,
                         .y = std.math.cast(i32, raw_y) orelse return error.ArithmeticOverflow,
                         .width = raster.width,
                         .height = raster.height,
                     });
+                    if (bounded_symbol) {
+                        const latest = sizing.allocation.x + @as(i32, sizing.allocation.width) - destination.width;
+                        destination.x = std.math.clamp(destination.x, sizing.allocation.x, @max(sizing.allocation.x, latest));
+                        destination.y = @max(destination.y, sizing.allocation.y);
+                    }
                     if (raster.format == .rgba8) {
                         const fitted = fitColor(destination, sizing.allocation);
                         if (try frame.intersectRects(fitted, strip)) |clip| {
