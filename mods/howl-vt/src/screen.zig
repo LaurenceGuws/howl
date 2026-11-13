@@ -4762,7 +4762,7 @@ pub const Screen = struct {
         if (observed.width == 1 and observed.height == 1 and observed.x == 0 and observed.y == 0)
             return false;
         if (observed.width == 0 or observed.height == 0 or observed.x >= observed.width or
-            observed.y >= observed.height or col < observed.x or row < observed.y)
+            observed.y >= observed.height or col < observed.x)
         {
             clearAcceptedTail(
                 &self.scalars.?,
@@ -4773,9 +4773,13 @@ pub const Screen = struct {
             self.markRowChanged(row);
             return true;
         }
-        const top = row - observed.y;
+        // A full-width scroll can leave the lead in immutable history and a
+        // continuation in the live grid. Clear only the live fragment; history
+        // is not a mutable extension of the current screen.
+        const missing_rows = @as(u16, observed.y) -| row;
+        const top = row -| observed.y;
         const left = col - observed.x;
-        const bottom = @min(self.rows, top + observed.height);
+        const bottom = @min(self.rows, top + observed.height - missing_rows);
         const right = @min(self.cols, left + observed.width);
         const replacement = if (replace_with_space) Cell{
             .codepoint = ' ',
@@ -4790,7 +4794,7 @@ pub const Screen = struct {
             while (x < right) : (x += 1) {
                 const candidate = &cells[@intCast(self.rowStart(y) + x)];
                 if (candidate.width != observed.width or candidate.height != observed.height or
-                    candidate.x != x - left or candidate.y != y - top)
+                    candidate.x != x - left or candidate.y != y - top + missing_rows)
                     continue;
                 if (!std.meta.eql(candidate.*, replacement)) {
                     clearAcceptedTail(
@@ -9066,4 +9070,36 @@ test "repeated single scroll matches bulk across seeded small grids" {
             }
         }
     }
+}
+
+test "clearing a live fragment leaves its historical lead intact" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("s=2;X"));
+    // Model one already-admitted full-width scroll without the current
+    // pre-scroll cluster erasure, so this tests the fragment operation alone.
+    screen.scrollUpPrepared(null);
+    try std.testing.expectEqual(@as(u32, 'X'), screen.historyCellAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(0, 0).y);
+    try std.testing.expect(screen.clearClusterAt(0, 0, false));
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(0, 1).width);
+    try std.testing.expectEqual(@as(u32, 'X'), screen.historyCellAt(0, 0).codepoint);
+}
+
+test "clearing any cell of a taller live fragment clears the whole fragment" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("s=3;X"));
+    screen.scrollUpPrepared(null);
+    try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(1, 2).y);
+    try std.testing.expect(screen.clearClusterAt(1, 2, false));
+    for (0..2) |row| for (0..3) |col| {
+        const cell = screen.cellInfoAt(@intCast(row), @intCast(col));
+        try std.testing.expectEqual(@as(u8, 1), cell.width);
+        try std.testing.expectEqual(@as(u8, 1), cell.height);
+        try std.testing.expectEqual(@as(u8, 0), cell.x);
+        try std.testing.expectEqual(@as(u8, 0), cell.y);
+    };
+    try std.testing.expectEqual(@as(u32, 'X'), screen.historyCellAt(0, 0).codepoint);
 }
