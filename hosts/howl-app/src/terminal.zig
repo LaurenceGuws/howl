@@ -1483,7 +1483,7 @@ test "selection paint travels with its immutable lease and a stalled transfer ca
     var held = try waitPaint(owner, null, &paint);
     defer held.abandon();
     try std.testing.expectEqual(@as(u64, 11), paint.serial);
-    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spans[0]);
+    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spanAt(0));
     const sequence = held.value.sequence;
     owner.state().frame_mutex.lockUncancelable(threaded.io());
     var locked = true;
@@ -1494,7 +1494,7 @@ test "selection paint travels with its immutable lease and a stalled transfer ca
     try std.testing.expectEqual(sequence, held.value.sequence);
     try std.testing.expect(try owner.replaceFrame(&held, &.{}, &paint) == null);
     try std.testing.expect(!held.released);
-    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spans[0]);
+    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spanAt(0));
     try std.testing.expectError(error.NoSelection, owner.copySelection(std.testing.allocator, 128));
     owner.state().frame_mutex.unlock(threaded.io());
     locked = false;
@@ -1505,7 +1505,7 @@ test "selection paint travels with its immutable lease and a stalled transfer ca
     try std.testing.expect(held.released);
     try std.testing.expect(cleared.value.sequence > sequence);
     try std.testing.expectEqual(@as(u64, 11), paint.serial);
-    for (paint.spans) |span| try std.testing.expect(span == null);
+    for (0..paint.rows) |row| try std.testing.expect(paint.spanAt(row) == null);
     const fresh_context = try selection.Context.fromFrame(@import("frame_info.zig").Info.fromLegacy(cleared.value));
     try owner.submit(.{ .select = .{ .serial = 12, .kind = .word, .context = fresh_context, .point = .{ .row = try fresh_context.row(0), .col = 7 } } });
     const next = try owner.copySelection(std.testing.allocator, 128);
@@ -1515,7 +1515,7 @@ test "selection paint travels with its immutable lease and a stalled transfer ca
     var selected = try waitPaint(owner, &cleared, &paint);
     defer selected.abandon();
     try std.testing.expectEqual(@as(u64, 12), paint.serial);
-    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 8 }), paint.spans[0]);
+    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 8 }), paint.spanAt(0));
     try std.testing.expect(try owner.replaceFrame(&selected, &.{}, &paint) == null);
     try std.testing.expect(!selected.released);
     try std.testing.expectEqual(@as(u64, 12), paint.serial);
@@ -2062,6 +2062,50 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     held = next orelse return error.Timeout;
     try std.testing.expect(!held.snapshot.alternate);
     try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
+    try owner.releaseDirectFrame(held);
+    pinned = false;
+}
+
+test "direct worker draws a multi-row continuation after history scroll" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.createDirect(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf '\\033[?25l\\033]66;s=2;X\\007\\033[S\\033]0;SCROLLED\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    var first: ?instance.DirectLease = null;
+    for (0..5000) |_| {
+        first = try owner.replaceDirectFrame(null, null);
+        if (first != null) break;
+        if (owner.snapshot().presentation_failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    var held = first orelse return error.Timeout;
+    var pinned = true;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The single direct lease is released before worker teardown.
+    defer if (pinned) owner.releaseDirectFrame(held) catch unreachable;
+    const initial = held.snapshot.terminal_revision;
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "SCROLLED");
+    owner.requestFrame();
+    var next: ?instance.DirectLease = null;
+    for (0..5000) |_| {
+        next = try owner.replaceDirectFrame(&held, null);
+        if (next != null) break;
+        if (owner.snapshot().presentation_failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    held = next orelse return error.Timeout;
+    try std.testing.expect(held.snapshot.terminal_revision > initial);
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     try owner.releaseDirectFrame(held);
     pinned = false;
 }

@@ -838,3 +838,223 @@ test "an inactive placement does not hide an active placement" {
     try owner.feed("\x1b[?47l");
     try std.testing.expectError(error.UnsupportedScene, owner.flush());
 }
+
+test "direct output resolves a multi-row lead across the history boundary" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=2;X\x07");
+    try owner.flush();
+    var held = try owner.hold();
+    try std.testing.expect(held.snapshot.glyphs[1].len != 0);
+    const lower = held.snapshot.glyphs[1][0].alpha_mask;
+    release(owner, held);
+    try owner.feed("\x1b[S");
+    try owner.flush();
+    held = try owner.hold();
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+    const after = held.snapshot.glyphs[0][0].alpha_mask;
+    try std.testing.expectEqualDeep(lower.destination, after.destination);
+    try std.testing.expectEqualDeep(lower.clip, after.clip);
+    try std.testing.expectEqualDeep(lower.resource.source, after.resource.source);
+    try std.testing.expectEqualDeep(lower.color, after.color);
+    release(owner, held);
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(u32, 1), held.snapshot.history_offset);
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+    try std.testing.expect(held.snapshot.glyphs[1].len != 0);
+}
+
+test "evicting a multi-row lead retires live fragments without stale output" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 1 });
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=3;X\x07\x1b[S");
+    try owner.flush();
+    const held = try owner.hold();
+    try std.testing.expect(held.snapshot.glyphs[1].len != 0);
+    const old = held.snapshot.glyphs[1][0];
+    try owner.feed("\x1b[S");
+    try owner.flush();
+    try std.testing.expectEqualDeep(old, held.snapshot.glyphs[1][0]);
+    release(owner, held);
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expectEqual(@as(usize, 0), next.snapshot.glyphs[0].len);
+    try std.testing.expectEqual(@as(u8, 1), owner.observation().semanticView(0).cellInfoAt(0, 0).width);
+}
+
+test "maximum-height cluster retires every live fragment when its lead is evicted" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 1 });
+    defer destroy(owner);
+    try owner.resize(8, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=7;X\x07\x1b[S");
+    try owner.flush();
+    const held = try owner.hold();
+    var pinned = true;
+    defer if (pinned) release(owner, held);
+    var glyph_row: ?usize = null;
+    for (held.snapshot.glyphs[0..held.snapshot.rows], 0..) |glyphs, row| {
+        if (glyphs.len != 0) {
+            glyph_row = row;
+            break;
+        }
+    }
+    const selected_row = glyph_row orelse return error.MissingGlyph;
+    const old = held.snapshot.glyphs[selected_row][0];
+    try owner.feed("\x1b[S");
+    try owner.flush();
+    try std.testing.expectEqualDeep(old, held.snapshot.glyphs[selected_row][0]);
+    release(owner, held);
+    pinned = false;
+    const next = try owner.hold();
+    defer release(owner, next);
+    for (0..5) |row| {
+        try std.testing.expectEqual(@as(usize, 0), next.snapshot.glyphs[row].len);
+        try std.testing.expectEqual(@as(u8, 1), owner.observation().semanticView(0).cellInfoAt(@intCast(row), 0).width);
+    }
+}
+
+test "resizing across a retained multi-row boundary preserves text and held output" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=2;X\x07\x1b[S");
+    try owner.flush();
+    const held = try owner.hold();
+    var pinned = true;
+    defer if (pinned) release(owner, held);
+    const old = held.snapshot.glyphs[0][0];
+    try owner.resize(4, 14);
+    owner.selectHistoryOffset(std.math.maxInt(u32));
+    try owner.flush();
+    try std.testing.expectEqualDeep(old, held.snapshot.glyphs[0][0]);
+    release(owner, held);
+    pinned = false;
+    const next = try owner.hold();
+    defer release(owner, next);
+    var glyph_count: usize = 0;
+    for (next.snapshot.glyphs[0..next.snapshot.rows]) |row| glyph_count += row.len;
+    const view = owner.observation().semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        if (view.cellAt(@intCast(row), @intCast(col)) == 'X') found = true;
+    };
+    try std.testing.expect(found);
+    try std.testing.expect(glyph_count != 0);
+}
+
+test "height-only resize preserves text across a retained multi-row boundary" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=2;X\x07\x1b[S");
+    try owner.flush();
+    const held = try owner.hold();
+    var pinned = true;
+    defer if (pinned) release(owner, held);
+    const old = held.snapshot.glyphs[0][0];
+    try owner.resize(4, 12);
+    owner.selectHistoryOffset(std.math.maxInt(u32));
+    try owner.flush();
+    try std.testing.expectEqualDeep(old, held.snapshot.glyphs[0][0]);
+    release(owner, held);
+    pinned = false;
+    const next = try owner.hold();
+    defer release(owner, next);
+    var glyph_count: usize = 0;
+    for (next.snapshot.glyphs[0..next.snapshot.rows]) |row| glyph_count += row.len;
+    const view = owner.observation().semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        if (view.cellAt(@intCast(row), @intCast(col)) == 'X') found = true;
+    };
+    try std.testing.expect(found);
+    try std.testing.expect(glyph_count != 0);
+}
+
+test "a history viewport can begin on a retained cluster continuation" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(4, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=3;X\x07\x1b[2S");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(u32, 1), held.snapshot.history_offset);
+    try std.testing.expectEqual(@as(u8, 1), owner.observation().semanticView(1).cellInfoAt(0, 0).y);
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+}
+
+test "history output tolerates a continuation whose lead was evicted" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 1 });
+    defer destroy(owner);
+    try owner.resize(4, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=3;X\x07\x1b[2S");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(u32, 1), held.snapshot.history_offset);
+    for (held.snapshot.glyphs[0..held.snapshot.rows]) |row| try std.testing.expectEqual(@as(usize, 0), row.len);
+}
+
+test "multi-row history frontier survives every admitted scale and small capacity" {
+    const f = try font(12);
+    defer f.deinit();
+    for (2..8) |scale| for (1..8) |capacity| {
+        const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = @intCast(capacity) });
+        defer destroy(owner);
+        try owner.resize(8, 16);
+        var command: [64]u8 = undefined;
+        try owner.feed(try std.fmt.bufPrint(&command, "\x1b[?25l\x1b]66;s={d};X\x07", .{scale}));
+        for (0..scale + 1) |step| {
+            try owner.feed("\x1b[S");
+            try owner.flush();
+            const view = owner.observation().semanticView(@intCast(@min(step + 1, capacity)));
+            if (step + 1 <= capacity) {
+                try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+            } else {
+                const live = owner.observation().semanticView(0);
+                for (0..live.rows) |row| {
+                    const cell = live.cellInfoAt(@intCast(row), 0);
+                    try std.testing.expect(@as(u32, cell.y) <= live.history_count + row);
+                }
+            }
+        }
+    };
+}
+
+test "multi-row history output reads the complete cold scalar tail" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=2;e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\x07\x1b[S");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    var scalars: [24]u21 = undefined;
+    const view = owner.observation().semanticView(1);
+    try std.testing.expectEqualSlices(u21, &.{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 }, view.cellScalarsAt(0, 0, &scalars));
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+}

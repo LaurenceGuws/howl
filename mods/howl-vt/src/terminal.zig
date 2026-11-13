@@ -5243,15 +5243,11 @@ pub const Terminal = struct {
         ) []const u21 {
             if (row >= self.rows or col >= self.cols) return &.{};
             const screen = self.backingScreen();
+            const cell = self.cellInfoAt(row, col);
+            const retained_row = self.start + rowIndex(row);
+            if (cell.x > col or cell.y > retained_row) return &.{};
             var retained: [24]u32 = undefined;
-            const values = switch (self.rowSource(row)) {
-                .history => |recency| screen.historyCellScalarsAt(
-                    recency,
-                    col,
-                    &retained,
-                ),
-                .screen => |screen_row| @call(.always_inline, Screen.cellScalarsAt, .{ screen, screen_row, col, &retained }),
-            };
+            const values = screen.retainedCellScalarsAt(retained_row - cell.y, col - cell.x, &retained);
             for (values, 0..) |value, index| output[index] = @intCast(value);
             return output[0..values.len];
         }
@@ -9235,23 +9231,31 @@ test "OSC 66 natural width splits bounded base and combining clusters" {
     try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(1, 3).y);
 }
 
-test "OSC 66 resize drops complete clusters without stale continuations" {
+test "OSC 66 resize retains a complete cluster when rows do not reflow" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
     try terminal.resize(3, 5);
-    const screen = terminal.screen_state.activeConst();
-    var row: u16 = 0;
-    while (row < screen.rows) : (row += 1) {
-        var col: u16 = 0;
-        while (col < screen.cols) : (col += 1) {
-            const cell = screen.cellInfoAt(row, col);
-            try std.testing.expectEqual(@as(u8, 1), cell.width);
-            try std.testing.expectEqual(@as(u8, 1), cell.height);
-            try std.testing.expectEqual(@as(u8, 0), cell.x);
-            try std.testing.expectEqual(@as(u8, 0), cell.y);
+    const view = terminal.semanticView(0);
+    var lead_row: ?u16 = null;
+    var lead_col: u16 = 0;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        if (view.cellAt(@intCast(row), @intCast(col)) == 'H') {
+            lead_row = @intCast(row);
+            lead_col = @intCast(col);
         }
-    }
+    };
+    const row = lead_row orelse return error.MissingCluster;
+    try std.testing.expect(row + 1 < view.rows and lead_col + 4 <= view.cols);
+    for (0..2) |y| for (0..4) |x| {
+        const cell = view.cellInfoAt(row + @as(u16, @intCast(y)), lead_col + @as(u16, @intCast(x)));
+        try std.testing.expectEqual(@as(u8, 4), cell.width);
+        try std.testing.expectEqual(@as(u8, 2), cell.height);
+        try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+        try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+    };
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{ 'H', 'i' }, view.cellScalarsAt(row, lead_col, &scalars));
 }
 
 test "OSC 66 cluster survives whole-grid scroll and erase repairs every member" {

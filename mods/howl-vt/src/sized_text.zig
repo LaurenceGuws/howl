@@ -6,6 +6,9 @@
 const std = @import("std");
 const scalar_storage = @import("scalar_storage.zig");
 
+/// Largest OSC 66 cell height admitted by this grammar.
+pub const maximum_scale: u8 = 7;
+
 /// Borrows one validated OSC 66 payload and its clamped presentation fields.
 pub const Value = struct {
     text: []const u8,
@@ -27,7 +30,7 @@ pub fn parse(payload: []const u8) ?Value {
         if (field.len < 3 or field[1] != '=') return null;
         const value = parseNumber(field[2..]) orelse return null;
         switch (field[0]) {
-            's' => result.scale = @intCast(@max(1, @min(value, 7))),
+            's' => result.scale = @intCast(@max(1, @min(value, maximum_scale))),
             'w' => result.width = @intCast(@min(value, 7)),
             'n' => result.subscale_n = @intCast(@min(value, 15)),
             'd' => result.subscale_d = @intCast(@min(value, 15)),

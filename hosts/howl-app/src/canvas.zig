@@ -501,17 +501,24 @@ pub const Canvas = struct {
         const rows = value.surface.height / value.cell_size.height;
         const columns = value.surface.width / value.cell_size.width;
         if (!c.SDL_SetRenderDrawColor(renderer, 180, 180, 180, 100)) return error.SDLGeometry;
-        for (self.selection_paint.spans[0..@min(self.selection_paint.spans.len, @min(self.selection_paint.rows, rows))], 0..) |span, row| if (span) |range| {
-            if (range.last < range.first or range.first >= columns) continue;
-            const last = @min(range.last, columns - 1);
-            const rect: c.SDL_FRect = .{
-                .x = pane.x + @as(f32, @floatFromInt(@as(u32, range.first) * value.cell_size.width)),
-                .y = pane.y + @as(f32, @floatFromInt(row * value.cell_size.height)),
-                .w = @floatFromInt(@as(u32, last - range.first + 1) * value.cell_size.width),
-                .h = @floatFromInt(value.cell_size.height),
-            };
-            if (!c.SDL_RenderFillRect(renderer, &rect)) return error.SDLGeometry;
-        };
+        for (0..@min(self.selection_paint.rows, rows)) |row| {
+            var col: usize = 0;
+            while (col < columns) {
+                if (!self.selection_paint.contains(row, col)) {
+                    col += 1;
+                    continue;
+                }
+                const first = col;
+                while (col < columns and self.selection_paint.contains(row, col)) : (col += 1) {}
+                const rect: c.SDL_FRect = .{
+                    .x = pane.x + @as(f32, @floatFromInt(first * value.cell_size.width)),
+                    .y = pane.y + @as(f32, @floatFromInt(row * value.cell_size.height)),
+                    .w = @floatFromInt((col - first) * value.cell_size.width),
+                    .h = @floatFromInt(value.cell_size.height),
+                };
+                if (!c.SDL_RenderFillRect(renderer, &rect)) return error.SDLGeometry;
+            }
+        }
     }
 
     /// Discards backend content pixels; the next draw reconstructs from the held frame.
@@ -1096,7 +1103,7 @@ test "cursor shapes blink and outline above selection at fractional scales witho
         const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(frame.surface.width), .h = @floatFromInt(frame.surface.height) };
         for ([_]CursorDisplay{ .shown, .hidden, .outline }) |mode| for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| for ([_]bool{ false, true }) |selected| for ([_]u8{ 1, 3, 16 }) |outline| {
             backend.selection_paint = .{ .rows = 2 };
-            if (selected) backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
+            if (selected) backend.selection_paint.add(0, 0, 1);
             try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
@@ -1156,7 +1163,7 @@ test "cursor shapes blink and outline above selection at fractional scales witho
                 };
             }
             backend.selection_paint = .{ .rows = 2 };
-            if (selected) backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
+            if (selected) backend.selection_paint.add(0, 0, 1);
             try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
@@ -1237,7 +1244,7 @@ test "pending drag requests retain accepted selection paint; accepted clear remo
     var backend = Canvas.init(std.testing.allocator);
     defer backend.deinit();
     backend.selection_paint = .{ .serial = 11, .rows = 1 };
-    backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
+    backend.selection_paint.add(0, 0, 1);
     const frame: instance.PublishedFrame = .{
         .sequence = 1,
         .presentation_generation = 1,
@@ -1891,4 +1898,44 @@ test "colour atlas survives alternating clipped scales" {
     var pixel: [4]u8 = undefined;
     try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 28, 6, &pixel[0], &pixel[1], &pixel[2], &pixel[3]));
     try std.testing.expectEqualDeep([4]u8{ 255, 0, 0, 255 }, pixel);
+}
+
+test "split selection draws both runs without painting their gap" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(50, 10, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var backend = Canvas.init(std.testing.allocator);
+    defer backend.deinit();
+    backend.selection_paint = .{ .rows = 1 };
+    backend.selection_paint.add(0, 0, 1);
+    backend.selection_paint.add(0, 3, 4);
+    const frame: instance.PublishedFrame = .{
+        .sequence = 1,
+        .presentation_generation = 1,
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .alternate_screen = false,
+        .surface = .{ .width = 50, .height = 10 },
+        .cell_size = .{ .width = 10, .height = 10 },
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .pixels = &.{},
+    };
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+    try std.testing.expect(c.SDL_RenderClear(renderer));
+    try backend.drawSelection(renderer, .{ .x = 0, .y = 0, .w = 50, .h = 10 }, @import("frame_info.zig").Info.fromLegacy(frame));
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    for ([_]i32{ 5, 15, 25, 35, 45 }, 0..) |x, index| {
+        var red: u8 = 0;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, x, 5, &red, null, null, null));
+        try std.testing.expect(if (index == 2) red == 0 else red > 0);
+    }
 }

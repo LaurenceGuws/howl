@@ -1,5 +1,6 @@
 const std = @import("std");
 const instance = @import("howl_instance");
+const vt_selection = @import("howl_vt").selection;
 const vt = instance.Terminal;
 const limits = instance.render.limits;
 
@@ -46,7 +47,29 @@ pub const Span = struct { first: u16, last: u16 };
 pub const Paint = struct {
     serial: u64 = 0,
     rows: u16 = 0,
-    spans: [limits.maximum_rows]?Span = @splat(null),
+    bits: [limits.maximum_rows][(limits.maximum_columns + 63) / 64]u64 = @splat(@splat(0)),
+
+    /// Adds an inclusive selected run to this immutable-frame overlay.
+    pub fn add(self: *Paint, row: u16, first: u16, last: u16) void {
+        std.debug.assert(row < limits.maximum_rows and first <= last and last < limits.maximum_columns);
+        var col = first;
+        while (col <= last) : (col += 1) self.bits[row][col / 64] |= @as(u64, 1) << @as(u6, @intCast(col % 64));
+    }
+    /// Reports whether a cell belongs to this selected overlay.
+    pub fn contains(self: *const Paint, row: usize, col: usize) bool {
+        if (row >= self.rows or col >= limits.maximum_columns) return false;
+        return self.bits[row][col / 64] & (@as(u64, 1) << @as(u6, @intCast(col % 64))) != 0;
+    }
+    /// Returns the row bounding span for simple consumers and tests.
+    pub fn spanAt(self: *const Paint, row: usize) ?Span {
+        var first: ?u16 = null;
+        var last: u16 = 0;
+        for (0..limits.maximum_columns) |col| if (self.contains(row, col)) {
+            if (first == null) first = @intCast(col);
+            last = @intCast(col);
+        };
+        return if (first) |f| .{ .first = f, .last = last } else null;
+    }
 };
 /// Inclusive stable endpoints plus the column/bank context that gives them meaning.
 pub const Range = struct {
@@ -115,12 +138,16 @@ pub const Range = struct {
         var range = self.ordered();
         const live = observation.semanticView(0);
         if (!live.is_alternate_screen) {
-            if (try textEnd(live)) |end| {
-                if (after(range.end, end)) range.end = end;
-            } else {
-                const first = try Context.fromView(live).row(0);
+            const first = try Context.fromView(live).row(0);
+            const end = try textEnd(live);
+            if (end != null and end.?.row >= first) {
+                if (after(range.end, end.?)) range.end = end.?;
+            } else if (range.end.row >= first) {
+                // A live continuation can point behind newer retained history.
+                // A range wholly in history needs no frontier scan.
                 if (range.start.row >= first) return &.{};
-                range.end = .{ .row = first - 1, .col = live.cols - 1 };
+                const history_end = vt_selection.historyTextEnd(observation) orelse return &.{};
+                if (after(range.end, history_end)) range.end = history_end;
             }
             if (after(range.start, range.end)) return &.{};
         }
@@ -130,7 +157,7 @@ pub const Range = struct {
     pub fn paint(self: Range, view: vt.SemanticView, serial: u64) !Paint {
         var result: Paint = .{ .serial = serial, .rows = view.rows };
         if (self.empty) return result;
-        if (view.rows > result.spans.len) return error.InvalidSelection;
+        if (view.rows > limits.maximum_rows or view.cols > limits.maximum_columns) return error.InvalidSelection;
         const context = Context.fromView(view);
         if (self.validity(context) != .valid) return result;
         var range = self.ordered();
@@ -140,25 +167,22 @@ pub const Range = struct {
             if (after(range.end, last)) range.end = last;
             if (after(range.start, range.end)) return result;
         }
+        var row_storage: [limits.maximum_columns]vt_selection.Span = undefined;
         for (0..view.rows) |index| {
             const row_index: u16 = @intCast(index);
             const absolute = try context.row(row_index);
-            if (absolute < range.start.row or absolute > range.end.row or (end != null and absolute > end.?.row)) continue;
-            const first = if (absolute == range.start.row) range.start.col else 0;
-            var last = if (absolute == range.end.row) range.end.col else view.cols - 1;
-            if (absolute == range.end.row) {
-                const cell = view.cellInfoAt(row_index, last);
-                if (cell.x == 0 and cell.y == 0) last = @intCast(@min(@as(u32, view.cols - 1), @as(u32, last) + @max(cell.width, 1) - 1));
-            }
-            const content_end = rowContentEnd(view, row_index);
-            if (absolute == range.end.row or view.rowWrapped(row_index)) {
+            const spans = try vt_selection.visibleRowSpans(&view, range, row_index, &row_storage);
+            var max_col: u16 = view.cols - 1;
+            if (absolute <= range.end.row and (absolute == range.end.row or view.rowWrapped(row_index))) {
+                const content_end = rowContentEnd(view, row_index);
                 if (content_end == 0) continue;
-                last = @min(last, content_end - 1);
-                if (last < first) continue;
-                result.spans[index] = .{ .first = first, .last = last };
-            } else {
-                const newline = @min(content_end, view.cols - 1);
-                result.spans[index] = .{ .first = @min(first, newline), .last = newline };
+                max_col = content_end - 1;
+            } else if (absolute < range.end.row and !view.rowWrapped(row_index)) {
+                max_col = @min(rowContentEnd(view, row_index), view.cols - 1);
+            }
+            for (spans) |span| {
+                const last = @min(span.column + span.columns - 1, max_col);
+                if (span.column <= last) result.add(row_index, span.column, last);
             }
         }
         return result;
@@ -169,14 +193,10 @@ fn after(a: vt.TextPoint, b: vt.TextPoint) bool {
 }
 /// Last actual glyph in this projected view, independent of the cursor position.
 pub fn textEnd(view: vt.SemanticView) error{InvalidSelection}!?vt.TextPoint {
-    var row_index = view.rows;
-    while (row_index != 0) {
-        row_index -= 1;
-        const end = rowContentEnd(view, row_index);
-        if (end != 0) return try point(view, row_index, end - 1);
-    }
-    return null;
+    if (view.rows > limits.maximum_rows or view.cols > limits.maximum_columns) return error.InvalidSelection;
+    return vt_selection.textEnd(&view);
 }
+
 /// A drag into unused live rows stops at the last actual glyph.
 pub fn dragPoint(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!vt.TextPoint {
     const value = try point(view, row_index, column);
@@ -187,14 +207,7 @@ pub fn dragPoint(view: vt.SemanticView, row_index: u16, column: u16) error{Inval
 }
 /// Resolves one visible cell or continuation to stable canonical lead identity.
 pub fn point(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!vt.TextPoint {
-    if (row_index >= view.rows or column >= view.cols) return error.InvalidSelection;
-    const context = Context.fromView(view);
-    const cell = view.cellInfoAt(row_index, column);
-    const absolute = try context.row(row_index);
-    if (cell.x > column or @as(i64, absolute) < cell.y) return error.InvalidSelection;
-    const value: vt.TextPoint = .{ .row = absolute - cell.y, .col = column - cell.x };
-    if (!context.retained(value)) return error.InvalidSelection;
-    return value;
+    return vt_selection.point(&view, row_index, column) orelse error.InvalidSelection;
 }
 /// Starts at canonical text, retaining an empty end anchor when the pointer is in live padding.
 pub fn start(view: vt.SemanticView, row_index: u16, column: u16) !Range {
@@ -207,71 +220,18 @@ pub fn start(view: vt.SemanticView, row_index: u16, column: u16) !Range {
 /// Selects one projected visual row's text, deliberately without inventing logical-line search.
 pub fn visualRow(view: vt.SemanticView, row_index: u16) !?Range {
     if (row_index >= view.rows or view.cols == 0) return error.InvalidSelection;
-    const end = rowContentEnd(view, row_index);
-    if (end == 0) return null;
-    var first: u16 = 0;
-    while (first < end) : (first += 1) {
-        const cell = view.cellInfoAt(row_index, first);
-        if (cell.x == 0 and cell.y == 0) break;
-    }
-    if (first == end) return null;
-    var result = try start(view, row_index, first);
-    result.focus = try point(view, row_index, end - 1);
-    result.unit = .{ .row = result.ordered() };
-    return result;
+    const text = vt_selection.visualRowRange(&view, row_index) orelse return null;
+    return .{ .anchor = text.start, .focus = text.end, .columns = view.cols, .alternate = view.is_alternate_screen, .unit = .{ .row = text } };
 }
-const Position = struct { row: u16, col: u16 };
-fn lead(view: vt.SemanticView, position: Position) ?Position {
-    if (position.row >= view.rows or position.col >= view.cols) return null;
-    const cell = view.cellInfoAt(position.row, position.col);
-    if (cell.x > position.col or cell.y > position.row) return null;
-    return .{ .row = position.row - cell.y, .col = position.col - cell.x };
-}
-fn selectable(view: vt.SemanticView, position: Position) bool {
-    const cell = view.cellInfoAt(position.row, position.col);
-    return cell.x == 0 and cell.y == 0 and cell.codepoint != 0 and cell.codepoint != ' ' and !cell.attrs.invisible;
-}
-fn previous(view: vt.SemanticView, position: Position) ?Position {
-    if (position.col != 0) return lead(view, .{ .row = position.row, .col = position.col - 1 });
-    if (position.row == 0 or !view.rowWrapped(position.row - 1)) return null;
-    return lead(view, .{ .row = position.row - 1, .col = view.cols - 1 });
-}
-fn next(view: vt.SemanticView, position: Position) ?Position {
-    const cell = view.cellInfoAt(position.row, position.col);
-    const column = @as(u32, position.col) + @max(cell.width, 1);
-    if (column < view.cols) return lead(view, .{ .row = position.row, .col = @intCast(column) });
-    if (!view.rowWrapped(position.row) or position.row + 1 >= view.rows) return null;
-    return lead(view, .{ .row = position.row + 1, .col = 0 });
-}
-/// Expands a non-space word across canonical soft wraps within the projected viewport.
+/// Expands a non-space word using VT's canonical text semantics.
 pub fn word(view: vt.SemanticView, row_index: u16, column: u16) !?Range {
-    if (view.rows > limits.maximum_rows or view.cols > limits.maximum_columns) return error.InvalidSelection;
-    const initial = lead(view, .{ .row = row_index, .col = column }) orelse return error.InvalidSelection;
-    if (!selectable(view, initial)) return null;
-    var first = initial;
-    while (previous(view, first)) |position| {
-        if (position.row > first.row or (position.row == first.row and position.col >= first.col) or !selectable(view, position)) break;
-        first = position;
-    }
-    var last = initial;
-    while (next(view, last)) |position| {
-        if (position.row < last.row or (position.row == last.row and position.col <= last.col) or !selectable(view, position)) break;
-        last = position;
-    }
-    var result = try start(view, first.row, first.col);
-    result.focus = try point(view, last.row, last.col);
-    result.unit = .{ .word = result.ordered() };
-    return result;
+    if (view.rows > limits.maximum_rows or view.cols > limits.maximum_columns or row_index >= view.rows or column >= view.cols) return error.InvalidSelection;
+    const text = vt_selection.wordRange(&view, row_index, column) orelse return null;
+    return .{ .anchor = text.start, .focus = text.end, .columns = view.cols, .alternate = view.is_alternate_screen, .unit = .{ .word = text } };
 }
 fn rowContentEnd(view: vt.SemanticView, row_index: u16) u16 {
-    var column = view.cols;
-    while (column != 0) {
-        column -= 1;
-        const cell = view.cellInfoAt(row_index, column);
-        if (cell.x != 0 or cell.y != 0 or cell.codepoint == 0 or cell.codepoint == ' ') continue;
-        return @intCast(@min(@as(u32, view.cols), @as(u32, column) + @max(cell.width, 1)));
-    }
-    return 0;
+    const last = vt_selection.lastContentColumn(&view, row_index) orelse return 0;
+    return last + 1;
 }
 
 test "stable selection survives viewport movement and vertical growth but rejects eviction reflow and bank changes" {
@@ -309,7 +269,7 @@ test "canonical word and visual-row selection preserve graphemes soft wraps and 
     try std.testing.expectEqualStrings("bar", text);
     const wide = try start(view, 1, 3);
     const paint = try wide.paint(view, 7);
-    try std.testing.expectEqual(@as(?Span, .{ .first = 2, .last = 3 }), paint.spans[1]);
+    try std.testing.expectEqual(@as(?Span, .{ .first = 2, .last = 3 }), paint.spanAt(1));
     try std.testing.expectEqual(@as(u64, 7), paint.serial);
     const line = (try visualRow(view, 1)).?;
     const line_text = try line.copy(terminal.observation(), std.testing.allocator, 128);
@@ -335,8 +295,8 @@ test "prompt selection excludes unused live padding but retains interior blank r
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("first\n\nwide: 界\nprompt>", text);
     const paint = try selected.paint(view, 1);
-    try std.testing.expect(paint.spans[1] != null);
-    try std.testing.expect(paint.spans[4] == null and paint.spans[5] == null);
+    try std.testing.expect(paint.spanAt(1) != null);
+    try std.testing.expect(paint.spanAt(4) == null and paint.spanAt(5) == null);
     try std.testing.expectEqual(try textEnd(view), try dragPoint(view, 5, 19));
     // A prompt cursor at the top does not hide real text farther down.
     // zig-audit: acknowledge discard
@@ -352,12 +312,13 @@ test "a drag beginning below or right of the prompt selects backwards without a 
     // reason: This test asserts selection endpoints, exact copied text and spans instead of feed counters.
     _ = try terminal.feed("first\r\n\r\nprompt> ");
     const view = terminal.semanticView(0);
-    for ([_]Position{ .{ .row = 5, .col = 19 }, .{ .row = 2, .col = 19 } }) |origin| {
+    const TestPosition = struct { row: u16, col: u16 };
+    for ([_]TestPosition{ .{ .row = 5, .col = 19 }, .{ .row = 2, .col = 19 } }) |origin| {
         var selected = try start(view, origin.row, origin.col);
         try std.testing.expect(selected.empty);
         try std.testing.expectError(error.NoSelection, selected.copy(terminal.observation(), std.testing.allocator, 128));
         const empty_paint = try selected.paint(view, 1);
-        try std.testing.expect(empty_paint.spans[2] == null and empty_paint.spans[5] == null);
+        try std.testing.expect(empty_paint.spanAt(2) == null and empty_paint.spanAt(5) == null);
         try selected.extend(view, 0, 0);
         const copied = try selected.copy(terminal.observation(), std.testing.allocator, 128);
         defer std.testing.allocator.free(copied);
@@ -427,4 +388,97 @@ test "word drag keeps softwrapped wide glyphs whole" {
     const text = try selected.copy(terminal.observation(), std.testing.allocator, 128);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("bar 界z", text);
+}
+
+test "selection starts and paints on a visible fragment whose lead is in history" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: The assertions inspect canonical selection after parsed input.
+    _ = try terminal.feed("\x1b]66;s=2;X\x07\x1b[S");
+    const view = terminal.semanticView(0);
+    const selected = try start(view, 0, 1);
+    try std.testing.expect(!selected.empty);
+    const copied = try selected.copy(terminal.observation(), std.testing.allocator, 16);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("X", copied);
+    const word_selected = (try word(view, 0, 1)).?;
+    const word_copy = try word_selected.copy(terminal.observation(), std.testing.allocator, 16);
+    defer std.testing.allocator.free(word_copy);
+    try std.testing.expectEqualStrings("X", word_copy);
+    const row_selected = (try visualRow(view, 0)).?;
+    const row_copy = try row_selected.copy(terminal.observation(), std.testing.allocator, 16);
+    defer std.testing.allocator.free(row_copy);
+    try std.testing.expectEqualStrings("X", row_copy);
+    const paint = try selected.paint(view, 1);
+    try std.testing.expectEqual(@as(?Span, .{ .first = 0, .last = 1 }), paint.spanAt(0));
+}
+
+test "selection overlay excludes unselected tall block crossing a selected row" {
+    var terminal = try vt.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: The assertions inspect the selected overlay after parsed input.
+    _ = try terminal.feed("\x1b[1;4H\x1b]66;s=2:w=1;X\x07\x1b[3;8HZ");
+    const view = terminal.semanticView(0);
+    const selected: Range = .{ .anchor = .{ .row = 0, .col = 5 }, .focus = .{ .row = 2, .col = 7 }, .columns = 8, .alternate = false };
+    const paint = try selected.paint(view, 1);
+    try std.testing.expect(paint.contains(1, 0) and paint.contains(1, 2));
+    try std.testing.expect(!paint.contains(1, 3) and !paint.contains(1, 4));
+    try std.testing.expect(paint.contains(1, 5));
+}
+
+test "tall continuation does not hide later text on its lead row" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: The assertions inspect canonical selection after parsed input.
+    _ = try terminal.feed("\x1b]66;s=2;X\x07\x1b[1;8HZ");
+    const view = terminal.semanticView(0);
+    const selected = try start(view, 0, 7);
+    try std.testing.expect(!selected.empty);
+    const copied = try selected.copy(terminal.observation(), std.testing.allocator, 16);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("Z", copied);
+}
+
+test "visual-row selection includes all visible row text beside tall continuation" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: Assertions inspect selection after parsed input.
+    _ = try terminal.feed("\x1b[1;4H\x1b]66;s=2;X\x07\x1b[2;1HAB");
+    const selected = (try visualRow(terminal.semanticView(0), 1)).?;
+    const copied = try selected.copy(terminal.observation(), std.testing.allocator, 64);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expect(std.mem.indexOf(u8, copied, "AB") != null);
+}
+
+test "history text copies when only live content is a taller continuation" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: Assertions inspect canonical history selection after parsed input.
+    _ = try terminal.feed("\x1b]66;s=3;X\x07\x1b[2;8HZ\x1b[2S");
+    const view = terminal.semanticView(1);
+    const selected = (try word(view, 0, 7)).?;
+    const copied = try selected.copy(terminal.observation(), std.testing.allocator, 16);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("Z", copied);
+}
+
+test "history to live padding never copies an unselected tall block" {
+    for ([_]u16{ 1, 8 }) |capacity| {
+        var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, capacity);
+        defer terminal.deinit();
+        // zig-audit: acknowledge discard
+        // reason: The selection assertion checks the accepted screen and history.
+        _ = try terminal.feed("\x1b[1;6H\x1b]66;s=3;X\x07\x1b[2;1HZ\x1b[2S");
+        const view = terminal.semanticView(1);
+        var selected = try start(view, 0, 0);
+        try selected.extend(view, 1, 0);
+        const copied = try selected.copy(terminal.observation(), std.testing.allocator, 32);
+        defer std.testing.allocator.free(copied);
+        try std.testing.expectEqualStrings("Z", copied);
+    }
 }

@@ -1536,3 +1536,317 @@ test "full-width scroll preserves one-row sized clusters in history and on scree
     try std.testing.expectEqual(@as(u8, 3), terminal.semanticView(1).cellInfoAt(0, 0).width);
     try std.testing.expectEqual(@as(u8, 3), terminal.semanticView(0).cellInfoAt(1, 0).width);
 }
+
+test "full-width scroll retains the text of a multi-row cluster" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=2;X\x07\x1b[S");
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(1).cellAt(0, 0));
+}
+
+test "multi-row history and live fragment retain ownership across sequential scroll and overwrite" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=3;X\x07\x1b[2S");
+    try std.testing.expectEqual(@as(u32, 2), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(2).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u8, 1), terminal.semanticView(2).cellInfoAt(1, 0).y);
+    try std.testing.expectEqual(@as(u8, 2), terminal.semanticView(0).cellInfoAt(0, 0).y);
+    // Explicit erase clears the remaining live fragment before writing.
+    try feed(&terminal, "\x1b[1;3H\x1b[1XY");
+    try std.testing.expectEqual(@as(u21, 'Y'), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u8, 1), terminal.semanticView(0).cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), terminal.semanticView(0).cellInfoAt(0, 1).width);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(2).cellAt(0, 0));
+}
+
+test "height resize preserves a tall cluster following a soft-wrapped line" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 6, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "abcdefghZ\x1b[4;1H\x1b]66;s=2;X\x07");
+    try terminal.resize(7, 8);
+    const view = terminal.semanticView(std.math.maxInt(u32));
+    var lead: ?u16 = null;
+    for (0..view.rows) |row| {
+        if (view.cellAt(@intCast(row), 0) == 'X') lead = @intCast(row);
+    }
+    const row = lead orelse return error.MissingCluster;
+    try std.testing.expect(row + 1 < view.rows);
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(row, 0).height);
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(row + 1, 0).y);
+}
+
+test "visible continuation resolves its full retained scalar sequence" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=2;e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\x07\x1b[S");
+    const view = terminal.semanticView(0);
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 }, view.cellScalarsAt(0, 1, &scalars));
+}
+
+test "narrowing discards oversized OSC 66 text without restoring it on widening" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=2:w=2;Hi\x07");
+    try terminal.resize(4, 3);
+    try terminal.resize(4, 8);
+    const view = terminal.semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        if (view.cellAt(@intCast(row), @intCast(col)) == 'H') found = true;
+    };
+    try std.testing.expect(!found);
+}
+
+test "one-row OSC 66 packed text and presentation survive reflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "ABCD\x1b[1;31m\x1b]66;s=1:w=1:n=1:d=2:h=2:v=1;ab\x07\x1b[0m");
+    try terminal.resize(4, 3);
+    const view = terminal.semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        const r: u16 = @intCast(row);
+        const c: u16 = @intCast(col);
+        if (view.cellAt(r, c) != 'a') continue;
+        const cell = view.cellInfoAt(r, c);
+        var scalars: [24]u21 = undefined;
+        try std.testing.expectEqualSlices(u21, &.{ 'a', 'b' }, view.cellScalarsAt(r, c, &scalars));
+        try std.testing.expectEqual(@as(u8, 1), cell.width);
+        try std.testing.expectEqual(@as(u8, 1), cell.height);
+        try std.testing.expectEqual(@as(u4, 1), cell.subscale_n);
+        try std.testing.expectEqual(@as(u4, 2), cell.subscale_d);
+        try std.testing.expectEqual(@as(u2, 2), cell.horizontal_align);
+        try std.testing.expectEqual(@as(u2, 1), cell.vertical_align);
+        try std.testing.expect(cell.attrs.bold);
+        try std.testing.expectEqual(@as(u32, 1), cell.attrs.fg.value);
+        found = true;
+    };
+    try std.testing.expect(found);
+}
+
+test "one-row three-column OSC 66 text survives fitting reflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "ABCD\x1b[1;31m\x1b]66;s=1:w=3;XY\x07\x1b[0m");
+    try terminal.resize(4, 3);
+    const view = terminal.semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        const r: u16 = @intCast(row);
+        const c: u16 = @intCast(col);
+        if (view.cellAt(r, c) != 'X') continue;
+        const cell = view.cellInfoAt(r, c);
+        var scalars: [24]u21 = undefined;
+        try std.testing.expectEqualSlices(u21, &.{ 'X', 'Y' }, view.cellScalarsAt(r, c, &scalars));
+        try std.testing.expectEqual(@as(u8, 3), cell.width);
+        try std.testing.expect(cell.attrs.bold);
+        found = true;
+    };
+    try std.testing.expect(found);
+}
+
+test "one-row OSC 66 widths reflow atomically and unfit blocks are discarded" {
+    for (2..8) |width| {
+        for ([_]bool{ true, false }) |fits| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 12, 16);
+            defer terminal.deinit();
+            const input = try std.fmt.allocPrint(std.testing.allocator, "ABCD\x1b]66;s=1:w={d};XY\x07Z", .{width});
+            defer std.testing.allocator.free(input);
+            try feed(&terminal, input);
+            const cols: u16 = @intCast(if (fits) width else width - 1);
+            try terminal.resize(5, cols);
+            var count: usize = 0;
+            var found_z = false;
+            var offset: u32 = 0;
+            const history = terminal.semanticView(0).history_count;
+            while (offset <= history) : (offset += 1) {
+                const view = terminal.semanticView(offset);
+                // Each viewport overlaps; use only its first row, plus the live remainder below.
+                const rows: u16 = if (offset == 0) view.rows else 1;
+                for (0..rows) |row| for (0..view.cols) |col| {
+                    const r: u16 = @intCast(row);
+                    const c: u16 = @intCast(col);
+                    const cell = view.cellInfoAt(r, c);
+                    if (cell.codepoint == 'Z') found_z = true;
+                    if (cell.codepoint != 'X') continue;
+                    count += 1;
+                    try std.testing.expectEqual(@as(u8, @intCast(width)), cell.width);
+                    var scalars: [24]u21 = undefined;
+                    try std.testing.expectEqualSlices(u21, &.{ 'X', 'Y' }, view.cellScalarsAt(r, c, &scalars));
+                    for (1..width) |part| try std.testing.expectEqual(@as(u8, @intCast(part)), view.cellInfoAt(r, c + @as(u16, @intCast(part))).x);
+                };
+            }
+            try std.testing.expectEqual(@as(usize, if (fits) 1 else 0), count);
+            try std.testing.expect(found_z);
+        }
+    }
+}
+
+test "one-row OSC 66 cold scalar tail survives history reflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 10, 16);
+    defer terminal.deinit();
+    try feed(&terminal, "ABCD\x1b[1;31m\x1b]66;s=1:w=3;e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\x07\x1b[0m\r\nline2\r\nline3\r\nline4");
+    try std.testing.expect(terminal.semanticView(0).history_count > 0);
+    const before = terminal.semanticView(std.math.maxInt(u32));
+    var before_scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 }, before.cellScalarsAt(0, 4, &before_scalars));
+    try terminal.resize(3, 4);
+    const view = terminal.semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        const r: u16 = @intCast(row);
+        const c: u16 = @intCast(col);
+        const cell = view.cellInfoAt(r, c);
+        if (cell.codepoint != 'e' or cell.width != 3) continue;
+        var scalars: [24]u21 = undefined;
+        try std.testing.expectEqualSlices(u21, &.{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 }, view.cellScalarsAt(r, c, &scalars));
+        try std.testing.expectEqual(@as(u8, 3), cell.width);
+        try std.testing.expect(cell.attrs.bold);
+        found = true;
+    };
+    try std.testing.expect(found);
+}
+
+test "one-row OSC 66 history resize failure preserves accepted text for retry" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 3, 10, 16);
+    defer terminal.deinit();
+    try feed(&terminal, "ABCD\x1b]66;s=1:w=3;e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\x07\r\nline2\r\nline3\r\nline4");
+    const before = terminal.semanticView(std.math.maxInt(u32));
+    var scalars: [24]u21 = undefined;
+    const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 };
+    try std.testing.expectEqualSlices(u21, &expected, before.cellScalarsAt(0, 4, &scalars));
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.resize(3, 4));
+    const unchanged = terminal.semanticView(std.math.maxInt(u32));
+    try std.testing.expectEqual(@as(u16, 10), unchanged.cols);
+    try std.testing.expectEqualSlices(u21, &expected, unchanged.cellScalarsAt(0, 4, &scalars));
+    failing.fail_index = std.math.maxInt(usize);
+    try terminal.resize(3, 4);
+    const after = terminal.semanticView(std.math.maxInt(u32));
+    var found = false;
+    for (0..after.rows) |row| for (0..after.cols) |col| {
+        const r: u16 = @intCast(row);
+        const c: u16 = @intCast(col);
+        const cell = after.cellInfoAt(r, c);
+        if (cell.codepoint != 'e' or cell.width != 3) continue;
+        try std.testing.expectEqualSlices(u21, &expected, after.cellScalarsAt(r, c, &scalars));
+        found = true;
+    };
+    try std.testing.expect(found);
+}
+
+test "one-row OSC 66 reflow is transactional at every allocation failure" {
+    var observed_success = false;
+    for (0..256) |failure_offset| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var terminal = try Terminal.initWithHistory(failing.allocator(), 3, 10, 16);
+        defer terminal.deinit();
+        try feed(&terminal, "ABCD\x1b]66;s=1:w=3;e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\x07\r\nline2\r\nline3\r\nline4");
+        const expected = [_]u21{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 };
+        failing.fail_index = failing.alloc_index + failure_offset;
+        terminal.resize(3, 4) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            const unchanged = terminal.semanticView(std.math.maxInt(u32));
+            var scalars: [24]u21 = undefined;
+            try std.testing.expectEqual(@as(u16, 10), unchanged.cols);
+            try std.testing.expectEqualSlices(u21, &expected, unchanged.cellScalarsAt(0, 4, &scalars));
+            failing.fail_index = std.math.maxInt(usize);
+            try terminal.resize(3, 4);
+            continue;
+        };
+        observed_success = true;
+        break;
+    }
+    try std.testing.expect(observed_success);
+}
+
+test "reflow removes multi-row OSC 66 blocks but retains unrelated text in both screens" {
+    for ([_]bool{ false, true }) |alternate| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 8, 16);
+        defer terminal.deinit();
+        if (alternate) try feed(&terminal, "\x1b[?1049h");
+        try feed(&terminal, "ABCDEFG\x1b[3;1H\x1b]66;s=2;X\x07\x1b[5;1HZ");
+        try terminal.resize(8, 4);
+        const history = terminal.semanticView(0).history_count;
+        var found_x = false;
+        var found_a = false;
+        var found_z = false;
+        var offset: u32 = 0;
+        while (offset <= history) : (offset += 1) {
+            const view = terminal.semanticView(offset);
+            const rows: u16 = if (offset == 0) view.rows else 1;
+            for (0..rows) |row| for (0..view.cols) |col| {
+                const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+                if (cell.codepoint == 'X') found_x = true;
+                if (cell.codepoint == 'A') found_a = true;
+                if (cell.codepoint == 'Z') found_z = true;
+                try std.testing.expect(cell.height <= 1);
+            };
+        }
+        try std.testing.expect(!found_x);
+        try std.testing.expect(found_a);
+        try std.testing.expect(found_z);
+    }
+}
+
+test "height shrink discards a block taller than the new screen" {
+    for ([_]bool{ false, true }) |alternate| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+        defer terminal.deinit();
+        if (alternate) try feed(&terminal, "\x1b[?1049h");
+        try feed(&terminal, "\x1b]66;s=2;X\x07");
+        try terminal.resize(1, 8);
+        const view = terminal.semanticView(std.math.maxInt(u32));
+        for (0..view.rows) |row| for (0..view.cols) |col| {
+            const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+            try std.testing.expect(cell.codepoint != 'X');
+            try std.testing.expect(cell.height <= 1);
+        };
+    }
+}
+
+test "discarding tall cold scalars and unfit wide text does not panic on resize" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=1:w=3;X\x07\x1b]66;s=2;e\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\x07");
+    try terminal.resize(3, 2);
+}
+
+test "cursor maps past consecutive omitted OSC 66 blocks" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 16, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]66;s=1:w=3;X\x07\x1b]66;s=1:w=3;Y\x07abcdef\x1b[1;7H");
+    try terminal.resize(5, 2);
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'a'), view.cellAt(view.cursor_row, view.cursor_col));
+}
+
+test "whole tall block survives ordinary scroll without history" {
+    for ([_]bool{ false, true }) |alternate| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 0);
+        defer terminal.deinit();
+        if (alternate) try feed(&terminal, "\x1b[?1049h");
+        try feed(&terminal, "\x1b[2;1H\x1b]66;s=2;X\x07\x1b[S");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, 0).y);
+    }
+}
+
+test "whole tall block survives downward scroll with and without history restore" {
+    for ([_]bool{ false, true }) |restore| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+        defer terminal.deinit();
+        if (restore) try feed(&terminal, "H\r\n\r\n\r\n\x1b[H");
+        try feed(&terminal, "\x1b]66;s=2;X\x07");
+        if (restore) try feed(&terminal, "\x1b[1+T") else try feed(&terminal, "\x1b[T");
+        const view = terminal.semanticView(0);
+        if (restore) try std.testing.expectEqual(@as(u21, 'H'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(2, 0).y);
+    }
+}

@@ -165,9 +165,12 @@ pub fn lastContentColumn(
     while (column != 0) {
         column -= 1;
         const cell = view.cellInfoAt(row, @intCast(column));
-        if (cell.x != 0 or cell.y != 0) continue;
-        // A lead cell's first scalar is its copied codepoint.
-        if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
+        if (cell.x != 0) continue;
+        if (cell.y != 0) {
+            var scalars: [maximum_cell_scalars]u21 = undefined;
+            const sequence = view.cellScalarsAt(row, @intCast(column), &scalars);
+            if (sequence.len == 0 or sequence[0] == ' ') continue;
+        } else if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
         const end = @min(
             @as(u32, view.cols - 1),
             @as(u32, @intCast(column)) + @max(@as(u32, cell.width), 1) - 1,
@@ -175,6 +178,20 @@ pub fn lastContentColumn(
         return @intCast(end);
     }
     return null;
+}
+
+/// Returns the canonical range covering a visible physical row's content.
+pub fn visualRowRange(view: *const Terminal.SemanticView, row: u16) ?Terminal.TextRange {
+    const last = lastContentColumn(view, row) orelse return null;
+    var first_point: ?Terminal.TextPoint = null;
+    var last_point: ?Terminal.TextPoint = null;
+    var column: u16 = 0;
+    while (column <= last) : (column += 1) {
+        const current = point(view, row, column) orelse continue;
+        if (first_point == null or pointBefore(current, first_point.?)) first_point = current;
+        if (last_point == null or pointBefore(last_point.?, current)) last_point = current;
+    }
+    return .{ .start = first_point orelse return null, .end = last_point orelse return null };
 }
 
 /// Locates a retained projected row; the returned view borrows until VT mutation.
@@ -207,33 +224,84 @@ pub fn viewForStableRow(
 
 /// Converts one visible cell, including a continuation, to its canonical lead.
 pub fn point(view: *const Terminal.SemanticView, row: u16, column: u16) ?Terminal.TextPoint {
-    const lead = leadPosition(view, row, column) orelse return null;
-    return .{ .row = stableRow(view, lead.row) orelse return null, .col = lead.column };
+    if (row >= view.rows or column >= view.cols) return null;
+    const cell = view.cellInfoAt(row, column);
+    if (cell.x > column) return null;
+    const absolute = stableRow(view, row) orelse return null;
+    const lead = @as(i64, absolute) - cell.y;
+    const oldest: i64 = if (view.is_alternate_screen) 0 else view.history_row_base;
+    if (lead < oldest) return null;
+    return .{ .row = @intCast(lead), .col = column - cell.x };
 }
 
-/// Expands a nonblank word or one visual row using canonical cluster occupancy.
-/// Null means no selectable content; stale bank/columns/retention fail explicitly.
-pub fn expand(observation: *const Terminal.Observation, kind: Kind, history_offset: u32, target: Terminal.TextPoint, context: Context) Error!?Range {
-    const view = observation.semanticView(history_offset);
-    if (!context.matches(&view)) return error.ContextChanged;
-    const row = viewportRow(&view, target.row) orelse return error.ContextChanged;
-    if (target.col >= view.cols) return error.ContextChanged;
-    if (kind == .visual_row) {
-        const last = lastContentColumn(&view, row) orelse return null;
-        var first: ?u16 = null;
-        var column: u16 = 0;
-        while (column < view.cols) : (column += 1) {
-            const cell = view.cellInfoAt(row, column);
-            if (cell.x == 0 and cell.y == 0) {
-                first = column;
-                break;
-            }
-        }
-        const start = first orelse return null;
-        const stable = stableRow(&view, row) orelse return error.ContextChanged;
-        return .{ .text = .{ .start = .{ .row = stable, .col = start }, .end = .{ .row = stable, .col = last } }, .context = Context.fromView(&view) };
+// Return the greatest retained lead represented on one physical row.
+fn rowTextEnd(view: *const Terminal.SemanticView, row: u16) ?Terminal.TextPoint {
+    const absolute = stableRow(view, row) orelse return null;
+    var last: ?Terminal.TextPoint = null;
+    var column = view.cols;
+    while (column != 0) {
+        column -= 1;
+        const cell = view.cellInfoAt(row, column);
+        if (cell.x != 0) continue;
+        if (cell.y != 0) {
+            var scalars: [maximum_cell_scalars]u21 = undefined;
+            const sequence = view.cellScalarsAt(row, column, &scalars);
+            if (sequence.len == 0 or sequence[0] == ' ') continue;
+        } else if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
+        const candidate = point(view, row, column) orelse continue;
+        if (last == null or pointBefore(last.?, candidate)) last = candidate;
+        if (candidate.row == absolute) break;
     }
-    const start = leadPosition(&view, row, target.col) orelse return error.ContextChanged;
+    return last;
+}
+
+/// Returns the greatest canonical text point visible in this view.
+pub fn textEnd(view: *const Terminal.SemanticView) ?Terminal.TextPoint {
+    var last: ?Terminal.TextPoint = null;
+    var row = view.rows;
+    while (row != 0) {
+        row -= 1;
+        const absolute = stableRow(view, row) orelse return null;
+        if (rowTextEnd(view, row)) |candidate| {
+            if (last == null or pointBefore(last.?, candidate)) last = candidate;
+        }
+        if (last) |value| if (value.row >= absolute) return last;
+    }
+    return last;
+}
+
+/// Returns the greatest canonical text point retained in primary history.
+pub fn historyTextEnd(observation: *const Terminal.Observation) ?Terminal.TextPoint {
+    const live = observation.semanticView(0);
+    if (live.is_alternate_screen) return null;
+    var last: ?Terminal.TextPoint = null;
+    var offset: u32 = 1;
+    while (offset <= live.history_count) : (offset += 1) {
+        const view = observation.semanticView(offset);
+        const absolute = stableRow(&view, 0) orelse return null;
+        if (rowTextEnd(&view, 0)) |candidate| {
+            if (last == null or pointBefore(last.?, candidate)) last = candidate;
+        }
+        if (last) |value| if (value.row >= absolute) return last;
+    }
+    return last;
+}
+
+/// Expands the word under a visible cell, including a retained lead above it.
+pub fn wordRange(input: *const Terminal.SemanticView, input_row: u16, column: u16) ?Terminal.TextRange {
+    if (input_row >= input.rows or column >= input.cols) return null;
+    var view = input.*;
+    var row = input_row;
+    const cell = input.cellInfoAt(row, column);
+    if (cell.y > row) {
+        const shift = cell.y - row;
+        if (shift > view.start or @as(u32, row) + shift >= view.rows) return null;
+        view.start -= shift;
+        view.history_offset += shift;
+        view.cursor_visible = false;
+        row += shift;
+    }
+    const start = leadPosition(&view, row, column) orelse return null;
     if (!selectableLead(&view, start)) return null;
     var first = start;
     while (previousLead(&view, first)) |candidate| {
@@ -245,11 +313,35 @@ pub fn expand(observation: *const Terminal.Observation, kind: Kind, history_offs
         if (!selectableLead(&view, candidate)) break;
         last = candidate;
     }
-    const first_row = stableRow(&view, first.row) orelse return error.ContextChanged;
-    const last_row = stableRow(&view, last.row) orelse return error.ContextChanged;
-    const cell = view.cellInfoAt(last.row, last.column);
-    const end_column = @min(@as(u32, view.cols - 1), @as(u32, last.column) + @max(@as(u32, cell.width), 1) - 1);
-    return .{ .text = .{ .start = .{ .row = first_row, .col = first.column }, .end = .{ .row = last_row, .col = @intCast(end_column) } }, .context = Context.fromView(&view) };
+    const first_row = stableRow(&view, first.row) orelse return null;
+    const last_row = stableRow(&view, last.row) orelse return null;
+    const final_cell = view.cellInfoAt(last.row, last.column);
+    const end = @min(@as(u32, view.cols - 1), @as(u32, last.column) + @max(@as(u32, final_cell.width), 1) - 1);
+    return .{ .start = .{ .row = first_row, .col = first.column }, .end = .{ .row = last_row, .col = @intCast(end) } };
+}
+
+/// Expands a nonblank word or one visual row using canonical cluster occupancy.
+/// Null means no selectable content; stale bank/columns/retention fail explicitly.
+pub fn expand(observation: *const Terminal.Observation, kind: Kind, history_offset: u32, target: Terminal.TextPoint, context: Context) Error!?Range {
+    var view = observation.semanticView(history_offset);
+    if (!context.matches(&view) or target.col >= view.cols) return error.ContextChanged;
+    const row = viewportRow(&view, target.row) orelse blk: {
+        // A visible continuation at the top can point to a retained lead just
+        // above the viewport. Do not admit an unrelated off-screen target.
+        if (view.rows == 0) return error.ContextChanged;
+        const first = view.cellInfoAt(0, target.col);
+        const absolute = stableRow(&view, 0) orelse return error.ContextChanged;
+        if (first.x != 0 or first.y == 0 or @as(i64, absolute) - first.y != target.row) return error.ContextChanged;
+        const located = viewForStableRow(observation, target.row) orelse return error.ContextChanged;
+        view = located.view;
+        break :blk located.viewport_row;
+    };
+    if (kind == .visual_row) {
+        const text = visualRowRange(&view, row) orelse return null;
+        return .{ .text = text, .context = Context.fromView(&view) };
+    }
+    const text = wordRange(&view, row, target.col) orelse return null;
+    return .{ .text = text, .context = Context.fromView(&view) };
 }
 
 /// One contiguous selected run in a visible row's logical text columns.
@@ -263,38 +355,47 @@ pub fn visibleSpans(observation: *const Terminal.Observation, history_offset: u3
     const view = observation.semanticView(history_offset);
     var used: usize = 0;
     for (0..view.rows) |row_index| {
-        const row: u16 = @intCast(row_index);
-        const absolute = stableRow(&view, row) orelse continue;
-        const columns = switch (view.lineGeometry(row)) {
-            .single_width => view.cols,
-            .double_width, .double_height_top, .double_height_bottom => @max(@as(u16, 1), view.cols / 2),
-        };
-        var start: ?u16 = null;
-        var column: u16 = 0;
-        while (column < columns) : (column += 1) {
-            const cell = view.cellInfoAt(row, column);
-            const lead: ?Terminal.TextPoint = if (cell.x <= column and cell.y <= absolute)
-                .{ .row = absolute - @as(i32, cell.y), .col = column - cell.x }
-            else
-                null;
-            const included = if (lead) |value|
-                !pointBefore(value, selected.text.start) and !pointBefore(selected.text.end, value)
-            else
-                false;
-            if (included) {
-                if (start == null) start = column;
-            } else if (start) |first| {
-                if (used == output.len) return error.SpanLimit;
-                output[used] = .{ .row = row, .column = first, .columns = column - first };
-                used += 1;
-                start = null;
-            }
-        }
-        if (start) |first| {
+        const spans = try visibleRowSpans(&view, selected.text, @intCast(row_index), output[used..]);
+        used += spans.len;
+    }
+    return output[0..used];
+}
+
+/// Projects one normalized selection onto one viewport row into caller storage.
+pub fn visibleRowSpans(view: *const Terminal.SemanticView, selected: Terminal.TextRange, row: u16, output: []Span) error{SpanLimit}![]const Span {
+    const absolute = stableRow(view, row) orelse return output[0..0];
+    const columns = switch (view.lineGeometry(row)) {
+        .single_width => view.cols,
+        .double_width, .double_height_top, .double_height_bottom => @max(@as(u16, 1), view.cols / 2),
+    };
+    var used: usize = 0;
+    var start: ?u16 = null;
+    var column: u16 = 0;
+    while (column < columns) : (column += 1) {
+        const cell = view.cellInfoAt(row, column);
+        const oldest: i64 = if (view.is_alternate_screen) 0 else view.history_row_base;
+        const lead_row = @as(i64, absolute) - cell.y;
+        const lead: ?Terminal.TextPoint = if (cell.x <= column and lead_row >= oldest)
+            .{ .row = @intCast(lead_row), .col = column - cell.x }
+        else
+            null;
+        const included = if (lead) |value|
+            !pointBefore(value, selected.start) and !pointBefore(selected.end, value)
+        else
+            false;
+        if (included) {
+            if (start == null) start = column;
+        } else if (start) |first| {
             if (used == output.len) return error.SpanLimit;
-            output[used] = .{ .row = row, .column = first, .columns = columns - first };
+            output[used] = .{ .row = row, .column = first, .columns = column - first };
             used += 1;
+            start = null;
         }
+    }
+    if (start) |first| {
+        if (used == output.len) return error.SpanLimit;
+        output[used] = .{ .row = row, .column = first, .columns = columns - first };
+        used += 1;
     }
     return output[0..used];
 }
@@ -455,7 +556,7 @@ test "copy handles the maximum representable projected row without increment ove
     try std.testing.expectEqualStrings("X", text);
 }
 
-test "selection spans cover tall occupancy and respect canonical scroll cleanup" {
+test "selection spans retain tall occupancy across history scroll" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
@@ -468,12 +569,11 @@ test "selection spans cover tall occupancy and respect canonical scroll cleanup"
     }, whole);
     try std.testing.expect((try terminal.feed("\x1b[3;1H\r\n")).stateChanged());
     const partial = try visibleSpans(terminal.observation(), 0, range, &output);
-    // Canonical scrolling clears non-semantic clusters that would straddle
-    // the live/history boundary; the query must not invent a surviving fragment.
-    try std.testing.expectEqual(@as(usize, 0), partial.len);
+    // The top row is in history; the remaining live row still occupies four cells.
+    try std.testing.expectEqualSlices(Span, &.{.{ .row = 0, .column = 0, .columns = 4 }}, partial);
     const text = try range.copy(terminal.observation(), std.testing.allocator, 16);
     defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings("", text);
+    try std.testing.expectEqualStrings("Hi", text);
 }
 
 test "unselected tall occupancy can split one selected visible row into separate runs" {
@@ -502,4 +602,38 @@ test "DEC wide-row selection spans stop at its logical text column frontier" {
     var output: [2]Span = undefined;
     const spans = try visibleSpans(terminal.observation(), 0, range, &output);
     try std.testing.expectEqualSlices(Span, &.{.{ .row = 0, .column = 0, .columns = 4 }}, spans);
+}
+
+test "a visible continuation selects its retained lead above the viewport" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2;X\x07\x1b[S")).stateChanged());
+    const observation = terminal.observation();
+    const view = observation.semanticView(0);
+    const target = point(&view, 0, 1) orelse return error.MissingLead;
+    try std.testing.expectEqualDeep(Terminal.TextPoint{ .row = 0, .col = 0 }, target);
+    const selected = (try expand(observation, .word, 0, target, Context.fromView(&view))) orelse return error.MissingSelection;
+    const text = try selected.copy(observation, std.testing.allocator, 16);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("X", text);
+    var storage: [4]Span = undefined;
+    const spans = try visibleSpans(observation, 0, selected, &storage);
+    try std.testing.expectEqualSlices(Span, &.{.{ .row = 0, .column = 0, .columns = 2 }}, spans);
+}
+
+test "an evicted cluster lead cannot be selected through its history fragment" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 1);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=3;X\x07\x1b[2S")).stateChanged());
+    const view = terminal.semanticView(1);
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, 0).y);
+    try std.testing.expect(point(&view, 0, 0) == null);
+}
+
+test "word expansion does not accept an unrelated offscreen lead" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 8, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("OLD\r\nNEW\r\nEND")).stateChanged());
+    const view = terminal.semanticView(0);
+    try std.testing.expectError(error.ContextChanged, expand(terminal.observation(), .word, 0, .{ .row = 0, .col = 0 }, Context.fromView(&view)));
 }

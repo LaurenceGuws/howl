@@ -556,12 +556,32 @@ pub const Screen = struct {
     ) ReflowError!Screen {
         var lines = try self.collectLogicalSnapshot(allocator);
         defer lines.deinit(allocator);
+        var preserves_rows = !self.nonsemantic_clusters_possible or cols == self.cols;
+        if (!preserves_rows) {
+            // If every retained physical row fits and none participates in a
+            // soft wrap, reflow leaves row/column positions unchanged.
+            preserves_rows = true;
+            var row: u32 = 0;
+            while (row < self.retainedRowCount()) : (row += 1) {
+                const retained = self.retainedRowAt(row);
+                if (retained.wrapped or self.retainedRowStateLen(retained) > cols) {
+                    preserves_rows = false;
+                    break;
+                }
+            }
+        }
         for (lines.logical_lines.items) |*line| {
-            for (line.cells.items) |*cell| {
-                if (!isSemanticWideCell(cell.*) and
-                    (cell.width != 1 or cell.height != 1 or
-                        cell.x != 0 or cell.y != 0))
-                {
+            for (line.cells.items, 0..) |*cell, index| {
+                if (cell.height > rows or (!preserves_rows and cell.height > 1)) {
+                    if (sidecarCount(cell.*) != 0) {
+                        if (line.scalars) |*storage| {
+                            clearAcceptedTail(storage, index, cell.combining_len);
+                        } else {
+                            // zig-audit: acknowledge panic
+                            // reason: Accepted external scalars require their logical snapshot owner.
+                            @panic("accepted logical scalar owner missing");
+                        }
+                    }
                     cell.* = blank_cell;
                 }
             }
@@ -1369,6 +1389,18 @@ pub const Screen = struct {
     pub fn historyCellAt(self: *const Screen, history_idx: u32, col: u16) Cell {
         const store = if (self.history_store) |*value| value else return blank_cell;
         return store.cellAtRecency(history_idx, col);
+    }
+
+    /// Reads a cell by oldest-first retained row, spanning history and live rows.
+    pub fn retainedCellInfoAt(self: *const Screen, row: u32, col: u16) ?Cell {
+        if (row >= self.retainedRowCount() or col >= self.cols) return null;
+        return self.retainedRowAt(row).cellInfoAt(col);
+    }
+
+    /// Copies a lead sequence by oldest-first retained row into caller storage.
+    pub fn retainedCellScalarsAt(self: *const Screen, row: u32, col: u16, output: *[scalar_storage.maximum_scalars]u32) []const u32 {
+        if (row >= self.retainedRowCount() or col >= self.cols) return &.{};
+        return self.retainedRowAt(row).cellScalarsAt(col, output);
     }
 
     /// Copies one complete retained-history lead scalar sequence.
@@ -3822,6 +3854,7 @@ pub const Screen = struct {
     fn scrollUpPrepared(self: *Screen, prepared: ?*history_store_mod.Store.Prepared) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
+        const history_dropped = if (prepared) |row| row.dropsOldest() else false;
         // The outgoing physical row becomes the cleared bottom row after rotation.
         const recycled = if (self.row_metadata) |metadata| &metadata[self.row_origin] else null;
         const clear_cols = self.rowScanEnd(0);
@@ -3843,6 +3876,31 @@ pub const Screen = struct {
             }
             row.ascii = .{ .end = clear_cols };
             row.ordinary = .{ .end = clear_cols };
+        }
+        if (history_dropped and self.nonsemantic_clusters_possible) self.clearEvictedLiveFragments();
+    }
+
+    // Once the oldest retained row drops the lead, its live continuation no
+    // longer has text to project. Retire it and advance the affected row IDs.
+    fn clearEvictedLiveFragments(self: *Screen) void {
+        const cells = self.cells orelse return;
+        const history = self.historyCount();
+        // Only rows whose distance from the retained frontier could exceed
+        // an admitted cell's maximum y can contain an evicted lead.
+        const maximum_y = @as(u32, sized_text.maximum_scale) - 1;
+        if (history >= maximum_y) return;
+        const limit: u16 = @intCast(@min(self.rows, maximum_y - history));
+        var row: u16 = 0;
+        while (row < limit) : (row += 1) {
+            var col: u16 = 0;
+            while (col < self.cols) : (col += 1) {
+                const cell = cells[self.rowStart(row) + col];
+                if (cell.y > @as(u32, history) + row) {
+                    // zig-audit: acknowledge discard
+                    // reason: Cluster cleanup advances row identity when it changes the grid.
+                    _ = self.clearClusterAt(row, col, false);
+                }
+            }
         }
     }
 
@@ -3959,6 +4017,24 @@ pub const Screen = struct {
     /// Scroll an ordered region upward by at most its bounded row count.
     /// Returns exact cell, row, history, damage, or pending-wrap mutation.
     pub fn scrollUpRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
+        // History-crossing multicell clusters need the same admitted row
+        // transition as input retries; ordinary bulk scrolling stays direct.
+        const full_width = !self.left_right_margin_mode or (self.left_margin == 0 and self.right_margin + 1 == self.cols);
+        if (count != 0 and self.rows != 0 and top == 0 and bottom >= self.rows - 1 and full_width and
+            self.history_capacity != 0 and self.nonsemantic_clusters_possible)
+        {
+            var remaining = @min(count, self.rows);
+            var changed = false;
+            while (remaining != 0) : (remaining -= 1) {
+                const row_changed = self.tryScrollUpRegionOne(top, bottom) catch {
+                    // This non-fallible API retains its existing best-effort
+                    // history-loss policy when admission is unavailable.
+                    return self.scrollUpRegionPrepared(top, bottom, remaining, null) or changed;
+                };
+                changed = row_changed or changed;
+            }
+            return changed;
+        }
         return self.scrollUpRegionPrepared(top, bottom, count, null);
     }
 
@@ -4083,20 +4159,30 @@ pub const Screen = struct {
         if (amount == 0) return changed;
         const full_width = !self.left_right_margin_mode or
             (self.left_margin == 0 and self.right_margin + 1 == self.cols);
-        changed = self.clearNonSemanticClustersIntersecting(
-            top,
-            top + amount,
-            0,
-            self.cols,
-            full_width,
-        ) or changed;
-        changed = self.clearNonSemanticClustersIntersecting(
-            bounded_bottom,
-            bounded_bottom + 1,
-            0,
-            self.cols,
-            full_width,
-        ) or changed;
+        // An admitted full-screen row move retains the cluster's lead in
+        // history and leaves its remaining rows live. Other moves still clear
+        // clusters where they can be split by a boundary.
+        const retain_fragments = prepared != null and top == 0 and bounded_bottom == self.rows - 1 and full_width;
+        if (!retain_fragments) {
+            changed = self.clearNonSemanticClustersIntersecting(
+                top,
+                top + amount,
+                0,
+                self.cols,
+                full_width,
+            ) or changed;
+            // A full-screen upward move has no cells below the bottom edge:
+            // a block wholly inside the moved rows remains intact.
+            if (!(top == 0 and bounded_bottom == self.rows - 1 and full_width)) {
+                changed = self.clearNonSemanticClustersIntersecting(
+                    bounded_bottom,
+                    bounded_bottom + 1,
+                    0,
+                    self.cols,
+                    full_width,
+                ) or changed;
+            }
+        }
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
@@ -4147,6 +4233,10 @@ pub const Screen = struct {
     /// Scroll an ordered region downward by at most its bounded row count.
     /// Returns exact cell, row, damage, or pending-wrap mutation.
     pub fn scrollDownRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
+        return self.scrollDownRegionRestoring(top, bottom, count, false);
+    }
+
+    fn scrollDownRegionRestoring(self: *Screen, top: u16, bottom: u16, count: u16, restoring: bool) bool {
         var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return changed;
         const bounded_bottom = @min(bottom, self.rows - 1);
@@ -4159,9 +4249,25 @@ pub const Screen = struct {
             0,
             self.cols,
         ) or changed;
-        changed = self.clearClustersIntersecting(top, top + 1, 0, self.cols) or changed;
+        const full_width = !self.left_right_margin_mode or (self.left_margin == 0 and self.right_margin + 1 == self.cols);
+        const restore_full_screen = restoring and top == 0 and bounded_bottom == self.rows - 1 and full_width;
+        const full_screen = top == 0 and bounded_bottom == self.rows - 1 and full_width;
+        if (full_screen) {
+            if (!restoring) {
+                // A continuation whose lead remains in history would split.
+                // Live leads move intact; restoration moves its lead back too.
+                const cells = self.cells.?;
+                for (0..self.cols) |col| {
+                    const cell = cells[self.rowStart(0) + col];
+                    if (cell.y != 0)
+                        changed = self.clearClusterAt(0, @intCast(col), false) or changed;
+                }
+            }
+        } else {
+            changed = self.clearClustersIntersecting(top, top + 1, 0, self.cols) or changed;
+        }
 
-        if (top == 0 and bounded_bottom == self.rows - 1 and !self.left_right_margin_mode) {
+        if (top == 0 and bounded_bottom == self.rows - 1 and (!self.left_right_margin_mode or restore_full_screen)) {
             self.row_origin = @intCast((@as(u32, self.row_origin) + @as(u32, self.rows) - @as(u32, amount)) % @as(u32, self.rows));
             var clear_row: u16 = 0;
             while (clear_row < amount) : (clear_row += 1) {
@@ -4220,7 +4326,7 @@ pub const Screen = struct {
             else
                 0;
             if (has_history and !self.preflightHistoryRestore()) break;
-            changed = self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1) or changed;
+            changed = self.scrollDownRegionRestoring(self.scroll_top, self.scrollBottom(), 1, has_history) or changed;
             if (has_history) {
                 const destination = self.rowStart(self.scroll_top);
                 self.commitHistoryRestore(destination);
@@ -7080,11 +7186,11 @@ fn appendRewrappedRows(
     var destination_col: u16 = 0;
     while (source_index < line.cells.items.len) {
         const cell = line.cells.items[source_index];
-        if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+        if (isReflowWideCell(cell) and isCellContinuation(cell)) {
             source_index += 1;
             continue;
         }
-        const span: u16 = if (isSemanticWideLead(cell)) cell.width else 1;
+        const span: u16 = if (isReflowWideLead(cell)) cell.width else 1;
         if (span > cols) {
             std.debug.assert(source_index + span <= line.cells.items.len);
             source_index += span;
@@ -7100,14 +7206,13 @@ fn appendRewrappedRows(
             destination_row * @as(usize, cols) +
             destination_col;
         result.flat_rows.items[destination] = cell;
-        if (span == 2) {
-            std.debug.assert(source_index + 1 < line.cells.items.len);
-            const continuation = line.cells.items[source_index + 1];
-            std.debug.assert(
-                isSemanticWideCell(continuation) and
-                    isCellContinuation(continuation),
-            );
-            result.flat_rows.items[destination + 1] = continuation;
+        if (span > 1) {
+            std.debug.assert(source_index + span <= line.cells.items.len);
+            for (1..span) |offset| {
+                const continuation = line.cells.items[source_index + offset];
+                std.debug.assert(isReflowWideCell(continuation) and continuation.x == offset);
+                result.flat_rows.items[destination + offset] = continuation;
+            }
         }
         if (sidecarCount(cell) != 0) {
             copyScalarCells(
@@ -7172,11 +7277,11 @@ fn updateSemanticCursor(
     var col: u16 = 0;
     while (source_index < line_cursor_offset and source_index < cells.len) {
         const cell = cells[source_index];
-        if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+        if (isReflowWideCell(cell) and isCellContinuation(cell)) {
             source_index += 1;
             continue;
         }
-        const span: u16 = if (isSemanticWideLead(cell)) cell.width else 1;
+        const span: u16 = if (isReflowWideLead(cell)) cell.width else 1;
         if (span > cols) {
             const span_end = source_index + span;
             if (line_cursor_offset <= span_end) {
@@ -7214,6 +7319,15 @@ fn updateSemanticCursor(
     }
 }
 
+// One-row OSC 66 items and ordinary wide glyphs reflow as atomic spans.
+fn isReflowWideCell(cell: ScreenCell) bool {
+    return cell.height == 1 and cell.width > 1 and cell.x < cell.width and cell.y == 0;
+}
+
+fn isReflowWideLead(cell: ScreenCell) bool {
+    return isReflowWideCell(cell) and cell.x == 0;
+}
+
 fn rowCountForSemanticCells(cells: []const ScreenCell, cols: u16) u32 {
     if (cols == 0) return 0;
     if (cells.len == 0) return 1;
@@ -7222,11 +7336,11 @@ fn rowCountForSemanticCells(cells: []const ScreenCell, cols: u16) u32 {
     var index: usize = 0;
     while (index < cells.len) {
         const cell = cells[index];
-        if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+        if (isReflowWideCell(cell) and isCellContinuation(cell)) {
             index += 1;
             continue;
         }
-        const span: u16 = if (isSemanticWideLead(cell)) cell.width else 1;
+        const span: u16 = if (isReflowWideLead(cell)) cell.width else 1;
         if (span > cols) {
             std.debug.assert(index + span <= cells.len);
             index += span;
@@ -7253,7 +7367,6 @@ fn omitUnrepresentableSemanticWidths(
     lines: *LogicalSnapshot,
     cols: u16,
 ) void {
-    if (cols >= 2) return;
     for (lines.logical_lines.items, 0..) |*line, line_index| {
         const storage: ?*scalar_storage.Storage = if (line.scalars) |*owner|
             owner
@@ -7269,16 +7382,16 @@ fn omitUnrepresentableSemanticWidths(
             0;
         while (source < original_len) {
             const cell = line.cells.items[source];
-            if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+            if (isReflowWideCell(cell) and isCellContinuation(cell)) {
                 // zig-audit: acknowledge panic
                 // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("accepted logical continuation missing its lead");
             }
-            const span: usize = if (isSemanticWideLead(cell)) cell.width else 1;
+            const span: usize = if (isReflowWideLead(cell)) cell.width else 1;
             if (span > cols) {
                 std.debug.assert(source + span <= original_len);
                 const continuation = line.cells.items[source + 1];
-                if (!isSemanticWideCell(continuation) or
+                if (!isReflowWideCell(continuation) or
                     !isCellContinuation(continuation))
                     // zig-audit: acknowledge panic
                     // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
@@ -7290,13 +7403,9 @@ fn omitUnrepresentableSemanticWidths(
                     // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                     @panic("accepted logical scalar owner missing");
                 }
-                line.cells.items[source] = blank_cell;
-                line.cells.items[source + 1] = blank_cell;
-                if (adjusted_cursor > source) {
-                    const removed_before_cursor = @min(
-                        span,
-                        adjusted_cursor - source,
-                    );
+                for (0..span) |offset| line.cells.items[source + offset] = blank_cell;
+                if (lines.cursor_found and lines.cursor_line_index == line_index and lines.cursor_offset > source) {
+                    const removed_before_cursor = @min(span, lines.cursor_offset - source);
                     adjusted_cursor -= @intCast(removed_before_cursor);
                 }
                 source += span;
@@ -9102,4 +9211,54 @@ test "clearing any cell of a taller live fragment clears the whole fragment" {
         try std.testing.expectEqual(@as(u8, 0), cell.y);
     };
     try std.testing.expectEqual(@as(u32, 'X'), screen.historyCellAt(0, 0).codepoint);
+}
+
+test "reverse history scroll restores the whole crossing cluster" {
+    for ([_]bool{ false, true }) |margins_enabled| {
+        var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 8, 4);
+        defer screen.deinit(std.testing.allocator);
+        screen.left_right_margin_mode = margins_enabled;
+        try std.testing.expect(screen.writeSizedText("s=2;X"));
+        try std.testing.expect(try screen.tryScrollUpRegionOne(0, 2));
+        try std.testing.expectEqual(@as(u32, 'X'), screen.historyCellAt(0, 0).codepoint);
+        try std.testing.expect(screen.scrollDownFromHistory(1));
+        try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+        try std.testing.expectEqual(@as(u32, 'X'), screen.cellInfoAt(0, 0).codepoint);
+        for (0..2) |y| for (0..2) |x| {
+            const cell = screen.cellInfoAt(@intCast(y), @intCast(x));
+            try std.testing.expectEqual(@as(u8, 2), cell.width);
+            try std.testing.expectEqual(@as(u8, 2), cell.height);
+            try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+            try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+        };
+    }
+}
+
+test "reverse history scroll reassembles a three-row crossing cluster" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("s=3;X"));
+    try std.testing.expect(try screen.tryScrollUpRegionOne(0, 3));
+    try std.testing.expect(try screen.tryScrollUpRegionOne(0, 3));
+    try std.testing.expectEqual(@as(u32, 2), screen.historyCount());
+    try std.testing.expect(screen.scrollDownFromHistory(2));
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqual(@as(u32, 'X'), screen.cellInfoAt(0, 0).codepoint);
+    for (0..3) |y| for (0..3) |x| {
+        const cell = screen.cellInfoAt(@intCast(y), @intCast(x));
+        try std.testing.expectEqual(@as(u8, 3), cell.width);
+        try std.testing.expectEqual(@as(u8, 3), cell.height);
+        try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+        try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+    };
+}
+
+test "zero-count scroll still cancels pending wrap after multicell admission" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("s=2;X"));
+    screen.wrap_pending = true;
+    try std.testing.expect(screen.scrollUpRegion(0, 2, 0));
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
 }
