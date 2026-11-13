@@ -3924,11 +3924,39 @@ fn applyInputScrollUp(vt: *Terminal, count: u16) ScrollUpProgress {
         std.debug.assert(changed);
         if (screen.scrollBottom() < screen.rows -| 1) {
             std.debug.assert(graphicsScreenOrigin(vt) == origin + 1);
-            // zig-audit: acknowledge discard
-            // reason: The completed row is the mutation witness for the input operation.
-            _ = vt.graphics.scroll(graphicsBank(vt), origin + screen.scrollBottom() + 1, origin + screen.rows, 1, false);
+            shiftFixedImages(vt, screen, origin, origin + 1);
         }
         progress.completed += 1;
+    }
+    return progress;
+}
+
+// History moves the viewport origin; rows below a scrolling top region stay
+// fixed on screen, so only their absolute graphics anchors need translation.
+fn shiftFixedImages(vt: *Terminal, screen: *Screen, before: u64, after: u64) void {
+    std.debug.assert(after >= before);
+    var origin = before;
+    while (origin < after) {
+        const amount: u16 = @intCast(@min(after - origin, std.math.maxInt(u16)));
+        // zig-audit: acknowledge discard
+        // reason: The graphics generation records image mutation separately.
+        _ = vt.graphics.scroll(graphicsBank(vt), origin + screen.scrollBottom() + 1, origin + screen.rows - 1 + amount, amount, false);
+        origin += amount;
+    }
+}
+
+// Sized text may scroll before it blocks. Preserve fixed-row image anchors
+// for the history rows accepted in this attempt, including partial progress.
+fn writeSizedTextGrowing(vt: *Terminal, payload: []const u8, offset: usize) Screen.SizedTextProgress {
+    const screen = vt.screen_state.active();
+    const before = graphicsScreenOrigin(vt);
+    const progress = screen.writeSizedTextGrowing(payload, offset);
+    const full_width = !screen.left_right_margin_mode or
+        (screen.left_margin == 0 and screen.right_margin + 1 == screen.cols);
+    if (!vt.screen_state.alt_active and screen.history_capacity != 0 and
+        screen.scroll_top == 0 and full_width and screen.scrollBottom() < screen.rows -| 1)
+    {
+        shiftFixedImages(vt, screen, before, graphicsScreenOrigin(vt));
     }
     return progress;
 }
@@ -4287,7 +4315,7 @@ const TerminalStream = struct {
                     break :repeated progress.completed != 0;
                 },
                 .sized_text => |sized| written: {
-                    const progress = self.terminal.screen_state.active().writeSizedTextGrowing(sized.payload, sized.offset);
+                    const progress = writeSizedTextGrowing(self.terminal, sized.payload, sized.offset);
                     if (progress.blocked) |failure| {
                         self.terminal.stream_state.pending_input.?.work = .{ .sized_text = .{ .payload = sized.payload, .offset = progress.next_offset } };
                         self.terminal.stream_state.pending_input.?.failure = failure;
@@ -4558,7 +4586,7 @@ const TerminalStream = struct {
             if (routeParserEvent(event)) |semantic| {
                 if (semantic == .text_size) {
                     const payload = semantic.text_size.payload;
-                    const progress = self.terminal.screen_state.active().writeSizedTextGrowing(payload, 0);
+                    const progress = writeSizedTextGrowing(self.terminal, payload, 0);
                     if (progress.blocked) |failure| {
                         std.debug.assert(self.terminal.stream_state.pending_input == null);
                         self.terminal.stream_state.pending_input = .{

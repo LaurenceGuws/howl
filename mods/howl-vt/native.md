@@ -183,7 +183,8 @@ escaping a nonsemantic multicell cluster. Presentation widening that scrolls at
 the bottom margin also retries. One chained graphic case beginning above the
 margin and single-row OSC 66 horizontal wraps retry too. Primary top-anchored full-width
 CSI scroll-up retries remaining rows after a partially completed admission,
-including a partial-height region. Other chained paths and multi-row OSC 66
+including a partial-height region. Multi-row OSC 66 text retries under the
+same primary top-anchored, full-width history conditions. Other chained paths
 are not yet fully qualified for history-admission retry.
 
 Other canonical feed errors may follow an already-applied prefix. For those,

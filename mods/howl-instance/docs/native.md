@@ -58,7 +58,7 @@ then service the owner again, including when no PTY bytes remain buffered.
 Continue servicing pending writes. Do not force a zero timeout solely because
 `buffered_output_pending` is true during this pause. `hi_resize` returns
 `HI_BUSY` without changing geometry while input is blocked; the embedder
-should defer the requested resize and retry after the pause. Scalar and history capacity limits remain reported `HI_RESOURCE_LIMIT`, not indefinitely retried OOM. Explicit LF/NEL and non-joining graphic/REP placement beginning at the bottom margin retry history admission, including multicell escape and presentation widening. One chained graphic case from above, single-row OSC 66 wraps and primary top-anchored full-width CSI scroll-up are covered; other chained paths and multi-row OSC 66 are not yet fully qualified.
+should defer the requested resize and retry after the pause. Scalar and history capacity limits remain reported `HI_RESOURCE_LIMIT`, not indefinitely retried OOM. Explicit LF/NEL and non-joining graphic/REP placement beginning at the bottom margin retry history admission, including multicell escape and presentation widening. One chained graphic case from above, OSC 66 text and CSI scroll-up under primary top-anchored full-width history are covered; other chained paths are not yet fully qualified.
 
 The Instance ABI version incorporates VT native version 2 and Render native version 1. Changing an incorporated
 record requires coordinated Instance ABI review/versioning; compile-time guards

@@ -4536,3 +4536,56 @@ test "real PTY bulk scroll retries history before accepting suffix" {
         try std.testing.expectEqual(@as(u21, 'B'), terminal(value).semanticView(2).cellAt(1, 0));
     }
 }
+
+test "real PTY multi-row sized text retries history before suffix" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const value = try testInstance(failing.allocator(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'AAAA\\033[2;1HBBBB\\033[3;1H\\033]66;s=3;X'; read line; printf '\\007Z'; sleep 30",
+        .rows = 3,
+        .columns = 4,
+        .history_rows = 8,
+    });
+    defer deinit(value);
+    const state = stateMut(value);
+    var captured = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        try std.testing.expect(turn.input_retry_wait_ms == null);
+        if (state.terminal.stream_state.parser.osc.buffer.items.len == "s=3;X".len) {
+            captured = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(captured);
+    failing.fail_index = failing.alloc_index;
+    try state.input(.{ .bytes = "GO\n" });
+    var blocked = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        if (turn.input_retry_wait_ms != null) {
+            blocked = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(blocked);
+    try std.testing.expectEqual(@as(u32, 0), terminal(value).semanticView(0).history_count);
+    failing.fail_index = std.math.maxInt(usize);
+    var completed = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, std.time.ns_per_s + @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        if (turn.input_retry_wait_ms == null and !inputBlocked(value) and terminal(value).semanticView(0).cellAt(0, 3) == 'Z') {
+            completed = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(completed);
+    try std.testing.expectEqual(@as(u64, 0), state.terminal.screen_state.primary.history_loss_generation);
+    try std.testing.expectEqual(@as(u32, 2), terminal(value).semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal(value).semanticView(2).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal(value).semanticView(2).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal(value).semanticView(0).cellAt(0, 0));
+}

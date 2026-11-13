@@ -3057,7 +3057,7 @@ pub const Screen = struct {
         }
         defer if (prepared_tail) |*prepared| prepared.deinit();
         var history: ?history_store_mod.Store.Prepared = null;
-        if (grow and height == 1 and self.auto_wrap and
+        if (grow and self.auto_wrap and
             self.cursor.row == self.scrollBottom() and self.cursor.col + physical_width - 1 > right)
         {
             history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
@@ -3081,9 +3081,23 @@ pub const Screen = struct {
         }
         const bottom = self.scrollBottom();
         if (self.cursor.row + height - 1 > bottom) {
-            const amount = self.cursor.row + height - 1 - bottom;
-            changed = self.scrollUpRegion(self.scroll_top, bottom, amount) or changed;
-            self.cursor.setPositionByClient(self.cursor.row - amount, self.cursor.col);
+            const full_width = !self.left_right_margin_mode or
+                (self.left_margin == 0 and self.right_margin + 1 == self.cols);
+            if (grow and self.scroll_top == 0 and self.history_capacity != 0 and full_width) {
+                // Each committed row adjusts the cursor immediately. If the next
+                // admission fails, retry recomputes only the remaining scroll.
+                while (self.cursor.row + height - 1 > bottom) {
+                    changed = (self.tryScrollUpRegionOne(self.scroll_top, bottom) catch |failure| switch (failure) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        error.Capacity => return error.HistoryCapacity,
+                    }) or changed;
+                    self.cursor.setPositionByClient(self.cursor.row - 1, self.cursor.col);
+                }
+            } else {
+                const amount = self.cursor.row + height - 1 - bottom;
+                changed = self.scrollUpRegion(self.scroll_top, bottom, amount) or changed;
+                self.cursor.setPositionByClient(self.cursor.row - amount, self.cursor.col);
+            }
         }
         if (physical_width > 1 or height > 1)
             self.nonsemantic_clusters_possible = true;
