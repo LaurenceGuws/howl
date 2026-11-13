@@ -2222,3 +2222,44 @@ test "terminal: wide printing boundaries reject REP on a one-column row" {
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
     try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
 }
+
+test "terminal: bulk and sequential scrolling retain identical graphics" {
+    var bulk = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer bulk.deinit();
+    var single = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer single.deinit();
+    const init = "\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\x1b\\";
+    for ([_]*Terminal{ &bulk, &single }) |terminal| {
+        try terminal.setCellPixelSize(1, 1);
+        try feed(terminal, init);
+        try std.testing.expect(terminal.images(0).placement(0) != null);
+    }
+    try feed(&bulk, "\x1b[2S");
+    try feed(&single, "\x1b[S\x1b[S");
+    for ([_]u16{ 0, 1, 2 }) |offset| {
+        try std.testing.expectEqualDeep(bulk.images(offset).placement(0), single.images(offset).placement(0));
+    }
+    // The image started on the second row, which is now the second history row.
+    try std.testing.expectEqual(@as(u16, 0), bulk.images(1).placement(0).?.row);
+}
+
+test "terminal: graphics scrolls without history and evicts with bounded history" {
+    const init = "\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\x1b\\";
+    var no_history = try Terminal.init(std.testing.allocator, 3, 8);
+    defer no_history.deinit();
+    try no_history.setCellPixelSize(1, 1);
+    try feed(&no_history, init);
+    try feed(&no_history, "\x1b[S");
+    try std.testing.expectEqual(@as(u16, 0), no_history.images(0).placement(0).?.row);
+    try feed(&no_history, "\x1b[S");
+    try std.testing.expect(no_history.images(0).placement(0) == null);
+
+    var limited = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 1);
+    defer limited.deinit();
+    try limited.setCellPixelSize(1, 1);
+    try feed(&limited, init);
+    try feed(&limited, "\x1b[2S");
+    try std.testing.expectEqual(@as(u16, 0), limited.images(1).placement(0).?.row);
+    try feed(&limited, "\x1b[S");
+    try std.testing.expect(limited.images(1).placement(0) == null);
+}

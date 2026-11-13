@@ -3775,7 +3775,14 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .scroll_up_lines => |count| {
             const screen = vt.screen_state.active();
+            const origin = graphicsScreenOrigin(vt);
             const changed = screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
+            // A full-screen primary scroll moves the viewport through retained
+            // history. Image anchors are already in absolute history coordinates.
+            const history_scroll = !vt.screen_state.alt_active and screen.scroll_top == 0 and
+                screen.scrollBottom() == screen.rows -| 1 and
+                graphicsScreenOrigin(vt) == origin + @min(count, screen.rows);
+            if (history_scroll) return changed;
             return vt.graphics.scroll(
                 graphicsBank(vt),
                 graphicsScreenOrigin(vt) + screen.scroll_top,
