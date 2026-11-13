@@ -647,3 +647,42 @@ test "dense output allocation failure preserves the held frame and retries" {
     try owner.flush();
     try std.testing.expectEqualDeep(before, held.snapshot.glyphs[0]);
 }
+
+test "single-row explicit-width OSC 66 remains drawable with cursor on any cell" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.resize(2, 12);
+    try owner.feed("\x1b[?25h\x1b[H\x1b]66;s=1:w=7;X\x07");
+    for (0..7) |col| {
+        var sequence: [32]u8 = undefined;
+        const move = try std.fmt.bufPrint(&sequence, "\x1b[1;{d}H", .{col + 1});
+        try owner.feed(move);
+        try owner.flush();
+        const held = try owner.hold();
+        try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+        try std.testing.expectEqual(@as(i32, @intCast(col * held.snapshot.cell_width)), held.snapshot.cursor_cell.?.x);
+        try owner.release(held);
+    }
+    try owner.feed("\x1b[1;4HZ");
+    try owner.flush();
+    try std.testing.expectEqual(@as(u21, ' '), owner.observation().semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Z'), owner.observation().semanticView(0).cellAt(0, 3));
+}
+
+test "single-row explicit-width OSC 66 remains drawable in history" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(2, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=1:w=7;X\x07\r\nnext\r\n");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(u32, 1), held.snapshot.history_offset);
+    try std.testing.expectEqual(@as(u21, 'X'), owner.observation().semanticView(1).cellAt(0, 0));
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+}

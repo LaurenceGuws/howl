@@ -93,8 +93,9 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (cell.height != 1 or cell.y != 0 or cell.subscale_n != 0 or cell.subscale_d != 0 or
                 cell.vertical_align != 0 or cell.horizontal_align != 0)
                 return error.UnsupportedScene;
-            if (!((cell.width == 1 and cell.x == 0 and !cell.semantic_width) or
-                (cell.width == 2 and cell.x <= 1 and cell.semantic_width))) return error.UnsupportedScene;
+            if (cell.semantic_width) {
+                if (cell.width != 2 or cell.x > 1) return error.UnsupportedScene;
+            } else if (cell.width == 0 or cell.x >= cell.width) return error.UnsupportedScene;
             if (cell.codepoint == 0x10eeee) return error.UnsupportedScene;
         }
         fn solid(counter: if (instrumented) ?*u64 else void, output: []frame.Command, used: *usize, rect: frame.Rect, clip: frame.Rect, color: frame.Color) !void {
@@ -268,11 +269,19 @@ pub fn Emitter(comptime instrumented: bool) type {
             const shared_style = if (uniform) variant(span.attrs) else undefined;
             if (!uniform) for (cells, 0..) |cell, col| {
                 try validate(cell);
-                if (cell.x == 1) {
-                    if (col == 0 or cells[col - 1].x != 0 or cells[col - 1].width != 2 or !cells[col - 1].semantic_width)
-                        return error.UnsupportedScene;
-                } else if (cell.width == 2) {
-                    if (col + 1 == columns or cells[col + 1].x != 1) return error.UnsupportedScene;
+                if (cell.width > 1) {
+                    if (cell.x > col) return error.UnsupportedScene;
+                    const start = col - cell.x;
+                    const end = start + cell.width;
+                    if (end > columns) return error.UnsupportedScene;
+                    const lead = cells[start];
+                    if (lead.x != 0 or lead.width != cell.width or lead.height != 1 or
+                        lead.semantic_width != cell.semantic_width) return error.UnsupportedScene;
+                    if (cell.x == 0) for (cells[start + 1 .. end], 1..) |tail, x| {
+                        if (tail.x != x or tail.width != cell.width or tail.height != 1 or
+                            tail.y != 0 or tail.semantic_width != cell.semantic_width or
+                            tail.codepoint != 0 or tail.combining_len != 0) return error.UnsupportedScene;
+                    };
                 }
             };
             const row_clip: frame.Rect = .{ .x = 0, .y = 0, .width = columns * ctx.cell_width, .height = ctx.cell_height };

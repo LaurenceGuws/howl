@@ -1539,7 +1539,7 @@ test "VT block cursor final commands paint fill and ink through Canvas" {
     try std.testing.expect(fill != 0 and ink != 0);
 }
 
-test "direct color glyph and block cursor match native software Canvas" {
+test "direct color glyph, explicit width and block cursor match native software Canvas" {
     const output = @import("howl_vt_output");
     const a = std.testing.allocator;
     const font = try instance.text.FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
@@ -1551,7 +1551,7 @@ test "direct color glyph and block cursor match native software Canvas" {
     // reason: The single direct lease below is released before teardown.
     defer direct.deinit() catch unreachable;
     try direct.resize(2, 12);
-    try direct.feed("M😀\x1b[2G");
+    try direct.feed("M😀\x1b[2;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H");
     try direct.flush();
     const lease = try direct.hold();
     // zig-audit: acknowledge catch_unreachable
@@ -1565,7 +1565,7 @@ test "direct color glyph and block cursor match native software Canvas" {
     try instance.Terminal.initWithHistoryInto(vt, a, 2, 12, 0);
     defer vt.deinit();
     try vt.setCellPixelSize(metrics.advance_width, metrics.line_height);
-    try std.testing.expect((try vt.feed("M😀\x1b[2G")).stateChanged());
+    try std.testing.expect((try vt.feed("M😀\x1b[2;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H")).stateChanged());
     const native = try render.initPrivate(a, .{ .regular = font }, .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
