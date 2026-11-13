@@ -1998,7 +1998,7 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     defer threaded.deinit();
     const owner = try Terminal.createDirect(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
-        .command = "stty -echo; printf 'READY\\033]0;READY\\007'; read line; printf '\\033_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\\033\\\\\\033]0;IMAGE\\007'; read line; printf '\\033[?1049hALT\\033]0;ALT\\007'; read line; printf '\\033[?1049l\\033]0;PRIMARY\\007'; sleep 30",
+        .command = "stty -echo; printf 'READY\\033]0;READY\\007'; read line; printf '\\033_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\\033\\\\\\033]0;IMAGE\\007'; read line; printf '\\033[?1049hALT\\033]0;ALT\\007'; read line; printf '\\033[?1049l\\033]0;PRIMARY\\007'; read line; printf '\\033_Ga=d,d=A,q=2\\033\\\\\\033]0;CLEARED\\007'; sleep 30",
         .rows = 4,
         .columns = 20,
         .history_rows = 8,
@@ -2050,6 +2050,18 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     }
     try std.testing.expectEqual(@as(?PresentationFailure, error.UnsupportedScene), owner.snapshot().presentation_failure);
     try std.testing.expect(held.snapshot.alternate);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "CLEARED");
+    owner.requestFrame();
+    next = null;
+    for (0..5000) |_| {
+        next = try owner.replaceDirectFrame(&held, null);
+        if (next != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    held = next orelse return error.Timeout;
+    try std.testing.expect(!held.snapshot.alternate);
+    try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
     try owner.releaseDirectFrame(held);
     pinned = false;
 }
