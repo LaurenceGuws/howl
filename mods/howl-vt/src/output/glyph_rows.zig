@@ -489,7 +489,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                             .resource = .{ .resource = ctx.pending_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                         } });
                     } else {
-                        const clip = try frame.intersectRects(destination, if (bounded_symbol) allocation else row_clip);
+                        const clip = try frame.intersectRects(destination, if (bounded_symbol or (!cell.semantic_width and cell.width > 1)) allocation else row_clip);
                         if (clip) |visible| {
                             const size = cache.atlasSize(ctx.atlas);
                             try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
