@@ -13,6 +13,7 @@ const text = @import("howl_text");
 const cache = @import("glyph_cache");
 const frame = @import("frame");
 const support = @import("text_support");
+const graphics_output = @import("graphics.zig");
 
 /// Maximum supported output row count.
 pub const rows = @import("limits").maximum_rows;
@@ -103,6 +104,7 @@ pub const Snapshot = struct {
     color_atlas_width: u16 = 0,
     color_atlas_height: u16 = 0,
     color_resource: ?frame.ResourceRef = null,
+    graphics: graphics_output.View = .{},
     format: frame.ResourceFormat = .alpha8,
 };
 /// Private bounded cache and output configuration shared by both specializations.
@@ -223,7 +225,7 @@ pub fn State(comptime instrumented: bool) type {
         /// Pin admission failures before accepted storage is modified.
         pub const HoldError = error{ NotReady, LeaseBusy };
         /// Native row/resource preparation failures, plus proof faults only in test specialization.
-        pub const FlushError = glyph_rows.BuildError || glyph_rows.CursorError || std.mem.Allocator.Error || error{ GenerationOverflow, Overflow, PresentationBusy, PixelSizeMismatch } || (if (instrumented) error{ InjectedOutputFailure, InjectedResourceFailure } else error{});
+        pub const FlushError = glyph_rows.BuildError || glyph_rows.CursorError || graphics_output.BuildError || std.mem.Allocator.Error || error{ GenerationOverflow, Overflow, PresentationBusy, PixelSizeMismatch } || (if (instrumented) error{ InjectedOutputFailure, InjectedResourceFailure } else error{});
         allocator: std.mem.Allocator,
         vt: *VT,
         owns_vt: bool,
@@ -239,6 +241,10 @@ pub fn State(comptime instrumented: bool) type {
         color_resources: [3]Resource = @splat(.{}),
         color_current: u2 = 0,
         color_held: ?u2 = null,
+        graphics_cuts: [3]graphics_output.Cut = @splat(.{}),
+        graphics_current: u2 = 0,
+        graphics_held: ?u2 = null,
+        graphics_generation: u64 = 0,
         structural_pending: bool = false,
         accepted_reset: u64 = 0,
         visual_context: u64 = 0,
@@ -352,6 +358,10 @@ pub fn State(comptime instrumented: bool) type {
             self.color_resources = @splat(.{});
             self.color_current = 0;
             self.color_held = null;
+            self.graphics_cuts = @splat(.{});
+            self.graphics_current = 0;
+            self.graphics_held = null;
+            self.graphics_generation = 0;
             self.structural_pending = false;
             self.accepted_reset = 0;
             self.visual_context = 0;
@@ -487,6 +497,7 @@ pub fn State(comptime instrumented: bool) type {
             destroyWorking(self.allocator, self.atlas, self.shapes, self.raster, self.shared);
             for (self.resources) |resource| self.allocator.free(resource.pixels);
             for (self.color_resources) |resource| self.allocator.free(resource.pixels);
+            for (&self.graphics_cuts) |*cut| cut.deinit(self.allocator);
             for (self.slots) |slot| for (slot.blocks) |block| self.allocator.free(block.commands);
             for (self.cursor_slot.blocks) |block| self.allocator.free(block.commands);
             self.allocator.destroy(self);
@@ -602,6 +613,7 @@ pub fn State(comptime instrumented: bool) type {
             for (self.resources) |resource| total += resource.pixels.len;
             if (cache.colorAtlasView(self.atlas)) |color| total += color.pixels.len;
             for (self.color_resources) |resource| total += resource.pixels.len;
+            for (self.graphics_cuts) |cut| total += cut.pixels.len;
             return total;
         }
         fn committedColorResource(self: *const Candidate) ?frame.ResourceRef {
@@ -701,6 +713,7 @@ pub fn State(comptime instrumented: bool) type {
             if (self.leased) return error.LeaseBusy;
             var result: Snapshot = .{ .history_offset = self.accepted_offset, .history_count = self.accepted_history_count, .history_row_base = self.accepted_history_base, .terminal_revision = self.accepted_terminal_revision, .content_revision = self.accepted_content_revision, .cursor_blink = self.accepted_cursor_blink, .cursor_movement = self.accepted_cursor_movement, .alternate = self.accepted_alternate, .rows = self.accepted_rows, .cols = self.accepted_cols, .surface = .{ .width = self.accepted_cols * self.cell_width, .height = self.accepted_rows * self.cell_height }, .glyphs = @splat(&.{}), .backgrounds = @splat(&.{}), .decorations = @splat(&.{}), .background = self.backgroundCommand(), .cursor = self.cursor, .cursor_shape = self.cursor_shape, .cursor_cell = self.cursor_cell, .cursor_text_color = self.cursor_text_color, .cursor_ink = self.cursorInkCommands(), .cell_width = self.cell_width, .cell_height = self.cell_height, .atlas_pixels = self.atlasPixels(), .atlas_width = self.atlasWidth(), .atlas_height = self.resources[self.resource_current].height, .resource = self.committedResource(), .color_atlas_pixels = self.color_resources[self.color_current].pixels[0..self.color_resources[self.color_current].len], .color_atlas_width = self.color_resources[self.color_current].width, .color_atlas_height = self.color_resources[self.color_current].height, .color_resource = self.committedColorResource() };
             result.visual_context = self.visual_context;
+            result.graphics = self.graphics_cuts[self.graphics_current].view();
             result.row_origin = self.origin;
             for (self.slots[0..self.accepted_rows]) |*slot| slot.held = slot.current;
             for (0..self.accepted_rows) |row| {
@@ -711,6 +724,7 @@ pub fn State(comptime instrumented: bool) type {
             }
             self.resource_held = self.resource_current;
             self.color_held = self.color_current;
+            self.graphics_held = self.graphics_current;
             self.cursor_slot.held = self.cursor_slot.current;
             self.leased = true;
             if (instrumented) self.stats.descriptor_bytes_written += @sizeOf(Snapshot);
@@ -722,6 +736,7 @@ pub fn State(comptime instrumented: bool) type {
             for (&self.slots) |*slot| slot.held = null;
             self.resource_held = null;
             self.color_held = null;
+            self.graphics_held = null;
             self.cursor_slot.held = null;
             self.leased = false;
         }
@@ -743,16 +758,51 @@ pub fn State(comptime instrumented: bool) type {
             // reason: An externally resized VT must fit before output is staged.
             _ = try std.math.mul(u16, screen.rows, self.working_cell_height);
             const presentation = self.vt.presentation();
-            // Retained pixels and placements in the other screen bank do not
-            // affect this scene. Placements in this bank remain unsupported.
-            var placement_index: usize = 0;
-            while (self.vt.graphics.placement(placement_index)) |placement| : (placement_index += 1) {
-                if ((placement.bank == .alternate) == alternate) return error.UnsupportedScene;
-            }
             if (screen.view_padding_rows != 0) return error.UnsupportedScene;
             const history_count = if (alternate) 0 else screen.historyCount();
             const history_base = if (alternate) 0 else screen.historyRowBase();
             const offset = @min(self.requested_offset, history_count);
+            // Final image commands are cut directly from canonical VT graphics,
+            // not from the separate terminal-observation/Render input lane.
+            const images = self.vt.images(offset);
+            // Placeholder cells are canonical text, so a retained invisible
+            // Kitty prototype depends on non-cursor terminal content as well
+            // as pixels. Cursor-only motion must not recopy image planes.
+            const placeholder_revision: u64 = if (self.vt.graphics.hasVirtualPlacement(if (alternate) .alternate else .primary))
+                self.vt.contentSequence()
+            else
+                0;
+            const graphics_changed = !self.ready or !self.graphics_cuts[self.graphics_current].matches(
+                images,
+                alternate,
+                screen.rows,
+                screen.cols,
+                self.working_cell_width,
+                self.working_cell_height,
+                placeholder_revision,
+            );
+            var graphics_next = self.graphics_current;
+            if (graphics_changed) {
+                if (self.graphics_generation == std.math.maxInt(u64)) return error.GenerationOverflow;
+                graphics_next = 0;
+                while (graphics_next == self.graphics_current or graphics_next == self.graphics_held) graphics_next += 1;
+                // An inactive, unheld cut has no reader. Retire its slab
+                // before staging so peak copied graphics stays within three
+                // declared cuts even when new content grows to the quota.
+                self.graphics_cuts[graphics_next].deinit(self.allocator);
+                const cut = try graphics_output.build(
+                    self.allocator,
+                    images,
+                    alternate,
+                    screen.rows,
+                    screen.cols,
+                    self.working_cell_width,
+                    self.working_cell_height,
+                    placeholder_revision,
+                    self.graphics_generation + 1,
+                );
+                self.graphics_cuts[graphics_next] = cut;
+            }
             const accepted = self.resources[self.resource_current];
             const rebuild_all = changed_backing or self.config_pending or offset != self.accepted_offset or (offset != 0 and (history_count != self.accepted_history_count or history_base != self.accepted_history_base)) or screen.rows != self.accepted_rows or screen.cols != self.accepted_cols or alternate != self.accepted_alternate or !std.meta.eql(presentation, self.accepted_presentation) or self.structural_pending or self.vt.resetSequence() != self.accepted_reset or
                 cache.atlasView(self.atlas).generation != accepted.atlas_epoch;
@@ -932,9 +982,9 @@ pub fn State(comptime instrumented: bool) type {
                 };
             };
             if (instrumented) if (self.fail_after_resource) return error.InjectedResourceFailure;
-            const next_context = if (!self.ready or rebuild_all) try std.math.add(u64, self.visual_context, 1) else self.visual_context;
+            const next_context = if (!self.ready or rebuild_all or graphics_changed) try std.math.add(u64, self.visual_context, 1) else self.visual_context;
             const next_origin: u16 = if (offset == 0) screen.row_origin else 0;
-            const content_changed = !self.ready or rebuild_all or rebuilt != 0 or changed or color_stage.changed or next_origin != self.origin;
+            const content_changed = !self.ready or rebuild_all or rebuilt != 0 or changed or color_stage.changed or graphics_changed or next_origin != self.origin;
             const next_content_revision = if (content_changed) try std.math.add(u64, self.accepted_content_revision, 1) else self.accepted_content_revision;
             // Atomic acceptance: no fallible work below this point.
             self.visual_context = next_context;
@@ -947,6 +997,8 @@ pub fn State(comptime instrumented: bool) type {
             self.accepted_presentation = presentation;
             self.resource_current = resource_next;
             self.color_current = color_stage.index;
+            self.graphics_current = graphics_next;
+            if (graphics_changed) self.graphics_generation += 1;
             self.accepted_reset = self.vt.resetSequence();
             self.primary_cells = primary_cells;
             self.alternate_cells = alternate_cells;

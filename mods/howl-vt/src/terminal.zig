@@ -5811,6 +5811,82 @@ pub const Terminal = struct {
             return self.virtualRun(index - plane.placement_count);
         }
 
+        /// Streams actual visible placements once, without charging invisible
+        /// other-bank prototypes to the caller's final-command budget.
+        /// This preserves the native placeholder scanner across successive
+        /// reads instead of rescanning the cell lattice for every index.
+        pub const PlacementIterator = struct {
+            /// The final-command destination Y may be negative when a tall
+            /// physical image's anchor precedes the selected history viewport.
+            pub const VisiblePlacement = struct { placement: ImagePlacement, top: i128 };
+            images: *const Images,
+            physical_index: usize = 0,
+            virtual_row: u16 = 0,
+            scanner: ?PlaceholderRunScanner = null,
+
+            /// Copies the next visible physical or projected virtual placement.
+            pub fn next(self: *PlacementIterator) ?VisiblePlacement {
+                const plane = self.images.backingPlane();
+                while (self.physical_index < plane.placement_count) {
+                    const index = self.physical_index;
+                    self.physical_index += 1;
+                    const physical = plane.placement(index) orelse continue;
+                    if (physical.virtual or physical.bank != self.images.bank) continue;
+                    const row_offset: i128 = @as(i128, physical.row) - @as(i128, self.images.visible_row_start);
+                    const pixel_top = row_offset * self.images.cell_pixel_height + physical.cell_y;
+                    const pixel_bottom = pixel_top + physical.pixel_height;
+                    const viewport_bottom: i128 = @as(i128, self.images.rows) * self.images.cell_pixel_height;
+                    if (pixel_bottom <= 0 or pixel_top >= viewport_bottom) continue;
+                    const pixel_left: i128 = @as(i128, physical.col) * self.images.cell_pixel_width + physical.cell_x;
+                    const viewport_right: i128 = @as(i128, self.images.view.cols) * self.images.cell_pixel_width;
+                    if (pixel_left >= viewport_right or pixel_left + physical.pixel_width <= 0) continue;
+                    const relative_row: u16 = if (row_offset < 0) 0 else std.math.cast(u16, row_offset) orelse continue;
+                    return .{ .placement = .{
+                        .image_id = physical.image_id,
+                        .generation = physical.generation,
+                        .row = relative_row,
+                        .col = physical.col,
+                        .source_x = physical.source_x,
+                        .source_y = physical.source_y,
+                        .source_width = physical.source_width,
+                        .source_height = physical.source_height,
+                        .cell_x = physical.cell_x,
+                        .cell_y = physical.cell_y,
+                        .pixel_width = physical.pixel_width,
+                        .pixel_height = physical.pixel_height,
+                        .z = physical.z,
+                    }, .top = pixel_top };
+                }
+                if (!plane.hasVirtualPlacement(self.images.bank)) return null;
+                while (self.virtual_row < self.images.view.rows) {
+                    if (self.scanner == null)
+                        self.scanner = PlaceholderRunScanner.init(self.images, self.virtual_row);
+                    if (self.scanner) |*scanner| {
+                        while (scanner.next()) |run| {
+                            if (self.images.projectVirtualRun(run)) |placed| {
+                                const top: i128 = @as(i128, placed.row) * self.images.cell_pixel_height + placed.cell_y;
+                                const left: i128 = @as(i128, placed.col) * self.images.cell_pixel_width + placed.cell_x;
+                                if (top >= @as(i128, self.images.rows) * self.images.cell_pixel_height or
+                                    top + placed.pixel_height <= 0 or
+                                    left >= @as(i128, self.images.view.cols) * self.images.cell_pixel_width or
+                                    left + placed.pixel_width <= 0) continue;
+                                return .{ .placement = placed, .top = top };
+                            }
+                        }
+                    }
+                    self.virtual_row += 1;
+                    self.scanner = null;
+                }
+                return null;
+            }
+        };
+
+        /// Borrows one linear traversal of all visible graphics placements.
+        /// A caller enforces its own command limit on the number returned.
+        pub fn placementIterator(self: *const Images) PlacementIterator {
+            return .{ .images = self };
+        }
+
         const Placeholder = struct {
             image_low: u32 = 0,
             placement_id: u32 = 0,
@@ -5919,8 +5995,12 @@ pub const Terminal = struct {
                         const completed = self.completedRun();
                         self.run_length = 0;
                         if (current != null) self.startRun(value);
-                        if (!at_end) self.col += 1 else self.col += 1;
-                        return completed;
+                        self.col += 1;
+                        // A malformed run is not the end of the row. The
+                        // scanner must preserve the following run already
+                        // started at the boundary.
+                        if (completed) |run| return run;
+                        continue;
                     }
                     if (current != null) self.startRun(value);
                     self.col += 1;
@@ -10583,6 +10663,19 @@ fn pixelGeometryTransaction(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(u32, 24), terminal.screen_state.alternate.cellPixelSize().?.height);
 }
 
+test "native image iterator retains visible coordinates beyond draw-command i32 range" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 2);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 2_147_483_648);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\",
+    )).stateChanged());
+    const images = terminal.images(0);
+    var iterator = images.placementIterator();
+    try std.testing.expectEqual(@as(i128, 2_147_483_648), iterator.next().?.top);
+    try std.testing.expect(iterator.next() == null);
+}
+
 test "image projection requires a virtual prototype in the viewed bank" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
@@ -10603,6 +10696,9 @@ test "image projection requires a virtual prototype in the viewed bank" {
     try std.testing.expectEqual(@as(usize, 1), primary.placementCount());
     try std.testing.expect(primary.placement(0) != null);
     try std.testing.expect(primary.placement(1) == null);
+    var physical_iterator = primary.placementIterator();
+    try std.testing.expectEqualDeep(primary.placement(0).?, physical_iterator.next().?.placement);
+    try std.testing.expect(physical_iterator.next() == null);
 
     try std.testing.expect((try terminal.feed(
         "\x1b[?1049h\x1b_Ga=p,i=56,p=2,c=1,r=1,U=1,q=2\x1b\\" ++ placeholder,
@@ -10612,6 +10708,9 @@ test "image projection requires a virtual prototype in the viewed bank" {
     try std.testing.expect(alternate.placement(0) == null);
     try std.testing.expect(alternate.placement(1) == null);
     try std.testing.expect(alternate.placement(2) != null);
+    var virtual_iterator = alternate.placementIterator();
+    try std.testing.expectEqualDeep(alternate.placement(2).?, virtual_iterator.next().?.placement);
+    try std.testing.expect(virtual_iterator.next() == null);
 
     try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
     primary = terminal.images(0);
@@ -10619,6 +10718,9 @@ test "image projection requires a virtual prototype in the viewed bank" {
     try std.testing.expect(primary.placement(0) != null);
     try std.testing.expect(primary.placement(1) == null);
     try std.testing.expect(primary.placement(2) == null);
+    physical_iterator = primary.placementIterator();
+    try std.testing.expectEqualDeep(primary.placement(0).?, physical_iterator.next().?.placement);
+    try std.testing.expect(physical_iterator.next() == null);
 }
 
 test "virtual projection resumes after prototype admission and stops after deletion" {

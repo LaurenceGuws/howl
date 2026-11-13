@@ -32,3 +32,61 @@ with Session work deferred. Instance composes PTY, VT and Render; the embedder
 owns the GPU backend, UI, window and platform lifecycle. VT and PTY remain
 independently usable. Remove alternate Instance construction paths first, then
 remove duplicate bookkeeping and compare performance for regressions.
+
+## Direct howl-app first; simplify the terminal composition
+
+Recorded 13 November 2026 from Captain's direct-output migration clarification.
+This changes the migration sequence and intended end state described above;
+it does not require an immediate rewrite or removal of the existing Instance.
+
+**Immediate priority:** `howl-app` remains Howl's main maintained host. Finish
+and qualify its direct native path first, then integrate a coherent, proven
+cut into `main`. `howl-host`, `howl-vk`, `howl-wayland`, and foreign consumers
+are not prerequisites for this first integration.
+
+**Target architecture:** Let the app own its local runtime composition of
+PTY, canonical VT, and Text. An optional compile-time VT output owner can
+produce backend-neutral drawing commands directly from the same canonical
+terminal state; the app owns GUI waking, drawing, GPU resources, and frame
+handoff. The existing semantic VT observation API is not a second terminal
+model. Plain VT and PTY remain independently usable, and canonical input
+must never wait for a drawing consumer or font presentation.
+
+**Simplification goal:** Remove the intermediate VT-observation-to-Render-input
+translation and the duplicate Instance/Render presentation path from the app.
+Retiring the `howl-render` and `howl-instance` packages entirely is a possible
+end state, not an immediate deletion requirement. Retain only concepts that
+buy correctness, capability, clear ownership, or measured performance.
+The drawing path should skip the semantic-observation-to-Render-input stage;
+the canonical VT observation API still serves selection, history, copy, and
+other terminal queries without becoming a separate rendering state model.
+
+**First-main-cut allowance:** Instance may remain temporarily if that is the
+smallest correct integration. Do not let rehabilitating its accumulated
+historical machinery block the working app. Bring Gandalf into a separate
+architecture/source review before substantial Instance salvage or retirement;
+preserve proven PTY service, backpressure, consequence, resize, and lifetime
+behavior rather than rewriting it casually.
+The first main merge requires `howl-app` to use the direct-output presentation
+path exclusively, but does not require app-owned PTY/VT/Text composition or
+removal of the legacy implementations elsewhere. Work toward those later,
+from the proven app path, rather than holding the first integration for them.
+
+**Other hosts and Server:** Plan to retire `howl-host` and its Vulkan/Wayland
+code shortly after the app happy path is qualified. Their GUI libraries could
+potentially be repurposed by the young experimental Howl Server, but that is
+a later design choice, not a dependency or preservation obligation today.
+Captain discarded the previous Server/Client module design and has begun
+rebuilding that experiment; do not silently restore the rejected design.
+
+**Acceptance:** Preserve OSC 66, history, selection, graphics, exact failure
+recovery, bounded resource lifetimes, and clean independent module ownership.
+Compare identifiable source-to-binary builds and real app behavior before
+promotion; installed Howl stays untouched until the candidate earns it.
+The first redesign is not required to match the highly optimized accepted
+build's throughput. Measured regressions are an optimization backlog, not an
+automatic reason to reject a correct, bounded, simpler first integration;
+report their real magnitude, affected workloads, and uncertainty without
+claiming performance parity. Favor independent Comrade source review on
+substantial cuts before Captain's acceptance, while normally working
+interactively.

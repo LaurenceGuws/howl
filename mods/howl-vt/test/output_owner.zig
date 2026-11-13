@@ -25,7 +25,7 @@ fn release(owner: *output.Terminal, lease: output.Lease) void {
     owner.release(lease) catch unreachable;
 }
 
-test "public owner holds exact bytes across unsupported input retry and font replacement" {
+test "public owner holds exact bytes across placeholder input and font replacement" {
     const f = try font(12);
     defer f.deinit();
     const larger = try font(18);
@@ -40,7 +40,8 @@ test "public owner holds exact bytes across unsupported input retry and font rep
     defer a.free(commands);
     try std.testing.expect(commands.len > 0 and pixels.len > 0);
     try owner.feed("\x1b[H\x1b]66;s=2;\u{10eeee}\x1b\\");
-    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    // The reserved placeholder is not rasterized as a text glyph.
+    try owner.flush();
     try std.testing.expectEqual(@as(u21, 0x10eeee), owner.observation().semanticView(0).cellAt(0, 0));
     try owner.feed("\x1b[0m\x1b[2J\x1b[HY");
     try owner.flush();
@@ -748,13 +749,310 @@ test "unplaced image does not prevent text output" {
     try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).imageCount());
     try owner.flush();
     const held = try owner.hold();
-    defer release(owner, held);
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     const glyphs = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
     defer a.free(glyphs);
     try owner.feed("\x1b_Ga=p,i=56,p=1,c=1,r=1,C=1,q=2\x1b\\");
-    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try owner.flush();
     try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
+    release(owner, held);
+    const placed = try owner.hold();
+    defer release(owner, placed);
+    try std.testing.expectEqual(@as(usize, 1), placed.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), placed.snapshot.graphics.positive.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, placed.snapshot.graphics.images[0].pixels);
+}
+
+test "held RGBA graphics survives deletion and replacement without canonical replay" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\");
+    try owner.flush();
+    const original = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 1), original.snapshot.graphics.images.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, original.snapshot.graphics.images[0].pixels);
+    const first_resource = original.snapshot.graphics.images[0].resource;
+    const first_command = original.snapshot.graphics.positive[0];
+
+    try owner.feed("\x1b_Ga=d,d=A,q=2\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, original.snapshot.graphics.images[0].pixels);
+    try std.testing.expectEqualDeep(first_command, original.snapshot.graphics.positive[0]);
+    release(owner, original);
+
+    const empty = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 0), empty.snapshot.graphics.images.len);
+    release(owner, empty);
+
+    try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=57,C=1,q=2;AAD//w==\x1b\\");
+    try owner.flush();
+    const blue = try owner.hold();
+    defer release(owner, blue);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, blue.snapshot.graphics.images[0].pixels);
+    try std.testing.expectEqual(first_resource.resource, blue.snapshot.graphics.images[0].resource.resource);
+    try std.testing.expect(@backingInt(blue.snapshot.graphics.images[0].resource.generation) > @backingInt(first_resource.generation));
+}
+
+test "Unicode-placeholder Kitty image projects without rasterizing its reserved scalar" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    const placeholder = "\x1b[1;1H\x1b[38;5;56m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m";
+    try owner.feed("\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++ placeholder);
+    try owner.flush();
+    const missing = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 0), missing.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 0), missing.snapshot.glyphs[0].len);
+    release(owner, missing);
+
+    try owner.feed("\x1b_Ga=p,i=56,p=7,c=1,r=1,U=1,q=2\x1b\\");
+    const canonical_images = owner.observation().images(0);
+    try std.testing.expectEqual(@as(usize, 2), canonical_images.placementCount());
+    try std.testing.expect(canonical_images.placement(1) != null);
+    try owner.flush();
+    const shown = try owner.hold();
+    var shown_pinned = true;
+    defer if (shown_pinned) release(owner, shown);
+    try std.testing.expectEqual(@as(usize, 1), shown.snapshot.graphics.images.len);
+    // Virtual placeholders sit under terminal text by canonical Kitty policy.
+    try std.testing.expectEqual(@as(usize, 1), shown.snapshot.graphics.negative.len);
+    try std.testing.expectEqual(@as(usize, 0), shown.snapshot.glyphs[0].len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, shown.snapshot.graphics.images[0].pixels);
+    const image_generation = shown.snapshot.graphics.images[0].resource.generation;
+    const content_revision = shown.snapshot.content_revision;
+    release(owner, shown);
+    shown_pinned = false;
+
+    try owner.feed("\x1b[1;2H");
+    try owner.flush();
+    const cursor_only = try owner.hold();
+    try std.testing.expectEqual(image_generation, cursor_only.snapshot.graphics.images[0].resource.generation);
+    try std.testing.expectEqual(content_revision, cursor_only.snapshot.content_revision);
+    release(owner, cursor_only);
+
+    try owner.feed("\x1b[1;1HX");
+    try owner.flush();
+    const erased = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 0), erased.snapshot.graphics.images.len);
+    release(owner, erased);
+
+    // Rewriting the same placeholder changes no Kitty image-plane generation.
+    // It must nevertheless reproject the virtual image from canonical cells.
+    try owner.feed(placeholder);
+    try owner.flush();
+    const returned = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 1), returned.snapshot.graphics.negative.len);
+    release(owner, returned);
+
+    try owner.feed("\x1b_Ga=d,d=i,i=56,p=7,q=2\x1b\\");
+    try owner.flush();
+    const removed = try owner.hold();
+    defer release(owner, removed);
+    try std.testing.expectEqual(@as(usize, 0), removed.snapshot.graphics.images.len);
+}
+
+test "eight visible Kitty images fail output admission while canonical state progresses" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    const held = try owner.hold();
+    const original = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
+    defer a.free(original);
+    for (0..8) |index| {
+        var bytes: [100]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b_Ga=T,f=32,s=1,v=1,i={d},C=1,q=2;/wAA/w==\x1b\\", .{100 + index});
+        try owner.feed(command);
+    }
+    try std.testing.expectError(error.ImageLimit, owner.flush());
+    try std.testing.expectEqualDeep(original, held.snapshot.glyphs[0]);
+    release(owner, held);
+    try owner.feed("\x1b_Ga=d,d=A,q=2\x1b\\");
+    try owner.flush();
+    const recovered = try owner.hold();
+    defer release(owner, recovered);
+    try std.testing.expectEqual(@as(usize, 0), recovered.snapshot.graphics.images.len);
+}
+
+test "eight completely clipped Kitty images do not consume output resource quota" {
+    const large = try font(18);
+    defer large.deinit();
+    const small = try font(12);
+    defer small.deinit();
+    const reference = try ready(a, small);
+    const small_width = reference.acceptedMetrics().?.cell_width;
+    destroy(reference);
+    const owner = try ready(a, large);
+    defer destroy(owner);
+    try std.testing.expect(small_width < owner.acceptedMetrics().?.cell_width);
+    try owner.resize(2, 1);
+    for (0..8) |index| {
+        var bytes: [128]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i={d},X={d},c=1,r=1,C=1,q=2;/wAA/w==\x1b\\", .{ 100 + index, small_width });
+        try owner.feed(command);
+    }
+    try owner.replaceWorkingBorrowed(small, .{});
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.positive.len);
+}
+
+test "malformed Kitty placeholder run does not hide later valid runs on its row" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    const invalid = "\u{10eeee}\u{0305}\u{0305}\u{1d244}";
+    const valid = "\u{10eeee}\u{0305}\u{0305}";
+    try owner.feed(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++
+            "\x1b_Ga=p,i=56,p=7,c=1,r=1,U=1,q=2\x1b\\" ++
+            "\x1b[H\x1b[38;5;56m" ++ invalid ++ " " ++ valid ++
+            "\x1b[2;1H" ++ valid ++ "\x1b[0m",
+    );
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 2), held.snapshot.graphics.negative.len);
+    try std.testing.expectEqual(@as(i32, 2 * held.snapshot.cell_width), held.snapshot.graphics.negative[0].rgba.destination.x);
+    try std.testing.expectEqual(held.snapshot.graphics.negative[0].rgba.destination.y + @as(i32, held.snapshot.cell_height), held.snapshot.graphics.negative[1].rgba.destination.y);
+}
+
+test "direct Kitty images have deterministic deep negative and positive paint order" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed(
+        "\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i=1,z=-1073741825,C=1,q=2;/wAA/w==\x1b\\" ++
+            "\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i=2,z=-1,C=1,q=2;AP8A/w==\x1b\\" ++
+            "\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i=3,z=1,C=1,q=2;AAD//w==\x1b\\",
+    );
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 3), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.deep.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.negative.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.positive.len);
+    const scene = held.snapshot.graphics;
+    try std.testing.expectEqualDeep(scene.images[0].resource, scene.deep[0].rgba.resource.resource);
+    try std.testing.expectEqualDeep(scene.images[1].resource, scene.negative[0].rgba.resource.resource);
+    try std.testing.expectEqualDeep(scene.images[2].resource, scene.positive[0].rgba.resource.resource);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, scene.images[0].pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, scene.images[1].pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, scene.images[2].pixels);
+}
+
+test "direct output preserves Kitty source crop and destination pixel offsets" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed(
+        "\x1b_Ga=t,f=32,s=2,v=2,i=11,q=2;AQIDBAUGBwgJCgsMDQ4PEA==\x1b\\" ++
+            "\x1b[1;1H\x1b_Ga=p,i=11,p=3,x=1,y=0,w=1,h=2,c=2,r=3,X=2,Y=4,z=-7,C=1,q=2\x1b\\",
+    );
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.negative.len);
+    const command = held.snapshot.graphics.negative[0].rgba;
+    const metrics = owner.acceptedMetrics().?;
+    try std.testing.expectEqual(@as(i32, 2), command.destination.x);
+    try std.testing.expectEqual(@as(i32, 4), command.destination.y);
+    try std.testing.expectEqual(metrics.cell_width * 2 - 2, command.destination.width);
+    try std.testing.expectEqual(metrics.cell_height * 3 - 4, command.destination.height);
+    try std.testing.expectEqualDeep(output.commands.SourceRect{
+        .x = 1,
+        .y = 0,
+        .width = 1,
+        .height = 2,
+    }, command.resource.source.?);
+}
+
+test "tall physical image survives scrolling when its anchor is above the viewport" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(4, 4);
+    try owner.feed("\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i=56,c=1,r=3,C=1,q=2;/wAA/w==\x1b\\");
+    try owner.flush();
+    const first = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 1), first.snapshot.graphics.positive.len);
+    try std.testing.expectEqual(@as(i32, 0), first.snapshot.graphics.positive[0].rgba.destination.y);
+    const cell_height = first.snapshot.cell_height;
+    try owner.feed("\x1b[4;1H\n");
+    try owner.flush();
+    try std.testing.expectEqual(@as(i32, 0), first.snapshot.graphics.positive[0].rgba.destination.y);
+    release(owner, first);
+
+    const scrolled = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 1), scrolled.snapshot.graphics.positive.len);
+    try std.testing.expectEqual(-@as(i32, cell_height), scrolled.snapshot.graphics.positive[0].rgba.destination.y);
+    release(owner, scrolled);
+
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const history = try owner.hold();
+    defer release(owner, history);
+    try std.testing.expectEqual(@as(u32, 1), history.snapshot.history_offset);
+    try std.testing.expectEqual(@as(i32, 0), history.snapshot.graphics.positive[0].rgba.destination.y);
+}
+
+test "Sixel decoded pixels reach direct graphics commands without Render" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b[H\x1bPq\"1;1;3;6#1;2;100;0;0!3~\x1b\\");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.positive.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, held.snapshot.graphics.images[0].pixels[0..4]);
+    const command = held.snapshot.graphics.positive[0].rgba;
+    try std.testing.expectEqual(@as(i32, 0), command.destination.x);
+    try std.testing.expectEqual(@as(i32, 0), command.destination.y);
+    try std.testing.expectEqual(@as(u16, 3), command.destination.width);
+    try std.testing.expectEqual(@as(u16, 6), command.destination.height);
+}
+
+test "every graphics staging allocation failure retains the previous cut and retries" {
+    const f = try font(12);
+    defer f.deinit();
+    var failing = std.testing.FailingAllocator.init(a, .{});
+    const owner = try ready(failing.allocator(), f);
+    defer destroy(owner);
+    const original = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 0), original.snapshot.graphics.images.len);
+    const glyphs = try a.dupe(output.commands.Command, original.snapshot.glyphs[0]);
+    defer a.free(glyphs);
+    try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\");
+    // Ordering storage, copied RGBA slab, final-command storage.
+    // Each failure starts a clean graphics stage and must preserve the pin.
+    for (0..3) |skip| {
+        failing.fail_index = failing.alloc_index + skip;
+        try std.testing.expectError(error.OutOfMemory, owner.flush());
+        try std.testing.expectEqualDeep(glyphs, original.snapshot.glyphs[0]);
+        try std.testing.expectEqual(@as(usize, 0), original.snapshot.graphics.images.len);
+    }
+    failing.fail_index = std.math.maxInt(usize);
+    try owner.flush();
+    try std.testing.expectEqualDeep(glyphs, original.snapshot.glyphs[0]);
+    release(owner, original);
+    const recovered = try owner.hold();
+    defer release(owner, recovered);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, recovered.snapshot.graphics.images[0].pixels);
 }
 
 test "fractional generated and colour glyphs survive history" {
@@ -794,14 +1092,20 @@ test "primary image does not block a clean alternate screen" {
     try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\\x1b[?1049hALT");
     try owner.flush();
     const held = try owner.hold();
-    defer release(owner, held);
     try std.testing.expect(held.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     const glyphs = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
     defer a.free(glyphs);
     try owner.feed("\x1b[?1049l");
-    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try owner.flush();
     try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
+    release(owner, held);
+    const primary = try owner.hold();
+    defer release(owner, primary);
+    try std.testing.expect(!primary.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 1), primary.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), primary.snapshot.graphics.positive.len);
 }
 
 test "alternate image does not block a clean primary screen" {
@@ -812,14 +1116,19 @@ test "alternate image does not block a clean primary screen" {
     try owner.feed("\x1b[?47h\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\\x1b[?47lPRIMARY");
     try owner.flush();
     const held = try owner.hold();
-    defer release(owner, held);
     try std.testing.expect(!held.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     const glyphs = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
     defer a.free(glyphs);
     try owner.feed("\x1b[?47h");
-    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try owner.flush();
     try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
+    release(owner, held);
+    const alternate = try owner.hold();
+    defer release(owner, alternate);
+    try std.testing.expect(alternate.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 1), alternate.snapshot.graphics.images.len);
 }
 
 test "an inactive placement does not hide an active placement" {
@@ -828,15 +1137,24 @@ test "an inactive placement does not hide an active placement" {
     const owner = try ready(a, f);
     defer destroy(owner);
     try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\\x1b[?47hALT\x1b_Ga=T,f=32,s=1,v=1,i=57,C=1,q=2;/wAA/w==\x1b\\");
-    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try owner.flush();
+    const with_image = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 1), with_image.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), with_image.snapshot.graphics.positive.len);
+    release(owner, with_image);
     try owner.feed("\x1b_Ga=d,d=i,i=57,q=2\x1b\\");
     try owner.flush();
     const held = try owner.hold();
-    defer release(owner, held);
     try std.testing.expect(held.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     try owner.feed("\x1b[?47l");
-    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
+    release(owner, held);
+    const primary = try owner.hold();
+    defer release(owner, primary);
+    try std.testing.expectEqual(@as(usize, 1), primary.snapshot.graphics.images.len);
 }
 
 test "direct output resolves a multi-row lead across the history boundary" {

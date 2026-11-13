@@ -49,13 +49,10 @@ pub const Failure = instance.InputError || instance.ResizeError ||
     instance.ServiceError || std.posix.PollError || desktop.Error;
 
 /// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
-pub const PresentationFailure = instance.PublishError || instance.PrepareDirectError || error{SDLNotification};
+pub const PresentationFailure = instance.PrepareDirectError || error{SDLNotification};
 
-/// Immutable lease transfer failures; no-frame leaves the previously accepted lease untouched.
-pub const FrameError = instance.RenderLease.ReleaseError || error{ WrongExchange, NoPublishedFrame };
-
-/// Direct cut transfer or lease validation failure.
-pub const DirectFrameError = instance.HoldDirectError || instance.ReleaseDirectError;
+/// Immutable cut transfer or lease validation failure.
+pub const FrameError = instance.HoldDirectError || instance.ReleaseDirectError;
 
 /// Exact transactional configuration/admission failures; old presentation survives failure.
 pub const ConfigureError = instance.ReconfigurePresentationError || error{ TerminalStopped, InputQueueFull };
@@ -92,7 +89,7 @@ pub const Status = struct {
 // zig-audit: acknowledge opaque_type
 // reason: The terminal worker's canonical Instance and queue ownership must be inaccessible to the graphical consumer.
 pub const Terminal = opaque {
-    /// Constructs and starts one sole terminal owner; rolls back completed resources on failure.
+    /// Constructs one PTY/VT owner with final draw commands; rolls back on failure.
     pub fn create(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -103,23 +100,8 @@ pub const Terminal = opaque {
         initially_visible: bool,
     ) !*Terminal {
         // zig-audit: acknowledge ptr_cast
-        // reason: State owns this allocation; the opaque pointer keeps SDL outside canonical mutation authority without changing address or lifetime.
-        return @ptrCast(try State.create(allocator, io, environ, launch, presentation, event_type, initially_visible, false));
-    }
-
-    /// Transitional direct-output worker for the app cutover. The canonical PTY/VT remains singular.
-    pub fn createDirect(
-        allocator: std.mem.Allocator,
-        io: std.Io,
-        environ: std.process.Environ,
-        launch: instance.Launch,
-        presentation: instance.PresentationConfig,
-        event_type: u32,
-        initially_visible: bool,
-    ) !*Terminal {
-        // zig-audit: acknowledge ptr_cast
         // reason: State owns this allocation behind the same opaque worker boundary.
-        return @ptrCast(try State.create(allocator, io, environ, launch, presentation, event_type, initially_visible, true));
+        return @ptrCast(try State.create(allocator, io, environ, launch, presentation, event_type, initially_visible));
     }
 
     /// Stops/joins the worker and retires its child; all graphical leases must already be retired.
@@ -184,26 +166,20 @@ pub const Terminal = opaque {
     pub fn requestFrame(self: *Terminal) void {
         self.state().requestFrame();
     }
-    /// Replaces the backend's old lease only when another publication is ready.
-    /// A null result preserves the old lease; the short transfer contains no SDL work.
-    pub fn replaceFrame(self: *Terminal, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency, paint: ?*selection.Paint) FrameError!?instance.RenderLease {
-        return self.state().replaceFrame(previous, residency, paint);
+    /// Transfers a completed draw-command cut; no new cut preserves the held lease.
+    pub fn replaceFrame(self: *Terminal, previous: ?*instance.DirectLease, paint: ?*selection.Paint) FrameError!?instance.DirectLease {
+        return self.state().replaceFrame(previous, paint);
     }
-
-    /// This worker was constructed for the transitional direct output path.
-    pub fn usesDirect(self: *Terminal) bool {
-        return self.state().direct_enabled;
-    }
-
-    /// Transfers only a completed direct cut; a missing cut leaves the previous lease held.
-    pub fn replaceDirectFrame(self: *Terminal, previous: ?*instance.DirectLease, paint: ?*selection.Paint) DirectFrameError!?instance.DirectLease {
-        return self.state().replaceDirectFrame(previous, paint);
-    }
-    /// Retires a direct lease before destroying this terminal worker.
-    pub fn releaseDirectFrame(self: *Terminal, lease: instance.DirectLease) instance.ReleaseDirectError!void {
+    /// Retires the host's held cut before destroying the terminal worker.
+    pub fn releaseFrame(self: *Terminal, lease: instance.DirectLease) instance.ReleaseDirectError!void {
         const owned = self.state();
         owned.frame_mutex.lockUncancelable(owned.io);
-        defer owned.frame_mutex.unlock(owned.io);
+        defer {
+            owned.frame_mutex.unlock(owned.io);
+            // A producer may have skipped this short transfer mutex while credit was ready.
+            // Retiring the pin must not strand a pending projection in the idle poll.
+            if (owned.credit.load(.acquire)) owned.wake();
+        }
         try instance.releaseDirectOutput(owned.value, lease);
     }
 
@@ -222,7 +198,6 @@ const State = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     value: *instance.Instance,
-    exchange: ?*instance.RenderExchange,
     wake_fd: posix.fd_t,
     event_type: u32,
     thread: ?std.Thread = null,
@@ -242,8 +217,6 @@ const State = struct {
     visible: std.atomic.Value(bool) = .init(true),
     credit: std.atomic.Value(bool) = .init(true),
     new_frame: std.atomic.Value(bool) = .init(false),
-    new_direct_frame: std.atomic.Value(bool) = .init(false),
-    direct_enabled: bool = false,
     gate: policy.Gate = .{},
     // Block only the content/viewport which failed; canonical service remains independent.
     store_busy: bool = false,
@@ -267,16 +240,11 @@ const State = struct {
         presentation: instance.PresentationConfig,
         event_type: u32,
         initially_visible: bool,
-        direct_enabled: bool,
     ) !*State {
         const self = try allocator.create(State);
         errdefer allocator.destroy(self);
-        const value = if (direct_enabled)
-            try instance.initDirect(allocator, environ, launch, presentation)
-        else
-            try instance.init(allocator, environ, launch, presentation);
+        const value = try instance.initDirect(allocator, environ, launch, presentation);
         errdefer instance.deinit(value);
-        const exchange = instance.renderExchange(value);
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (fd < 0) return error.WakeFailed;
         errdefer closeWake(fd);
@@ -285,11 +253,9 @@ const State = struct {
             .io = io,
             .value = value,
             .color_preference = desktop.colorPreference(launch.color_defaults.background),
-            .exchange = exchange,
             .wake_fd = fd,
             .event_type = event_type,
             .visible = .init(initially_visible),
-            .direct_enabled = direct_enabled,
         };
         self.thread = try std.Thread.spawn(.{}, run, .{self});
         return self;
@@ -310,10 +276,6 @@ const State = struct {
         allocator.destroy(self);
     }
 
-    fn takeFrame(self: *State) bool {
-        return self.new_frame.swap(false, .acq_rel);
-    }
-
     fn takeClipboardSet(self: *State, allocator: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -324,40 +286,17 @@ const State = struct {
         return copied;
     }
 
-    fn replaceFrame(self: *State, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency, paint: ?*selection.Paint) FrameError!?instance.RenderLease {
-        if (!self.new_frame.load(.acquire)) {
-            // Reconfiguration or a stalled transfer may still owe a credit-backed publication.
-            if (self.credit.load(.acquire)) self.wake();
-            return null;
-        }
+    fn replaceFrame(self: *State, previous: ?*instance.DirectLease, paint: ?*selection.Paint) FrameError!?instance.DirectLease {
+        if (!self.new_frame.load(.acquire)) return null;
         self.frame_mutex.lockUncancelable(self.io);
         defer {
             self.frame_mutex.unlock(self.io);
-            // A producer that skipped this short transfer never waits for the GUI.
             if (self.credit.load(.acquire)) self.wake();
         }
         if (!self.new_frame.load(.acquire)) return null;
-        if (previous) |lease| {
-            if (lease.exchange != self.exchange) return error.WrongExchange;
-            try lease.release(residency);
-        }
-        const lease = instance.acquirePublishedFrame(self.exchange.?) orelse return error.NoPublishedFrame;
-        if (paint) |output| output.* = self.paint;
-        self.new_frame.store(false, .release);
-        return lease;
-    }
-
-    fn replaceDirectFrame(self: *State, previous: ?*instance.DirectLease, paint: ?*selection.Paint) DirectFrameError!?instance.DirectLease {
-        if (!self.new_direct_frame.load(.acquire)) return null;
-        self.frame_mutex.lockUncancelable(self.io);
-        defer {
-            self.frame_mutex.unlock(self.io);
-            if (self.credit.load(.acquire)) self.wake();
-        }
-        if (!self.new_direct_frame.load(.acquire)) return null;
         const lease = try instance.replaceDirectOutput(self.value, if (previous) |lease| lease.* else null);
         if (paint) |output| output.* = self.paint;
-        self.new_direct_frame.store(false, .release);
+        self.new_frame.store(false, .release);
         return lease;
     }
 
@@ -732,29 +671,13 @@ const State = struct {
             if (!self.frame_mutex.tryLock()) return result;
             defer self.frame_mutex.unlock(self.io);
             std.debug.assert(self.credit.swap(false, .acq_rel));
-            if (self.direct_enabled) instance.prepareDirectOutput(self.value, self.history.offset) catch |failure| {
+            instance.prepareDirectOutput(self.value, self.history.offset) catch |failure| {
                 if (failure == error.PresentationBusy) {
                     self.store_busy = true;
                     self.credit.store(true, .release);
                     return result;
                 }
                 self.blocked_presentation = .{ .content_sequence = observation.contentSequence(), .history_offset = self.history.offset };
-                self.mutex.lockUncancelable(self.io);
-                self.status.presentation_failure = failure;
-                self.mutex.unlock(self.io);
-                self.notify();
-                return result;
-            };
-            if (!self.direct_enabled) instance.publishRenderAt(self.value, self.history.offset) catch |failure| {
-                if (failure == error.PublicationBusy or failure == error.PresentationBusy) {
-                    self.store_busy = failure == error.PresentationBusy;
-                    self.credit.store(true, .release);
-                    return result;
-                }
-                self.blocked_presentation = .{
-                    .content_sequence = observation.contentSequence(),
-                    .history_offset = self.history.offset,
-                };
                 self.mutex.lockUncancelable(self.io);
                 self.status.presentation_failure = failure;
                 self.mutex.unlock(self.io);
@@ -770,7 +693,7 @@ const State = struct {
             const view = observation.semanticView(self.history.offset);
             self.paint = if (self.selected) |range| range.paint(view, self.selection_serial) catch .{ .serial = self.selection_serial } else .{ .serial = self.selection_serial };
             self.gate.pending = false;
-            if (self.direct_enabled) self.new_direct_frame.store(true, .release) else self.new_frame.store(true, .release);
+            self.new_frame.store(true, .release);
             published = true;
         }
         if (published) self.notify();
@@ -1007,8 +930,7 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     @memset(submitted, '?');
     std.testing.allocator.free(submitted);
     try waitTitle(owner, "DONE");
-    try std.testing.expect(!owner.state().takeFrame());
-    try std.testing.expect(instance.acquirePublishedFrame(owner.state().exchange.?) == null);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
     // Every owned payload is bounded; unused legacy key fallback remains rejected.
     const oversized = try std.testing.allocator.alloc(u8, input_byte_limit + 1);
     defer std.testing.allocator.free(oversized);
@@ -1017,37 +939,12 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .legacy_text = "borrowed" } } }));
 }
 
-test "a held immutable publication cannot pace canonical progress or prevent cleanup" {
-    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
-    defer c.SDL_Quit();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
-        .shell = "/bin/sh",
-        .command = "printf '\\033]0;READY\\007'; read line; dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\\000' x; printf '\\033]0;DONE\\007'; sleep 30",
-        .rows = 4,
-        .columns = 20,
-        .history_rows = 8,
-    }, testPresentation(), c.SDL_RegisterEvents(1), true);
-    defer owner.destroy();
-    try waitTitle(owner, "READY");
-    try waitFrame(owner);
-    var lease = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    defer lease.abandon();
-    const before = lease.value.terminal_revision;
-    const first = lease.value.commands[0];
-    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
-    try waitTitle(owner, "DONE");
-    try std.testing.expectEqual(before, lease.value.terminal_revision);
-    try std.testing.expectEqualDeep(first, lease.value.commands[0]);
-    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
-}
-
-fn waitFrame(owner: *Terminal) !void {
-    var attempt: u16 = 0;
-    while (attempt < 5000) : (attempt += 1) {
-        if (owner.state().takeFrame()) return;
-        if (owner.snapshot().failure) |failure| return failure;
+fn waitFrame(owner: *Terminal, previous: ?*instance.DirectLease, paint: ?*selection.Paint) !instance.DirectLease {
+    for (0..5000) |_| {
+        if (try owner.replaceFrame(previous, paint)) |lease| return lease;
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (status.presentation_failure) |failure| return failure;
         try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     }
     return error.Timeout;
@@ -1067,30 +964,29 @@ test "synchronized hold releases a new frame after one second without further ch
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    try waitFrame(owner);
-    var initial = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
+    var initial = try waitFrame(owner, null, null);
     const ready_revision = owner.snapshot().revision;
-    if (initial.value.terminal_revision < ready_revision) {
-        try initial.release(&.{});
+    if (initial.snapshot.terminal_revision < ready_revision) {
+        try owner.releaseFrame(initial);
         owner.requestFrame();
-        try waitFrame(owner);
-        initial = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
+        initial = try waitFrame(owner, null, null);
     }
-    try std.testing.expectEqual(ready_revision, initial.value.terminal_revision);
-    const revision = initial.value.terminal_revision;
-    try initial.release(&.{});
+    try std.testing.expectEqual(ready_revision, initial.snapshot.terminal_revision);
+    const revision = initial.snapshot.terminal_revision;
+    try owner.releaseFrame(initial);
     const start = std.Io.Clock.awake.now(owner.state().io);
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     owner.requestFrame();
-    try waitFrame(owner);
+    const released = try waitFrame(owner, null, null);
     const elapsed = start.durationTo(std.Io.Clock.awake.now(owner.state().io)).toMilliseconds();
     if (elapsed < 800) {
         std.debug.print("hold published too early: {d}ms after input, initial revision {d}, canonical revision {d}\n", .{ elapsed, revision, owner.snapshot().revision });
         return error.EarlyPublication;
     }
-    var released = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    defer released.abandon();
-    try std.testing.expect(released.value.terminal_revision > revision);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owner.releaseFrame(released) catch unreachable;
+    try std.testing.expect(released.snapshot.terminal_revision > revision);
 }
 
 test "failed font construction frees the unobservable terminal owner" {
@@ -1113,69 +1009,6 @@ fn closeWake(fd: posix.fd_t) void {
     std.debug.assert(status == .SUCCESS or status == .INTR);
 }
 
-test "projection failure blocks only the failed content while canonical service stays alive" {
-    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
-    defer c.SDL_Quit();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    var presentation = testPresentation();
-    presentation.command_capacity = 16;
-    presentation.command_limit = 16;
-    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
-        .shell = "/bin/sh",
-        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 32 ]; do printf '\\033[41mX\\033[42mY'; i=$((i + 1)); done; printf '\\033[0m'; printf '\\033]0;FIRST\\007'; read line; printf '\\033[1;2H'; read line; printf '\\033[0m\\033[2J\\033[Hok\\033]0;RECOVERED\\007'; sleep 30",
-        .rows = 4,
-        .columns = 20,
-        .history_rows = 8,
-    }, presentation, c.SDL_RegisterEvents(1), true);
-    defer owner.destroy();
-    var stage: []const u8 = "initial";
-    errdefer {
-        const status = owner.snapshot();
-        std.debug.print("recovery proof {s}: title={s}, cursor={d}, failure={any}, credit={any}, ready={any}\n", .{
-            stage,                               status.title[0..status.title_len],      status.cursor_col, status.presentation_failure,
-            owner.state().credit.load(.acquire), owner.state().new_frame.load(.acquire),
-        });
-    }
-    try waitTitle(owner, "READY");
-    try waitFrame(owner);
-    var initial = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    const initial_revision = initial.value.terminal_revision;
-    try initial.release(&.{});
-    stage = "exhaustion";
-    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
-    try waitTitle(owner, "FIRST");
-    owner.requestFrame();
-    var attempts: u16 = 0;
-    while (owner.snapshot().presentation_failure == null and attempts < 5000) : (attempts += 1)
-        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
-    try std.testing.expect(owner.snapshot().presentation_failure != null);
-    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
-    stage = "cursor";
-    try owner.submit(.{ .input = .{ .bytes = "CONTINUE\n" } });
-    attempts = 0;
-    while (owner.snapshot().cursor_col != 1 and attempts < 5000) : (attempts += 1)
-        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
-    try std.testing.expectEqual(@as(u16, 1), owner.snapshot().cursor_col);
-    const failure = owner.snapshot().presentation_failure;
-    try std.testing.expect(failure != null);
-    owner.requestFrame();
-    try std.Io.sleep(owner.state().io, .fromMilliseconds(20), .awake);
-    try std.testing.expectEqual(failure, owner.snapshot().presentation_failure);
-    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
-    try std.testing.expect(!owner.state().new_frame.load(.acquire));
-    // A consumed credit would prove another failed projection, even with no new frame.
-    try std.testing.expect(owner.state().credit.load(.acquire));
-    stage = "recovery";
-    try owner.submit(.{ .input = .{ .bytes = "RECOVER\n" } });
-    try waitTitle(owner, "RECOVERED");
-    try waitFrame(owner);
-    try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
-    var recovered = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    defer recovered.abandon();
-    try std.testing.expect(recovered.value.terminal_revision > initial_revision);
-}
-
 test "visibility affirmation cannot manufacture presentation credits; reveal can" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
     defer c.SDL_Quit();
@@ -1190,22 +1023,21 @@ test "visibility affirmation cannot manufacture presentation credits; reveal can
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    try waitFrame(owner);
-    var initial = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    try initial.release(&.{});
+    const initial = try waitFrame(owner, null, null);
+    try owner.releaseFrame(initial);
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "FIRST");
     for (0..16) |_| owner.setVisible(true);
     try owner.submit(.{ .input = .{ .bytes = "END\n" } });
     try waitTitle(owner, "SECOND");
-    try std.testing.expect(!owner.state().takeFrame());
-    try std.testing.expect(instance.acquirePublishedFrame(owner.state().exchange.?) == null);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
     owner.setVisible(false);
     owner.setVisible(true);
-    try waitFrame(owner);
-    var revealed = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    defer revealed.abandon();
-    try std.testing.expectEqual(owner.snapshot().revision, revealed.value.terminal_revision);
+    const revealed = try waitFrame(owner, null, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owner.releaseFrame(revealed) catch unreachable;
+    try std.testing.expectEqual(owner.snapshot().revision, revealed.snapshot.terminal_revision);
 }
 
 test "font configuration rolls back failure and replaces geometry while an older immutable lease stays held" {
@@ -1222,15 +1054,14 @@ test "font configuration rolls back failure and replaces geometry while an older
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    try waitFrame(owner);
-    var held = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    const old_generation = held.value.presentation_generation;
-    const old_size = held.value.cell_size;
+    var held = try waitFrame(owner, null, null);
+    const old_generation = held.presentation_generation;
+    const old_size: instance.render.terminal.Size = .{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height };
     var invalid = testPresentation();
     invalid.text.private.regular = .{ .path = .{ .primary = "/missing-howl-live-font.ttf", .size = .{ .pixels = 18 } } };
     try std.testing.expectError(error.FontOpen, owner.reconfigure(invalid, null));
-    try std.testing.expectEqual(old_generation, held.value.presentation_generation);
-    try std.testing.expectEqualDeep(old_size, held.value.cell_size);
+    try std.testing.expectEqual(old_generation, held.presentation_generation);
+    try std.testing.expectEqualDeep(old_size, instance.render.terminal.Size{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height });
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "CONTINUED");
     var larger = testPresentation();
@@ -1239,14 +1070,14 @@ test "font configuration rolls back failure and replaces geometry while an older
     const geometry = try owner.reconfigure(larger, surface);
     try std.testing.expectEqual(surface.width / geometry.cell_size.width, geometry.columns);
     try std.testing.expectEqual(surface.height / geometry.cell_size.height, geometry.rows);
-    try std.testing.expectEqual(old_generation, held.value.presentation_generation);
-    try std.testing.expectEqualDeep(old_size, held.value.cell_size);
-    try held.release(&.{});
-    try waitFrame(owner);
-    var changed = instance.acquirePublishedFrame(owner.state().exchange.?) orelse return error.MissingFrame;
-    defer changed.abandon();
-    try std.testing.expect(changed.value.presentation_generation > old_generation);
-    try std.testing.expectEqualDeep(geometry.cell_size, changed.value.cell_size);
+    try std.testing.expectEqual(old_generation, held.presentation_generation);
+    try std.testing.expectEqualDeep(old_size, instance.render.terminal.Size{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height });
+    const changed = try waitFrame(owner, &held, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owner.releaseFrame(changed) catch unreachable;
+    try std.testing.expect(changed.presentation_generation > old_generation);
+    try std.testing.expectEqualDeep(geometry.cell_size, instance.render.terminal.Size{ .width = changed.snapshot.cell_width, .height = changed.snapshot.cell_height });
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 
@@ -1267,6 +1098,43 @@ test "canonical failure rejects or releases borrowed configuration before its ca
     try std.testing.expect(owner.snapshot().failure != null);
 }
 
+test "releasing a held cut wakes an idle producer that skipped the transfer mutex" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'A\\033]0;READY\\007'; read line; printf 'B\\033]0;DONE\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const held = try waitFrame(owner, null, null);
+    const before = held.snapshot.terminal_revision;
+    owner.state().frame_mutex.lockUncancelable(threaded.io());
+    var locked = true;
+    defer if (locked) owner.state().frame_mutex.unlock(threaded.io());
+    owner.requestFrame();
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "DONE");
+    try std.testing.expect(owner.snapshot().revision > before);
+    // Let the worker attempt projection while the transfer lock is still held.
+    try std.Io.sleep(threaded.io(), .fromMilliseconds(20), .awake);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+    owner.state().frame_mutex.unlock(threaded.io());
+    locked = false;
+    // The release itself supplies the only post-content wake. No test-only wake
+    // and no new canonical input may rescue a missed producer turn.
+    try owner.releaseFrame(held);
+    const next = try waitFrame(owner, null, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test owns the sole new pin and releases it before teardown.
+    defer owner.releaseFrame(next) catch unreachable;
+    try std.testing.expect(next.snapshot.terminal_revision > before);
+}
+
 test "a stalled backend lease transfer cannot pace canonical output; no-frame preserves the accepted lease" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
     defer c.SDL_Quit();
@@ -1281,28 +1149,24 @@ test "a stalled backend lease transfer cannot pace canonical output; no-frame pr
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    var initial: ?instance.RenderLease = null;
-    var attempts: u16 = 0;
-    while (initial == null and attempts < 5000) : (attempts += 1) {
-        initial = try owner.replaceFrame(null, &.{}, null);
-        if (initial == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
-    }
-    var held = initial orelse return error.MissingFrame;
-    defer held.abandon();
-    try std.testing.expect(try owner.replaceFrame(&held, &.{}, null) == null);
-    try std.testing.expect(!held.released);
-    const sequence = held.value.sequence;
+    var held = try waitFrame(owner, null, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owner.releaseFrame(held) catch unreachable;
+    try std.testing.expect(try owner.replaceFrame(&held, null) == null);
+    const sequence = held.serial;
     owner.state().frame_mutex.lockUncancelable(owner.state().io);
     var locked = true;
     defer if (locked) owner.state().frame_mutex.unlock(owner.state().io);
     owner.requestFrame();
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "DONE");
-    try std.testing.expectEqual(sequence, held.value.sequence);
+    try std.testing.expectEqual(sequence, held.serial);
     owner.state().frame_mutex.unlock(owner.state().io);
     locked = false;
     owner.requestFrame();
     owner.state().wake();
+
     const other = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
@@ -1310,32 +1174,21 @@ test "a stalled backend lease transfer cannot pace canonical output; no-frame pr
         .columns = 20,
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer other.destroy();
-    var other_frame: ?instance.RenderLease = null;
-    attempts = 0;
-    while (other_frame == null and attempts < 5000) : (attempts += 1) {
-        other_frame = try other.replaceFrame(null, &.{}, null);
-        if (other_frame == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
-    }
-    var foreign = other_frame orelse return error.MissingFrame;
-    defer foreign.abandon();
-    attempts = 0;
+    const foreign = try waitFrame(other, null, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer other.releaseFrame(foreign) catch unreachable;
+
+    var attempts: u16 = 0;
     while (!owner.state().new_frame.load(.acquire) and attempts < 5000) : (attempts += 1)
         try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     if (attempts == 5000) return error.Timeout;
-    try std.testing.expectError(error.WrongExchange, owner.replaceFrame(&foreign, &.{}, null));
-    try std.testing.expect(!foreign.released and !held.released);
-    var replacement: ?instance.RenderLease = null;
-    attempts = 0;
-    while (replacement == null and attempts < 5000) : (attempts += 1) {
-        replacement = try owner.replaceFrame(&held, &.{}, null);
-        if (replacement == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
-    }
-    var changed = replacement orelse return error.MissingFrame;
-    defer changed.abandon();
-    try std.testing.expect(held.released);
-    try std.testing.expect(changed.value.sequence > sequence);
-    try std.testing.expect(try owner.replaceFrame(&changed, &.{}, null) == null);
-    try std.testing.expect(!changed.released);
+    var foreign_copy = foreign;
+    try std.testing.expectError(error.InvalidLease, owner.replaceFrame(&foreign_copy, null));
+    try std.testing.expectEqual(sequence, held.serial);
+    held = try waitFrame(owner, &held, null);
+    try std.testing.expect(held.serial > sequence);
+    try std.testing.expect(try owner.replaceFrame(&held, null) == null);
 }
 
 test "semantic mouse reports and copied caret facts survive without a graphical observer" {
@@ -1360,7 +1213,7 @@ test "semantic mouse reports and copied caret facts survive without a graphical 
     const after = owner.snapshot();
     try std.testing.expectEqual(@as(u16, 1), after.cursor_row);
     try std.testing.expectEqual(@as(u16, 4), after.cursor_col);
-    try std.testing.expect(!owner.state().takeFrame());
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
 }
 
 test "completed reconfiguration fences unread frames from the previous presentation" {
@@ -1385,22 +1238,22 @@ test "completed reconfiguration fences unread frames from the previous presentat
     const configured = try owner.reconfigure(testPresentation(), null);
     try std.testing.expect(configured.cell_size.width > 0);
     // An old unread slot remains native-owned, but cannot enter a fresh backend.
-    var hidden = try owner.replaceFrame(null, &.{}, null);
-    defer if (hidden) |*lease| lease.abandon();
-    if (hidden) |lease| std.debug.print("pre-reset unread generation entered the backend: {d}\n", .{lease.value.presentation_generation});
+    const hidden = try owner.replaceFrame(null, null);
+    if (hidden) |lease| {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: This test defers the exact live pin's release before destroying its terminal owner.
+        defer owner.releaseFrame(lease) catch unreachable;
+        std.debug.print("pre-reset unread generation entered the backend: {d}\n", .{lease.presentation_generation});
+    }
     try std.testing.expect(hidden == null);
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "CONTINUED");
     owner.setVisible(true);
-    var fresh: ?instance.RenderLease = null;
-    defer if (fresh) |*lease| lease.abandon();
-    attempts = 0;
-    while (fresh == null and attempts < 5000) : (attempts += 1) {
-        fresh = try owner.replaceFrame(null, &.{}, null);
-        if (fresh == null) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
-    }
-    const accepted = fresh orelse return error.Timeout;
-    try std.testing.expect(accepted.value.presentation_generation > 1);
+    const accepted = try waitFrame(owner, null, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owner.releaseFrame(accepted) catch unreachable;
+    try std.testing.expect(accepted.presentation_generation > 1);
 }
 
 fn waitCopy(owner: *Terminal, request: *Copy) void {
@@ -1408,14 +1261,6 @@ fn waitCopy(owner: *Terminal, request: *Copy) void {
     state.mutex.lockUncancelable(state.io);
     while (!request.complete) state.configured.waitUncancelable(state.io, &state.mutex);
     state.mutex.unlock(state.io);
-}
-fn waitPaint(owner: *Terminal, previous: ?*instance.RenderLease, paint: *selection.Paint) !instance.RenderLease {
-    var attempts: u16 = 0;
-    while (attempts < 5000) : (attempts += 1) {
-        if (try owner.replaceFrame(previous, &.{}, paint)) |lease| return lease;
-        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
-    }
-    return error.Timeout;
 }
 
 test "hidden canonical selection copies Unicode in FIFO order without presentation authority" {
@@ -1480,44 +1325,41 @@ test "selection paint travels with its immutable lease and a stalled transfer ca
     try std.testing.expectEqualStrings("beta", word);
     var paint: selection.Paint = .{};
     owner.setVisible(true);
-    var held = try waitPaint(owner, null, &paint);
-    defer held.abandon();
+    var held = try waitFrame(owner, null, &paint);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owner.releaseFrame(held) catch unreachable;
     try std.testing.expectEqual(@as(u64, 11), paint.serial);
     try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spanAt(0));
-    const sequence = held.value.sequence;
+    const sequence = held.serial;
     owner.state().frame_mutex.lockUncancelable(threaded.io());
     var locked = true;
     defer if (locked) owner.state().frame_mutex.unlock(threaded.io());
     owner.requestFrame();
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "DONE");
-    try std.testing.expectEqual(sequence, held.value.sequence);
-    try std.testing.expect(try owner.replaceFrame(&held, &.{}, &paint) == null);
-    try std.testing.expect(!held.released);
+    try std.testing.expectEqual(sequence, held.serial);
+    try std.testing.expect(try owner.replaceFrame(&held, &paint) == null);
     try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spanAt(0));
     try std.testing.expectError(error.NoSelection, owner.copySelection(std.testing.allocator, 128));
     owner.state().frame_mutex.unlock(threaded.io());
     locked = false;
     owner.requestFrame();
     owner.state().wake();
-    var cleared = try waitPaint(owner, &held, &paint);
-    defer cleared.abandon();
-    try std.testing.expect(held.released);
-    try std.testing.expect(cleared.value.sequence > sequence);
+    held = try waitFrame(owner, &held, &paint);
+    try std.testing.expect(held.serial > sequence);
     try std.testing.expectEqual(@as(u64, 11), paint.serial);
     for (0..paint.rows) |row| try std.testing.expect(paint.spanAt(row) == null);
-    const fresh_context = try selection.Context.fromFrame(@import("frame_info.zig").Info.fromLegacy(cleared.value));
+    const fresh_context = try selection.Context.fromFrame(@import("frame_info.zig").Info.fromSnapshot(&held.snapshot, held.presentation_generation, held.serial));
     try owner.submit(.{ .select = .{ .serial = 12, .kind = .word, .context = fresh_context, .point = .{ .row = try fresh_context.row(0), .col = 7 } } });
     const next = try owner.copySelection(std.testing.allocator, 128);
     defer std.testing.allocator.free(next);
     try std.testing.expectEqualStrings("psi", next);
     owner.requestFrame();
-    var selected = try waitPaint(owner, &cleared, &paint);
-    defer selected.abandon();
+    held = try waitFrame(owner, &held, &paint);
     try std.testing.expectEqual(@as(u64, 12), paint.serial);
     try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 8 }), paint.spanAt(0));
-    try std.testing.expect(try owner.replaceFrame(&selected, &.{}, &paint) == null);
-    try std.testing.expect(!selected.released);
+    try std.testing.expect(try owner.replaceFrame(&held, &paint) == null);
     try std.testing.expectEqual(@as(u64, 12), paint.serial);
 }
 
@@ -1766,11 +1608,12 @@ test "shared text serves concurrent workers while one observer stalls and native
         count += 1;
     }
     for (owners) |owner| try waitTitle(owner, "READY");
-    try waitFrame(owners[0]);
-    var held = instance.acquirePublishedFrame(owners[0].state().exchange.?) orelse return error.MissingFrame;
-    defer held.abandon();
-    const before = held.value.terminal_revision;
-    const command = held.value.commands[0];
+    const held = try waitFrame(owners[0], null, null);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test defers the exact live pin's release before destroying its terminal owner.
+    defer owners[0].releaseFrame(held) catch unreachable;
+    const before = held.snapshot.terminal_revision;
+    const glyph_count = held.snapshot.glyphs[0].len;
     instance.releasePresentationStore(shared);
     caller_live = false;
     for (owners) |owner| try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
@@ -1778,10 +1621,9 @@ test "shared text serves concurrent workers while one observer stalls and native
     var accepted_revision: ?u64 = null;
     while (attempts < 5000) : (attempts += 1) {
         const live = owners[1];
-        if (instance.acquirePublishedFrame(live.state().exchange.?)) |ready| {
-            var lease = ready;
-            accepted_revision = lease.value.terminal_revision;
-            try lease.release(&.{});
+        if (try live.replaceFrame(null, null)) |ready| {
+            accepted_revision = ready.snapshot.terminal_revision;
+            try live.releaseFrame(ready);
             live.requestFrame();
         }
         const status = live.snapshot();
@@ -1794,8 +1636,8 @@ test "shared text serves concurrent workers while one observer stalls and native
         try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
         try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
     }
-    try std.testing.expectEqual(before, held.value.terminal_revision);
-    try std.testing.expectEqualDeep(command, held.value.commands[0]);
+    try std.testing.expectEqual(before, held.snapshot.terminal_revision);
+    try std.testing.expectEqual(glyph_count, held.snapshot.glyphs[0].len);
 }
 
 test "cursor activity coalesces accepted typing and paste without echo; releases modifiers and rejected work stay quiet" {
@@ -1854,7 +1696,7 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const owner = try Terminal.createDirect(std.testing.allocator, threaded.io(), std.testing.environ, .{
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "printf '\\033[?25lFIRST\\033]0;READY\\007'; read line; printf '\\r\\nSECOND\\033]0;DONE\\007'; sleep 30",
         .rows = 4,
@@ -1865,7 +1707,7 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     try waitTitle(owner, "READY");
     var first: ?instance.DirectLease = null;
     for (0..5000) |_| {
-        first = try owner.replaceDirectFrame(null, null);
+        first = try owner.replaceFrame(null, null);
         if (first != null) break;
         if (owner.snapshot().presentation_failure) |failure| return failure;
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
@@ -1874,7 +1716,12 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     var pinned = true;
     // zig-audit: acknowledge catch_unreachable
     // reason: The test releases the sole held direct lease before worker destruction.
-    defer if (pinned) owner.releaseDirectFrame(held) catch unreachable;
+    defer if (pinned) owner.releaseFrame(held) catch unreachable;
+    if (held.snapshot.glyphs[0].len == 0) {
+        owner.requestFrame();
+        held = try waitFrame(owner, &held, null);
+    }
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     const initial = held.snapshot.terminal_revision;
     const old_first = held.snapshot.glyphs[0][0];
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
@@ -1884,7 +1731,7 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     owner.requestFrame();
     var next: ?instance.DirectLease = null;
     for (0..5000) |_| {
-        next = try owner.replaceDirectFrame(&held, null);
+        next = try owner.replaceFrame(&held, null);
         if (next != null) break;
         if (owner.snapshot().presentation_failure) |failure| return failure;
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
@@ -1894,7 +1741,7 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     var glyph_count: usize = 0;
     for (held.snapshot.glyphs[0..held.snapshot.rows]) |glyphs| glyph_count += glyphs.len;
     try std.testing.expect(glyph_count != 0);
-    try owner.releaseDirectFrame(held);
+    try owner.releaseFrame(held);
     pinned = false;
 }
 
@@ -1955,7 +1802,7 @@ test "direct worker backs off scalar pressure and applies queued resize after re
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     var pressure = ScalarPressureAllocator{ .child = std.testing.allocator };
-    const owner = try Terminal.createDirect(pressure.allocator(), threaded.io(), std.testing.environ, .{
+    const owner = try Terminal.create(pressure.allocator(), threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 511 ]; do printf 'e\\314\\201\\314\\202\\314\\203\\314\\204\\314\\205\\314\\206\\314\\207\\314\\210'; i=$((i+1)); done; printf 'X\\033]0;DONE\\007'; sleep 30",
         .rows = 1,
@@ -1996,7 +1843,7 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const owner = try Terminal.createDirect(std.testing.allocator, threaded.io(), std.testing.environ, .{
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf 'READY\\033]0;READY\\007'; read line; printf '\\033_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\\033\\\\\\033]0;IMAGE\\007'; read line; printf '\\033[?1049hALT\\033]0;ALT\\007'; read line; printf '\\033[?1049l\\033]0;PRIMARY\\007'; read line; printf '\\033_Ga=d,d=A,q=2\\033\\\\\\033]0;CLEARED\\007'; sleep 30",
         .rows = 4,
@@ -2007,7 +1854,7 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     try waitTitle(owner, "READY");
     var first: ?instance.DirectLease = null;
     for (0..5000) |_| {
-        first = try owner.replaceDirectFrame(null, null);
+        first = try owner.replaceFrame(null, null);
         if (first != null) break;
         if (owner.snapshot().presentation_failure) |failure| return failure;
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
@@ -2016,53 +1863,45 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     var pinned = true;
     // zig-audit: acknowledge catch_unreachable
     // reason: This test releases the one pinned direct lease before worker teardown.
-    defer if (pinned) owner.releaseDirectFrame(held) catch unreachable;
+    defer if (pinned) owner.releaseFrame(held) catch unreachable;
+    if (held.snapshot.glyphs[0].len == 0) {
+        owner.requestFrame();
+        held = try waitFrame(owner, &held, null);
+    }
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     const initial = held.snapshot.terminal_revision;
     const original = held.snapshot.glyphs[0][0];
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "IMAGE");
     owner.requestFrame();
-    for (0..5000) |_| {
-        if (owner.snapshot().presentation_failure != null) break;
-        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
-    }
-    try std.testing.expectEqual(@as(?PresentationFailure, error.UnsupportedScene), owner.snapshot().presentation_failure);
     try std.testing.expectEqualDeep(original, held.snapshot.glyphs[0][0]);
+    held = try waitFrame(owner, &held, null);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.positive.len);
+    try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
+
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "ALT");
     owner.requestFrame();
-    var next: ?instance.DirectLease = null;
-    for (0..5000) |_| {
-        next = try owner.replaceDirectFrame(&held, null);
-        if (next != null) break;
-        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
-    }
-    held = next orelse return error.Timeout;
+    held = try waitFrame(owner, &held, null);
     try std.testing.expect(held.snapshot.alternate);
     try std.testing.expect(held.snapshot.terminal_revision > initial);
-    try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
+
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "PRIMARY");
     owner.requestFrame();
-    for (0..5000) |_| {
-        if (owner.snapshot().presentation_failure != null) break;
-        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
-    }
-    try std.testing.expectEqual(@as(?PresentationFailure, error.UnsupportedScene), owner.snapshot().presentation_failure);
-    try std.testing.expect(held.snapshot.alternate);
+    held = try waitFrame(owner, &held, null);
+    try std.testing.expect(!held.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.images.len);
+
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "CLEARED");
     owner.requestFrame();
-    next = null;
-    for (0..5000) |_| {
-        next = try owner.replaceDirectFrame(&held, null);
-        if (next != null) break;
-        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
-    }
-    held = next orelse return error.Timeout;
-    try std.testing.expect(!held.snapshot.alternate);
+    held = try waitFrame(owner, &held, null);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
     try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
-    try owner.releaseDirectFrame(held);
+    try owner.releaseFrame(held);
     pinned = false;
 }
 
@@ -2071,7 +1910,7 @@ test "direct worker draws a multi-row continuation after history scroll" {
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const owner = try Terminal.createDirect(std.testing.allocator, threaded.io(), std.testing.environ, .{
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf '\\033[?25l\\033]66;s=2;X\\007\\033[S\\033]0;SCROLLED\\007'; sleep 30",
         .rows = 4,
@@ -2082,7 +1921,7 @@ test "direct worker draws a multi-row continuation after history scroll" {
     try waitTitle(owner, "READY");
     var first: ?instance.DirectLease = null;
     for (0..5000) |_| {
-        first = try owner.replaceDirectFrame(null, null);
+        first = try owner.replaceFrame(null, null);
         if (first != null) break;
         if (owner.snapshot().presentation_failure) |failure| return failure;
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
@@ -2091,14 +1930,14 @@ test "direct worker draws a multi-row continuation after history scroll" {
     var pinned = true;
     // zig-audit: acknowledge catch_unreachable
     // reason: The single direct lease is released before worker teardown.
-    defer if (pinned) owner.releaseDirectFrame(held) catch unreachable;
+    defer if (pinned) owner.releaseFrame(held) catch unreachable;
     const initial = held.snapshot.terminal_revision;
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "SCROLLED");
     owner.requestFrame();
     var next: ?instance.DirectLease = null;
     for (0..5000) |_| {
-        next = try owner.replaceDirectFrame(&held, null);
+        next = try owner.replaceFrame(&held, null);
         if (next != null) break;
         if (owner.snapshot().presentation_failure) |failure| return failure;
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
@@ -2106,6 +1945,6 @@ test "direct worker draws a multi-row continuation after history scroll" {
     held = next orelse return error.Timeout;
     try std.testing.expect(held.snapshot.terminal_revision > initial);
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
-    try owner.releaseDirectFrame(held);
+    try owner.releaseFrame(held);
     pinned = false;
 }

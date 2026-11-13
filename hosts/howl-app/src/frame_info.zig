@@ -26,31 +26,6 @@ pub const Info = struct {
     surface: render.Size = .{ .width = 0, .height = 0 },
     cell_size: render.Size = .{ .width = 0, .height = 0 },
 
-    /// Projects old publication metadata while the legacy path is removed.
-    pub fn fromLegacy(frame: instance.PublishedFrame) Info {
-        return .{
-            .sequence = frame.sequence,
-            .presentation_generation = frame.presentation_generation,
-            .terminal_revision = frame.terminal_revision,
-            .content_revision = frame.content_revision,
-            .cursor = if (frame.cursor) |cursor| switch (cursor.shape) {
-                .block => Cursor{ .rect = cursor.rect, .shape = .block },
-                .bar => Cursor{ .rect = cursor.rect, .shape = .bar },
-                .underline => Cursor{ .rect = cursor.rect, .shape = .underline },
-                .none => null,
-            } else null,
-            .cursor_blink = frame.cursor_blink,
-            .cursor_movement = frame.cursor_movement,
-            .has_cursor_command = frame.commands.len != frame.content_command_count,
-            .history_offset = frame.history_offset,
-            .history_count = frame.history_count,
-            .history_row_base = frame.history_row_base,
-            .alternate_screen = frame.alternate_screen,
-            .surface = frame.surface,
-            .cell_size = frame.cell_size,
-        };
-    }
-
     /// Copies the same facts from a pinned direct VT cut.
     pub fn fromSnapshot(snapshot: *const output.Snapshot, generation: u64, sequence: u64) Info {
         return .{

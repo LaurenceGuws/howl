@@ -14,6 +14,10 @@ pub const maximum_columns: u16 = 512;
 pub const maximum_cells: usize = @as(usize, maximum_rows) * @as(usize, maximum_columns);
 /// Largest terminal image-placement set admitted by maintained renderers.
 pub const maximum_image_placements: usize = 16 * 1024;
+/// Maximum distinct visible RGBA image resources in one direct output cut.
+pub const maximum_output_images: usize = 7;
+/// Exact upper bound of copied RGBA image pixels in one direct cut.
+pub const maximum_output_image_bytes: usize = 64 * 1024 * 1024;
 /// Complete terminal-frame command envelope shared by maintained hosts.
 ///
 /// One ordinary dense glyph per cell consumes `maximum_cells`. The remaining

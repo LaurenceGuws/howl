@@ -202,7 +202,7 @@ const App = struct {
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
         const presentation = try self.presentationConfig(self.fonts, pixels, self.configuration.value.cursor_stroke_pixels);
         errdefer self.fonts.collect();
-        return terminal.Terminal.createDirect(allocator, self.init.io, inherited, .{
+        return terminal.Terminal.create(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
             .command = if (recipe.command.len != 0) recipe.command else null,
             .arguments = recipe.arguments,
@@ -3172,8 +3172,8 @@ test "failed settings save restores fonts without changing canonical history or 
     }
     try std.testing.expect(attempts < 5000);
     const restored = panes[0].canvas.frame().?;
-    const restored_legacy = panes[0].canvas.lease.?.value;
-    try std.testing.expectEqual(@as(u16, 2), restored_legacy.commands[restored_legacy.content_command_count].solid.rect.width);
+    const restored_direct = panes[0].canvas.lease.?.snapshot;
+    try std.testing.expectEqual(@as(u16, 2), restored_direct.cursor.?.solid.rect.width);
     proof_stage = "accepted save";
     try app.applyConfigurationAt(&candidate, temporary.dir, "app.json");
     try std.testing.expectEqual(@as(i32, 23), current.value.terminal_font_pixels);
@@ -3189,8 +3189,8 @@ test "failed settings save restores fonts without changing canonical history or 
         try panes[0].canvas.update(renderer, panes[0].owner.?);
         const frame = panes[0].canvas.frame().?;
         if (frame.presentation_generation > restored.presentation_generation) {
-            const legacy = panes[0].canvas.lease.?.value;
-            try std.testing.expectEqual(@as(u16, 6), legacy.commands[legacy.content_command_count].solid.rect.width);
+            const direct = panes[0].canvas.lease.?.snapshot;
+            try std.testing.expectEqual(@as(u16, 6), direct.cursor.?.solid.rect.width);
             break;
         }
         panes[0].owner.?.requestFrame();
@@ -3208,8 +3208,8 @@ test "failed settings save restores fonts without changing canonical history or 
             const frame = panes[0].canvas.frame().?;
             if (frame.presentation_generation > before_generation) {
                 try std.testing.expectEqual(.bar, frame.cursor.?.shape);
-                const legacy = panes[0].canvas.lease.?.value;
-                try std.testing.expectEqual(@min(expected, frame.cursor.?.rect.width), legacy.commands[legacy.content_command_count].solid.rect.width);
+                const direct = panes[0].canvas.lease.?.snapshot;
+                try std.testing.expectEqual(@min(expected, frame.cursor.?.rect.width), direct.cursor.?.solid.rect.width);
                 break;
             }
             panes[0].owner.?.requestFrame();

@@ -95,7 +95,6 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (cell.semantic_width) {
                 if (cell.height != 1 or cell.width != 2 or cell.x > 1) return error.UnsupportedScene;
             } else if (cell.width == 0 or cell.x >= cell.width or cell.width % cell.height != 0) return error.UnsupportedScene;
-            if (cell.codepoint == 0x10eeee) return error.UnsupportedScene;
         }
         fn needsScale(cell: VT.Cell) bool {
             return cell.height > 1 or cell.subscale_n != 0 or cell.subscale_d != 0 or
@@ -265,9 +264,6 @@ pub fn Emitter(comptime instrumented: bool) type {
             const shared_cell: VT.Cell = .{ .codepoint = 0, .attrs = span.attrs };
             if (uniform) {
                 try validate(shared_cell);
-                for (cells) |cell| {
-                    if (cell.codepoint == 0x10eeee) return error.UnsupportedScene;
-                }
             }
             const shared_colors = if (uniform) try colors(shared_cell, p) else null;
             const shared_style = if (uniform) variant(span.attrs) else undefined;
@@ -357,7 +353,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                     const lead_row = retained_row - cell.y;
                     const lead = screen.retainedCellInfoAt(lead_row, @intCast(col)) orelse return error.UnsupportedScene;
                     const sequence = screen.retainedCellScalarsAt(lead_row, @intCast(col), &scalars);
-                    if (sequence.len != 0 and !(sequence.len == 1 and sequence[0] == ' ')) {
+                    if (sequence.len != 0 and sequence[0] != 0x10eeee and !(sequence.len == 1 and sequence[0] == ' ')) {
                         const c = try colors(lead, p);
                         try appendScaled(ctx, output, &used, sequence, variant(lead.attrs), lead, col, cell.y, row_clip, c.fg);
                     }
@@ -367,7 +363,9 @@ pub fn Emitter(comptime instrumented: bool) type {
                     scalars[0] = cell.codepoint;
                     break :blk scalars[0..@as(usize, if (cell.codepoint == 0) 0 else 1)];
                 } else if (history) |recency| screen.historyCellScalarsAt(recency, @intCast(col), &scalars) else screen.cellScalarsAt(logical_row, @intCast(col), &scalars);
-                if (sequence.len == 0 or (sequence.len == 1 and sequence[0] == ' ')) continue;
+                // Kitty Unicode placeholders describe image placement, not text ink.
+                // VT's native images iterator emits their final image commands.
+                if (sequence.len == 0 or sequence[0] == 0x10eeee or (sequence.len == 1 and sequence[0] == ' ')) continue;
                 const c = shared_colors orelse try colors(cell, p);
                 const style = if (uniform) shared_style else variant(cell.attrs);
                 if (sequence.len == 1 and text.generated.classify(sequence[0]) != null) {
