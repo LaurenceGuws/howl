@@ -4476,3 +4476,56 @@ test "real PTY single-row sized text retries wrap after history OOM" {
     try std.testing.expectEqual(@as(u21, 'X'), terminal(value).semanticView(0).cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), terminal(value).semanticView(0).cellAt(0, 3));
 }
+
+test "real PTY bulk scroll retries history before accepting suffix" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const value = try testInstance(failing.allocator(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'AAAA\\033[2;1HBBBB'; read line; printf '\\033[2SX'; sleep 30",
+        .rows = 2,
+        .columns = 4,
+        .history_rows = 8,
+    });
+    defer deinit(value);
+    const state = stateMut(value);
+    var ready = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        try std.testing.expect(turn.input_retry_wait_ms == null);
+        if (terminal(value).semanticView(0).cellAt(1, 3) == 'B') {
+            ready = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(ready);
+    failing.fail_index = failing.alloc_index;
+    try state.input(.{ .bytes = "GO\n" });
+    var blocked = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        if (turn.input_retry_wait_ms != null) {
+            blocked = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(blocked);
+    try std.testing.expectEqual(@as(u32, 0), terminal(value).semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal(value).semanticView(0).cellAt(0, 0));
+    failing.fail_index = std.math.maxInt(usize);
+    var completed = false;
+    for (0..3000) |attempt| {
+        const turn = try service(value, true, true, std.time.ns_per_s + @as(u64, @intCast(attempt)) * std.time.ns_per_ms);
+        if (turn.input_retry_wait_ms == null and !inputBlocked(value) and terminal(value).semanticView(0).cellAt(1, 3) == 'X') {
+            completed = true;
+            break;
+        }
+        sleepOneMillisecond();
+    }
+    try std.testing.expect(completed);
+    try std.testing.expectEqual(@as(u64, 0), state.terminal.screen_state.primary.history_loss_generation);
+    try std.testing.expectEqual(@as(u32, 2), terminal(value).semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal(value).semanticView(2).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal(value).semanticView(2).cellAt(1, 0));
+}

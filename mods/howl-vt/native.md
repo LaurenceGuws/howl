@@ -181,9 +181,10 @@ The caller owns retry scheduling and backoff. Retry covers a non-joining
 graphic or REP that starts at the bottom margin and must scroll, including
 escaping a nonsemantic multicell cluster. Presentation widening that scrolls at
 the bottom margin also retries. One chained graphic case beginning above the
-margin and single-row OSC 66 horizontal wraps retry too. Other chained paths,
-multi-row OSC 66 and multi-row scrolling are not yet fully qualified for
-history-admission retry.
+margin and single-row OSC 66 horizontal wraps retry too. Full-screen primary
+CSI scroll-up retries remaining rows after a partially completed admission.
+Other chained paths, multi-row OSC 66 and partial-region multi-row scrolling
+are not yet fully qualified for history-admission retry.
 
 Other canonical feed errors may follow an already-applied prefix. For those,
 failed C progress remains zero and invalid and the caller must not blindly replay

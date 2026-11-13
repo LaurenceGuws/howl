@@ -250,7 +250,7 @@ pub const InputBlock = error{ OutOfMemory, ScalarCapacity, HistoryCapacity };
 pub const PendingInput = struct {
     // Sized payload borrows the OSC parser buffer. No parser input may run
     // until the pending operation completes or is explicitly reset.
-    work: union(enum) { codepoint: u21, repeat: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: bool },
+    work: union(enum) { codepoint: u21, repeat: u16, scroll_up: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: bool },
     failure: InputBlock,
 };
 

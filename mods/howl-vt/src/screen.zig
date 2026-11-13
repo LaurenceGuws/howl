@@ -3060,7 +3060,7 @@ pub const Screen = struct {
         if (grow and height == 1 and self.auto_wrap and
             self.cursor.row == self.scrollBottom() and self.cursor.col + physical_width - 1 > right)
         {
-            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Capacity => return error.HistoryCapacity,
             };
@@ -3356,7 +3356,7 @@ pub const Screen = struct {
             self.auto_wrap and anchor_col == self.cursorRightBoundaryAt(anchor_row, anchor_col) and
             self.cursor.row == self.scrollBottom())
         {
-            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom()) catch |failure| switch (failure) {
+            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Capacity => return error.HistoryCapacity,
             };
@@ -3948,7 +3948,7 @@ pub const Screen = struct {
         return self.scrollUpRegionPrepared(top, bottom, count, null);
     }
 
-    fn prepareScrollHistoryOne(self: *Screen, top: u16, bottom: u16) error{ OutOfMemory, Capacity }!?history_store_mod.Store.Prepared {
+    fn prepareScrollHistoryOne(self: *Screen, top: u16, bottom: u16, changes_cursor_row: bool) error{ OutOfMemory, Capacity }!?history_store_mod.Store.Prepared {
         if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return null;
         const bounded_bottom = @min(bottom, self.rows - 1);
         const full_screen = top == 0 and bounded_bottom == self.rows - 1;
@@ -3956,7 +3956,7 @@ pub const Screen = struct {
         if (self.history_capacity == 0 or top != 0 or (!full_screen and !full_width)) return null;
         // With no multicell clusters, scrolling cannot alter the outgoing row.
         // A one-row region is different: LF/wrap may change that row's flags.
-        const may_change = self.nonsemantic_clusters_possible or self.cursor.row == 0;
+        const may_change = self.nonsemantic_clusters_possible or (changes_cursor_row and self.cursor.row == 0);
         const source = self.historyRowSource(0, may_change);
         const store = &self.history_store.?;
         return (if (may_change) store.preparePushForClear(source) else store.preparePush(source)) catch |failure| switch (failure) {
@@ -3995,7 +3995,7 @@ pub const Screen = struct {
         };
         if (!scrolls and width == 2 and col == right and self.auto_wrap) scrolls = true;
         if (!scrolls) return null;
-        return self.prepareScrollHistoryOne(self.scroll_top, bottom) catch |failure| switch (failure) {
+        return self.prepareScrollHistoryOne(self.scroll_top, bottom, true) catch |failure| switch (failure) {
             error.OutOfMemory => error.OutOfMemory,
             error.Capacity => error.HistoryCapacity,
         };
@@ -4016,7 +4016,7 @@ pub const Screen = struct {
 
     /// Prepares history before any part of a single-row scroll can mutate.
     pub fn tryScrollUpRegionOne(self: *Screen, top: u16, bottom: u16) error{ OutOfMemory, Capacity }!bool {
-        var prepared = try self.prepareScrollHistoryOne(top, bottom);
+        var prepared = try self.prepareScrollHistoryOne(top, bottom, false);
         defer self.discardPreparedHistory(&prepared);
         return self.scrollUpRegionPrepared(top, bottom, 1, if (prepared) |*row| row else null);
     }
@@ -4035,7 +4035,7 @@ pub const Screen = struct {
         const bottom = self.scrollBottom();
         const scrolls = self.rows != 0 and self.cursor.row == bottom;
         return .{
-            .history = if (scrolls) try self.prepareScrollHistoryOne(self.scroll_top, bottom) else null,
+            .history = if (scrolls) try self.prepareScrollHistoryOne(self.scroll_top, bottom, true) else null,
             .scrolls = scrolls,
             .top = self.scroll_top,
             .bottom = bottom,

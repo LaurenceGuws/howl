@@ -3775,6 +3775,20 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .scroll_up_lines => |count| {
             const screen = vt.screen_state.active();
+            if (!vt.screen_state.alt_active and screen.history_capacity != 0 and
+                screen.scroll_top == 0 and screen.scrollBottom() == screen.rows -| 1)
+            {
+                const amount = @min(count, screen.rows);
+                const progress = applyInputScrollUp(vt, amount);
+                if (progress.blocked) |failure| {
+                    std.debug.assert(vt.stream_state.pending_input == null);
+                    vt.stream_state.pending_input = .{
+                        .work = .{ .scroll_up = amount - progress.completed },
+                        .failure = failure,
+                    };
+                }
+                return progress.completed != 0;
+            }
             const origin = graphicsScreenOrigin(vt);
             const changed = screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
             // A full-screen primary scroll moves the viewport through retained
@@ -3890,6 +3904,30 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
     }
     return true;
+}
+
+const ScrollUpProgress = struct {
+    completed: u16 = 0,
+    blocked: ?stream_state_mod.InputBlock = null,
+};
+
+// Full-screen primary rows are admitted one at a time. Their image anchors
+// remain in absolute history coordinates; eviction is applied at feed boundary.
+fn applyInputScrollUp(vt: *Terminal, count: u16) ScrollUpProgress {
+    const screen = vt.screen_state.active();
+    var progress: ScrollUpProgress = .{};
+    while (progress.completed < count) {
+        const changed = screen.tryScrollUpRegionOne(screen.scroll_top, screen.scrollBottom()) catch |failure| {
+            progress.blocked = switch (failure) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.Capacity => error.HistoryCapacity,
+            };
+            return progress;
+        };
+        std.debug.assert(changed);
+        progress.completed += 1;
+    }
+    return progress;
 }
 
 // A parsed LF/NEL is retried as one operation: history allocation happens
@@ -4226,6 +4264,15 @@ const TerminalStream = struct {
                         break :resumed false;
                     };
                     break :resumed true;
+                },
+                .scroll_up => |remaining| scrolled: {
+                    const progress = applyInputScrollUp(self.terminal, remaining);
+                    if (progress.blocked) |failure| {
+                        self.terminal.stream_state.pending_input.?.work = .{ .scroll_up = remaining - progress.completed };
+                        self.terminal.stream_state.pending_input.?.failure = failure;
+                        input_blocked = failure;
+                    }
+                    break :scrolled progress.completed != 0;
                 },
                 .repeat => |remaining| repeated: {
                     const progress = self.terminal.screen_state.active().repeatPrecedingGrowing(remaining);
