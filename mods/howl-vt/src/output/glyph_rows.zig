@@ -90,14 +90,16 @@ pub fn Emitter(comptime instrumented: bool) type {
             return true;
         }
         fn validate(cell: VT.Cell) !void {
-            if (cell.height == 0 or cell.y >= cell.height or cell.subscale_n != 0 or cell.subscale_d != 0 or
-                cell.vertical_align != 0 or cell.horizontal_align != 0)
-                return error.UnsupportedScene;
+            if (cell.height == 0 or cell.y >= cell.height) return error.UnsupportedScene;
             if (cell.semantic_width) {
                 if (cell.height != 1 or cell.width != 2 or cell.x > 1) return error.UnsupportedScene;
             } else if (cell.width == 0 or cell.x >= cell.width or cell.width % cell.height != 0) return error.UnsupportedScene;
-            if (cell.height > 1 and (cell.attrs.underline or cell.attrs.strikethrough)) return error.UnsupportedScene;
+            if (needsScale(cell) and (cell.attrs.underline or cell.attrs.strikethrough)) return error.UnsupportedScene;
             if (cell.codepoint == 0x10eeee) return error.UnsupportedScene;
+        }
+        fn needsScale(cell: VT.Cell) bool {
+            return cell.height > 1 or cell.subscale_n != 0 or cell.subscale_d != 0 or
+                cell.vertical_align != 0 or cell.horizontal_align != 0;
         }
         fn solid(counter: if (instrumented) ?*u64 else void, output: []frame.Command, used: *usize, rect: frame.Rect, clip: frame.Rect, color: frame.Color) !void {
             const visible = (try frame.intersectRects(rect, clip)) orelse return;
@@ -270,7 +272,7 @@ pub fn Emitter(comptime instrumented: bool) type {
             const shared_style = if (uniform) variant(span.attrs) else undefined;
             if (!uniform) for (cells, 0..) |cell, col| {
                 try validate(cell);
-                if (cell.height > 1) {
+                if (needsScale(cell)) {
                     if (history != null or cell.y > logical_row or screen.lineGeometry(logical_row) != .single_width or
                         @as(u32, logical_row - cell.y) + cell.height > screen.rows or
                         (cell.y != 0 and (cell.codepoint != 0 or cell.combining_len != 0)))
@@ -340,7 +342,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 column += 1;
                 const cell = cells[col];
                 if (cell.x != 0 or cell.attrs.invisible) continue;
-                if (cell.height > 1) {
+                if (needsScale(cell)) {
                     const lead_row = logical_row - cell.y;
                     const lead = screen.cellInfoAt(lead_row, @intCast(col));
                     const sequence = screen.cellScalarsAt(lead_row, @intCast(col), &scalars);
@@ -460,6 +462,11 @@ pub fn Emitter(comptime instrumented: bool) type {
             try appendRun(ctx, output, used, run, true, operators[0..1], style, cell, col, row_clip, color);
             return true;
         }
+        fn scaledExtent(value: u16, numerator: u16, denominator: u16) BuildError!u16 {
+            const product: u32 = @as(u32, value) * numerator;
+            return std.math.cast(u16, (product + denominator - 1) / denominator) orelse error.ArithmeticOverflow;
+        }
+
         // Project a live scaled cluster into one row-local strip. Retaining
         // strips independently lets the VT's existing row generations drive repair.
         fn appendScaled(ctx: Context, output: []frame.Command, used: *usize, sequence: []const u32, style: cache.FontVariant, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, color: frame.Color) BuildError!void {
@@ -468,10 +475,31 @@ pub fn Emitter(comptime instrumented: bool) type {
                 (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff))) return error.UnsupportedScene;
             const run = try cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?);
             if (run.glyphs.len > ctx.shaped.?.len) return error.InsufficientGlyphs;
-            const scale: i64 = cell.height;
             const x: i32 = @intCast(col * ctx.cell_width);
             const y: i32 = -@as(i32, row_offset) * @as(i32, ctx.cell_height);
             const allocation: frame.Rect = .{ .x = x, .y = y, .width = ctx.cell_width * cell.width, .height = ctx.cell_height * cell.height };
+            var numerator: u16 = cell.height;
+            var denominator: u16 = 1;
+            if (cell.subscale_n != 0 and cell.subscale_d != 0 and cell.subscale_n < cell.subscale_d) {
+                numerator *= cell.subscale_n;
+                denominator = cell.subscale_d;
+            }
+            const base_width = ctx.cell_width * (cell.width / cell.height);
+            const scaled_width = try scaledExtent(base_width, numerator, denominator);
+            const scaled_height = try scaledExtent(ctx.cell_height, numerator, denominator);
+            if (scaled_width > allocation.width or scaled_height > allocation.height) return error.UnsupportedScene;
+            const remaining_x = allocation.width - scaled_width;
+            const remaining_y = allocation.height - scaled_height;
+            const offset_x: u16 = switch (cell.horizontal_align) {
+                2 => remaining_x / 2,
+                1, 3 => remaining_x,
+                else => 0,
+            };
+            const offset_y: u16 = switch (cell.vertical_align) {
+                1 => remaining_y,
+                2 => remaining_y / 2,
+                else => 0,
+            };
             const strip = (try frame.intersectRects(allocation, row_clip)) orelse return;
             var pen_x: i64 = @as(i64, x) * 64;
             var pen_y: i64 = 0;
@@ -482,10 +510,10 @@ pub fn Emitter(comptime instrumented: bool) type {
                     const raw_x = @divFloor(pen_x + g.x_offset, 64) + raster.left;
                     const raw_y = @as(i64, ctx.baseline) + @divFloor(pen_y - g.y_offset, 64) - raster.top;
                     const destination: frame.Rect = .{
-                        .x = std.math.cast(i32, @as(i64, x) + (raw_x - x) * scale) orelse return error.ArithmeticOverflow,
-                        .y = std.math.cast(i32, @as(i64, y) + raw_y * scale) orelse return error.ArithmeticOverflow,
-                        .width = std.math.mul(u16, raster.width, cell.height) catch return error.ArithmeticOverflow,
-                        .height = std.math.mul(u16, raster.height, cell.height) catch return error.ArithmeticOverflow,
+                        .x = std.math.cast(i32, @as(i64, x) + offset_x + @divFloor((raw_x - x) * numerator, denominator)) orelse return error.ArithmeticOverflow,
+                        .y = std.math.cast(i32, @as(i64, y) + offset_y + @divFloor(raw_y * numerator, denominator)) orelse return error.ArithmeticOverflow,
+                        .width = try scaledExtent(raster.width, numerator, denominator),
+                        .height = try scaledExtent(raster.height, numerator, denominator),
                     };
                     if (try frame.intersectRects(destination, strip)) |clip| {
                         const size = cache.atlasSize(ctx.atlas);

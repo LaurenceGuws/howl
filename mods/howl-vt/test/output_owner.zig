@@ -39,7 +39,7 @@ test "public owner holds exact bytes across unsupported input retry and font rep
     const commands = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
     defer a.free(commands);
     try std.testing.expect(commands.len > 0 and pixels.len > 0);
-    try owner.feed("\x1b[H\x1b]66;s=2:n=1:d=2;X\x1b\\");
+    try owner.feed("\x1b[H\x1b[4m\x1b]66;s=2;X\x1b\\");
     try std.testing.expectError(error.UnsupportedScene, owner.flush());
     try std.testing.expectEqual(@as(u21, 'X'), owner.observation().semanticView(0).cellAt(0, 0));
     try owner.feed("\x1b[0m\x1b[2J\x1b[HY");
