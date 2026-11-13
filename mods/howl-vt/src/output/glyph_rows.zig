@@ -559,13 +559,28 @@ pub fn Emitter(comptime instrumented: bool) type {
         // Project a live scaled cluster into one row-local strip. Retaining
         // strips independently lets the VT's existing row generations drive repair.
         fn appendScaled(ctx: Context, output: []frame.Command, used: *usize, sequence: []const u32, style: cache.FontVariant, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, color: frame.Color) BuildError!void {
-            if (sequence.len == 1 and (text.generated.classify(sequence[0]) != null or
-                (sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or
+            const sizing = try scaledLayout(ctx, cell, col, row_offset);
+            const strip = (try frame.intersectRects(sizing.allocation, row_clip)) orelse return;
+            if (sequence.len == 1 and text.generated.classify(sequence[0]) != null) {
+                const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = 0, .width = sizing.base_width, .height = ctx.cell_height });
+                const proper_fraction = cell.subscale_n != 0 and cell.subscale_d != 0 and cell.subscale_n < cell.subscale_d;
+                const raster = try cache.resolveGeneratedAtlas(ctx.atlas, sequence[0], destination.width, destination.height, .{ .scale = cell.height, .subscale_n = if (proper_fraction) cell.subscale_n else 0, .subscale_d = if (proper_fraction) cell.subscale_d else 0 }, ctx.raster);
+                if (try frame.intersectRects(destination, strip)) |clip| {
+                    const size = cache.atlasSize(ctx.atlas);
+                    try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
+                        .destination = destination,
+                        .clip = clip,
+                        .color = color,
+                        .cursor_component = true,
+                        .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                    } });
+                }
+                return;
+            }
+            if (sequence.len == 1 and ((sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or
                 (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff))) return error.UnsupportedScene;
             const run = try cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?);
             if (run.glyphs.len > ctx.shaped.?.len) return error.InsufficientGlyphs;
-            const sizing = try scaledLayout(ctx, cell, col, row_offset);
-            const strip = (try frame.intersectRects(sizing.allocation, row_clip)) orelse return;
             const x = sizing.allocation.x;
             var pen_x: i64 = @as(i64, x) * 64;
             var pen_y: i64 = 0;
