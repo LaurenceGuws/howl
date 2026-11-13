@@ -202,7 +202,10 @@ pub const Canvas = struct {
                 upload_pixels = self.converted.items;
                 stride = width * 4;
             }
-            const texture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_RGBA32, c.SDL_TEXTUREACCESS_STATIC, upload.size.width, upload.size.height) orelse return error.SDLTexture;
+            // SDL 3.4.18's software renderer RLE-compresses static textures;
+            // alternating clipped scales can corrupt subsequent colour draws.
+            const access: c.SDL_TextureAccess = if (upload.format == .rgba8) c.SDL_TEXTUREACCESS_STREAMING else c.SDL_TEXTUREACCESS_STATIC;
+            const texture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_RGBA32, access, upload.size.width, upload.size.height) orelse return error.SDLTexture;
             var owned = true;
             errdefer if (owned) c.SDL_DestroyTexture(texture);
             if (!c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_NEAREST) or
@@ -1848,4 +1851,42 @@ test "direct retained row repair matches full repaint across viewport changes an
         };
         try owner.release(lease);
     }
+}
+
+test "colour atlas survives alternating clipped scales" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const a = std.testing.allocator;
+    const surface = c.SDL_CreateSurface(228, 224, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var canvas = Canvas.init(a);
+    defer canvas.deinit();
+    const geometry = try a.create(Geometry);
+    defer a.destroy(geometry);
+    geometry.* = .{};
+    const id: render.ResourceRef = .{ .resource = try render.ResourceId.init(1), .generation = @fromBackingInt(1) };
+    const pixels = try a.alloc(u8, 256 * 256 * 4);
+    defer a.free(pixels);
+    @memset(pixels, 0);
+    for (0..16) |y| for (0..20) |x| {
+        const at = (y * 256 + x) * 4;
+        pixels[at..][0..4].* = .{ 255, 0, 0, 255 };
+    };
+    const upload: render.FrameResourceUpload = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .pixel_offset = 0, .pixel_count = pixels.len, .stride = 1024 };
+    try canvas.applyResources(renderer, 1, &.{upload}, &.{}, pixels);
+    const view: render.ResourceView = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .source = .{ .x = 0, .y = 0, .width = 20, .height = 16 } };
+    const small: render.Command = .{ .rgba = .{ .destination = .{ .x = 104, .y = 48, .width = 20, .height = 16 }, .clip = .{ .x = 104, .y = 48, .width = 20, .height = 8 }, .resource = view } };
+    const large: render.Command = .{ .rgba = .{ .destination = .{ .x = 0, .y = 41, .width = 38, .height = 30 }, .clip = .{ .x = 0, .y = 56, .width = 38, .height = 15 }, .resource = view } };
+    const normal: render.Command = .{ .rgba = .{ .destination = .{ .x = 28, .y = 6, .width = 20, .height = 16 }, .clip = .{ .x = 28, .y = 6, .width = 20, .height = 16 }, .resource = view } };
+    const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = 228, .h = 224 };
+    try canvas.drawCommands(renderer, geometry, pane, &.{ small, large });
+    try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255));
+    try std.testing.expect(c.SDL_RenderClear(renderer));
+    try canvas.drawCommands(renderer, geometry, pane, &.{normal});
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    var pixel: [4]u8 = undefined;
+    try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 28, 6, &pixel[0], &pixel[1], &pixel[2], &pixel[3]));
+    try std.testing.expectEqualDeep([4]u8{ 255, 0, 0, 255 }, pixel);
 }
