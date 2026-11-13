@@ -90,3 +90,27 @@ report their real magnitude, affected workloads, and uncertainty without
 claiming performance parity. Favor independent Comrade source review on
 substantial cuts before Captain's acceptance, while normally working
 interactively.
+
+## First-main integration scope: shared core plus direct app
+
+Recorded 14 November 2026 after an independent review of the 69-commit
+`experiment/vt-direct-output` dependency closure and Captain's approval.
+
+**Approved scope:** The first main cut may carry the shared VT output/Text
+extraction, canonical scalar/history and retained-input recovery improvements,
+versioned VT native ABI v2 and Instance native ABI v3, and the necessary
+`howl-host` poll adaptation, together with the direct-only `howl-app`.
+These are explicitly shared-core changes, not a claim that only app source
+changes. `howl-host` remains on its legacy Render presentation path; Vulkan,
+Wayland, other foreign consumers, and Howl Server do not migrate as part of this
+cut.
+
+**Sequence:** Prefer the already-qualified dependency closure to a cosmetic
+cherry-pick/reconstruction that would require fresh behavioral qualification.
+The eventual review history may be curated, but any squash changes history,
+not the accepted source/behavioral scope.
+
+This is **scope approval**, not permission to skip the remaining app dogfood,
+accepted-versus-candidate measurements, final integrated-source gates, or
+independent review. It does not approve replacement of the installed
+`howl-app` binary. Main integration and installation remain separate gates.
