@@ -39,7 +39,7 @@ pub const Config = struct {
     box_drawing: text.generated.BoxDrawingConfig = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
     atlas: AtlasConfig = .{ .width = 64, .height = 16, .entry_capacity = 16, .growth = .{ .entry_limit = 256, .alpha_height_limit = 512, .color_height_limit = 16 } },
     raster_bytes: usize = 512 * 512,
-    /// Zero derives a ceiling from shaping capacities; storage still grows on demand.
+    /// Zero derives a ceiling from shaping capacities and font width; storage grows on demand.
     command_limit: usize = 0,
 
     fn internal(self: Config) state.Config {

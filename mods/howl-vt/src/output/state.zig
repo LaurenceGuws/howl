@@ -20,14 +20,18 @@ pub const rows = @import("limits").maximum_rows;
 pub const cols = @import("limits").maximum_columns;
 const private_glyph_capacity = cols * 2;
 
-fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) error{InvalidCommandLimit}!usize {
+fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore, cell_width: u16) error{InvalidCommandLimit}!usize {
     // Individual-cell runs fit the lane's scratch, including cached runs.
     // A contextual run uses a separate full-row lane of at most 2 * cols.
     const glyph_capacity = if (shared) |store|
         support.storeConfig(support.borrowStore(store)).shaped_capacity
     else
         private_glyph_capacity;
-    const per_cell = std.math.add(usize, glyph_capacity, 4) catch return error.InvalidCommandLimit;
+    // Scaled dotted underlines emit at most ceil(cell_width / 2) solids
+    // per occupied column; lazy storage still grows only when needed.
+    const dots = (@as(usize, cell_width) + 1) / 2;
+    const decorations = std.math.add(usize, 4, dots) catch return error.InvalidCommandLimit;
+    const per_cell = std.math.add(usize, glyph_capacity, decorations) catch return error.InvalidCommandLimit;
     const cells = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
     const maximum = std.math.add(usize, cells, private_glyph_capacity) catch return error.InvalidCommandLimit;
     if (config.command_limit == 0) return maximum;
@@ -110,7 +114,7 @@ pub const Config = struct {
     box_drawing: text.generated.BoxDrawingConfig = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
     atlas: cache.AtlasConfig = .{ .width = 64, .height = 16, .entry_capacity = 16, .growth = .{ .entry_limit = 256, .alpha_height_limit = 512, .color_height_limit = 16 } },
     raster_bytes: usize = 512 * 512,
-    /// Zero derives a ceiling from shaping capacities; storage still grows on demand.
+    /// Zero derives a ceiling from shaping capacities and font width; storage grows on demand.
     command_limit: usize = 0,
 };
 const Resource = struct {
@@ -130,7 +134,7 @@ pub const SharedConfig = struct {
     cursor_stroke_pixels: u8 = 2,
     box_drawing: text.generated.BoxDrawingConfig = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
     atlas: cache.AtlasConfig = .{ .width = 64, .height = 16, .entry_capacity = 16, .growth = .{ .entry_limit = 256, .alpha_height_limit = 512, .color_height_limit = 16 } },
-    /// Zero derives a ceiling from shaping capacities; storage still grows on demand.
+    /// Zero derives a ceiling from shaping capacities and font width; storage grows on demand.
     command_limit: usize = 0,
     fn internal(self: SharedConfig) Config {
         return .{ .history_capacity = self.history_capacity, .cursor_stroke_pixels = self.cursor_stroke_pixels, .box_drawing = self.box_drawing, .atlas = self.atlas, .command_limit = self.command_limit };
@@ -339,7 +343,7 @@ pub fn State(comptime instrumented: bool) type {
             self.atlas = atlas;
             self.shapes = shapes;
             self.raster = raster;
-            self.command_limit = try resolveCommandLimit(config, working.shared);
+            self.command_limit = try resolveCommandLimit(config, working.shared, metrics.advance_width);
             self.config = config;
             self.shared = working.shared;
             self.resources = @splat(.{});
@@ -397,7 +401,7 @@ pub fn State(comptime instrumented: bool) type {
             const next = try prepareWorking(self.allocator, font, config);
             errdefer destroyWorking(self.allocator, next.atlas, next.shapes, next.raster, next.shared);
             try self.validateWorkingGeometry(next.metrics);
-            self.installWorking(next, config, try resolveCommandLimit(config, next.shared));
+            self.installWorking(next, config, try resolveCommandLimit(config, next.shared, next.metrics.advance_width));
         }
         /// Prepared replacement owns its new shared claim and private atlas until committed or discarded.
         pub const Replacement = struct { working: ?Working, config: Config, command_limit: usize };
@@ -417,7 +421,7 @@ pub fn State(comptime instrumented: bool) type {
             // zig-audit: acknowledge discard
             // reason: Checked pixel extents must fit before the canonical resize.
             _ = try std.math.mul(u16, new_rows, next.metrics.line_height);
-            return .{ .working = next, .config = local, .command_limit = try resolveCommandLimit(local, next.shared) };
+            return .{ .working = next, .config = local, .command_limit = try resolveCommandLimit(local, next.shared, next.metrics.advance_width) };
         }
         /// Releases an uncommitted replacement without disturbing accepted output.
         pub fn discardWorking(self: *Candidate, replacement: *Replacement) void {

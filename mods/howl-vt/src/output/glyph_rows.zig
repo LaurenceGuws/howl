@@ -95,9 +95,6 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (cell.semantic_width) {
                 if (cell.height != 1 or cell.width != 2 or cell.x > 1) return error.UnsupportedScene;
             } else if (cell.width == 0 or cell.x >= cell.width or cell.width % cell.height != 0) return error.UnsupportedScene;
-            if (needsScale(cell) and cell.attrs.underline and
-                cell.attrs.underline_style != .straight and cell.attrs.underline_style != .double)
-                return error.UnsupportedScene;
             if (cell.codepoint == 0x10eeee) return error.UnsupportedScene;
         }
         fn needsScale(cell: VT.Cell) bool {
@@ -518,16 +515,43 @@ pub fn Emitter(comptime instrumented: bool) type {
             } };
         }
 
-        // Scaled straight/double underline and strike are row-clipped solids.
+        // Project scaled decorations into each row-local strip.
         fn appendScaledDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
             const sizing = try scaledLayout(ctx, cell, col, row_offset);
             const clip = (try frame.intersectRects(sizing.allocation, row_clip)) orelse return;
             if (cell.attrs.underline) {
                 const height = @max(@as(u16, 1), metrics.underline_height);
                 const y = line_offset + metrics.underline_y;
-                try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = y, .width = sizing.base_width, .height = height }), clip, resolved.underline);
-                if (cell.attrs.underline_style == .double)
-                    try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = y + height + 1, .width = sizing.base_width, .height = height }), clip, resolved.underline);
+                switch (cell.attrs.underline_style) {
+                    .straight, .double => {
+                        try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = y, .width = sizing.base_width, .height = height }), clip, resolved.underline);
+                        if (cell.attrs.underline_style == .double)
+                            try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = y + height + 1, .width = sizing.base_width, .height = height }), clip, resolved.underline);
+                    },
+                    .dotted, .dashed => {
+                        // Transform each segment, rather than scaling a bitmap:
+                        // fractional rounding is defined per rectangle.
+                        const step: usize = if (cell.attrs.underline_style == .dotted) 2 else 5;
+                        const width: usize = if (cell.attrs.underline_style == .dotted) 1 else 3;
+                        var offset: usize = 0;
+                        while (offset < sizing.base_width) : (offset += step) {
+                            try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{
+                                .x = sizing.allocation.x + @as(i32, @intCast(offset)),
+                                .y = y,
+                                .width = @intCast(@min(width, sizing.base_width - offset)),
+                                .height = height,
+                            }), clip, resolved.underline);
+                        }
+                    },
+                    .curly => {
+                        const wave = try cache.resolveSmoothWaveAtlas(ctx.atlas, sizing.base_width, height, metrics.line_height, ctx.raster);
+                        const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = y - wave.top, .width = wave.width, .height = wave.height });
+                        if (try frame.intersectRects(destination, clip) != null) {
+                            const size = cache.atlasSize(ctx.atlas);
+                            try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{ .destination = destination, .clip = clip, .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } }, .color = resolved.underline } });
+                        }
+                    },
+                }
             }
             if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = line_offset + metrics.strike_y, .width = sizing.base_width, .height = @max(@as(u16, 1), metrics.strike_height) }), clip, resolved.underline);
         }

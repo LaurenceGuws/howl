@@ -381,3 +381,50 @@ test "automatic row limit follows a replacement shaping lane" {
     try std.testing.expectEqual(@as(usize, 8), direct.config.command_limit);
     try std.testing.expectEqual(@as(usize, 8), direct.command_limit);
 }
+
+test "automatic command bound admits a dense fractional dotted row" {
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try output.initPresentationStore(a, threaded.io(), .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 48 } } } }, .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 1,
+        .raster_bytes = 512 * 512,
+    });
+    defer output.releasePresentationStore(store);
+    const owner = try output.Terminal.initShared(a, store, .{ .atlas = .{ .width = 512, .height = 512, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(1, 512);
+    try owner.feed("\x1b[?25l\x1b[?7l\x1b[4:4m");
+    for (0..512) |_| try owner.feed("\x1b]66;s=1:n=1:d=2;X\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    defer unpin(owner, held);
+    const count = held.snapshot.backgrounds[0].len + held.snapshot.decorations[0].len + held.snapshot.glyphs[0].len;
+    // The prior automatic cap allowed only 512 * (1 shaped glyph + 4) + 1024.
+    try std.testing.expect(count > 512 * 5 + 1024);
+}
+
+test "automatic row limit follows replacement font width" {
+    const Candidate = @import("output_state").State(false);
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const small = try makeStore(threaded.io());
+    defer output.releasePresentationStore(small);
+    const large = try output.initPresentationStore(a, threaded.io(), .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 48 } } } }, .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 160,
+        .raster_bytes = 512 * 512,
+    });
+    defer output.releasePresentationStore(large);
+    const direct = try Candidate.initShared(a, small, .{});
+    defer direct.deinit();
+    const before = direct.command_limit;
+    var replacement = try direct.stageWorkingShared(large, .{}, 24, 80);
+    defer direct.discardWorking(&replacement);
+    direct.commitWorking(&replacement);
+    try std.testing.expect(direct.command_limit > before);
+    var back = try direct.stageWorkingShared(small, .{}, 24, 80);
+    defer direct.discardWorking(&back);
+    direct.commitWorking(&back);
+    try std.testing.expectEqual(before, direct.command_limit);
+}
