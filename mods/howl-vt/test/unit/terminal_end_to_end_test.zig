@@ -2263,3 +2263,36 @@ test "terminal: graphics scrolls without history and evicts with bounded history
     try feed(&limited, "\x1b[S");
     try std.testing.expect(limited.images(1).placement(0) == null);
 }
+
+test "terminal: partial top scroll retains same images for bulk and single rows" {
+    var bulk = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer bulk.deinit();
+    var single = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer single.deinit();
+    const init = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\x1b\\" ++
+        "\x1b[4;1H\x1b_Ga=T,f=32,s=1,v=1,i=8,C=1;AQIDBA==\x1b\\\x1b[1;3r";
+    for ([_]*Terminal{ &bulk, &single }) |terminal| {
+        try terminal.setCellPixelSize(1, 1);
+        try feed(terminal, init);
+        try std.testing.expect(terminal.images(0).placement(0) != null);
+    }
+    try feed(&bulk, "\x1b[2S");
+    try feed(&single, "\x1b[S\x1b[S");
+    for ([_]u16{ 0, 1, 2 }) |offset| {
+        try std.testing.expectEqualDeep(bulk.images(offset).placement(0), single.images(offset).placement(0));
+        try std.testing.expectEqualDeep(bulk.images(offset).placement(1), single.images(offset).placement(1));
+    }
+    try std.testing.expectEqual(@as(u16, 0), bulk.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 3), bulk.images(0).placement(1).?.row);
+}
+
+test "terminal: non-top margin scroll moves only images inside the region" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\x1b\\" ++
+        "\x1b[4;1H\x1b_Ga=T,f=32,s=1,v=1,i=8,C=1;AQIDBA==\x1b\\\x1b[2;3r\x1b[S");
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.images(0).placement(1).?.row);
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+}

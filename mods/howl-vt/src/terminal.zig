@@ -3797,6 +3797,22 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 screen.scrollBottom() == screen.rows -| 1 and
                 graphicsScreenOrigin(vt) == origin + @min(count, screen.rows);
             if (history_scroll) return changed;
+            const amount = @min(count, screen.scrollBottom() - screen.scroll_top + 1);
+            const top_history_scroll = !vt.screen_state.alt_active and screen.scroll_top == 0 and
+                screen.scrollBottom() < screen.rows -| 1 and amount != 0 and
+                graphicsScreenOrigin(vt) == origin + amount;
+            if (top_history_scroll) {
+                // Rows in the scrolling region retain their absolute anchor as
+                // the history origin advances. Rows below the margin stay on
+                // screen, so their absolute anchors advance with the origin.
+                return vt.graphics.scroll(
+                    graphicsBank(vt),
+                    origin + screen.scrollBottom() + 1,
+                    origin + screen.rows - 1 + amount,
+                    amount,
+                    false,
+                ) or changed;
+            }
             return vt.graphics.scroll(
                 graphicsBank(vt),
                 graphicsScreenOrigin(vt) + screen.scroll_top,
