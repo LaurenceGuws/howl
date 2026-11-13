@@ -1401,3 +1401,37 @@ test "bulk scroll resumes after a partially completed history admission" {
     try std.testing.expectEqual(@as(u16, 0), terminal.images(1).placement(0).?.row);
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 2047));
 }
+
+test "top-margin multi-row scroll resumes history and keeps fixed image" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 3, 2048, 8);
+    defer terminal.deinit();
+    var row: [2048]u8 = @splat('A');
+    try feed(&terminal, &row);
+    try feed(&terminal, "\x1b[2;1H");
+    @memset(&row, 'B');
+    try feed(&terminal, &row);
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\x1b\\" ++
+        "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=8,C=1;AQIDBA==\x1b\\\x1b[1;2r\x1b[2");
+    try std.testing.expect(terminal.images(0).placement(0) != null);
+    try std.testing.expect(terminal.images(0).placement(1) != null);
+    failing.fail_index = failing.alloc_index + 2;
+    const blocked = try terminal.feedAtServiceBoundary("SX", 1);
+    try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    try std.testing.expect(!blocked.summary.historyLost());
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(1).?.row);
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try terminal.feedAtServiceBoundary("X", 2);
+    try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expectEqual(@as(u32, 2), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(2).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(2).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(1).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(1).?.row);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+}

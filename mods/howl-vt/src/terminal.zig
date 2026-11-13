@@ -3775,10 +3775,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .scroll_up_lines => |count| {
             const screen = vt.screen_state.active();
+            const full_width = !screen.left_right_margin_mode or
+                (screen.left_margin == 0 and screen.right_margin + 1 == screen.cols);
             if (!vt.screen_state.alt_active and screen.history_capacity != 0 and
-                screen.scroll_top == 0 and screen.scrollBottom() == screen.rows -| 1)
+                screen.scroll_top == 0 and full_width)
             {
-                const amount = @min(count, screen.rows);
+                const amount = @min(count, screen.scrollBottom() + 1);
                 const progress = applyInputScrollUp(vt, amount);
                 if (progress.blocked) |failure| {
                     std.debug.assert(vt.stream_state.pending_input == null);
@@ -3789,30 +3791,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 }
                 return progress.completed != 0;
             }
-            const origin = graphicsScreenOrigin(vt);
             const changed = screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
-            // A full-screen primary scroll moves the viewport through retained
-            // history. Image anchors are already in absolute history coordinates.
-            const history_scroll = !vt.screen_state.alt_active and screen.scroll_top == 0 and
-                screen.scrollBottom() == screen.rows -| 1 and
-                graphicsScreenOrigin(vt) == origin + @min(count, screen.rows);
-            if (history_scroll) return changed;
-            const amount = @min(count, screen.scrollBottom() - screen.scroll_top + 1);
-            const top_history_scroll = !vt.screen_state.alt_active and screen.scroll_top == 0 and
-                screen.scrollBottom() < screen.rows -| 1 and amount != 0 and
-                graphicsScreenOrigin(vt) == origin + amount;
-            if (top_history_scroll) {
-                // Rows in the scrolling region retain their absolute anchor as
-                // the history origin advances. Rows below the margin stay on
-                // screen, so their absolute anchors advance with the origin.
-                return vt.graphics.scroll(
-                    graphicsBank(vt),
-                    origin + screen.scrollBottom() + 1,
-                    origin + screen.rows - 1 + amount,
-                    amount,
-                    false,
-                ) or changed;
-            }
             return vt.graphics.scroll(
                 graphicsBank(vt),
                 graphicsScreenOrigin(vt) + screen.scroll_top,
@@ -3927,12 +3906,14 @@ const ScrollUpProgress = struct {
     blocked: ?stream_state_mod.InputBlock = null,
 };
 
-// Full-screen primary rows are admitted one at a time. Their image anchors
-// remain in absolute history coordinates; eviction is applied at feed boundary.
+// Primary top-anchored full-width rows are admitted one at a time. Their
+// image anchors remain in history coordinates; fixed rows below the margin move
+// with the screen origin. Eviction is applied at the feed boundary.
 fn applyInputScrollUp(vt: *Terminal, count: u16) ScrollUpProgress {
     const screen = vt.screen_state.active();
     var progress: ScrollUpProgress = .{};
     while (progress.completed < count) {
+        const origin = graphicsScreenOrigin(vt);
         const changed = screen.tryScrollUpRegionOne(screen.scroll_top, screen.scrollBottom()) catch |failure| {
             progress.blocked = switch (failure) {
                 error.OutOfMemory => error.OutOfMemory,
@@ -3941,6 +3922,12 @@ fn applyInputScrollUp(vt: *Terminal, count: u16) ScrollUpProgress {
             return progress;
         };
         std.debug.assert(changed);
+        if (screen.scrollBottom() < screen.rows -| 1) {
+            std.debug.assert(graphicsScreenOrigin(vt) == origin + 1);
+            // zig-audit: acknowledge discard
+            // reason: The completed row is the mutation witness for the input operation.
+            _ = vt.graphics.scroll(graphicsBank(vt), origin + screen.scrollBottom() + 1, origin + screen.rows, 1, false);
+        }
         progress.completed += 1;
     }
     return progress;

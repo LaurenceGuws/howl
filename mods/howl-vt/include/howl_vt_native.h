@@ -358,8 +358,8 @@ void hvt_output_release(hvt_output **);
  * discards the pending input. Non-joining graphic/REP placement beginning at the
  * bottom margin retries its scroll, including multicell escape and presentation
  * widening. A chained graphic case from above and single-row OSC 66 wraps are
- * covered, as is full-screen primary CSI scroll-up. Other chained paths,
- * multi-row OSC 66 and partial-region multi-row admission remain unqualified.
+ * covered, as is primary top-anchored full-width CSI scroll-up. Other chained
+ * paths and multi-row OSC 66 admission remain unqualified.
  * Replies, requests and synchronized release
  * can also end the prefix. Time is caller-supplied monotonic nanoseconds.
  * Other failures still report invalid progress after possible partial mutation. */
