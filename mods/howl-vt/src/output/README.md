@@ -1,8 +1,10 @@
 # Experimental optional VT output
 
-This is an opt-in direct native-cell-to-command owner, not the current app path.
-Plain `howl_vt` imports neither Text nor output. Existing Instance, Render, native C
-and Odin APIs remain supported and unchanged.
+This is an opt-in direct native-cell-to-command owner and the current experimental
+`howl-app` presentation path. Plain `howl_vt` imports neither Text nor output.
+Instance still composes the app's PTY/VT/Text runtime for this first cut; legacy
+Instance/Render and foreign consumers remain supported on their respective paths.
+VT native v2 and Instance native v3 separately version their input-recovery ABI changes.
 
 ## Selection and identity
 
@@ -41,7 +43,8 @@ The internal shared binding can instead borrow an existing canonical VT. Its
 producer owns and serializes that VT and must outlive the output binding. The
 configured history capacity and cell pixels must match the existing terminal;
 external resizes are admitted at the next flush and do not mutate a held frame.
-This is an internal integration seam, not an app cutover.
+The app currently uses this seam through its temporary Instance composition,
+not through a second canonical VT or independent output scheduler.
 
 Borrowed-font mode retains its original private shape cache/raster allocations and
 bounded transient shape scratch. All supplied regular/bold/italic/bold-italic
@@ -65,8 +68,9 @@ cursor-only row-reuse decisions; `PresentationBusy` preserves accepted output an
 canonical input is never replayed. Replacement retains and stages before commit;
 old local atlas destruction precedes releasing its old store reference. Io must
 outlive all store references. Immutable held output borrows no mutable font data
-and survives final store destruction. This is no app configuration hook, new
-scheduler, shared-store reset protocol or exchange retirement.
+and survives final store destruction. App configuration still enters through
+Instance; this owner introduces no second scheduler, shared-store reset protocol
+or exchange.
 
 ## Proof ownership
 
