@@ -743,10 +743,13 @@ pub fn State(comptime instrumented: bool) type {
             // reason: An externally resized VT must fit before output is staged.
             _ = try std.math.mul(u16, screen.rows, self.working_cell_height);
             const presentation = self.vt.presentation();
-            // Retained pixels alone do not affect the scene. Any placement,
-            // including a virtual one, remains unsupported by this owner.
-            if (self.vt.graphics.placement(0) != null or screen.view_padding_rows != 0)
-                return error.UnsupportedScene;
+            // Retained pixels and placements in the other screen bank do not
+            // affect this scene. Placements in this bank remain unsupported.
+            var placement_index: usize = 0;
+            while (self.vt.graphics.placement(placement_index)) |placement| : (placement_index += 1) {
+                if ((placement.bank == .alternate) == alternate) return error.UnsupportedScene;
+            }
+            if (screen.view_padding_rows != 0) return error.UnsupportedScene;
             const history_count = if (alternate) 0 else screen.historyCount();
             const history_base = if (alternate) 0 else screen.historyRowBase();
             const offset = @min(self.requested_offset, history_count);
