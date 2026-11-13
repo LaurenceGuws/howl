@@ -738,3 +738,21 @@ test "fractional single-row text remains drawable in history" {
     try std.testing.expectEqualDeep(live_glyph.resource.source, history_glyph.resource.source);
     try std.testing.expectEqualDeep(live_glyph.color, history_glyph.color);
 }
+
+test "unplaced image does not prevent text output" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\after");
+    try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).imageCount());
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+    const glyphs = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
+    defer a.free(glyphs);
+    try owner.feed("\x1b_Ga=p,i=56,p=1,c=1,r=1,C=1,q=2\x1b\\");
+    try std.testing.expectError(error.UnsupportedScene, owner.flush());
+    try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
+}
