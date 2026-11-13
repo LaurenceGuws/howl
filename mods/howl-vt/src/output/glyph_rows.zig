@@ -273,11 +273,13 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (!uniform) for (cells, 0..) |cell, col| {
                 try validate(cell);
                 if (needsScale(cell)) {
-                    if (history != null or cell.y > logical_row or screen.lineGeometry(logical_row) != .single_width or
+                    if (cell.x > col) return error.UnsupportedScene;
+                    if (history != null) {
+                        if (cell.height != 1 or cell.y != 0 or screen.historyLineGeometry(history.?) != .single_width) return error.UnsupportedScene;
+                    } else if (cell.y > logical_row or screen.lineGeometry(logical_row) != .single_width or
                         @as(u32, logical_row - cell.y) + cell.height > screen.rows or
-                        (cell.y != 0 and (cell.codepoint != 0 or cell.combining_len != 0)))
-                        return error.UnsupportedScene;
-                    const origin = screen.cellInfoAt(logical_row - cell.y, @intCast(col -| cell.x));
+                        (cell.y != 0 and (cell.codepoint != 0 or cell.combining_len != 0))) return error.UnsupportedScene;
+                    const origin = if (history != null) cells[col - cell.x] else screen.cellInfoAt(logical_row - cell.y, @intCast(col - cell.x));
                     if (cell.x > col or origin.x != 0 or origin.y != 0 or origin.width != cell.width or
                         origin.height != cell.height or origin.semantic_width or
                         !std.meta.eql(origin.attrs, cell.attrs)) return error.UnsupportedScene;
@@ -327,7 +329,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 if (cell.x != 0 or cell.attrs.invisible or
                     (!cell.attrs.underline and !cell.attrs.strikethrough)) continue;
                 if (needsScale(cell)) {
-                    const lead = screen.cellInfoAt(logical_row - cell.y, @intCast(col));
+                    const lead = if (history != null) cell else screen.cellInfoAt(logical_row - cell.y, @intCast(col));
                     if (lead.codepoint != 0) try appendScaledDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
                     continue;
                 }
@@ -350,8 +352,8 @@ pub fn Emitter(comptime instrumented: bool) type {
                 if (cell.x != 0 or cell.attrs.invisible) continue;
                 if (needsScale(cell)) {
                     const lead_row = logical_row - cell.y;
-                    const lead = screen.cellInfoAt(lead_row, @intCast(col));
-                    const sequence = screen.cellScalarsAt(lead_row, @intCast(col), &scalars);
+                    const lead = if (history != null) cell else screen.cellInfoAt(lead_row, @intCast(col));
+                    const sequence = if (history) |recency| screen.historyCellScalarsAt(recency, @intCast(col), &scalars) else screen.cellScalarsAt(lead_row, @intCast(col), &scalars);
                     if (sequence.len != 0 and !(sequence.len == 1 and sequence[0] == ' ')) {
                         const c = try colors(lead, p);
                         try appendScaled(ctx, output, &used, sequence, variant(lead.attrs), lead, col, cell.y, row_clip, c.fg);

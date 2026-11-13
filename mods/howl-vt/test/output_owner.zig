@@ -710,3 +710,31 @@ test "scaled row strips repair together while a prior frame is held" {
     try std.testing.expectEqual(@as(u21, 0), owner.observation().semanticView(0).cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'Z'), owner.observation().semanticView(0).cellAt(1, 0));
 }
+
+test "fractional single-row text remains drawable in history" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(2, 12);
+    try owner.feed("\x1b[?25l\x1b[4:3m\x1b]66;s=1:n=1:d=2:h=2:v=2;e\u{0301}\x07\x1b[0m");
+    try owner.flush();
+    const live = try owner.hold();
+    try std.testing.expect(live.snapshot.glyphs[0].len != 0);
+    const live_glyph = live.snapshot.glyphs[0][0].alpha_mask;
+    release(owner, live);
+    try owner.feed("\r\nnext\r\n");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(u32, 1), held.snapshot.history_offset);
+    try std.testing.expectEqual(@as(u21, 'e'), owner.observation().semanticView(1).cellAt(0, 0));
+    try std.testing.expect(held.snapshot.glyphs[0].len != 0);
+    try std.testing.expect(held.snapshot.decorations[0].len != 0);
+    const history_glyph = held.snapshot.glyphs[0][0].alpha_mask;
+    try std.testing.expectEqualDeep(live_glyph.destination, history_glyph.destination);
+    try std.testing.expectEqualDeep(live_glyph.clip, history_glyph.clip);
+    try std.testing.expectEqualDeep(live_glyph.resource.source, history_glyph.resource.source);
+    try std.testing.expectEqualDeep(live_glyph.color, history_glyph.color);
+}
