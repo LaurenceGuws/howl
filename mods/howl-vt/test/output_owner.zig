@@ -756,3 +756,32 @@ test "unplaced image does not prevent text output" {
     try std.testing.expectError(error.UnsupportedScene, owner.flush());
     try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
 }
+
+test "fractional generated and colour glyphs survive history" {
+    const f = try text.FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8, .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(2, 12);
+    try owner.feed("\x1b[?25l\x1b]66;s=1:n=1:d=2;─\x07\x1b[1;5H\x1b]66;s=1:n=1:d=2;😀\x07");
+    try owner.flush();
+    const live = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 2), live.snapshot.glyphs[0].len);
+    const alpha = live.snapshot.glyphs[0][0].alpha_mask;
+    const rgba = live.snapshot.glyphs[0][1].rgba;
+    release(owner, live);
+    try owner.feed("\r\nnext\r\n");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 2), held.snapshot.glyphs[0].len);
+    const history_alpha = held.snapshot.glyphs[0][0].alpha_mask;
+    const history_rgba = held.snapshot.glyphs[0][1].rgba;
+    try std.testing.expectEqualDeep(alpha.destination, history_alpha.destination);
+    try std.testing.expectEqualDeep(alpha.clip, history_alpha.clip);
+    try std.testing.expectEqualDeep(alpha.resource.source, history_alpha.resource.source);
+    try std.testing.expectEqualDeep(rgba.destination, history_rgba.destination);
+    try std.testing.expectEqualDeep(rgba.clip, history_rgba.clip);
+    try std.testing.expectEqualDeep(rgba.resource.source, history_rgba.resource.source);
+}
