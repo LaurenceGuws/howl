@@ -8,6 +8,7 @@ const Borrowed = @import("output_state").State(false);
 
 test {
     std.testing.refAllDecls(@import("canonical.zig"));
+    std.testing.refAllDecls(@import("direct_projection.zig"));
 }
 
 test "one canonical VT serves borrowed direct output with an independently retained Text store" {
