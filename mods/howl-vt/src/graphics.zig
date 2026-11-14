@@ -1,6 +1,7 @@
 //! Owns bounded terminal images, animation frames, and cell-relative placements.
 
 const std = @import("std");
+const png = @import("png.zig");
 
 // File map:
 //   - fixed bounds and graphics command vocabulary
@@ -204,6 +205,7 @@ const Command = struct {
     medium: u8 = 'd',
     format: u8 = 32,
     compression: u8 = 0,
+    uncompressed_bytes: usize = 0,
     id: u32 = 0,
     image_number: u32 = 0,
     width: u32 = 0,
@@ -344,11 +346,13 @@ pub const Plane = struct {
         cell_width: u32,
         cell_height: u32,
     ) std.mem.Allocator.Error!Result {
+        errdefer self.cancel();
         if (self.loading == null) {
+            const is_png = command_value.format == 100;
             if ((command_value.id != 0 and command_value.image_number != 0) or
-                command_value.width == 0 or command_value.height == 0 or
+                (!is_png and (command_value.width == 0 or command_value.height == 0)) or
                 command_value.width > max_dimension or command_value.height > max_dimension or
-                (command_value.format != 24 and command_value.format != 32))
+                (command_value.format != 24 and command_value.format != 32 and !is_png))
                 return .{
                     .response_id = nonzero(command_value.id),
                     .response_number = nonzero(command_value.image_number),
@@ -399,7 +403,16 @@ pub const Plane = struct {
                     .failure = .unsupported,
                     .quiet = command_value.quiet,
                 };
-            const storage_bytes = if (command_value.compression == 'z')
+            if (is_png and command_value.compression == 'z' and
+                (command_value.uncompressed_bytes == 0 or command_value.uncompressed_bytes > max_compressed_bytes))
+                return .{ .response_id = nonzero(command_value.id), .failure = .invalid, .quiet = command_value.quiet };
+            if (!is_png and command_value.uncompressed_bytes != 0 and
+                command_value.uncompressed_bytes != input_bytes)
+                return .{ .response_id = nonzero(command_value.id), .failure = .invalid, .quiet = command_value.quiet };
+            const expected_bytes = if (is_png) command_value.uncompressed_bytes else input_bytes;
+            const storage_bytes = if (is_png)
+                @as(usize, max_command_bytes)
+            else if (command_value.compression == 'z')
                 compressedInputCapacity(input_bytes) orelse
                     return .{
                         .response_id = nonzero(command_value.id),
@@ -430,7 +443,7 @@ pub const Plane = struct {
                 .compose_mode = command_value.compose_mode,
                 .unicode_placement = command_value.unicode_placement,
                 .compression = command_value.compression,
-                .expected_bytes = input_bytes,
+                .expected_bytes = expected_bytes,
                 .width = command_value.width,
                 .height = command_value.height,
                 .quiet = command_value.quiet,
@@ -450,17 +463,33 @@ pub const Plane = struct {
         }
 
         const loading = &self.loading.?;
-        const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(command_value.payload) catch {
+        // kitten icat emits unpadded base64; both forms are valid Kitty data.
+        const decoder = if (std.mem.endsWith(u8, command_value.payload, "="))
+            std.base64.standard.Decoder
+        else
+            std.base64.standard_no_pad.Decoder;
+        const decoded_len = decoder.calcSizeForSlice(command_value.payload) catch {
             self.cancel();
             return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet };
         };
+        if (loading.format == 100 and decoded_len > loading.bytes.len - loading.used) {
+            const maximum = if (loading.compression == 'z')
+                compressedInputCapacity(loading.expected_bytes) orelse max_compressed_bytes
+            else
+                max_compressed_bytes;
+            const total = std.math.add(usize, loading.used, decoded_len) catch maximum + 1;
+            if (total <= maximum) {
+                const capacity = @min(maximum, @max(total, loading.bytes.len * 2));
+                loading.bytes = try self.allocator.realloc(loading.bytes, capacity);
+            }
+        }
         if (decoded_len > loading.bytes.len - loading.used) {
             const id = loading.id;
             const quiet = loading.quiet;
             self.cancel();
             return .{ .response_id = id, .failure = .quota, .quiet = quiet };
         }
-        std.base64.standard.Decoder.decode(
+        decoder.decode(
             loading.bytes[loading.used..][0..decoded_len],
             command_value.payload,
         ) catch {
@@ -471,7 +500,46 @@ pub const Plane = struct {
         };
         loading.used += decoded_len;
         if (command_value.more) return .{ .quiet = loading.quiet };
-        if (loading.compression == 0) {
+        if (loading.format == 100) {
+            if (loading.compression == 'z' and !(try inflateLoading(self))) {
+                const id = self.loading.?.id;
+                const quiet = self.loading.?.quiet;
+                self.cancel();
+                return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+            }
+            const decoded = png.decode(self.allocator, self.loading.?.bytes[0..self.loading.?.used]) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                const id = self.loading.?.id;
+                const quiet = self.loading.?.quiet;
+                self.cancel();
+                return .{
+                    .response_id = id,
+                    .failure = switch (err) {
+                        error.Quota => .quota,
+                        error.Unsupported => .unsupported,
+                        else => .invalid,
+                    },
+                    .quiet = quiet,
+                };
+            };
+            if ((loading.width != 0 and loading.width != decoded.width) or
+                (loading.height != 0 and loading.height != decoded.height))
+            {
+                self.allocator.free(decoded.pixels);
+                const id = loading.id;
+                const quiet = loading.quiet;
+                self.cancel();
+                return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+            }
+            self.allocator.free(loading.bytes);
+            loading.bytes = decoded.pixels;
+            loading.used = decoded.pixels.len;
+            loading.expected_bytes = decoded.pixels.len;
+            loading.width = decoded.width;
+            loading.height = decoded.height;
+            loading.format = 32;
+            loading.compression = 0;
+        } else if (loading.compression == 0) {
             if (loading.used != loading.expected_bytes) {
                 const id = loading.id;
                 const quiet = loading.quiet;
@@ -2069,6 +2137,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'N' => 1 << 21,
             'o' => 1 << 22,
             'U' => 1 << 23,
+            'S' => 1 << 24,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -2122,6 +2191,7 @@ fn parseCommand(bytes: []const u8) ?Command {
                 if (placement > 1) return null;
                 result.unicode_placement = placement == 1;
             },
+            'S' => result.uncompressed_bytes = std.fmt.parseInt(usize, value, 10) catch return null,
             else => return null,
         }
     }
@@ -3316,6 +3386,159 @@ test "Kitty root frame is gapless until its gap is explicitly configured" {
     try std.testing.expect(first.changed);
     try std.testing.expectEqual(@as(?u32, 50), first.next_ms);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, plane.image(0).?.pixels);
+}
+
+test "Kitty PNG f=100 is chunked bounded and transactional through the graphics plane" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    const encoded = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+
+    var first: [256]u8 = undefined;
+    const first_command = try std.fmt.bufPrint(&first, "a=T,f=100,i=91,p=4,m=1,q=2;{s}", .{encoded[0..48]});
+    const partial = try plane.command(first_command, .primary, 0, 2, 3, 8, 16);
+    try std.testing.expect(!partial.changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+    var continuation: [256]u8 = undefined;
+    const last_command = try std.fmt.bufPrint(&continuation, "m=0,q=2;{s}", .{encoded[48..]});
+    const admitted = try plane.command(last_command, .primary, 0, 2, 3, 8, 16);
+    try std.testing.expect(admitted.changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(u32, 2), plane.image(0).?.width);
+    try std.testing.expectEqual(@as(u32, 1), plane.image(0).?.height);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, plane.image(0).?.pixels);
+    const generation = plane.generation();
+    const identity = plane.image(0).?.id;
+
+    // The PNG itself supplies geometry. An explicit contradictory size is
+    // rejected after decoding without destroying the existing image.
+    var mismatch_command: [256]u8 = undefined;
+    const mismatch_text = try std.fmt.bufPrint(&mismatch_command, "a=t,f=100,i=91,s=3,v=1,q=2;{s}", .{encoded});
+    const mismatch = try plane.command(mismatch_text, .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(Failure.invalid, mismatch.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+
+    // Corrupt the PNG CRC but keep the base64 framing valid.
+    const allocator = std.testing.allocator;
+    const byte_count = try std.base64.standard.Decoder.calcSizeForSlice(encoded);
+    const corrupted = try allocator.alloc(u8, byte_count);
+    defer allocator.free(corrupted);
+    try std.base64.standard.Decoder.decode(corrupted, encoded);
+    corrupted[corrupted.len - 8] ^= 0x01;
+    const bad_payload = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(corrupted.len));
+    defer allocator.free(bad_payload);
+    const bad_text = std.base64.standard.Encoder.encode(bad_payload, corrupted);
+    const bad_command = try std.fmt.allocPrint(allocator, "a=t,f=100,i=91,q=2;{s}", .{bad_text});
+    defer allocator.free(bad_command);
+    const rejected = try plane.command(bad_command, .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(Failure.invalid, rejected.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(identity, plane.image(0).?.id);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, plane.image(0).?.pixels);
+
+    // Kitty also permits the entire PNG to be zlib-compressed when S gives
+    // the inner PNG byte length. A stored zlib block makes an exact oracle.
+    const wrapped = try allocator.alloc(u8, corrupted.len + 11);
+    defer allocator.free(wrapped);
+    corrupted[corrupted.len - 8] ^= 0x01;
+    wrapped[0] = 0x78;
+    wrapped[1] = 0x01;
+    wrapped[2] = 1;
+    const inner_len: u16 = @intCast(corrupted.len);
+    std.mem.writeInt(u16, wrapped[3..5], inner_len, .little);
+    std.mem.writeInt(u16, wrapped[5..7], ~inner_len, .little);
+    @memcpy(wrapped[7..][0..corrupted.len], corrupted);
+    std.mem.writeInt(u32, wrapped[wrapped.len - 4 ..][0..4], std.hash.Adler32.hash(corrupted), .big);
+    const wrapped_payload = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(wrapped.len));
+    defer allocator.free(wrapped_payload);
+    const wrapped_text = std.base64.standard.Encoder.encode(wrapped_payload, wrapped);
+    const compressed_command = try std.fmt.allocPrint(
+        allocator,
+        "a=t,f=100,i=92,o=z,S={d},q=2;{s}",
+        .{ corrupted.len, wrapped_text },
+    );
+    defer allocator.free(compressed_command);
+    const compressed_result = try plane.command(compressed_command, .primary, 0, 0, 0, 8, 16);
+    try std.testing.expect(compressed_result.changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, plane.image(1).?.pixels);
+
+    // Exact payload shape emitted by kitten icat: unpadded base64 and explicit
+    // PNG dimensions. The image is yellow 64x40 RGBA.
+    const icat = "a=T,q=2,f=100,s=64,v=40;" ++
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAoCAYAAABOzvzpAAAAaElEQVRo3u3QQREAIAzAsIF/z0NGHjQKej27s/OxqwO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAeblkDTdoY5TUAAAAASUVORK5CYII";
+    const icat_result = try plane.command(icat, .primary, 0, 0, 0, 8, 16);
+    try std.testing.expect(icat_result.changed);
+    try std.testing.expectEqual(@as(u32, 64), plane.image(2).?.width);
+    try std.testing.expectEqual(@as(u32, 40), plane.image(2).?.height);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 0, 255 }, plane.image(2).?.pixels[0..4]);
+}
+
+test "Kitty graphics detection accepts a direct query with exact S size" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    const result = try plane.command("a=q,f=24,s=1,v=1,S=3,i=1;MTIz", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(@as(?Failure, null), result.failure);
+    try std.testing.expectEqual(@as(?u32, 1), result.response_id);
+    try std.testing.expect(!result.changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+    const mismatched = try plane.command("a=q,f=24,s=1,v=1,S=2,i=1;MTIz", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(Failure.invalid, mismatched.failure.?);
+}
+
+test "Kitty PNG grows bounded chunk storage without admitting a partial image" {
+    const allocator = std.testing.allocator;
+    var plane = Plane.init(allocator);
+    defer plane.deinit();
+    const tiny = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const tiny_len = try std.base64.standard.Decoder.calcSizeForSlice(tiny);
+    const original = try allocator.alloc(u8, tiny_len);
+    defer allocator.free(original);
+    try std.base64.standard.Decoder.decode(original, tiny);
+
+    // A valid ancillary chunk larger than the initial 8 KiB transfer buffer
+    // forces bounded growth. Its bytes have no effect on decoded pixels.
+    const text_len = 9 * 1024;
+    const chunk_start = original.len - 12;
+    const expanded = try allocator.alloc(u8, original.len + 12 + text_len);
+    defer allocator.free(expanded);
+    @memcpy(expanded[0..chunk_start], original[0..chunk_start]);
+    std.mem.writeInt(u32, expanded[chunk_start..][0..4], text_len, .big);
+    @memcpy(expanded[chunk_start + 4 ..][0..4], "tEXt");
+    const payload = expanded[chunk_start + 8 ..][0..text_len];
+    @memset(payload, 'x');
+    @memcpy(payload[0..5], "Note\x00");
+    var crc = std.hash.Crc32.init();
+    crc.update("tEXt");
+    crc.update(payload);
+    std.mem.writeInt(u32, expanded[chunk_start + 8 + text_len ..][0..4], crc.final(), .big);
+    @memcpy(expanded[chunk_start + 12 + text_len ..], original[chunk_start..]);
+
+    const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(expanded.len));
+    defer allocator.free(encoded);
+    const text = std.base64.standard.Encoder.encode(encoded, expanded);
+    var offset: usize = 0;
+    var chunk_count: usize = 0;
+    while (offset < text.len) {
+        const end = @min(text.len, offset + 4096);
+        const more = end < text.len;
+        const prefix = if (chunk_count == 0)
+            (if (more) "a=t,f=100,i=17,m=1,q=2;" else "a=t,f=100,i=17,m=0,q=2;")
+        else if (more)
+            "m=1,q=2;"
+        else
+            "m=0,q=2;";
+        var command: [max_command_bytes]u8 = undefined;
+        const body = try std.fmt.bufPrint(&command, "{s}{s}", .{ prefix, text[offset..end] });
+        const result = try plane.command(body, .primary, 0, 0, 0, 8, 16);
+        try std.testing.expectEqual(!more, result.changed);
+        try std.testing.expectEqual(@as(u16, if (more) 0 else 1), plane.image_count);
+        chunk_count += 1;
+        offset = end;
+    }
+    try std.testing.expect(chunk_count >= 3);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, plane.image(0).?.pixels);
 }
 
 test "Kitty usage hints are bounded advisory no-op metadata" {
