@@ -5,6 +5,7 @@ const std = @import("std");
 const vt = @import("howl_vt");
 const output = @import("howl_vt_output");
 const state = @import("output_state");
+const runtime = @import("canonical.zig");
 const Borrowed = state.State(false);
 
 /// Copied descriptor with a borrowed immutable output snapshot. Copies retain
@@ -23,6 +24,20 @@ pub const HoldError = Borrowed.HoldError || error{LeaseSequenceOverflow};
 pub const ReleaseError = error{InvalidLease};
 /// Replacement also validates the previous caller-provided cut.
 pub const ReplaceError = HoldError || ReleaseError;
+/// Shared Text staging, canonical geometry and generation admission failures.
+pub const ConfigureError = Borrowed.StageReplaceError || runtime.ResizeError || error{ GenerationOverflow, InvalidOwner };
+/// Target geometry: retain the current grid, choose a grid, or derive one from a surface.
+pub const Target = union(enum) {
+    current,
+    grid: struct { rows: u16, columns: u16 },
+    surface: struct { width: u16, height: u16 },
+};
+/// Committed canonical lattice and grid returned to the app layout owner.
+pub const Geometry = struct {
+    rows: u16,
+    columns: u16,
+    cell_size: vt.Terminal.CellPixelSize,
+};
 
 /// Lifetime owner sits beside the canonical PTY/VT Core, never in the GUI.
 /// The caller must keep `canonical` address-stable until this owner is retired.
@@ -60,6 +75,45 @@ pub const Projection = struct {
     pub fn prepare(self: *Projection, history_offset: u32) Borrowed.FlushError!void {
         self.direct.selectHistoryOffset(history_offset);
         try self.direct.flush();
+    }
+
+    /// Retain the old Text/output owner until all fallible work succeeds.
+    /// Font staging can wait on a shared Text claim, matching the current app contract.
+    /// The caller serializes this with canonical service and output preparation.
+    pub fn reconfigure(self: *Projection, core: *runtime.Core, store: *output.PresentationStore, config: state.SharedConfig, target: Target) ConfigureError!Geometry {
+        return self.reconfigureWith(core, core, store, config, target);
+    }
+
+    // zig-audit: acknowledge anytype
+    // reason: The actual app Core and a scripted resize failure prove the same atomic stage/commit path.
+    fn reconfigureWith(self: *Projection, core: *runtime.Core, resizer: anytype, store: *output.PresentationStore, config: state.SharedConfig, target: Target) ConfigureError!Geometry {
+        if (self.canonical != &core.terminal) return error.InvalidOwner;
+        if (core.inputBlocked()) return error.InputPending;
+        const next_generation = std.math.add(u64, self.presentation_generation, 1) catch return error.GenerationOverflow;
+        const resolved = output.presentationStoreCellSize(store);
+        const cell: vt.Terminal.CellPixelSize = .{ .width = resolved.width, .height = resolved.height };
+        const current = core.terminal.semanticView(0);
+        const rows, const columns = switch (target) {
+            .current => .{ current.rows, current.cols },
+            .grid => |grid| .{ grid.rows, grid.columns },
+            .surface => |surface| geometry: {
+                if (surface.width == 0 or surface.height == 0) return error.InvalidDimensions;
+                const rows = surface.height / resolved.height;
+                const columns = surface.width / resolved.width;
+                if (rows == 0 or columns < 2) return error.InvalidDimensions;
+                break :geometry .{ rows, columns };
+            },
+        };
+        var replacement = try self.direct.stageWorkingShared(store, config, rows, columns);
+        defer self.direct.discardWorking(&replacement);
+
+        const previous_cell = core.terminal.cellPixelSize().?;
+        if (current.rows != rows or current.cols != columns or
+            previous_cell.width != cell.width or previous_cell.height != cell.height)
+            try resizer.resizeGeometry(rows, columns, cell);
+        self.direct.commitWorking(&replacement);
+        self.presentation_generation = next_generation;
+        return .{ .rows = rows, .columns = columns, .cell_size = cell };
     }
 
     /// Transfers one ready immutable cut with a nonreused serial on this owner.
@@ -155,4 +209,109 @@ test "app-owned borrowed projection rejects foreign and stale leases without rel
     try std.testing.expectError(error.InvalidLease, a.release(fresh));
     try b.release(held_b);
     try std.testing.expectEqual(@as(u32, 3), output.presentationStoreReferences(store));
+}
+
+test "app-owned shared font reconfigure rolls back stage and PTY failure before changing the generation" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const font = @import("test_fonts").primary_font;
+    const shared_config: output.StoreConfig = .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 160,
+        .raster_bytes = 512 * 512,
+    };
+    const first = try output.initPresentationStore(allocator, threaded.io(), .{
+        .regular = .{ .path = .{ .primary = font, .size = .{ .pixels = 12 } } },
+    }, shared_config);
+    defer output.releasePresentationStore(first);
+    const next = try output.initPresentationStore(allocator, threaded.io(), .{
+        .regular = .{ .path = .{ .primary = font, .size = .{ .pixels = 18 } } },
+    }, shared_config);
+    defer output.releasePresentationStore(next);
+    const initial_cell = output.presentationStoreCellSize(first);
+    const next_cell = output.presentationStoreCellSize(next);
+    try std.testing.expect(next_cell.width > initial_cell.width);
+
+    const core = try allocator.create(runtime.Core);
+    defer allocator.destroy(core);
+    try core.initInto(allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 4,
+        .history_rows = 8,
+    }, .{ .width = initial_cell.width, .height = initial_cell.height });
+    defer core.deinit();
+    const projection = try Projection.create(allocator, &core.terminal, first, .{ .history_capacity = 8 });
+    defer projection.destroy();
+    try std.testing.expectEqual(@as(u32, 2), output.presentationStoreReferences(first));
+    try std.testing.expectEqual(@as(u32, 1), output.presentationStoreReferences(next));
+    try std.testing.expect((try core.terminal.feed("OLD")).stateChanged());
+    try projection.prepare(0);
+    const held = try projection.hold();
+    var pinned: ?Frame = held;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The test always tracks the one exact live frame serial on this owner before teardown.
+    defer if (pinned) |frame| projection.release(frame) catch unreachable;
+    const glyphs = try allocator.dupe(output.commands.Command, held.snapshot.glyphs[0]);
+    defer allocator.free(glyphs);
+    const revision = core.terminal.semanticSequence();
+
+    const invalid: state.SharedConfig = .{ .history_capacity = 8, .command_limit = std.math.maxInt(usize) };
+    try std.testing.expectError(error.InvalidCommandLimit, projection.reconfigure(core, next, invalid, .current));
+    try std.testing.expectEqual(@as(u32, 1), output.presentationStoreReferences(next));
+    try std.testing.expectEqual(revision, core.terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u64, 1), projection.presentation_generation);
+
+    const Failure = struct {
+        calls: usize = 0,
+        fn resizeGeometry(self: *@This(), _: u16, _: u16, _: vt.Terminal.CellPixelSize) runtime.ResizeError!void {
+            self.calls += 1;
+            return error.ResizeFailed;
+        }
+    };
+    var failure: Failure = .{};
+    const config: state.SharedConfig = .{ .history_capacity = 8 };
+    try std.testing.expectError(error.ResizeFailed, projection.reconfigureWith(core, &failure, next, config, .{ .grid = .{ .rows = 3, .columns = 5 } }));
+    try std.testing.expectEqual(@as(usize, 1), failure.calls);
+    try std.testing.expectEqual(@as(u32, 1), output.presentationStoreReferences(next));
+    try std.testing.expectEqual(@as(u32, 2), output.presentationStoreReferences(first));
+    try std.testing.expectEqual(revision, core.terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 2), core.terminal.semanticView(0).rows);
+    try std.testing.expectEqual(@as(u32, initial_cell.width), core.terminal.cellPixelSize().?.width);
+    try std.testing.expect(projection.direct.leased);
+    try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
+
+    projection.presentation_generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.GenerationOverflow, projection.reconfigure(core, next, config, .current));
+    projection.presentation_generation = 1;
+    try std.testing.expectEqual(@as(u32, 1), output.presentationStoreReferences(next));
+    try std.testing.expectError(error.InvalidDimensions, projection.reconfigure(core, next, config, .{ .surface = .{ .width = 0, .height = 100 } }));
+    try std.testing.expectEqual(@as(u32, 1), output.presentationStoreReferences(next));
+
+    const geometry = try projection.reconfigure(core, next, config, .{ .grid = .{ .rows = 3, .columns = 5 } });
+    try std.testing.expectEqual(@as(u16, 3), geometry.rows);
+    try std.testing.expectEqual(@as(u16, 5), geometry.columns);
+    try std.testing.expectEqual(@as(u32, next_cell.width), geometry.cell_size.width);
+    try std.testing.expectEqual(@as(u64, 2), projection.presentation_generation);
+    try std.testing.expectEqual(@as(u16, 3), core.terminal.semanticView(0).rows);
+    try std.testing.expectEqual(@as(u16, 5), core.terminal.semanticView(0).cols);
+    try std.testing.expectEqual(@as(u32, 1), output.presentationStoreReferences(first));
+    try std.testing.expectEqual(@as(u32, 2), output.presentationStoreReferences(next));
+    try std.testing.expectEqualDeep(glyphs, held.snapshot.glyphs[0]);
+    try projection.prepare(0);
+    const fresh = try projection.replace(held);
+    pinned = fresh;
+    try std.testing.expectEqual(@as(u64, 2), fresh.presentation_generation);
+    try std.testing.expectEqual(next_cell.width, fresh.snapshot.cell_width);
+    try std.testing.expect(fresh.serial > held.serial);
+    try std.testing.expectError(error.InvalidLease, projection.release(held));
+    const unchanged = try projection.reconfigure(core, next, config, .{ .surface = .{
+        .width = @intCast(@as(u32, next_cell.width) * 5),
+        .height = @intCast(@as(u32, next_cell.height) * 3),
+    } });
+    try std.testing.expectEqual(@as(u16, 3), unchanged.rows);
+    try std.testing.expectEqual(@as(u16, 5), unchanged.columns);
+    try std.testing.expectEqual(@as(u64, 3), projection.presentation_generation);
 }
