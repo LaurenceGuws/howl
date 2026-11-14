@@ -6,6 +6,13 @@ This is an opt-in direct native-cell-to-command owner and the current experiment
 output directly. The former Instance and Render packages are retired; historical
 contracts remain available from Git history, not current build exports.
 
+Canonical `Terminal.SemanticView` is a borrowed read-only query of the one VT
+state, not a competing rendered output format. Selection, history, hyperlinks
+and native cell queries still use it. Final command snapshots are a separately
+selected optional VT/Text composition; plain VT allocates none of that output
+state. `State(true/false)` selects test instrumentation only. There is no
+comptime semantic-versus-rendered format switch to maintain or retire.
+
 ## Selection and identity
 
 `howl-vt/build.zig:addOutputModules` takes the package LazyPath and the caller's

@@ -622,12 +622,6 @@ test "screen: DECOM with DECSLRM makes cursor addressing margin-relative" {
     try std.testing.expectEqual(@as(u16, 1), s.cursor.col);
 }
 
-test "screen: dirty regions union partial columns and full rows" {
-    const allocator = std.testing.allocator;
-    var screen = try Grid.initWithCells(allocator, 3, 8);
-    defer screen.deinit(allocator);
-}
-
 test "screen: SU scrolls only within configured region" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCells(gpa, 4, 4);
@@ -682,7 +676,7 @@ test "screen: vertical scrolling preserves columns outside horizontal margins" {
     try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(3, 4));
 }
 
-test "screen: structural edits report wrap row and dirty mutation exactly" {
+test "screen: structural edits clear pending wrap and report mutation" {
     const allocator = std.testing.allocator;
     var screen = try Grid.initWithCells(allocator, 3, 5);
     defer screen.deinit(allocator);
