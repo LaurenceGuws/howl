@@ -363,7 +363,7 @@ const State = struct {
     fn submit(self: *State, supplied: Task) !void {
         var task = supplied;
         const bytes = taskBytes(task);
-        if (bytes.len > input_byte_limit) return error.InputLimit;
+        if (bytes.len > canonical.input_event_limit) return error.InputLimit;
         // Associated text shares the bounded owned byte lane; legacy fallback text is not submitted by this host.
         if (task == .input and task.input == .key and
             task.input.key.legacy_text.len != 0)
@@ -603,6 +603,29 @@ const State = struct {
         return task;
     }
 
+    fn peek(self: *State) ?Work {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return if (self.count == 0) null else self.tasks[self.head];
+    }
+
+    /// Keep admitted input at the FIFO head until the bounded PTY outbox can accept it.
+    fn applyQueued(self: *State) !bool {
+        while (self.peek()) |work| {
+            switch (work) {
+                .intent => |task| self.apply(task) catch |failure| switch (failure) {
+                    error.WriteQueueFull => return true,
+                    else => return failure,
+                },
+                .configure => |request| self.applyConfiguration(request),
+                .copy => |request| self.applyCopy(request),
+            }
+            const completed = self.pop().?;
+            if (completed == .intent) self.releaseTask(completed.intent);
+        }
+        return false;
+    }
+
     fn releaseTask(self: *State, task: Task) void {
         const bytes = taskBytes(task);
         if (bytes.len != 0) self.allocator.free(bytes);
@@ -623,6 +646,7 @@ const State = struct {
                 self.selection_failure = failure;
             },
             .input => |input| {
+                try self.value.input(input);
                 // Committed input returns this pane to live; focus/mouse do not.
                 if (input == .bytes or input == .paste or input == .key) {
                     if (self.history.offset != 0) self.gate.pending = true;
@@ -632,7 +656,6 @@ const State = struct {
                         self.gate.pending = true;
                     }
                 }
-                try self.value.input(input);
             },
             .resize => |size| {
                 if (size.rows != live.rows or size.columns != live.cols) {
@@ -801,15 +824,9 @@ const State = struct {
             // Blocked scalar work still targets the current screen and cursor.
             // Defer queued mutations until it has been applied.
             const scalar_was_blocked = self.value.inputBlocked();
+            var input_deferred = false;
             if (!scalar_was_blocked) {
-                while (self.pop()) |work| switch (work) {
-                    .intent => |task| {
-                        defer self.releaseTask(task);
-                        try self.apply(task);
-                    },
-                    .configure => |request| self.applyConfiguration(request),
-                    .copy => |request| self.applyCopy(request),
-                };
+                input_deferred = try self.applyQueued();
                 if (self.takeCursor()) |style| {
                     self.value.terminal.setDefaultCursorStyle(style);
                     self.gate.pending = true;
@@ -829,8 +846,10 @@ const State = struct {
                     if (sent != null) self.preference_pending = false;
                 }
             }
+            const room_before = self.value.writeRoom();
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
+            if (input_deferred and self.value.writeRoom() > room_before) continue;
             // Queued work received while blocked must not wait for another wake.
             if (scalar_was_blocked and !self.value.inputBlocked()) continue;
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
@@ -1003,6 +1022,90 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .paste = oversized } }));
     try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .text = oversized } } }));
     try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .legacy_text = "borrowed" } } }));
+}
+
+test "oversized paste fails at admission and leaves the terminal worker alive" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+
+    const oversized = try std.testing.allocator.alloc(u8, 64 * 1024);
+    defer std.testing.allocator.free(oversized);
+    @memset(oversized, 'x');
+    try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .paste = oversized } }));
+    try owner.submit(.{ .input = .{ .bytes = "AFTER\n" } });
+    try waitTitle(owner, "AFTER");
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+}
+
+test "full PTY outbox retains accepted input in FIFO order until capacity returns" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const core = try std.testing.allocator.create(canonical.Core);
+    defer std.testing.allocator.destroy(core);
+    core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
+    defer core.terminal.deinit();
+    const filler: [canonical.input_event_limit]u8 = @splat('x');
+    try core.input(.{ .bytes = &filler });
+    const room_before = core.writeRoom();
+    try std.testing.expectEqual(@as(usize, 12), room_before);
+
+    const wake_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (wake_fd < 0) return error.WakeFailed;
+    defer closeWake(wake_fd);
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .io = threaded.io(),
+        .value = core,
+        .projection = undefined,
+        .history_capacity = 8,
+        .wake_fd = wake_fd,
+        .event_type = 0,
+    };
+    defer state.cancelPending();
+    try state.submit(.{ .input = .{ .bytes = "FIRST_123456789" } });
+    try state.submit(.{ .input = .{ .bytes = "SECOND\n" } });
+    try std.testing.expect(try state.applyQueued());
+    try std.testing.expectEqual(@as(usize, 2), state.count);
+    try std.testing.expectEqual(room_before, core.writeRoom());
+
+    // The PTY accepted the previous bytes, so the same bounded queue can advance.
+    core.writes = .{};
+    try std.testing.expect(!(try state.applyQueued()));
+    try std.testing.expectEqual(@as(usize, 0), state.count);
+    try std.testing.expectEqualStrings("FIRST_123456789SECOND\n", core.writes.bytes[0..core.writes.count]);
+}
+
+test "paused PTY reader eventually consumes every accepted input chunk" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033]0;READY\\007'; sleep 1; dd iflag=fullblock bs=1024 count=96 of=/dev/null 2>/dev/null; printf '\\033]0;DRAINED\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+
+    const chunk: [32 * 1024]u8 = @splat('x');
+    for (0..3) |_| try owner.submit(.{ .input = .{ .bytes = &chunk } });
+    try waitTitle(owner, "DRAINED");
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 
 fn waitFrame(owner: *Terminal, previous: ?*Frame, paint: ?*selection.Paint) !Frame {

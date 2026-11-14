@@ -6,6 +6,8 @@ const pty = @import("howl_pty");
 const vt = @import("howl_vt");
 
 const write_queue_bytes = 64 * 1024;
+/// Largest standalone pasted payload, allowing room for its VT delimiters.
+pub const input_event_limit = write_queue_bytes - 12;
 const read_buffer_bytes = 16 * 1024;
 const read_calls_per_turn = 8;
 const write_bytes_per_turn = 64 * 1024;
@@ -181,6 +183,11 @@ pub const Core = struct {
     /// Accepted input or replies await PTY writability.
     pub fn writePending(self: *const Core) bool {
         return !self.write_closed and self.writes.count != 0;
+    }
+
+    /// Capacity reclaimed by PTY writes lets the worker retry its retained FIFO head.
+    pub fn writeRoom(self: *const Core) usize {
+        return self.writes.remaining();
     }
     /// Retained bytes can advance without a new PTY readiness event.
     pub fn bufferedOutputRunnable(self: *const Core) bool {
