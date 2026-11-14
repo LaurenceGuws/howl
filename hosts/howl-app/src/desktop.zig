@@ -1,5 +1,5 @@
 const std = @import("std");
-const instance = @import("howl_instance");
+const vt = @import("howl_vt");
 
 /// Existing HTTP(S) desktop link policy's maximum URI bytes.
 pub const uri_limit = 2048;
@@ -7,28 +7,10 @@ pub const uri_limit = 2048;
 pub const file_limit = 4096;
 /// Existing exact text-drop bound.
 pub const text_limit = 64 * 1024;
-/// One terminal-originated clipboard write is bounded to the app's existing selection-copy ceiling.
-pub const clipboard_limit = 1024 * 1024;
 /// Worst-case single-quote spelling, including closing quote and trailing separator.
 pub const quoted_limit = file_limit * 4 + 3;
 /// Exact file/text rejection; a drop never executes or interprets its content.
 pub const DropError = error{ InvalidDrop, DropLimit };
-/// Canonical consequence identity and typed reply failures.
-pub const Error = instance.ConsumeConsequenceError || instance.ClipboardReplyError ||
-    instance.PointerShapeReplyError || instance.ColorPreferenceReplyError ||
-    instance.ContainerReplyError || error{ OutOfMemory, StaleClipboardRequest, StaleContainerRequest, ContainerReplyMismatch };
-/// Copied host work facts; no retained consequence payload reaches the GUI.
-pub const Applied = struct {
-    worked: bool = false,
-    attention: bool = false,
-    clipboard: ?[]u8 = null,
-
-    /// Releases any copied host payload still owned by this result.
-    pub fn deinit(self: *Applied, allocator: std.mem.Allocator) void {
-        if (self.clipboard) |bytes| allocator.free(bytes);
-        self.* = undefined;
-    }
-};
 
 /// Allows only explicit canonical HTTP(S), preserving Odin's bounded UTF-8 policy.
 pub fn uriAllowed(uri: []const u8) bool {
@@ -72,69 +54,6 @@ pub fn eventText(data: [*:0]const u8, file: bool) DropError![]const u8 {
     for (0..limit + 1) |offset| if (data[offset] == 0) return data[0..offset];
     return error.DropLimit;
 }
-/// Applies the existing deterministic desktop policy in exact canonical FIFO order.
-pub fn drain(value: *instance.Instance, allocator: std.mem.Allocator, preference: instance.ColorSchemePreference) Error!Applied {
-    var result: Applied = .{};
-    errdefer result.deinit(allocator);
-    while (instance.consequenceHead(value)) |head| {
-        const id = head.id();
-        result.worked = true;
-        switch (head) {
-            .clipboard => |request| switch (request.kind) {
-                .query => {
-                    const replied = try instance.replyClipboard(value, id, "");
-                    std.debug.assert(replied);
-                    continue;
-                },
-                .set => if (request.protocol == .osc52) {
-                    const copied = instance.copyClipboard(value, id, allocator, clipboard_limit) catch |failure| switch (failure) {
-                        // Oversize host clipboard writes are bounded host policy, not terminal failure.
-                        error.ClipboardLimit => {
-                            try instance.consumeConsequence(value, id);
-                            continue;
-                        },
-                        else => |err| return err,
-                    };
-                    if (copied) |bytes| {
-                        try instance.consumeConsequence(value, id);
-                        if (result.clipboard) |previous| allocator.free(previous);
-                        result.clipboard = bytes;
-                        continue;
-                    }
-                },
-                .packet => {},
-            },
-            .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
-                try instance.replyPointerShape(value, id, "default");
-                continue;
-            },
-            .color_preference_query => {
-                try instance.replyColorPreference(value, id, preference);
-                continue;
-            },
-            .container => |request| switch (request.request) {
-                .report_screen_cells => {
-                    const view = instance.terminal(value).semanticView(0);
-                    try instance.replyContainer(value, id, .{ .screen_cells = .{ .rows = view.rows, .cols = view.cols } });
-                    continue;
-                },
-                .report_state, .report_position, .report_icon_title => {
-                    try instance.declineContainerQuery(value, id);
-                    continue;
-                },
-                else => {},
-            },
-            .bell => result.attention = true,
-            .notification => |request| if (request.kind != .message) {
-                result.attention = true;
-            },
-            else => {},
-        }
-        try instance.consumeConsequence(value, id);
-    }
-    return result;
-}
-
 test "desktop HTTP policy rejects nonbrowser schemes whitespace controls malformed UTF8 and oversize" {
     for ([_][]const u8{ "https://howl.example/path?q=1", "HTTP://example.com", "http://127.0.0.1:8080/x", "https://例.example/界" }) |uri|
         try std.testing.expect(uriAllowed(uri));
@@ -165,11 +84,11 @@ test "file and text drop preserve exact paste spelling while rejecting invalid a
 }
 
 /// Host light/dark preference follows the configured background, independently of app chrome.
-pub fn colorPreference(background: instance.Terminal.Rgb) instance.ColorSchemePreference {
+pub fn colorPreference(background: vt.Terminal.Rgb) vt.Terminal.ColorSchemePreference {
     const luma = @as(u32, background.r) * 299 + @as(u32, background.g) * 587 + @as(u32, background.b) * 114;
     return if (luma >= 128000) .light else .dark;
 }
 test "terminal background decides host color preference rather than application chrome" {
-    try std.testing.expectEqual(instance.ColorSchemePreference.light, colorPreference(.{ .r = 246, .g = 244, .b = 239 }));
-    try std.testing.expectEqual(instance.ColorSchemePreference.dark, colorPreference(.{ .r = 24, .g = 25, .b = 33 }));
+    try std.testing.expectEqual(vt.Terminal.ColorSchemePreference.light, colorPreference(.{ .r = 246, .g = 244, .b = 239 }));
+    try std.testing.expectEqual(vt.Terminal.ColorSchemePreference.dark, colorPreference(.{ .r = 24, .g = 25, .b = 33 }));
 }
