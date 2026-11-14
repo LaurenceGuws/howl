@@ -301,15 +301,40 @@ pub const Canvas = struct {
                 if (!c.SDL_SetRenderClipRect(renderer, null) or !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) or !c.SDL_RenderClear(renderer)) return error.SDLTexture;
                 try self.drawSnapshot(renderer, geometry, target_pane, snapshot, 0, snapshot.rows, false, null);
             } else {
+                // A damage band describes only one accepted output transition.
+                // Missed cuts must replay complete rows from this latest snapshot.
+                const consecutive = if (self.content_revision) |previous|
+                    snapshot.content_revision > previous and snapshot.content_revision - previous == 1
+                else
+                    false;
+                var changed_rows: usize = 0;
+                if (consecutive) for (0..snapshot.rows) |index| {
+                    if (self.row_generations[index] != snapshot.row_generations[index]) changed_rows += 1;
+                };
+                const narrow = consecutive and changed_rows <= 4;
                 var row: u16 = 0;
                 while (row < snapshot.rows) {
                     if (self.row_generations[row] == snapshot.row_generations[row]) {
                         row += 1;
                         continue;
                     }
+                    if (narrow) if (snapshot.row_damage[row]) |band| {
+                        const first = row;
+                        row += 1;
+                        if (band.first != band.after) {
+                            const clip: c.SDL_Rect = .{
+                                .x = band.first,
+                                .y = @intCast(@as(u32, first) * snapshot.cell_height),
+                                .w = @intCast(band.after - band.first),
+                                .h = snapshot.cell_height,
+                            };
+                            try self.drawSnapshotImpl(true, renderer, geometry, target_pane, snapshot, first, row, false, clip);
+                        }
+                        continue;
+                    };
                     const first = row;
                     row += 1;
-                    while (row < snapshot.rows and self.row_generations[row] != snapshot.row_generations[row]) row += 1;
+                    while (row < snapshot.rows and self.row_generations[row] != snapshot.row_generations[row] and (!narrow or snapshot.row_damage[row] == null)) row += 1;
                     const row_clip: c.SDL_Rect = .{ .x = 0, .y = @intCast(@as(u32, first) * snapshot.cell_height), .w = snapshot.surface.width, .h = @intCast(@as(u32, row - first) * snapshot.cell_height) };
                     try self.drawSnapshot(renderer, geometry, target_pane, snapshot, first, row, false, row_clip);
                 }
@@ -459,6 +484,21 @@ pub const Canvas = struct {
         show_cursor: bool,
         device_clip: ?c.SDL_Rect,
     ) !void {
+        return self.drawSnapshotImpl(false, renderer, geometry, pane, snapshot, first, end, show_cursor, device_clip);
+    }
+
+    fn drawSnapshotImpl(
+        self: *Canvas,
+        comptime narrow_x: bool,
+        renderer: *c.SDL_Renderer,
+        geometry: *Geometry,
+        pane: c.SDL_FRect,
+        snapshot: *const @import("howl_vt_output").Snapshot,
+        first: u16,
+        end: u16,
+        show_cursor: bool,
+        device_clip: ?c.SDL_Rect,
+    ) !void {
         if (first > end or end > snapshot.rows) return error.InvalidRows;
         const pane_clip = pixelClip(pane);
         var visible = pane_clip;
@@ -467,32 +507,50 @@ pub const Canvas = struct {
         }
         errdefer self.invalidateContentRevision();
         try beginCommands(renderer, geometry);
-        try self.appendCommand(renderer, geometry, pane, visible, snapshot.background);
+        try self.appendContentCommand(renderer, geometry, pane, visible, snapshot.background, narrow_x);
         for (snapshot.graphics.deep) |command|
-            try self.appendCommand(renderer, geometry, pane, visible, command);
+            try self.appendContentCommand(renderer, geometry, pane, visible, command, narrow_x);
         for (first..end) |row| {
             var origin = pane;
             origin.y += @as(f32, @floatFromInt(row * snapshot.cell_height));
             for (snapshot.backgrounds[row]) |command|
-                try self.appendCommand(renderer, geometry, origin, visible, command);
+                try self.appendContentCommand(renderer, geometry, origin, visible, command, narrow_x);
         }
         for (snapshot.graphics.negative) |command|
-            try self.appendCommand(renderer, geometry, pane, visible, command);
+            try self.appendContentCommand(renderer, geometry, pane, visible, command, narrow_x);
         inline for (.{ "decorations", "glyphs" }) |phase| {
             for (first..end) |row| {
                 var origin = pane;
                 origin.y += @as(f32, @floatFromInt(row * snapshot.cell_height));
                 for (@field(snapshot, phase)[row]) |command|
-                    try self.appendCommand(renderer, geometry, origin, visible, command);
+                    try self.appendContentCommand(renderer, geometry, origin, visible, command, narrow_x);
             }
         }
         for (snapshot.graphics.positive) |command|
-            try self.appendCommand(renderer, geometry, pane, visible, command);
+            try self.appendContentCommand(renderer, geometry, pane, visible, command, narrow_x);
         if (show_cursor) if (snapshot.cursor) |command| {
-            try self.appendCommand(renderer, geometry, pane, visible, command);
-            for (snapshot.cursor_ink) |ink| try self.appendCommand(renderer, geometry, pane, visible, ink);
+            try self.appendContentCommand(renderer, geometry, pane, visible, command, narrow_x);
+            for (snapshot.cursor_ink) |ink| try self.appendContentCommand(renderer, geometry, pane, visible, ink, narrow_x);
         };
         try geometry.finish(renderer);
+    }
+
+    // SDL clips final pixels, not submitted geometry. A narrow repair can
+    // discard commands wholly outside its horizontal damage band first.
+    fn appendContentCommand(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, clip: c.SDL_Rect, command: output_commands.Command, comptime narrow_x: bool) !void {
+        if (narrow_x) {
+            const rect = switch (command) {
+                .solid => |value| value.rect,
+                .alpha_mask => |value| value.destination,
+                .rgba => |value| value.destination,
+            };
+            const first = pane.x + @as(f32, @floatFromInt(rect.x));
+            const after = first + @as(f32, @floatFromInt(rect.width));
+            const clip_start: f32 = @floatFromInt(clip.x);
+            const clip_end: f32 = @floatFromInt(clip.x + clip.w);
+            if (after <= clip_start or first >= clip_end) return;
+        }
+        try self.appendCommand(renderer, geometry, pane, clip, command);
     }
 
     fn appendCommand(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, pane_clip: c.SDL_Rect, command: output_commands.Command) !void {
@@ -1607,6 +1665,11 @@ test "direct retained row repair matches full repaint across viewport changes an
         "\x1b[?1049h\x1b[H\x1b[32mALT",
         "\x1b[?1049l",
         "\x1b[2J\x1b[Hfinal",
+        "\x1b[1;3Ha",
+        "\x1b[1;4Hn",
+        "\x1b[2;1H界🙂e\u{0301}X",
+        "\x1b[2;9H界",
+        "\x1b[2;9He\u{0301}",
     };
     for (cuts, 0..) |bytes, index| {
         if (index == 5) owner.selectHistoryOffset(1);
@@ -1614,10 +1677,19 @@ test "direct retained row repair matches full repaint across viewport changes an
             owner.selectHistoryOffset(0);
             try owner.resize(5, 12);
         }
+        // Deliberately skip one accepted output cut before the last redraw.
+        // The latest narrow band alone cannot repair the retained older pixels.
+        if (index == 10) {
+            try owner.feed("\x1b[1;5Ha");
+            try owner.flush();
+        }
         try owner.feed(bytes);
         try owner.flush();
         const lease = try owner.hold();
         const snapshot = &lease.snapshot;
+        if (index == 9) try std.testing.expect(snapshot.row_damage[0] != null);
+        if (index == 10) try std.testing.expect(snapshot.content_revision > direct.content_revision.? + 1);
+        if (index == 12 or index == 13) try std.testing.expect(snapshot.row_damage[1] != null);
         if (index == 5) try std.testing.expectEqual(@as(u32, 1), snapshot.history_offset);
         if (index == 6) try std.testing.expectEqual(@as(u16, 5), snapshot.rows);
         const info = @import("frame_info.zig").Info.fromSnapshot(snapshot, 1, index + 1);

@@ -589,6 +589,41 @@ test "DEC sized rows and cursor are accepted without changing held output" {
     try std.testing.expect(narrow.snapshot.row_generations[0] != generation);
 }
 
+test "public output reports narrow command damage only for exact incremental rows" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(4, 20);
+    try owner.feed("\x1b[?25lABCDEFXY");
+    try owner.flush();
+    const initial = try owner.hold();
+    const revision = initial.snapshot.content_revision;
+    try std.testing.expect(initial.snapshot.row_damage[0] == null);
+    try owner.release(initial);
+
+    // X is already resident at the end of this row; changing C at column 3
+    // must leave the other glyphs and their resource generation identical.
+    try owner.feed("\x1b[1;3HX");
+    try owner.flush();
+    const changed = try owner.hold();
+    try std.testing.expectEqual(revision + 1, changed.snapshot.content_revision);
+    const band = changed.snapshot.row_damage[0] orelse return error.MissingDamage;
+    try std.testing.expect(band.first > 0 and band.after < changed.snapshot.surface.width);
+    try std.testing.expect(band.first < band.after);
+    try std.testing.expectEqual(@as(u21, 'X'), owner.observation().semanticView(0).cellAt(0, 2));
+    try owner.release(changed);
+
+    // Global reverse changes the entire presentation context, even if only
+    // one row's source cells are relevant to a particular consumer.
+    try owner.feed("\x1b[?5h");
+    try owner.flush();
+    const reversed = try owner.hold();
+    defer release(owner, reversed);
+    try std.testing.expect(reversed.snapshot.row_damage[0] == null);
+    try std.testing.expect(reversed.snapshot.visual_context > changed.snapshot.visual_context);
+}
+
 test "dense decorated row fits ordinary command capacity" {
     const f = try font(20);
     defer f.deinit();

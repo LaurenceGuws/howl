@@ -171,3 +171,17 @@ catalogue; the canonical VT still has no host/platform dependency.
 Workspace snapshot `0.1.13-dev` changes the active package inventory only;
 no installed daily binary, Howl Sessions checkout, or historical performance
 measurement is modified as part of this source retirement.
+
+## Narrow direct-output repair (15 November 2026)
+
+The VT output owner may publish a bounded horizontal pixel-damage band for
+an exact, small row-command transition. The SDL app may reuse that band only
+when its retained content matches the immediately preceding output revision;
+missed cuts, resource or visual-context changes, and broad mutations retain
+the full-row/full-frame recovery paths. This is not a second cell authority.
+
+Private KWin A/B proved substantially fewer submitted textured quads on
+sparse edits, but no repeatable process-CPU improvement. Keep source and
+daily-binary promotion separate: the installed Howl is unchanged, and no
+Hyprland promotion claim follows from the KWin iteration. Disposable race
+receipts remain under the `howl-current` U7 workstream, not product tooling.

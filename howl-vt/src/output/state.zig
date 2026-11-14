@@ -62,15 +62,74 @@ const Block = struct {
     decoration_end: usize = 0,
     count: usize = 0,
 };
+/// Conservative horizontal pixel band for one exact output transition.
+/// A null band means full-row repair; an empty band needs no repaint.
+pub const RowDamage = struct {
+    first: u16 = 0,
+    after: u16 = 0,
+
+    fn include(self: *RowDamage, command: frame.Command, width: u16) void {
+        const Footprint = struct { destination: frame.Rect, clip: ?frame.Rect };
+        const footprint: Footprint = switch (command) {
+            .solid => |value| .{ .destination = value.rect, .clip = null },
+            .alpha_mask => |value| .{ .destination = value.destination, .clip = value.clip },
+            .rgba => |value| .{ .destination = value.destination, .clip = value.clip },
+        };
+        var first: i64 = @max(0, footprint.destination.x);
+        var after: i64 = @min(@as(i64, width), @as(i64, footprint.destination.x) + footprint.destination.width);
+        if (footprint.clip) |clip| {
+            first = @max(first, clip.x);
+            after = @min(after, @as(i64, clip.x) + clip.width);
+        }
+        if (first >= after) return;
+        const start: u16 = @intCast(first);
+        const end: u16 = @intCast(after);
+        if (self.first == self.after) {
+            self.* = .{ .first = start, .after = end };
+        } else {
+            self.first = @min(self.first, start);
+            self.after = @max(self.after, end);
+        }
+    }
+};
+
+fn changedPhase(before: []const frame.Command, after: []const frame.Command, width: u16, damage: *RowDamage) void {
+    const shorter = @min(before.len, after.len);
+    var prefix: usize = 0;
+    while (prefix < shorter and std.meta.eql(before[prefix], after[prefix])) : (prefix += 1) {}
+    var suffix: usize = 0;
+    while (suffix < shorter - prefix and std.meta.eql(before[before.len - 1 - suffix], after[after.len - 1 - suffix])) : (suffix += 1) {}
+    for (before[prefix .. before.len - suffix]) |command| damage.include(command, width);
+    for (after[prefix .. after.len - suffix]) |command| damage.include(command, width);
+}
+
+fn changedRow(before: *const Block, after: *const Block, width: u16) RowDamage {
+    const old = [_][]const frame.Command{
+        before.commands[0..before.background_end],
+        before.commands[before.background_end..before.decoration_end],
+        before.commands[before.decoration_end..before.count],
+    };
+    const next = [_][]const frame.Command{
+        after.commands[0..after.background_end],
+        after.commands[after.background_end..after.decoration_end],
+        after.commands[after.decoration_end..after.count],
+    };
+    var damage: RowDamage = .{};
+    for (old, next) |previous, current| changedPhase(previous, current, width, &damage);
+    return damage;
+}
 const Slot = struct {
     blocks: [3]Block = @splat(.{}),
     current: u2 = 0,
     held: ?u2 = null,
     generation: u64 = 0,
+    damage: ?RowDamage = null,
 };
 /// Borrowed immutable output pinned until the matching release.
 pub const Snapshot = struct {
     row_generations: [rows]u64 = @splat(0),
+    /// Only usable when the consumer retained the immediately previous content revision.
+    row_damage: [rows]?RowDamage = @splat(null),
     visual_context: u64 = 0,
     row_origin: u16 = 0,
     history_offset: u32 = 0,
@@ -718,6 +777,7 @@ pub fn State(comptime instrumented: bool) type {
             for (self.slots[0..self.accepted_rows]) |*slot| slot.held = slot.current;
             for (0..self.accepted_rows) |row| {
                 result.row_generations[row] = self.slots[(row + self.origin) % self.accepted_rows].generation;
+                result.row_damage[row] = self.slots[(row + self.origin) % self.accepted_rows].damage;
                 result.glyphs[row] = self.rowCommands(row);
                 result.backgrounds[row] = self.rowBackgroundCommands(row);
                 result.decorations[row] = self.rowDecorationCommands(row);
@@ -1003,10 +1063,15 @@ pub fn State(comptime instrumented: bool) type {
             self.primary_cells = primary_cells;
             self.alternate_cells = alternate_cells;
             self.structural_pending = false;
+            // Only a few changed rows earn an exact command diff. Broad or
+            // resource-changing frames keep the established whole-row path.
+            const narrow = self.ready and !rebuild_all and !graphics_changed and !changed and !color_stage.changed and rebuilt <= 4;
             for (staged, 0..) |next, physical| if (next) |index| {
-                self.slots[physical].current = index;
+                const slot = &self.slots[physical];
+                slot.damage = if (narrow) changedRow(&slot.blocks[slot.current], &slot.blocks[index], screen.cols * self.working_cell_width) else null;
+                slot.current = index;
                 const logical = if (offset == 0) (physical + screen.rows - screen.row_origin) % screen.rows else physical;
-                self.slots[physical].generation = if (logical < offset) screen.historyRowGeneration(offset - 1 - @as(u32, @intCast(logical))).? else if (offset == 0) screen.row_metadata.?[physical].generation else screen.rowGeneration(@intCast(logical - offset)).?;
+                slot.generation = if (logical < offset) screen.historyRowGeneration(offset - 1 - @as(u32, @intCast(logical))).? else if (offset == 0) screen.row_metadata.?[physical].generation else screen.rowGeneration(@intCast(logical - offset)).?;
                 if (instrumented) self.stats.descriptor_bytes_written += @sizeOf(u2) + @sizeOf(u64);
             };
             self.accepted_offset = offset;
