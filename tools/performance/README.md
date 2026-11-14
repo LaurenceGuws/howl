@@ -182,7 +182,7 @@ installed cursor checkpoint remain accepted. [Current CPU attribution](race.html
 identifies the contextual scratch initialization mechanism; the completed
 [source controls](race.html#context-scratch-20261022) record its measured tradeoffs.
 
-The benchmark build helper now targets `hosts/howl-app` and forwards build
+The benchmark build helper now targets `howl-app` and forwards build
 arguments. Choose a separate artifact prefix and bounded jobs, for example:
 
 ```bash
@@ -693,7 +693,7 @@ all four styles and CJK without an error; all owned processes/environment retire
 
 The app now shares one native font family and Render Store per matching recipe
 and physical pixel size. Instance requires an explicit private/shared choice;
-[its embedding contract](../../mods/howl-instance/README.md#presented-text-ownership)
+[its embedding contract](../../howl-instance/README.md#presented-text-ownership)
 defines reference lifetime, serialization and busy retries. Atlases and immutable
 frames remain terminal-local. Shape and atlas pressure reset their own storage;
 bounds are unchanged.

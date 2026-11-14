@@ -1,15 +1,15 @@
 {
   "schema": 1,
-  "version": "0.1.11-dev",
+  "version": "0.1.12-dev",
   "zig": "0.17.0",
   "packages": {
-    "hosts/howl-app": "0.1.9-dev",
-    "mods/howl-instance": "0.1.9-dev",
-    "mods/howl-pty": "0.1.6-dev",
-    "mods/howl-render": "0.1.11-dev",
-    "mods/howl-text": "0.1.6-dev",
-    "mods/howl-vt": "0.1.9-dev",
-    "mods/howl-vt/examples/0.1.4-dev": "0.1.4-dev",
+    "howl-app": "0.1.9-dev",
+    "howl-instance": "0.1.9-dev",
+    "howl-pty": "0.1.6-dev",
+    "howl-render": "0.1.11-dev",
+    "howl-text": "0.1.6-dev",
+    "howl-vt": "0.1.9-dev",
+    "howl-vt/examples/0.1.4-dev": "0.1.4-dev",
     "test/consumer": "0.1.8-dev"
   }
 }

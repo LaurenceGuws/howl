@@ -7,21 +7,21 @@ or knowing about Session or Server machinery.
 
 ## Repository layout and release snapshot
 
-Reusable packages live in [mods/](mods/README.md); application and runtime
-composition lives in [hosts/](hosts/README.md). Core is an ownership/capability
-designation, not a synonym for every package in mods.
+The six maintained packages are direct children of this repository:
+`howl-vt`, `howl-pty`, `howl-text`, `howl-render`, `howl-instance`, and
+`howl-app`. Each owns its own build, version, proofs and release boundary.
+Core is an ownership/capability designation, not a directory name.
 
 The Server, Protocol, Client and their Codec, CLI, Web and Odin products now
 live in the independently versioned sibling howl-sessions repository. This
-repository exports terminal primitives and direct-local hosts only.
+repository exports terminal primitives and the direct-local `howl-app`.
 
 Each package owns its build.zig.zon version. [snapshot.json](snapshot.json) records
 the exact tested package versions and Zig pin; VERSION names that combination.
 The Git revision fixes all source bytes in this one-repository snapshot. Packages
 may advance independently; update the changed package and its snapshot entry.
 The audit also checks host-advertised versions against their owning packages.
-This layout freeze preserves the qualified terminal runtime; it does not promote
-experimental hosts or orchestration to stable core.
+The root composes their qualified gates without changing package ownership.
 
 Independent core source releases use
 [`tools/package-release`](tools/package-release) and the
@@ -65,18 +65,12 @@ Local howl-app uses a Zig/SDL frontend with app-owned PTY, canonical VT and
 Text, borrowing VT's direct output for checked immutable drawing cuts. It does
 not construct Instance or Render.
 
-The former Flutter source remains in hosts/howl-flutter strictly as an
-**inactive, unsupported bring-up reference**. Its native/Dart/iOS build and
-installation scripts are not current interfaces. It is absent from the
-active build, snapshot and release inventory. The exact audit exception for
-its native root is temporary; no other package receives that exemption.
-
 Server-facing native clients, CLI, browser and Odin ownership now live in
 howl-sessions, including the extracted terminal observation codec. That
 codec consumes VT's pure OSC 52 grammar rather than living inside VT.
 
-The optional [standalone VT native contract](mods/howl-vt/native.md) and
-[standalone Render native contract](mods/howl-render/native.md) remain
+The optional [standalone VT native contract](howl-vt/native.md) and
+[standalone Render native contract](howl-render/native.md) remain
 independently qualified C interfaces for foreign embedders. They do not
 introduce Server, socket, GUI scheduling or client ownership into the core.
 

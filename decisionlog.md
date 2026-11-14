@@ -131,3 +131,23 @@ inactive reference, not part of this deletion.
 
 The new workspace snapshot is `0.1.11-dev`. Qualification: `zig build check
 test -j4`, Zig formatting, source-reference sweep and Git diff checks passed.
+
+## Flatten maintained package roots and retire Flutter (14 November 2026)
+
+Captain approved dropping the old `mods/` and `hosts/` grouping. The six
+maintained packages are now direct repository children: `howl-vt`,
+`howl-pty`, `howl-text`, `howl-render`, `howl-instance`, and `howl-app`.
+Each keeps its own manifest, independent version and owned build/audit/test
+gates. The root remains the curator, not a replacement package owner.
+
+The unsupported Flutter bring-up source and its old Linux engine patch are
+retired, together with the outdated Odin/Web ABI design HTML. The Flutter
+audit exception is deleted. The performance race harness and its measured
+historical reports, native package-release tool/overlays, project audit, and
+JSONL logger still have concrete uses and are retained. `test/consumer`
+remains a nested external-distribution proof helper, not an app or library
+to promote. Howl Sessions hosts are not a gate for this cleanup.
+
+Workspace snapshot `0.1.12-dev` records the moved source tree without
+changing the individual package versions. The installed daily `howl-app`
+binary is not modified by this repository cleanup.

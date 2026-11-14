@@ -20,13 +20,13 @@ root_publics=(
     '    pub const inline_scalars = scalar_storage.inline_scalars;'
     '    pub const maximum_scalars = scalar_storage.maximum_scalars;'
 )
-if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|inline fn|var|threadlocal)[[:space:]]' mods/howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
-    printf 'mods/howl-vt/src/howl_vt.zig: curated embedding root changed\n'
+if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|inline fn|var|threadlocal)[[:space:]]' howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
+    printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
     status=1
 fi
 for root_public in "${root_publics[@]}"; do
-    if ! grep -Fxq "$root_public" mods/howl-vt/src/howl_vt.zig; then
-        printf 'mods/howl-vt/src/howl_vt.zig: curated embedding root changed\n'
+    if ! grep -Fxq "$root_public" howl-vt/src/howl_vt.zig; then
+        printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
         status=1
         break
     fi
@@ -70,7 +70,7 @@ while IFS= read -r file; do
         { previous = $0 }
         END { exit failed }
     ' "$file" || status=1
-done < <(find mods/howl-vt/src mods/howl-instance/src mods/howl-pty/src -type f -name '*.zig' -print | sort)
+done < <(find howl-vt/src howl-instance/src howl-pty/src -type f -name '*.zig' -print | sort)
 
 # Empty lifecycle names preserve no behavior or ownership and therefore add no contract.
 empty_lifecycle_pattern='^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+(deinit|reset|clear)'
@@ -78,10 +78,7 @@ empty_lifecycle_pattern+='[[:space:]]*\([^)]*\)[^{]*\{[[:space:]]*\}[[:space:]]*
 while IFS=: read -r file line _; do
     printf '%s:%s: empty lifecycle hook\n' "$file" "$line"
     status=1
-done < <(grep -RnE "$empty_lifecycle_pattern" mods/howl-vt/src --include='*.zig' || true)
-
-# Old Flutter remains an inert source reference. Its FFI, Dart and iOS assets
-# are not Howl's current release contracts and must never gate core builds.
+done < <(grep -RnE "$empty_lifecycle_pattern" howl-vt/src --include='*.zig' || true)
 
 # Canonical machinery never imports Server communications or client ownership.
 # The workspace may build every consumer; each core package remains independent.
@@ -91,17 +88,17 @@ import re
 
 # One pure OSC 52 grammar leaf is exported by VT for outside consumers.
 # Keep it free of protocol, codec and process ownership.
-grammar = Path("mods/howl-vt/src/clipboard_grammar.zig")
+grammar = Path("howl-vt/src/clipboard_grammar.zig")
 grammar_imports = re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', grammar.read_text())
 if any(name not in ("std", "builtin") for name in grammar_imports):
     raise SystemExit(f"{grammar}: shared clipboard grammar imports non-pure ownership")
-vt_build = Path("mods/howl-vt/build.zig").read_text()
+vt_build = Path("howl-vt/build.zig").read_text()
 for exact in ('module.addImport("vt_clipboard_grammar", clipboard_grammar);',):
     if len(re.findall(r"^\s*" + re.escape(exact) + r"$", vt_build, re.MULTILINE)) != 1:
         raise SystemExit("VT must own the exact clipboard grammar module")
 
 for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-render"):
-    root = Path("mods") / package
+    root = Path(package)
     files = list((root / "src").rglob("*.zig")) + [root / "build.zig", root / "build.zig.zon"]
     for path in files:
         source = path.read_text()
@@ -126,7 +123,7 @@ PYCORE
 python3 - <<'PYINSTANCEABI'
 from pathlib import Path
 import re
-base = Path("mods/howl-instance/src").resolve()
+base = Path("howl-instance/src").resolve()
 roots = ["instance.zig", "native.zig", "native_frames.zig"]
 seen = set()
 def visit(path):
@@ -151,7 +148,7 @@ PYINSTANCEABI
 python3 - <<'PYRENDEROWNER' || status=1
 from pathlib import Path
 import re
-base = Path("mods/howl-render/src").resolve()
+base = Path("howl-render/src").resolve()
 def names(path):
     return re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', path.read_text())
 owner_files = {base / "native_owner.zig", base / "native_fonts.zig", base / "abi.zig"}
@@ -188,7 +185,7 @@ python3 - <<'PYVTNATIVE' || status=1
 from pathlib import Path
 import re
 
-root = Path("mods/howl-vt/src").resolve()
+root = Path("howl-vt/src").resolve()
 def imports(path):
     return re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', path.read_text())
 def relative(path, name):
@@ -245,11 +242,6 @@ import subprocess
 root = Path.cwd()
 tracked = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*build.zig"], text=True).splitlines()
 build_roots = {(root / path).parent.resolve() for path in tracked}
-# One exact temporary exception: the Flutter rewrite's old native package
-# remains in Git as bring-up evidence. It cannot become transitively active.
-inactive_flutter = (root / "hosts/howl-flutter/native").resolve()
-if inactive_flutter not in build_roots:
-    raise SystemExit("missing explicit inactive Flutter reference root")
 visited = set()
 pending = [root]
 while pending:
@@ -264,9 +256,7 @@ while pending:
         dependency = (package / relative).resolve()
         if dependency.is_relative_to(root):
             pending.append(dependency)
-if inactive_flutter in visited:
-    raise SystemExit("inactive Flutter reference was admitted to the active package graph")
-missing = build_roots - visited - {root / "test/consumer", inactive_flutter}
+missing = build_roots - visited - {root / "test/consumer"}
 for package in sorted(missing):
     print(f"{package.relative_to(root)}/build.zig: absent from the root package graph")
 raise SystemExit(bool(missing))
@@ -298,24 +288,21 @@ def package_version(directory):
 
 require(package_version(".") == snapshot["version"], "build.zig.zon: workspace snapshot version mismatch")
 tracked = subprocess.check_output(["git", "ls-files", "*build.zig.zon"], text=True).splitlines()
-inactive_flutter = Path("hosts/howl-flutter/native")
-require(str(inactive_flutter / "build.zig.zon") in tracked,
-        "missing explicit inactive Flutter reference manifest")
 packages = {str(Path(path).parent): package_version(Path(path).parent)
-            for path in tracked if Path(path).parent not in (Path("."), inactive_flutter)}
+            for path in tracked if Path(path).parent != Path(".")}
 require(snapshot["packages"] == packages, "snapshot.json: package inventory/version mismatch")
 
 for path in tracked:
     package = Path(path).parent
-    if not str(package).startswith("mods/"):
+    if package not in {Path(name) for name in ("howl-vt", "howl-pty", "howl-text", "howl-render", "howl-instance")}:
         continue
     for relative in re.findall(r'\.path\s*=\s*"([^"]+)"', Path(path).read_text()):
         dependency = (root / package / relative).resolve()
-        require(not dependency.is_relative_to(root / "hosts"),
+        require(dependency != (root / "howl-app").resolve(),
                 f"{path}: reusable module depends on host {relative}")
 
 for path, pattern, directory in (
-    ("hosts/howl-app/src/main.zig", r'const version = "([^"]+)";', "hosts/howl-app"),
+    ("howl-app/src/main.zig", r'const version = "([^"]+)";', "howl-app"),
 ):
     match = re.search(pattern, Path(path).read_text())
     require(match is not None and match.group(1) == package_version(directory),
@@ -336,12 +323,6 @@ import subprocess
 root = Path.cwd()
 tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
 packages = sorted({Path(path).parent for path in tracked if path.endswith("/build.zig") or path == "build.zig"})
-inactive_flutter = Path("hosts/howl-flutter/native")
-if inactive_flutter not in packages:
-    raise SystemExit("missing exact Flutter copybook audit exception")
-# Old Flutter is intentionally neither compiled nor certified by the active
-# audit. The exception is this one path, not a policy for arbitrary new roots.
-packages.remove(inactive_flutter)
 sources = subprocess.check_output(
     ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.zig"],
     text=True,
@@ -378,8 +359,6 @@ for package in packages:
 
 for source in sources:
     path = Path(source)
-    if path.is_relative_to(inactive_flutter):
-        continue
     ancestors = [package for package in packages if path.is_relative_to(package)]
     owner = max(ancestors, key=lambda package: len(package.parts))
     selected = []
@@ -392,8 +371,7 @@ for source in sources:
             selected.append(package)
     if selected != [owner]:
         raise SystemExit(f"{source}: expected only {owner} audit coverage, got {selected}")
-active_count = sum(not Path(source).is_relative_to(inactive_flutter) for source in sources)
-print(f"Howl audit coverage: {len(packages)} active package roots / {active_count} active Zig files (one named inactive Flutter reference)")
+print(f"Howl audit coverage: {len(packages)} active package roots / {len(sources)} active Zig files")
 PYAUDIT
 
 exit "$status"

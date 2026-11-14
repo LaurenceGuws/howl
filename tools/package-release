@@ -18,7 +18,7 @@ esac
 repo_root=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 git -C "$repo_root" cat-file -e "$revision^{commit}"
 revision=$(git -C "$repo_root" rev-parse "$revision^{commit}")
-manifest=$(git -C "$repo_root" show "$revision:mods/$module/build.zig.zon")
+manifest=$(git -C "$repo_root" show "$revision:$module/build.zig.zon")
 version=$(printf '%s\n' "$manifest" | sed -n 's/^[[:space:]]*\.version = "\([^"]*\)".*/\1/p')
 [[ -n "$version" ]] || { printf 'no package version in %s\n' "$module" >&2; exit 1; }
 
@@ -34,7 +34,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git -C "$repo_root" archive "$revision:mods/$module" | tar -xf - -C "$stage"
+git -C "$repo_root" archive "$revision:$module" | tar -xf - -C "$stage"
 overlay="tools/release-overlays/$module/release.zon"
 if [[ "$module" == howl-render || "$module" == howl-instance ]]; then
   git -C "$repo_root" cat-file -e "$revision:$overlay"

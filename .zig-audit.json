@@ -3,16 +3,12 @@
   "source": "git",
   "minimum_ruleset": 3,
   "exclude": [
-    "hosts/howl-app",
-    "hosts/howl-flutter/native",
-    "hosts/howl-host",
-    "mods/howl-instance",
-    "mods/howl-pty",
-    "mods/howl-render",
-    "mods/howl-text",
-    "mods/howl-vk",
-    "mods/howl-vt",
-    "mods/howl-wayland",
+    "howl-app",
+    "howl-instance",
+    "howl-pty",
+    "howl-render",
+    "howl-text",
+    "howl-vt",
     "test/consumer"
   ]
 }

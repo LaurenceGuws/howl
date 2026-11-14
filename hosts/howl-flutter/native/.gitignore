@@ -1,6 +1,0 @@
-.work/
-.zig-cache/
-zig-out/
-android/
-libhowl_native_host.so
-.native-host-symbols.txt
