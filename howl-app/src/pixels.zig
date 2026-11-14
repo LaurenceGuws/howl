@@ -3,8 +3,8 @@ const std = @import("std");
 const c = @import("desktop");
 const layout = @import("layout.zig");
 
-/// Settings name stroke width at a 15-pixel font. Render accepts 1–16 physical
-/// pixels; apply font/display scaling here, outside terminal semantics.
+/// Settings name stroke width at a 15-pixel font. Direct output accepts 1–16
+/// physical pixels; apply font/display scaling here, outside terminal semantics.
 pub fn cursorStroke(font_pixels: u16, reference: u8) u8 {
     std.debug.assert(reference >= 1 and reference <= 16);
     return @intCast(std.math.clamp((@as(u32, font_pixels) * reference + 7) / 15, 1, 16));

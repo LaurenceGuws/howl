@@ -157,7 +157,7 @@ pub const Terminal = opaque {
         if (self.impl().leased) return error.LeaseBusy;
         self.impl().deinit();
     }
-    /// Whole-slice native feed, not Instance's consumed-tail service protocol.
+    /// Whole-slice native feed, not a PTY service's consumed-tail protocol.
     /// Errors may commit a prefix; output failure never rolls canonical VT back.
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!void {
         try self.impl().feed(bytes);

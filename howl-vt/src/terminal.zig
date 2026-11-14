@@ -6250,9 +6250,9 @@ pub const Terminal = struct {
 
     /// Read-only capability over one live Terminal.
     ///
-    /// A Terminal owner keeps the direct mutable embedding API. An embedder such
-    /// as Instance may instead lend this opaque capability so another component
-    /// can observe canonical VT semantics without copying the owning Terminal value
+    /// A Terminal owner keeps the direct mutable embedding API. An embedder may
+    /// instead lend this opaque capability so another component can observe
+    /// canonical VT semantics without copying the owning Terminal value
     /// or reaching mutable retained storage.
     // zig-audit: acknowledge opaque_type
     // reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.

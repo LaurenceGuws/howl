@@ -389,7 +389,7 @@ pub export fn hvt_decline_container(raw: ?*c.hvt_terminal, id: u64) u32 {
     return c.HVT_OK;
 }
 
-/// Copies canonical graphics through the same optional VT-owned helper as Instance.
+/// Copies canonical graphics through VT's optional native graphics helper.
 pub export fn hvt_copy_graphics(raw: ?*const c.hvt_terminal, history: u32, images: ?[*]c.hvt_image, image_capacity: usize, placements: ?[*]c.hvt_image_placement, placement_capacity: usize, out: ?*c.hvt_graphics) u32 {
     const result = out orelse return c.HVT_INVALID_ARGUMENT;
     result.* = std.mem.zeroes(c.hvt_graphics);

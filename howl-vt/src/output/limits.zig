@@ -1,6 +1,6 @@
 //! Defines bounded limits for maintained terminal-frame production.
 //!
-//! Canonical terminal geometry belongs to its terminal owner, not Render.
+//! Canonical terminal geometry belongs to its terminal owner, not optional output.
 //! These finite projection capacities are shared with outside consumers as
 //! plain limits; importing them must not acquire a Session, wire or client.
 

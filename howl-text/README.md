@@ -97,7 +97,7 @@ extents and output byte counts are validated before copying.
 
 Non-scalable bitmap fonts select the nearest available strike when the requested
 size is unavailable. Shaping positions, raster dimensions and bearings share the
-same scale. Terminal allocation and clipping remain Render policy. rasterizeGlyphFitted can
+same scale. Terminal allocation and clipping remain caller/output policy. rasterizeGlyphFitted can
 re-rasterize scalable outlines to a caller-supplied width and overflow allowance;
 a temporary native size restores the exact original shaping size on every exit. Colour format
 availability follows the configured FreeType build: COLRv0 needs no image codec;

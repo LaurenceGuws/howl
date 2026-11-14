@@ -508,7 +508,7 @@ pub fn State(comptime instrumented: bool) type {
         pub fn feed(self: *Candidate, bytes: []const u8) VT.FeedError!void {
             // A failed native feed may already have committed a prefix: force repair.
             // zig-audit: acknowledge discard
-            // reason: This whole-slice owner does not use Instance's consumed-tail service protocol.
+            // reason: This whole-slice owner does not coordinate partial PTY service consumption.
             _ = self.vt.feed(bytes) catch |err| {
                 self.structural_pending = true;
                 return err;

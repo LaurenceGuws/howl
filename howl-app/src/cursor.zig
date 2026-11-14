@@ -23,7 +23,7 @@ const FrameInfo = @import("frame_info.zig").Info;
 
 /// Off preserves steady presentation; application follows DECSCUSR/DEC blink intent.
 pub const Policy = enum { off, application, always };
-/// Saved host timing only; VT and Render own no blink clock.
+/// Saved host timing only; canonical VT and direct output own no blink clock.
 pub const Options = struct {
     policy: Policy = .off,
     interval_ms: u16 = 500,
