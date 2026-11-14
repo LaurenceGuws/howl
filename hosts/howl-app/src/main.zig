@@ -1568,12 +1568,12 @@ const App = struct {
         for (places[0..result.panes]) |place| if (place.rect.contains(x, y)) {
             try self.focusPane(place.pane);
             const p = self.pane();
-            if (p.finder != null and findField(paneContent(place.rect)).contains(x, y)) {
+            if (p.finder != null and findField(terminalContent(place.rect, p.snapshot().closed)).contains(x, y)) {
                 if (button == .left) self.consume_left_release = true;
                 return;
             }
             const frame = p.canvas.frame() orelse return;
-            const content = terminalPlacement(paneContent(place.rect), frame.surface, self.scale);
+            const content = terminalPlacement(terminalContent(place.rect, p.snapshot().closed), frame.surface, self.scale);
             if (scrollbar.Bar.fromFrame(.{ .x = content.x, .y = content.y, .width = content.w, .height = content.h }, frame, self.scale)) |bar| {
                 if (button == .left and bar.track.contains(x, y)) {
                     self.scrolling = .{ .pane = p, .bar = bar, .grab = if (bar.thumb.contains(x, y)) y - bar.thumb.y else bar.thumb.height / 2 };
@@ -1671,7 +1671,7 @@ const App = struct {
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == dragging.pane) {
-            const rect = terminalPlacement(paneContent(place.rect), frame.surface, self.scale);
+            const rect = terminalPlacement(terminalContent(place.rect, dragging.pane.snapshot().closed), frame.surface, self.scale);
             const bottom = rect.y + @min(rect.h, @as(f32, @floatFromInt(frame.surface.height)) / self.scale);
             const band = @min(@as(f32, @floatFromInt(frame.cell_size.height)) / self.scale * 2, (bottom - rect.y) / 2);
             if (dragging.y < rect.y + band and frame.history_offset < frame.history_count) dragging.edge = 1 else if (dragging.y >= bottom - band and frame.history_offset != 0) dragging.edge = -1;
@@ -1699,7 +1699,7 @@ const App = struct {
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
-            const rect = terminalPlacement(paneContent(place.rect), frame.surface, self.scale);
+            const rect = terminalPlacement(terminalContent(place.rect, p.snapshot().closed), frame.surface, self.scale);
             return pointer.locate(.{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, self.scale, frame.cell_size, frame.surface, x, y, captured);
         };
         return null;
@@ -2285,7 +2285,7 @@ const App = struct {
             const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
             var found = false;
             for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
-                clip = findField(paneContent(place.rect));
+                clip = findField(terminalContent(place.rect, p.snapshot().closed));
                 clip.width = @max(1, clip.width * 0.55 - 6);
                 found = true;
                 break;
@@ -2308,7 +2308,7 @@ const App = struct {
             const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
             var found = false;
             for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
-                const rect = terminalPlacement(paneContent(place.rect), frame.surface, self.scale);
+                const rect = terminalPlacement(terminalContent(place.rect, p.snapshot().closed), frame.surface, self.scale);
                 clip = .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h };
                 found = true;
                 break;
@@ -2521,7 +2521,9 @@ const App = struct {
             const p = self.tab().panes[place.pane].?;
             const active = place.pane == self.tab().tree.active;
             try fill(self.renderer, place.rect, colors.panel);
-            const rect = paneContent(place.rect);
+            const status = p.snapshot();
+            const outer = paneContent(place.rect);
+            const rect = terminalContent(place.rect, status.closed);
             if (p.graphics_failure == null) {
                 if (p.owner) |owner| p.canvas.update(self.renderer, owner) catch |failure| {
                     p.graphics_failure = failure;
@@ -2529,7 +2531,6 @@ const App = struct {
             }
             if (self.selecting) |dragging| if (dragging.pane == p and dragging.edge != 0)
                 try self.selectPoint(p, dragging.x, dragging.y, .extend, true);
-            const status = p.snapshot();
             if (p.owner) |owner| if (owner.takeInputActivity()) p.blink.reset();
             if (active and status.selection_serial == p.selection_serial and status.selection_failure != null and p.selection_failure_reported != status.selection_serial) {
                 p.selection_failure_reported = status.selection_serial;
@@ -2570,17 +2571,19 @@ const App = struct {
             const failure: ?(CreationError || GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.creation_failure) |value| value else if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
             if (failure != null or status.closed) {
                 const clip: c.SDL_Rect = .{
-                    .x = @intFromFloat(@floor(rect.x)),
-                    .y = @intFromFloat(@floor(rect.y)),
-                    .w = @as(c_int, @intFromFloat(@ceil(rect.x + rect.w))) - @as(c_int, @intFromFloat(@floor(rect.x))),
-                    .h = @as(c_int, @intFromFloat(@ceil(rect.y + rect.h))) - @as(c_int, @intFromFloat(@floor(rect.y))),
+                    .x = @intFromFloat(@floor(outer.x)),
+                    .y = @intFromFloat(@floor(outer.y)),
+                    .w = @as(c_int, @intFromFloat(@ceil(outer.x + outer.w))) - @as(c_int, @intFromFloat(@floor(outer.x))),
+                    .h = @as(c_int, @intFromFloat(@ceil(outer.y + outer.h))) - @as(c_int, @intFromFloat(@floor(outer.y))),
                 };
                 if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
                 defer clearClip(self.renderer);
                 if (failure) |value| {
-                    try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = @min(28, rect.h) }, .{ .r = 96, .g = 35, .b = 43, .a = 255 });
-                    try self.drawText(@errorName(value), rect.x + 8, rect.y + 6);
-                } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
+                    try fill(self.renderer, .{ .x = outer.x, .y = outer.y, .width = outer.w, .height = @min(28, outer.h) }, .{ .r = 96, .g = 35, .b = 43, .a = 255 });
+                    try self.drawText(@errorName(value), outer.x + 8, outer.y + 6);
+                } else {
+                    try self.drawText("Exited — Ctrl+Shift+R to restart", outer.x + 8, outer.y + 6);
+                }
             }
         }
         if (result.panes > 1) for (places[0..result.panes]) |place| {
@@ -2763,6 +2766,16 @@ fn clearClip(renderer: *c.SDL_Renderer) void {
 fn paneContent(rect: layout.Rect) c.SDL_FRect {
     return .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
 }
+fn terminalContent(rect: layout.Rect, closed: bool) c.SDL_FRect {
+    var content = paneContent(rect);
+    if (closed) {
+        // A dead PTY keeps its final frame, with a separate restart banner above it.
+        const banner = @min(28, @max(0, content.h - 1));
+        content.y += banner;
+        content.h -= banner;
+    }
+    return content;
+}
 // Split sub-cell slack evenly around the accepted frame; the pane remains resize authority.
 // Align absolute origins to physical pixels.
 fn terminalPlacement(available: c.SDL_FRect, surface: commands.Size, scale: f32) c.SDL_FRect {
@@ -2865,6 +2878,21 @@ test "pane content uses its whole layout owner and has a bounded positive config
         try std.testing.expectEqual(outer.height, content.h);
         const surface = physicalSurface(outer, 1.7);
         try std.testing.expect(surface.width >= 1 and surface.height >= 1);
+    }
+}
+
+test "exited pane reserves a restart band without shifting live terminal geometry" {
+    for ([_]f32{ 0.125, 1, 4, 40, 650 }) |height| {
+        const outer: layout.Rect = .{ .x = 10, .y = 42, .width = 1000, .height = height };
+        const live = terminalContent(outer, false);
+        const dead = terminalContent(outer, true);
+        try std.testing.expectEqualDeep(paneContent(outer), live);
+        try std.testing.expectEqual(outer.x, dead.x);
+        try std.testing.expectEqual(outer.width, dead.w);
+        try std.testing.expect(dead.y >= live.y and dead.y <= live.y + 28);
+        try std.testing.expect(dead.h > 0);
+        try std.testing.expectApproxEqAbs(live.y + live.h, dead.y + dead.h, 0.001);
+        if (height >= 29) try std.testing.expectEqual(@as(f32, 28), dead.y - live.y);
     }
 }
 
