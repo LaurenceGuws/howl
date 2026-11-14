@@ -135,12 +135,18 @@ pub const Core = struct {
     }
     /// Validates and prepares VT before PTY ioctl, then infallibly commits VT.
     pub fn resizeGeometry(self: *Core, rows: u16, columns: u16, cell: vt.Terminal.CellPixelSize) ResizeError!void {
+        return self.resizeGeometryWith(&self.transport, rows, columns, cell);
+    }
+
+    // zig-audit: acknowledge anytype
+    // reason: The real PTY and a fault-injected ioctl share the exact prepared-VT transaction.
+    fn resizeGeometryWith(self: *Core, transport: anytype, rows: u16, columns: u16, cell: vt.Terminal.CellPixelSize) ResizeError!void {
         if (self.terminal.inputBlocked()) return error.InputPending;
         const width = try pixelExtent(columns, cell.width);
         const height = try pixelExtent(rows, cell.height);
         var prepared = try self.terminal.prepareResizeGeometry(rows, columns, cell);
         defer prepared.deinit();
-        try self.transport.resizeWithPixels(columns, rows, width, height);
+        try transport.resizeWithPixels(columns, rows, width, height);
         prepared.commit();
     }
 
@@ -509,6 +515,141 @@ test "canonical service yields the unread suffix on synchronized-output release"
     const visible = core.terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'A'), visible.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'B'), visible.cellAt(0, 1));
+}
+
+test "app canonical scalar pressure retries the retained input without re-reading PTY bytes" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = failing.allocator(), .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, failing.allocator(), 1, 512, 0);
+    defer core.terminal.deinit();
+
+    var length: usize = 0;
+    const lead = "e";
+    const marks = "\xcc\x81\xcc\x82\xcc\x83\xcc\x84\xcc\x85\xcc\x86\xcc\x87\xcc\x88";
+    for (0..511) |_| {
+        @memcpy(core.reads[length..][0..lead.len], lead);
+        length += lead.len;
+        @memcpy(core.reads[length..][0..marks.len], marks);
+        length += marks.len;
+    }
+    const tail = "X";
+    @memcpy(core.reads[length..][0..tail.len], tail);
+    length += tail.len;
+    core.read_end = length;
+    failing.fail_index = failing.alloc_index;
+    var viewport = false;
+    var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
+    var fallback = false;
+    try core.processBuffered(1, &viewport, &synchronized, &fallback);
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expect(core.inputBlocked());
+    try std.testing.expect(!core.readAdmissible());
+    const unread = core.read_start;
+    try std.testing.expect(unread < core.read_end);
+    const retry_at = core.input_retry_at.?;
+    try core.processBuffered(retry_at - 1, &viewport, &synchronized, &fallback);
+    try std.testing.expectEqual(unread, core.read_start);
+    try std.testing.expect(core.inputBlocked());
+
+    try core.processBuffered(retry_at, &viewport, &synchronized, &fallback);
+    try std.testing.expect(core.inputBlocked());
+    try std.testing.expectEqual(unread, core.read_start);
+    const second_retry = core.input_retry_at.?;
+    try std.testing.expect(second_retry > retry_at);
+    failing.fail_index = std.math.maxInt(usize);
+    try core.processBuffered(second_retry, &viewport, &synchronized, &fallback);
+    try std.testing.expect(!core.inputBlocked());
+    try std.testing.expect(core.input_retry_at == null);
+    try std.testing.expectEqual(@as(usize, 0), core.read_end);
+    try std.testing.expect(core.readAdmissible());
+    const view = core.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'e'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'e'), view.cellAt(0, 510));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 511));
+}
+
+test "canonical consequence pressure advances past retained bells without losing output" {
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 8, 0);
+    defer core.terminal.deinit();
+
+    var bytes: [66]u8 = undefined;
+    bytes[0] = 'X';
+    @memset(bytes[1..65], 0x07);
+    bytes[65] = 'Y';
+    @memcpy(core.reads[0..bytes.len], &bytes);
+    core.read_end = bytes.len;
+    var viewport = false;
+    var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
+    var fallback = false;
+    try core.processBuffered(1, &viewport, &synchronized, &fallback);
+    try std.testing.expect(fallback);
+    try std.testing.expectEqual(@as(u16, 32), core.terminal.consequenceCount());
+    const view = core.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+    try std.testing.expect(core.readAdmissible());
+    try std.testing.expectEqual(@as(usize, 0), core.read_end);
+}
+
+test "app canonical PTY resize failure discards prepared VT without changing geometry" {
+    const ResizeTransport = struct {
+        calls: usize = 0,
+        fail: bool = true,
+        cols: u16 = 0,
+        rows: u16 = 0,
+        width: u16 = 0,
+        height: u16 = 0,
+        fn resizeWithPixels(self: *@This(), cols: u16, rows: u16, width: u16, height: u16) pty.ResizeError!void {
+            self.calls += 1;
+            if (self.fail) return error.ResizeFailed;
+            self.cols = cols;
+            self.rows = rows;
+            self.width = width;
+            self.height = height;
+        }
+    };
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 4, 8);
+    defer core.terminal.deinit();
+    try core.terminal.setCellPixelSize(8, 16);
+    try std.testing.expect((try core.terminal.feed("A")).stateChanged());
+    const before = core.terminal.semanticSequence();
+    var transport: ResizeTransport = .{};
+    const target: vt.Terminal.CellPixelSize = .{ .width = 9, .height = 17 };
+
+    try std.testing.expectError(error.ResizeFailed, core.resizeGeometryWith(&transport, 3, 5, target));
+    try std.testing.expectEqual(@as(usize, 1), transport.calls);
+    try std.testing.expectEqual(before, core.terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 2), core.terminal.semanticView(0).rows);
+    try std.testing.expectEqual(@as(u16, 4), core.terminal.semanticView(0).cols);
+    try std.testing.expectEqual(@as(u32, 8), core.terminal.cellPixelSize().?.width);
+    try std.testing.expectEqual(@as(u32, 16), core.terminal.cellPixelSize().?.height);
+    try std.testing.expectEqual(@as(u21, 'A'), core.terminal.semanticView(0).cellAt(0, 0));
+
+    transport.fail = false;
+    try core.resizeGeometryWith(&transport, 3, 5, target);
+    try std.testing.expectEqual(@as(usize, 2), transport.calls);
+    try std.testing.expectEqual(@as(u16, 5), transport.cols);
+    try std.testing.expectEqual(@as(u16, 3), transport.rows);
+    try std.testing.expectEqual(@as(u16, 45), transport.width);
+    try std.testing.expectEqual(@as(u16, 51), transport.height);
+    try std.testing.expectEqual(@as(u16, 3), core.terminal.semanticView(0).rows);
+    try std.testing.expectEqual(@as(u16, 5), core.terminal.semanticView(0).cols);
+    try std.testing.expectEqual(@as(u32, 9), core.terminal.cellPixelSize().?.width);
+    try std.testing.expectEqual(@as(u32, 17), core.terminal.cellPixelSize().?.height);
+    try std.testing.expectEqual(@as(u21, 'A'), core.terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectError(error.InvalidDimensions, core.resizeGeometryWith(&transport, 3, 5, .{ .width = 65535, .height = 17 }));
+    try std.testing.expectEqual(@as(usize, 2), transport.calls);
 }
 
 test "VT reply bytes precede later app input without loss on full outbox" {
