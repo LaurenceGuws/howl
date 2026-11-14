@@ -106,6 +106,75 @@ test "direct desktop owns latest clipboard, attention and exact typed reply FIFO
     try std.testing.expectEqual(@as(?[]u8, null), idle.clipboard);
 }
 
+test "direct desktop declines container geometry and window mutations without changing VT" {
+    const allocator = std.testing.allocator;
+    var terminal: vt.Terminal = undefined;
+    try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(8, 16);
+
+    const cases = [_]struct { sequence: []const u8, request: vt.Terminal.ContainerRequest }{
+        .{ .sequence = "\x1b[1t", .request = .deiconify },
+        .{ .sequence = "\x1b[2t", .request = .iconify },
+        .{ .sequence = "\x1b[3;10;20t", .request = .{ .move = .{ .x = 10, .y = 20 } } },
+        .{ .sequence = "\x1b[4;80;160t", .request = .{ .resize_pixels = .{ .height = 80, .width = 160 } } },
+        .{ .sequence = "\x1b[5t", .request = .raise },
+        .{ .sequence = "\x1b[6t", .request = .lower },
+        .{ .sequence = "\x1b[8;12;34t", .request = .{ .resize_cells = .{ .rows = 12, .cols = 34 } } },
+        .{ .sequence = "\x1b[12*|", .request = .{ .resize_rows = 12 } },
+        .{ .sequence = "\x1b[132$|", .request = .{ .resize_columns = .columns_132 } },
+    };
+    for (cases) |case| {
+        try std.testing.expect((try terminal.feed(case.sequence)).stateChanged());
+        const pending = terminal.consequenceHead().?.container;
+        try std.testing.expectEqualDeep(case.request, pending.request);
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+
+        var applied = try drain(&terminal, allocator, .dark);
+        defer applied.deinit(allocator);
+        try std.testing.expect(applied.worked);
+        try std.testing.expect(!applied.attention);
+        try std.testing.expect(applied.clipboard == null);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 4), view.rows);
+        try std.testing.expectEqual(@as(u16, 20), view.cols);
+        const pixels = terminal.cellPixelSize().?;
+        try std.testing.expectEqual(@as(u32, 8), pixels.width);
+        try std.testing.expectEqual(@as(u32, 16), pixels.height);
+    }
+}
+
+test "direct desktop only requests attention for focus and attention notifications" {
+    const allocator = std.testing.allocator;
+    var terminal: vt.Terminal = undefined;
+    try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
+    defer terminal.deinit();
+
+    const cases = [_]struct { sequence: []const u8, kind: vt.Terminal.NotificationKind, attention: bool }{
+        .{ .sequence = "\x1b]9;message\x07", .kind = .message, .attention = false },
+        .{ .sequence = "\x1b]99;i=one:d=0;body\x1b\\", .kind = .message, .attention = false },
+        .{ .sequence = "\x1b]777;notify;title;body\x07", .kind = .message, .attention = false },
+        .{ .sequence = "\x1b]1337;Notification=rich body\x07", .kind = .message, .attention = false },
+        .{ .sequence = "\x1b]1337;StealFocus\x07", .kind = .steal_focus, .attention = true },
+        .{ .sequence = "\x1b]1337;RequestAttention=fireworks\x07", .kind = .request_attention, .attention = true },
+    };
+    for (cases) |case| {
+        try std.testing.expect((try terminal.feed(case.sequence)).stateChanged());
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+        const before = terminal.consequenceHead().?.notification;
+        try std.testing.expectEqual(case.kind, before.kind);
+        var applied = try drain(&terminal, allocator, .dark);
+        defer applied.deinit(allocator);
+        try std.testing.expect(applied.worked);
+        try std.testing.expectEqual(case.attention, applied.attention);
+        try std.testing.expect(applied.clipboard == null);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
 test "direct desktop replies pass through canonical PTY before subsequent input" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});

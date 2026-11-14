@@ -2,7 +2,7 @@
 //! Plain VT does not import this module or allocate presentation state.
 //! Bounded to 1..192 rows, 1..512 columns, history capacity bounded by u16, one selected view
 //! and one held output. Unsupported visual properties fail flush after canonical
-//! input has committed. This is not an Instance/PTY service owner.
+//! input has committed. This is not a PTY service owner.
 const std = @import("std");
 const vt = @import("howl_vt");
 const text = @import("howl_text");
@@ -27,7 +27,7 @@ pub const Lease = struct { snapshot: Snapshot, owner: *const Terminal, occurrenc
 /// sufficient. Borrowed-font mode adds no shared lock or Store ownership.
 /// Shared mode instead retains an owning PresentationStore and claims its work lane.
 pub const FontFaces = cache.FontFaces;
-/// Exact backend-independent final command/resource vocabulary, shared with Render.
+/// Exact backend-independent final command/resource vocabulary.
 pub const commands = @import("frame");
 /// Private atlas capacity policy; font/cache ownership remains with this owner.
 pub const AtlasConfig = cache.AtlasConfig;
@@ -46,7 +46,7 @@ pub const Config = struct {
         return .{ .history_capacity = self.history_capacity, .cursor_stroke_pixels = self.cursor_stroke_pixels, .faces = self.faces, .box_drawing = self.box_drawing, .atlas = self.atlas, .raster_bytes = self.raster_bytes, .command_limit = self.command_limit };
     }
 };
-/// Owned family and shared work lane, identical to Instance's presentation store.
+/// Owned family and shared work lane for direct VT output.
 pub const PresentationStore = support.PresentationStore;
 /// Owned family face specification.
 pub const FontConfig = support.FontConfig;

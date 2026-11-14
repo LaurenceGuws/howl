@@ -6,7 +6,6 @@ accepted:
   build.zig.zon: complete workspace dependency and distribution source boundary
   .zig-audit.json: required zig-audit schema-2/ruleset-3 scope for the accepted core source and root-check proofs; intentional sharp constructs are acknowledged beside source
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-external-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
-  howl-instance: required platform process-terminal/VT/Render composition for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; src/instance.zig owns the single implementation; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation and consume immutable frames on their GPU backend; publishes no listener, daemon, Session, or Server identity
   howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
   protocol_coverage.yml: pinned terminal-protocol census
@@ -20,12 +19,11 @@ experimental:
     selected by addOutputModules with exact VT/Text/commands/limits module identities.
     One private instrumented core serves white-box proofs; default owner compiles
     instrumentation out and never exposes mutable VT. Final vocabulary/validation
-    and limits are pure leaves. Render keeps substantive Input/projection/CursorRows
-    and consumes the same single glyph cache. Bounded geometry/history, borrowed
+    and limits are pure leaves. Bounded geometry/history, borrowed
     private font families or a shared Store claim, and one immutable lease.
     howl-app now consumes its final commands directly through app-owned VT/Text
     composition. The output owner adds no new scheduler or native ABI;
-    separately versioned VT/Instance native input-recovery ABIs remain in use.
+    the separately versioned VT native input-recovery ABI remains in use.
     See howl-vt/src/output/README.md.
   howl-vt-native: >-
     Optional howl_vt_native root owns versioned foreign input vocabulary, C and Odin
@@ -40,53 +38,16 @@ experimental:
     explicit reply transfer, typed retained-request service, atomic geometry,
     canonical RIS and caller-clocked animation. Optional immutable logical-output
     results preserve all five canonical outcomes, copied text/open/loss evidence,
-    exact cursors and source-independent lifetime; Instance forwards the same owner.
+    exact cursors and source-independent lifetime.
     The native owner uses an injected
     allocator; only the C export root selects libc. It imports canonical VT but no
-    Instance, Server, codec, Render or process/runtime owner. The live VT root
+    Server, codec or process/runtime owner. The live VT root
     never imports native ownership. Optional native observation separates Controller
     retirement from Reader retain/read/release in one small bounded allocation.
     It retains no terminal state; owner destruction retires it, and new terminal
     address reuse cannot revive it. Only opaque Readers cross C. Direct and parsed
     RIS share one raw transition
     and each advances canonical identity exactly once.
-  howl-instance-native: >-
-    Optional howl_instance_native static artifact and owned aggregate C header
-    expose the initial plain Linux/x86_64-qualified lifecycle, semantic input,
-    geometry/signals, bounded caller-driven service and VT-owned copied
-    cells, queries, graphics manifests/pixels, immutable logical-output results and pending request facts; named canonical replies and explicit
-    retained/discard consequence policy. Exact local Instance composition; no host runtime, wait/poll loop,
-    wake source, clock or Server/codec. Public native Zig helpers share input
-    conversion/operations. Optional howl_instance_frames_native owns one
-    backend endpoint, immutable frame leases, bulk payload projection and checked
-    parent destruction; embedders own their worker
-    handoff/pacing. The sole C construction requires presentation and owns explicit copied
-    path/memory font inputs and a caller reference to the canonical shared Store;
-    Instances retain it independently. Core try-claim admission precedes canonical
-    State allocation/child launch; C environment/wrapper admission may allocate
-    earlier. The ordinary Zig constructor preserves its waiting lane. A private
-    C-only wrapper delegates every hi_* operation to the exact local Instance and
-    lazily owns a VT observation Controller. Successful destruction retires it;
-    busy destruction preserves it. Readers never pin process/terminal lifetime.
-    Direct Zig modules/helpers do not import that wrapper.
-  howl-render-native: >-
-    Optional howl_render_native root owns versioned C/Odin command, upload, removal
-    and residency schemas and bounded field-wise projection. Commands are bulk
-    caller-owned copies; upload pixels borrow their immutable frame lease. The separate
-    howl_render_owner_native module and howl_render_native static artifact bind one
-    retained VT Reader, private Text styles and canonical Renderer to explicit reusable
-    buffers. Open buffers pin the parent namespace; source closure ends capture without
-    invalidating copied frames. Capture uses complete commands and exact caller residency,
-    copying RGBA and alpha pixels before publication. One producer owns mutation; backend
-    read/release use atomic lease handoff. Direct and existing schema roots import no
-    standalone ownership. It owns no Instance, GUI backend, host scheduler or Server codec.
-  howl-render: >-
-    Backend-independent terminal-to-frame presentation composed with howl-text.
-    Its direct VT adapter borrows canonical Terminal.Observation; no Server,
-    wire, remote client or transport source can become a Render dependency.
-    Bounded shaping, font families, image upload/removal, cursor, decorations,
-    frame commands and residency reconciliation remain its presentation work.
-    Its separately usable limits module has no terminal-process owner.
   howl-app: >-
     experimental Local-only Zig/SDL3 daily-shell. Each
     pane owns one app-local PTY and canonical VT on an exclusive terminal worker;

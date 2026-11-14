@@ -1,8 +1,8 @@
 //! Owns one Windows ConPTY, its child process, bounded I/O, and cleanup.
 //!
 //! This is the Windows implementation of the same platform PTY contract used by
-//! howl-instance. It owns process/pipe/ConPTY mechanics only; VT semantics,
-//! Instance publication, HWLS, and desktop policy remain outside this module.
+//! direct local hosts. It owns process/pipe/ConPTY mechanics only; VT semantics,
+//! VT-owned presentation output, HWLS, and desktop policy remain outside this module.
 
 const std = @import("std");
 const windows = std.os.windows;
@@ -159,7 +159,7 @@ pub const TermiosSignalError = error{
 /// Reports one nonblocking ConPTY input write failure.
 pub const WriteError = error{ ChildClosed, Interrupted, NotStarted, WouldBlock, WriteFailed };
 
-/// Reports the conventional child exit status retained by Instance wire.
+/// Reports the conventional child exit status retained by the host.
 pub const ChildExit = union(enum) {
     code: u8,
     signal: u8,

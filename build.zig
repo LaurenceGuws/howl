@@ -1,5 +1,6 @@
 //! Composes every maintained Zig package's proofs and public consumer graph.
 const std = @import("std");
+const vt_build = @import("howl_vt");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -11,26 +12,8 @@ pub fn build(b: *std.Build) void {
     // configuration; public modules/artifacts are forwarded from their owners.
     for (b.available_deps) |entry| {
         const name = entry[0];
-        // Match Instance's explicit text selection so standalone Render and
-        // local composition expose one exact schema/renderer module identity.
-        const child = if (std.mem.eql(u8, name, "howl_render"))
-            b.dependency(name, .{ .target = target, .optimize = optimize, .bundled_text = false })
-        else
-            b.dependency(name, .{ .target = target, .optimize = optimize });
-        const composition_leaf =
-            std.mem.eql(u8, name, "howl_vt") or
-            std.mem.eql(u8, name, "howl_pty") or
-            std.mem.eql(u8, name, "howl_text") or
-            std.mem.eql(u8, name, "howl_render");
-        forward(b, name, child, check, tests, !composition_leaf);
-        if (std.mem.eql(u8, name, "howl_render")) {
-            std.debug.assert(child.module("howl_vt_output") == b.modules.get("howl_vt_output").?);
-            std.debug.assert(child.module("howl_vt_output_commands") == b.modules.get("howl_vt_output_commands").?);
-            std.debug.assert(child.module("howl_render_native") == b.modules.get("howl_render_native").?);
-            // zig-audit: acknowledge panic
-            // reason: Forward the child-owned optional module; graph allocation failure is unrecoverable.
-            b.modules.put(b.allocator, "howl_render_owner_native", child.module("howl_render_owner_native")) catch @panic("OOM");
-        }
+        const child = b.dependency(name, .{ .target = target, .optimize = optimize });
+        forward(b, name, child, check, tests, true);
         audit.dependOn(childStep(child, "audit"));
     }
 
@@ -97,19 +80,63 @@ pub fn build(b: *std.Build) void {
     tests.dependOn(protocol);
 
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
-    // OSC 52 grammar is the only VT-owned observation-adjacent language shared
-    // upward. Session encoding must not become a dependency of a local terminal.
-    // zig-audit: acknowledge panic
-    // reason: Build configuration cannot recover from allocation failure.
-    b.modules.put(b.allocator, "vt_clipboard_grammar", vt.module("vt_clipboard_grammar")) catch @panic("OOM");
-    // The optional standalone native contract is the exact VT-owned module.
-    // zig-audit: acknowledge panic
-    // reason: Build graph allocation failure is unrecoverable while forwarding the child-owned module.
-    b.modules.put(b.allocator, "howl_vt_native", vt.module("howl_vt_native")) catch @panic("OOM");
+    const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
+    // The root qualifies optional VT/Text output without making plain VT depend
+    // on fonts or an application. Every module is made by the VT-owned factory.
+    addDirectOutputProofs(b, vt, text, target, optimize, check, tests);
     b.step("simulate", "Run VT simulations").dependOn(childStep(vt, "simulate"));
     b.step("fuzz:terminal", "Run VT fuzz proofs").dependOn(childStep(vt, "fuzz"));
     b.step("benchmark:vt", "Run the VT benchmark").dependOn(childStep(vt, "benchmark"));
     b.default_step = check;
+}
+
+fn addDirectOutputProofs(
+    b: *std.Build,
+    vt: *std.Build.Dependency,
+    text: *std.Build.Dependency,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    check: *std.Build.Step,
+    tests: *std.Build.Step,
+) void {
+    const output = vt_build.addOutputModules(
+        b,
+        vt.path("."),
+        target,
+        optimize,
+        vt.module("howl_vt"),
+        text.module("howl_text"),
+        vt.module("howl_vt_output_commands"),
+        vt.module("howl_vt_output_limits"),
+    );
+    const owner = b.createModule(.{ .root_source_file = vt.path("test/output_owner.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    owner.addImport("howl_vt_output", output.owner);
+    owner.addImport("howl_vt", vt.module("howl_vt"));
+    owner.addImport("howl_text", text.module("howl_text"));
+    owner.addImport("test_fonts", text.module("howl_text_test_fonts"));
+    const owner_tests = b.addTest(.{ .name = "howl-vt-output-owner", .root_module = owner, .use_llvm = false, .use_lld = false });
+    check.dependOn(&owner_tests.step);
+    const owner_run = b.addRunArtifact(owner_tests);
+    tests.dependOn(&owner_run.step);
+    b.step("test:output-owner", "Run independent VT-owned opaque output proofs").dependOn(&owner_run.step);
+
+    const shared = b.createModule(.{ .root_source_file = vt.path("test/output_shared.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    shared.addImport("howl_vt_output", output.owner);
+    shared.addImport("output_state", output.owner.import_table.get("output_state").?);
+    shared.addImport("howl_vt", vt.module("howl_vt"));
+    shared.addImport("text_support", output.support);
+    shared.addImport("glyph_cache", output.cache);
+    shared.addImport("howl_text", text.module("howl_text"));
+    shared.addImport("test_fonts", text.module("howl_text_test_fonts"));
+    const shared_tests = b.addTest(.{ .name = "howl-vt-output-shared", .root_module = shared, .use_llvm = false, .use_lld = false });
+    check.dependOn(&shared_tests.step);
+    const shared_run = b.addRunArtifact(shared_tests);
+    tests.dependOn(&shared_run.step);
+    b.step("test:output-shared", "Run independent VT/Text shared output proofs").dependOn(&shared_run.step);
+
+    const cache_tests = b.addTest(.{ .name = "howl-vt-output-cache", .root_module = output.cache, .use_llvm = false, .use_lld = false });
+    check.dependOn(&cache_tests.step);
+    tests.dependOn(&b.addRunArtifact(cache_tests).step);
 }
 
 fn sameInstallDirectory(left: ?std.Build.InstallDir, right: ?std.Build.InstallDir) bool {

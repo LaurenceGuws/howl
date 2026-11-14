@@ -7,8 +7,8 @@ installed header. The root forwards the exact child artifact and native module.
 
 The native module's `owner` namespace contains one stable opaque Terminal and
 uses an injected allocator. Only the C export root chooses libc. Ordinary
-`howl_vt` stays independent of this optional root, libc, native records, Instance,
-PTY, Server, Render and the optional observation codec. The caller owns transport,
+`howl_vt` stays independent of this optional root, libc, native records,
+PTY, Server, presentation and the optional observation codec. The caller owns transport,
 process lifetime, time, scheduling, request policy and UI.
 
 ## Operations and lifetime
@@ -49,11 +49,10 @@ reads serialize externally. Independent retained references may release
 concurrently. Copying a Reader pointer creates no reference.
 
 The native `observation` namespace separates opaque Controller retirement
-authority from Reader retain/read/release. The same helper lets the optional
-Instance C owner lend its exact canonical VT observation. A consumer retains only
-the small lifetime capability; it borrows const VT data during its serialized
-read and keeps no canonical slice afterward. Standalone Render construction retains this Reader and copies complete immutable
-frames; source retirement leaves old frames readable and rejects new capture.
+authority from Reader retain/read/release. A consumer retains only the small
+lifetime capability; it borrows const VT data during its serialized read and
+keeps no canonical slice afterward. Source retirement invalidates further reads
+without preventing reference release.
 
 Composed native artifacts must come from the same qualified Howl build and remain
 loaded while their handles live. The C version is not a promise that private
@@ -91,8 +90,6 @@ other failures. Its separate 16 MiB ceiling admits one canonical image, unlike
 the smaller text-copy limit. Caller records and pixels survive mutation and
 destruction. No allocation, snapshot cache, lock, renderer or codec is introduced.
 
-Instance's matching `hi_*` operations supply their canonical const observation
-to the same VT-owned projection and admission. No presentation owner is required.
 Existing native v1 layouts and signatures are unchanged; consumers of the new
 symbols must use the matching updated headers and artifacts.
 
@@ -102,7 +99,7 @@ symbols must use the matching updated headers and artifacts.
 finalized text after the supplied cursor, the current primary open line, ordered
 loss evidence, cursor bounds and semantic revision. Primary output remains the
 source while alternate screen is active. The result owns copied storage and no
-terminal, Instance or Reader reference. It survives source mutation/destruction.
+terminal or Reader reference. It survives source mutation/destruction.
 
 All five canonical outcomes are successful immutable query results:
 
@@ -135,10 +132,8 @@ libraries loaded through release. The helper stores its originating allocator,
 transfers canonical text/open storage, converts loss records once and frees every
 partial allocation on failure.
 
-Instance's `hi_output_open` returns this same VT-owned result family; read/release
-through its exact forwarded VT companion. It neither pins the Instance nor makes
-Instance destruction busy. Ordinary local Zig APIs and canonical retention,
-output, scheduling and process lifetime are unchanged.
+Ordinary local Zig APIs and canonical retention, output, scheduling and process
+lifetime are unchanged.
 
 ## Geometry and reset
 
@@ -258,5 +253,4 @@ preserving every prefix, cache-revocation, cleanup and canonical-state assertion
 Production encoder/VT behavior is unchanged.
 
 Direct foreign image/logical-output projection and other platform deployment
-remain separate. Standalone Render construction belongs to the Render native
-contract.
+remain separate.

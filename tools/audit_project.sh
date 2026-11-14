@@ -70,7 +70,7 @@ while IFS= read -r file; do
         { previous = $0 }
         END { exit failed }
     ' "$file" || status=1
-done < <(find howl-vt/src howl-instance/src howl-pty/src -type f -name '*.zig' -print | sort)
+done < <(find howl-vt/src howl-pty/src -type f -name '*.zig' -print | sort)
 
 # Empty lifecycle names preserve no behavior or ownership and therefore add no contract.
 empty_lifecycle_pattern='^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+(deinit|reset|clear)'
@@ -97,13 +97,13 @@ for exact in ('module.addImport("vt_clipboard_grammar", clipboard_grammar);',):
     if len(re.findall(r"^\s*" + re.escape(exact) + r"$", vt_build, re.MULTILINE)) != 1:
         raise SystemExit("VT must own the exact clipboard grammar module")
 
-for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-render"):
+for package in ("howl-vt", "howl-pty", "howl-text"):
     root = Path(package)
     files = list((root / "src").rglob("*.zig")) + [root / "build.zig", root / "build.zig.zon"]
     for path in files:
         source = path.read_text()
         forbidden = re.search(
-            r'(?:@import|addImport|b\.dependency)\(\s*"(?:server[^"]*|howl_client[^"]*|client_transport|howl_instance_protocol|howl_instance_service)"'
+            r'(?:@import|addImport|b\.dependency)\(\s*"(?:server[^"]*|howl_client[^"]*|client_transport)"'
             r'|\.(?:server[a-z_]*|howl_client[a-z_]*|client_transport)\s*=\s*\.\{',
             source,
         )
@@ -120,67 +120,6 @@ for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-rende
 PYCORE
 
 # The live VT and optional native owner are separate dependency capabilities.
-python3 - <<'PYINSTANCEABI'
-from pathlib import Path
-import re
-base = Path("howl-instance/src").resolve()
-roots = ["instance.zig", "native.zig", "native_frames.zig"]
-seen = set()
-def visit(path):
-    path = path.resolve()
-    if path in seen:
-        return
-    seen.add(path)
-    if path.name == "abi_owner.zig":
-        raise SystemExit("Instance direct/native-helper graph imports private C ownership")
-    for name in re.findall(r'@import\("([^"]+)"\)', path.read_text()):
-        if name == "instance_abi_owner":
-            raise SystemExit("Instance direct/native-helper graph imports private C ownership")
-        if name.endswith(".zig"):
-            child = (path.parent / name).resolve()
-            if child.is_relative_to(base):
-                visit(child)
-for root in roots:
-    visit(base / root)
-PYINSTANCEABI
-
-# Optional Render ownership cannot enter direct local or existing schema roots.
-python3 - <<'PYRENDEROWNER' || status=1
-from pathlib import Path
-import re
-base = Path("howl-render/src").resolve()
-def names(path):
-    return re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', path.read_text())
-owner_files = {base / "native_owner.zig", base / "native_fonts.zig", base / "abi.zig"}
-seen = set()
-def visit(path):
-    path = path.resolve()
-    if path in seen:
-        return
-    seen.add(path)
-    if path in owner_files:
-        raise SystemExit("Render direct/schema graph imports optional ownership")
-    for name in names(path):
-        if name == "howl_render_owner_native":
-            raise SystemExit("Render direct/schema graph imports optional ownership")
-        if name.endswith(".zig"):
-            child = (path.parent / name).resolve()
-            if child.is_relative_to(base):
-                visit(child)
-for root in ("root.zig", "renderer.zig", "terminal_vt.zig", "adapter.zig", "native.zig"):
-    visit(base / root)
-allowed = {"std", "howl_render", "howl_render_native", "howl_vt_native"}
-for path in owner_files:
-    for name in names(path):
-        if path.name == "abi.zig" and name == "howl_render_owner_native":
-            continue
-        if name not in allowed and (path.parent / name).resolve() not in owner_files:
-            raise SystemExit(f"{path}: standalone owner imports an unrelated runtime")
-    # No scheduler/backend policy, even disguised behind the otherwise allowed std.
-    if re.search(r'\bstd\.(?:Thread|Io|process|posix|time)\b', path.read_text()):
-        raise SystemExit(f"{path}: standalone owner contains runtime scheduling/process policy")
-PYRENDEROWNER
-
 python3 - <<'PYVTNATIVE' || status=1
 from pathlib import Path
 import re
@@ -294,7 +233,7 @@ require(snapshot["packages"] == packages, "snapshot.json: package inventory/vers
 
 for path in tracked:
     package = Path(path).parent
-    if package not in {Path(name) for name in ("howl-vt", "howl-pty", "howl-text", "howl-render", "howl-instance")}:
+    if package not in {Path(name) for name in ("howl-vt", "howl-pty", "howl-text")}:
         continue
     for relative in re.findall(r'\.path\s*=\s*"([^"]+)"', Path(path).read_text()):
         dependency = (root / package / relative).resolve()

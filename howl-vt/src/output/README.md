@@ -2,24 +2,23 @@
 
 This is an opt-in direct native-cell-to-command owner and the current experimental
 `howl-app` presentation path. Plain `howl_vt` imports neither Text nor output.
-Instance still composes the app's PTY/VT/Text runtime for this first cut; legacy
-Instance/Render and foreign consumers remain supported on their respective paths.
-VT native v2 and Instance native v3 separately version their input-recovery ABI changes.
+`howl-app` composes its own PTY/VT/Text runtime and selects the optional VT-owned
+output directly. The former Instance and Render packages are retired; historical
+contracts remain available from Git history, not current build exports.
 
 ## Selection and identity
 
 `howl-vt/build.zig:addOutputModules` takes the package LazyPath and the caller's
 exact VT, Text, commands and limits module objects. It returns the opaque owner
-and the one glyph-cache and internal text-support module objects. Full Render selects
-this factory once and uses the shared lane without importing the owner at runtime. Instance and the workspace
-root forward that exact owner. A standalone VT + Text consumer uses the same
-factory with no Render dependency. Dependency arguments for canonical VT do not
-change. Limits-only Render returns before selecting Text or the factory.
+and the one glyph-cache and internal text-support module objects. `howl-app`
+selects the factory using its exact local modules; the workspace root selects
+it separately for VT-owned output tests. A standalone VT + Text consumer can
+select the same factory. Neither plain canonical VT nor the external native
+consumer must select this optional output. Canonical VT dependencies do not change.
 
 `commands.zig` owns final command/resource/rectangle vocabulary and stateless
-validation. `limits.zig` is dependency-free. Render's frame module remains the
-owner of legacy Input, projection and CursorRows; its final types alias the
-canonical vocabulary. There is no schema conversion at the direct consumer.
+validation. `limits.zig` is dependency-free. Direct output consumers use this
+final vocabulary without an intermediate frame schema conversion.
 
 ## Ownership and limits
 
@@ -43,17 +42,16 @@ The internal shared binding can instead borrow an existing canonical VT. Its
 producer owns and serializes that VT and must outlive the output binding. The
 configured history capacity and cell pixels must match the existing terminal;
 external resizes are admitted at the next flush and do not mutate a held frame.
-The app currently uses this seam through its temporary Instance composition,
-not through a second canonical VT or independent output scheduler.
+The app uses this binding directly, without a second canonical VT or
+independent output scheduler.
 
 Borrowed-font mode retains its original private shape cache/raster allocations and
 bounded transient shape scratch. All supplied regular/bold/italic/bold-italic
 FontSets remain borrowed: serialize native-face use across every borrower.
 
-Shared mode retains the exact owning PresentationStore also accepted by Instance.
+Shared mode retains the VT output owner's PresentationStore.
 The internal `text_support.zig` owns one font family, refcount and Io mutex around
-one Store lane (ShapeCache, clusters, shaped glyphs and raster scratch). Render's
-borrowed Store API aliases that same lane and remains externally serialized.
+one Store lane (ShapeCache, clusters, shaped glyphs and raster scratch).
 Neither public root exposes the support module, work borrow or claim helpers.
 Shared output allocates only its local atlas and immutable output storage, not a
 second shape cache or raster/shape scratch lane. Local atlases remain independent.
@@ -68,15 +66,14 @@ cursor-only row-reuse decisions; `PresentationBusy` preserves accepted output an
 canonical input is never replayed. Replacement retains and stages before commit;
 old local atlas destruction precedes releasing its old store reference. Io must
 outlive all store references. Immutable held output borrows no mutable font data
-and survives final store destruction. App configuration still enters through
-Instance; this owner introduces no second scheduler, shared-store reset protocol
-or exchange.
+and survives final store destruction. App configuration is app-owned; this owner
+introduces no second scheduler, shared-store reset protocol or exchange.
 
 ## Proof ownership
 
-`test/output_owner.zig` uses only the opaque default API and runs through full
-Render's check/test graph. It also runs through the standalone VT + Text factory
-fixture. Root external consumers assert final type identity and execute the owner.
+`test/output_owner.zig` uses only the opaque default API through the standalone
+VT + Text factory selected by the workspace root. The root also checks the
+module identities and the app's separately constructed direct output.
 `test/output_shared.zig` qualifies actual owning-store behavior; internal identity
 checks prove one scratch lane rather than duplicated shape stores.
 The retained workstream proofs qualify ordered native commands, real no-window

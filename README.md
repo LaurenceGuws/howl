@@ -2,14 +2,14 @@
 
 Howl is a small native terminal **module family**. It is not a tmux identity and it
 is not inherently a Server. The smallest useful embedding is `howl-vt` by itself;
-a local shell composes PTY + VT + Render through `howl-instance` without importing
-or knowing about Session or Server machinery.
+a local shell composes PTY + VT directly and may borrow VT-owned Text output
+without importing or knowing about Session or Server machinery.
 
 ## Repository layout and release snapshot
 
-The six maintained packages are direct children of this repository:
-`howl-vt`, `howl-pty`, `howl-text`, `howl-render`, `howl-instance`, and
-`howl-app`. Each owns its own build, version, proofs and release boundary.
+The four maintained packages are direct children of this repository:
+`howl-vt`, `howl-pty`, `howl-text`, and `howl-app`.
+Each owns its own build, version, proofs and release boundary.
 Core is an ownership/capability designation, not a directory name.
 
 The Server, Protocol, Client and their Codec, CLI, Web and Odin products now
@@ -24,12 +24,10 @@ The audit also checks host-advertised versions against their owning packages.
 The root composes their qualified gates without changing package ownership.
 
 Independent core source releases use
-[`tools/package-release`](tools/package-release) and the
-[`release-overlays`](tools/release-overlays/README.md). Each archive contains
-one module's tracked source at an exact commit; Render and Instance release
-manifests pin their core dependencies by immutable artifact URL and Zig hash.
-The sibling package paths in this source checkout are for local development,
-not the released dependency contract.
+[`tools/package-release`](tools/package-release). Each archive contains one
+module's tracked source at an exact commit. Published historical Instance and
+Render source/ABI artifacts remain recoverable through their immutable Git
+releases; they are not maintained products in this snapshot.
 
 ## Ownership model
 
@@ -39,40 +37,30 @@ The terminal layers are deliberately narrow:
 | --- | --- |
 | `howl-vt` | terminal parsing, semantic state, history, images, input encoding, replies, consequences |
 | `howl-pty` | platform process-terminal transport and child lifecycle: Linux PTY or Windows ConPTY |
-| `howl-instance` | one concrete terminal occurrence: one platform process-terminal transport + one canonical VT + required Render + explicit geometry |
 | `howl-text` | font metrics, fallback, shaping, source clusters, glyph lookup, bounded alpha rasterization |
+| `howl-app` | local SDL shell, one PTY/VT per pane, direct VT/Text output, host scheduling and presentation |
 
-An **Instance** is the terminal lifetime. It owns the authoritative rows/columns and
-font-derived cell-pixel geometry for that process-terminal/VT/Render composition. It is not a Session, listener, daemon, Server,
-window, pane, or product identity.
-
-The sole Instance path is **PTY → VT → Render → the embedder's GPU backend**.
-Presentation is required at construction. The embedder owns GPU resources, UI,
-window and platform lifecycle; VT and PTY remain independently usable.
-
-Observers and clients may disconnect, stall, or disappear without pacing canonical
-Instance progress. Attaching a client never silently resizes an Instance; geometry is
-an explicit Instance mutation.
+A host owns its terminal's PTY lifetime, mutable VT, geometry and consequences.
+VT owns canonical semantic state and an optional direct-output factory that borrows
+Text only when the caller selects it. The host owns GPU resources, UI, window and
+platform lifecycle. Observers cannot pace canonical progress or silently resize VT.
 
 ## Product boundary and maintained hosts
 
-Howl's VT, PTY, Instance, Text and Render can be embedded without a Session,
-Server, socket or observation serialization. Optional Server -> Sessions ->
-Instances orchestration is a separately released consumer in howl-sessions;
-it depends down on Howl and never changes this local composition.
+Howl's VT, PTY and Text can be embedded without a Session, Server, socket or
+observation serialization. Optional Server/Session orchestration is a separate
+product in howl-sessions and never changes this local composition.
 
 Local howl-app uses a Zig/SDL frontend with app-owned PTY, canonical VT and
-Text, borrowing VT's direct output for checked immutable drawing cuts. It does
-not construct Instance or Render.
+Text, borrowing VT's direct output for checked immutable drawing cuts.
 
 Server-facing native clients, CLI, browser and Odin ownership now live in
 howl-sessions, including the extracted terminal observation codec. That
 codec consumes VT's pure OSC 52 grammar rather than living inside VT.
 
-The optional [standalone VT native contract](howl-vt/native.md) and
-[standalone Render native contract](howl-render/native.md) remain
-independently qualified C interfaces for foreign embedders. They do not
-introduce Server, socket, GUI scheduling or client ownership into the core.
+The optional [standalone VT native contract](howl-vt/native.md) remains
+independently qualified for C embedders. It introduces no Server, socket,
+GUI scheduling or client ownership into the core.
 
 ## VT protocol coverage
 
@@ -128,15 +116,14 @@ VT embedding example and howl-app. The root does not compile or
 install historical Flutter, and does not build any moved Server product.
 
 The root distribution exports exact child-owned Zig module identities,
-including VT's pure OSC 52 grammar, and the tested native VT, Instance and
-Render artifacts. It does not re-create modules, or export Server client,
-protocol, terminal codec, CLI or remote host artifacts. Consumers should
-pin immutable module releases and provide matching dependency options
-(notably Render's bundled_text=false where sharing with Instance).
+including VT's pure OSC 52 grammar and standalone VT native artifact.
+It does not re-create the optional VT/Text output owner as a public root
+module or export Server client, protocol, terminal codec, CLI or remote host
+artifacts. Consumers should pin immutable module releases.
 
 The test/consumer package imports the root as a separate distribution
-consumer, verifies VT/Instance/Text/Render identity and exercises the
-real VT/Instance/Render native C headers and artifacts. It is included in
-root check and test; no old Server client ABI is required.
+consumer, verifies VT/PTY/Text identity and exercises the real VT native C
+header and artifact. Independent VT/Text direct-output owner, shared-store
+and glyph-cache proofs run in the root check/test graph.
 For the detailed current ownership rules, read `project_design.yml`,
 `project_rules.yml`, and `project_source_map.yml`.

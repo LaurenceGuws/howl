@@ -151,3 +151,23 @@ to promote. Howl Sessions hosts are not a gate for this cleanup.
 Workspace snapshot `0.1.12-dev` records the moved source tree without
 changing the individual package versions. The installed daily `howl-app`
 binary is not modified by this repository cleanup.
+
+## Retire standalone Instance and Render (14 November 2026)
+
+Captain approved retiring the independent `howl-instance` and `howl-render`
+Zig/C products after source dependency review. No maintained Howl host uses
+either. The local `howl-app` composes PTY, VT and Text directly; sibling
+Howl Sessions hosts are deferred and are not migration gates. Previously
+published archives/tags remain historical, not supported future contracts.
+
+Keep the standalone VT native API and its externally linked consumer proof.
+Move VT-owned opaque-output, shared-store and glyph-cache tests from the
+legacy Render build into a separate root VT/Text composition, without making
+plain VT import Text or reconstructing a renderer abstraction. Retire old
+native ABIs, release overlays, build exports and stale active contracts.
+Host consequences now cite the direct SDL app owner and tests in the protocol
+catalogue; the canonical VT still has no host/platform dependency.
+
+Workspace snapshot `0.1.13-dev` changes the active package inventory only;
+no installed daily binary, Howl Sessions checkout, or historical performance
+measurement is modified as part of this source retirement.

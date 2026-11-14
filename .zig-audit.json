@@ -4,9 +4,7 @@
   "minimum_ruleset": 3,
   "exclude": [
     "howl-app",
-    "howl-instance",
     "howl-pty",
-    "howl-render",
     "howl-text",
     "howl-vt",
     "test/consumer"

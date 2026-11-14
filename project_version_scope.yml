@@ -1,36 +1,36 @@
 schema: 1
-version: 0.1.12-dev
+version: 0.1.13-dev
 
 objective: >-
-  Keep independent terminal semantics, process transport, local Instance, Text and
-  Render packages. Server and remote client product ownership is now in howl-sessions;
-  this snapshot proves the retained direct-local core without that product dependency.
+  Keep independently versioned VT, PTY and Text primitives with one direct-local
+  app. Retire legacy Instance/Render products and their duplicate presentation
+  path, while preserving VT-owned direct output and its independent proofs.
+  Server and remote clients remain in howl-sessions.
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
   pty: caller-polled platform process-terminal ownership with Linux PTY and Windows ConPTY child-process lifecycle
-  instance: opaque owner of one required platform process-terminal/VT/Render composition with bounded ordered I/O, font-derived geometry, explicit resize, signals, child observation, and retained/discard consequence handling
   text: tracked bounded native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and natural alpha rasterization
+  app: direct PTY/VT lifecycle, bounded ordered I/O, geometry, signals, consequences and borrowed VT/Text immutable output without an intermediate instance or renderer
 
 invariants:
-  - one local Instance has one authoritative PTY, VT and Render; its sole path ends at the embedder's GPU backend
-  - observers cannot mutate VT directly and cannot pace Instance progress
-  - attaching an observer never changes canonical geometry
-  - text shaping and rasterization expose no renderer, window, Instance, Session, Server, or client authority
-  - Render is required by Instance; GPU backend, UI, window and platform lifecycle remain embedder-owned; VT and PTY remain independently usable
-  - VT owns terminal animation state and Instance owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
-  - canonical graphics identity/resource generations cross an Instance interaction boundary; backend residency remains presentation state
+  - each local terminal occurrence has one authoritative app-owned PTY and VT; the host owns presentation, GPU and UI
+  - observers cannot mutate VT directly or pace canonical progress; attachment never changes canonical geometry
+  - text shaping and rasterization expose no window, Session, Server, or client authority
+  - optional VT-owned output is borrowed through the exact VT/Text module identities without making plain VT depend on Text
+  - VT owns terminal animation state while its host supplies a monotonic service/wake schedule
+  - canonical graphics identity/resource generations remain in VT; backend residency remains presentation state
   - projected history plus the visible screen are the complete future-reflow cell authority; evicted rows never return
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
   - keep the basic native cursor path independently qualified: content reuse, clipped glyph recoloring, complete immutable publications and visible-pane pixel composition, with CPU and memory tradeoffs measured separately
   - qualify the smallest direct Zig SDL howl-app without Server, endpoint, transport or attachment/detach machinery
-  - keep the old Flutter native/Dart/iOS tree as explicitly inactive engineering evidence, outside check/test/release contracts
+  - retain historical ABI and Flutter products only in Git history and immutable published releases
 
 deferred:
   - reduce bounded ASCII/BG span bookkeeping overhead on styled VT writes and scrolling; compare VT-only cost and complete VT-to-frame cost while preserving plain-ASCII throughput, exact invalidation and observer independence
-  - renderer backend selection and presentation polish
+  - direct-output backend selection and presentation polish
 
 gates:
   - root checks/tests forward all retained Zig roots and the external core consumer contract, and pass

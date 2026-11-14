@@ -6,40 +6,33 @@ project:
 core:
   howl-vt:
     role: terminal parsing, semantic state, history, images, input encoding, replies, protocol consequences, and the pure shared OSC 52 grammar; no observation transport codec
-  howl-instance:
-    role: one required composition of platform process-terminal transport (Linux PTY or Windows ConPTY), canonical howl-vt terminal, and howl-render presentation; owns ordered I/O lifetime, font-derived geometry, signals, and bounded consequence policy
-    invariant: Instance is one concrete terminal occurrence, not a Session, Server, listener, daemon, or product identity; observers never own, pace, or block canonical progress
   howl-pty:
     role: platform process-terminal ownership covering Linux PTY or Windows ConPTY, child process/control lifetime, descriptors or handles, resize, signals, and cleanup
   howl-text:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
 composition:
-  - howl-app is Local-only: one app-owned PTY and canonical VT per pane, with borrowed VT/Text output and no Instance, Render, Server/Session, endpoint, transport or attachment/detach subsystem
-  - howl-vt may be embedded directly without PTY, Instance, Session, or Server machinery
-  - a local terminal host composes howl-pty, howl-vt, and howl-render through howl-instance without knowing that Session or Server concepts exist
-  - optional Server -> Sessions -> Instances orchestration belongs to the separate howl-sessions product, which depends downward on these terminal primitives
-  - an Instance is not a Session; Session identity/lifetime never belongs to the terminal family
-  - every Instance follows PTY -> VT -> Render -> the embedder's GPU backend; presentation is required at construction, while GPU, UI, window and platform lifecycle remain embedder-owned
-  - every Instance owns exactly one canonical terminal geometry; external orchestration and clients receive no direct geometry authority
-  - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
+  - howl-app is Local-only: one app-owned PTY and canonical VT per pane, with borrowed VT/Text output and no Server/Session, endpoint, wire transport or attachment/detach subsystem
+  - howl-vt may be embedded directly without PTY, Text, Session, or Server machinery
+  - a local terminal host composes howl-pty and howl-vt directly, optionally selecting VT-owned Text output without knowing Session or Server concepts
+  - optional Server and Sessions orchestration belongs to the separate howl-sessions product, which depends downward on these terminal primitives
+  - Session identity/lifetime never belongs to the terminal family
+  - each host owns explicit terminal geometry, ordered service, consequences and the GPU/UI/window lifecycle; a host may compose multiple terminals on one surface
   - obsolete Flutter bring-up source is retired; new Flutter product work belongs to howl-sessions
-  - direct-local howl-app composition belongs here; Instance remains independently available to embedders
+  - direct-local howl-app composition belongs here; historical Instance and Render APIs remain available only through their prior Git releases
 
 experimental:
-  - howl-render
   - howl-app
 
 ownership:
   - terminal semantics belong to howl-vt and remain usable without any orchestration layer
-  - one howl-instance owns exactly one authoritative platform process-terminal transport, VT and Render composition
-  - Instance exposes no wire protocol, Session or Server identity and publishes no listener or executable
+  - the local host owns one authoritative platform process-terminal transport and VT per terminal occurrence
   - howl-vt owns the pure OSC 52 grammar shared with downstream consumers; observation payload encoding and transport belong entirely to howl-sessions Server Protocol
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt
   - attaching a client never changes canonical terminal geometry
   - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
-  - Render is composed by Instance and remains outside VT and PTY; GPU backend and host platform policy stay outside all three
+  - the optional direct output owner is under howl-vt but depends on Text only when its host selects it; GPU backend and host policy stay outside VT, PTY, and Text
   - VT owns one semantic cursor and a canonical content identity which remains stable for cursor-only movement and output bracketing; missed observations cannot erase a content mutation
   - howl-app keeps content and cursor work separate: VT-owned output provides immutable content commands and cursor geometry, an app-local projection lends checked frame cuts, and Canvas retains visible-pane content pixels beneath the cursor overlay
   - VT output supplies clipped painted ink by physical row, including overhang; retained Canvas content reuse requires the same content revision, viewport and presentation context, while failed preparation invalidates reuse
@@ -51,11 +44,11 @@ ownership:
   - Direct output cursor bounds follow canonical Unicode lead/continuation occupancy before DEC scaling; implicit cursor colors use resolved cell colors, explicit colors stay exact, and Canvas composes selection below the retained cursor overlay
   - Canvas content targets are backend acceleration only, released for hidden panes and rebuilt after geometry, presentation or target-reset changes; canonical progress never depends on their lifetime
   - howl-app blocks a failed projection only for its exact canonical content identity and history viewport; cursor-only movement cannot retry it, new content may recover, and only successful publication clears the failure
-  - VT owns retained image/frame/animation semantics; Instance supplies monotonic service/wake scheduling when used, while a direct VT embedder supplies its own clock
-  - separately released Server/Session orchestration depends downward on Instances and must never become a prerequisite for local terminal composition
+  - VT owns retained image/frame/animation semantics; each host supplies monotonic service/wake scheduling
+  - separately released Server/Session orchestration depends downward on VT/PTY primitives and must never become a prerequisite for local terminal composition
 
 workspace:
-  packages: howl-vt, howl-pty, howl-text, howl-render, howl-instance, howl-app; sibling roots preserve independent ownership
+  packages: howl-vt, howl-pty, howl-text, howl-app; sibling roots preserve independent ownership
   versions: package-owned; VERSION labels the exact snapshot.json combination
   local_root_gate: all retained Zig package check/test graphs, including direct-local hosts, versioned VT example and external core consumer proof
   distribution_root: forwards child-owned modules and artifacts without reconstructing their type identities
@@ -67,4 +60,4 @@ shared_presentation_text:
   - PresentationConfig requires an explicit private native family or a retained PresentationStore; matching app panes share one owner per recipe and physical pixel size
   - PresentationStore owns native fonts and bounded shape/raster scratch; atlases, commands, residency and immutable frames remain terminal-local
   - full runtime text projection tries the native-face claim and returns PresentationBusy on contention; cursor-only work and canonical PTY/VT service do not wait
-  - caller release and Instance retirement are reference-counted; idle app owners retire, and shape pressure never resets a neighbour atlas
+  - caller release and output owner retirement are reference-counted; idle app owners retire, and shape pressure never resets a neighbour atlas

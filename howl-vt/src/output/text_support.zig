@@ -136,7 +136,7 @@ fn constStoreImpl(content: *const Store) *const StoreImpl {
     return @ptrCast(@alignCast(content));
 }
 
-/// Selects one owned font source for Instance construction.
+/// Selects one owned font source for VT presentation construction.
 pub const FontConfig = union(enum) {
     path: text.Config,
     memory: text.MemoryConfig,

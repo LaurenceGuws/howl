@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  printf 'usage: package-release howl-{pty,vt,text,render,instance} COMMIT OUTPUT_DIRECTORY\n' >&2
+  printf 'usage: package-release howl-{pty,vt,text} COMMIT OUTPUT_DIRECTORY\n' >&2
   exit 2
 fi
 
@@ -12,7 +12,7 @@ module=$1
 revision=$2
 output_dir=$3
 case "$module" in
-  howl-pty|howl-vt|howl-text|howl-render|howl-instance) ;;
+  howl-pty|howl-vt|howl-text) ;;
   *) printf 'unrecognised Howl release package: %s\n' "$module" >&2; exit 2 ;;
 esac
 repo_root=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
@@ -35,22 +35,6 @@ cleanup() {
 trap cleanup EXIT
 
 git -C "$repo_root" archive "$revision:$module" | tar -xf - -C "$stage"
-overlay="tools/release-overlays/$module/release.zon"
-if [[ "$module" == howl-render || "$module" == howl-instance ]]; then
-  git -C "$repo_root" cat-file -e "$revision:$overlay"
-  git -C "$repo_root" show "$revision:$overlay" > "$stage/build.zig.zon"
-  source_fingerprint=$(printf '%s\n' "$manifest" | sed -n 's/^[[:space:]]*\.fingerprint = \([^,]*\),.*/\1/p')
-  overlay_version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)".*/\1/p' "$stage/build.zig.zon")
-  overlay_fingerprint=$(sed -n 's/^[[:space:]]*\.fingerprint = \([^,]*\),.*/\1/p' "$stage/build.zig.zon")
-  if [[ "$version" != "$overlay_version" || "$source_fingerprint" != "$overlay_fingerprint" ]]; then
-    printf 'release overlay version/fingerprint differs from source %s\n' "$module" >&2
-    exit 1
-  fi
-  if rg -q 'REPLACE_WITH_|\.path = "\.\./' "$stage/build.zig.zon"; then
-    printf 'unresolved dependency in %s\n' "$overlay" >&2
-    exit 1
-  fi
-fi
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf - -C "$stage" . | gzip -n -9 > "$candidate"
 
 hash=$(zig fetch "$candidate")

@@ -112,7 +112,7 @@ typedef struct hvt_interaction {
 
 /* Copied pending terminal requests. kind selects the native data union arm.
  * These are C-defined layouts, never Zig unions or Server wire metadata.
- * occurrence_id is scoped to the matching Instance/Terminal lifetime.
+ * occurrence_id is scoped to the matching Terminal lifetime.
  * reply_required describes canonical consume refusal; pointer query_requested
  * separately permits caller policy to reply or consume. Payload copies are
  * complete-or-untouched and checked against the exact current occurrence. */
@@ -291,8 +291,8 @@ uint32_t hvt_abi_version(void);
  * performs lazy allocation/reference admission and changes no VT revision.
  * All calls on source owner serialize with capture and source destruction.
  * Every reference must release once; copying a pointer adds no reference.
- * After source destruction it is safe to release, and Render reports its source
- * closed without touching freed VT. A new VT cannot revive the old capability.
+ * After source destruction it is safe to release; reads report a closed source
+ * without touching freed VT. A new VT cannot revive the old capability.
  * Output slot/handle storage and all other input/result ranges are disjoint. */
 uint32_t hvt_observation_open(uint32_t version, hvt_terminal *, hvt_observation **out);
 /* Clears a caller reference, including a closed-source capability.
@@ -332,7 +332,7 @@ uint32_t hvt_copy_image_pixels(const hvt_terminal *, uint64_t terminal_revision,
  * first; out requires a null slot and publishes only a complete immutable result.
  * Canonical cursor/retention/size outcomes are successful query kinds, not ABI
  * errors: reported_id is oldest/newest/line id/0 respectively. DATA has id=0.
- * No source, Instance, Reader or worker is retained. Existing result owners
+ * No source, Reader or worker is retained. Existing result owners
  * survive source mutation/destruction; creating one never changes VT state. */
 uint32_t hvt_output_open(uint32_t version, const hvt_terminal *, uint64_t cursor,
     uint16_t max_entries, size_t max_bytes, hvt_output **out);
