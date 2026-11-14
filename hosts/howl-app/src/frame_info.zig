@@ -1,11 +1,10 @@
 //! Copied host interaction facts from one immutable terminal output cut.
-const instance = @import("howl_instance");
 const output = @import("howl_vt_output");
-const render = instance.render.terminal;
+const commands = @import("howl_vt_output_commands");
 
 /// Visible cursor geometry, independent of the underlying command storage.
 pub const Cursor = struct {
-    rect: render.Rect,
+    rect: commands.Rect,
     shape: enum { block, bar, underline },
 };
 
@@ -23,8 +22,8 @@ pub const Info = struct {
     history_count: u32 = 0,
     history_row_base: u32 = 0,
     alternate_screen: bool = false,
-    surface: render.Size = .{ .width = 0, .height = 0 },
-    cell_size: render.Size = .{ .width = 0, .height = 0 },
+    surface: commands.Size = .{ .width = 0, .height = 0 },
+    cell_size: commands.Size = .{ .width = 0, .height = 0 },
 
     /// Copies the same facts from a pinned direct VT cut.
     pub fn fromSnapshot(snapshot: *const output.Snapshot, generation: u64, sequence: u64) Info {

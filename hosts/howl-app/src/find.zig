@@ -1,14 +1,14 @@
 const std = @import("std");
-const instance = @import("howl_instance");
 const selection = @import("selection.zig");
-const vt = instance.Terminal;
+const vt = @import("howl_vt").Terminal;
+const limits = @import("howl_vt_output_limits");
 
 /// Maximum owned literal query bytes.
 pub const query_limit = 255;
 /// Maximum retained copied matches before explicit incomplete status.
 pub const match_limit = 512;
 const rows_per_turn = 4;
-const row_byte_limit = instance.render.limits.maximum_columns * 24 * 4;
+const row_byte_limit = limits.maximum_columns * 24 * 4;
 /// Exact local literal query and canonical row/context failures.
 pub const Error = error{ InvalidQuery, InvalidSearchContext, RowTooLarge };
 /// Query bytes are copied inline at FIFO admission; no text borrow escapes the caller.
@@ -54,7 +54,7 @@ pub const Find = struct {
         const context = selection.Context.fromView(observation.semanticView(0));
         const total = @as(u64, if (context.alternate) 0 else context.history_count) + context.rows;
         const first: u64 = if (context.alternate) 0 else context.history_row_base;
-        if (total == 0 or first + total - 1 > std.math.maxInt(i32) or context.columns == 0 or context.columns > instance.render.limits.maximum_columns) return error.InvalidSearchContext;
+        if (total == 0 or first + total - 1 > std.math.maxInt(i32) or context.columns == 0 or context.columns > limits.maximum_columns) return error.InvalidSearchContext;
         self.context = context;
         self.revision = observation.semanticSequence();
         self.status = .{ .serial = request.serial, .phase = if (request.len == 0) .idle else .scanning, .total = @intCast(total) };

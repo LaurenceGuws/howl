@@ -200,47 +200,44 @@ test "saved font paths take precedence and remain owned after their input retire
 
 test "desktop presentation renders the full canonical cell scalar bound" {
     const a = std.testing.allocator;
+    const vt = @import("howl_vt");
+    const output_owner = @import("howl_vt_output");
     var fonts: Fonts = .{ .allocator = a };
     defer fonts.deinit();
     for ([_]usize{ 0, 4, 5 }) |index| fonts.paths[index] = try a.dupe(u8, @import("test_fonts").primary_font);
     const config = try fonts.config(std.testing.io, 15);
     var bytes: [512]u8 = undefined;
-    var output = std.Io.Writer.fixed(&bytes);
-    for ([_]usize{ 16, 17, instance.maximum_cell_scalars }, 1..) |count, row| {
-        try output.print("\x1b[{d};1Ha", .{row});
-        for (1..count) |_| try output.writeAll("\xcc\x81");
+    var writer = std.Io.Writer.fixed(&bytes);
+    for ([_]usize{ 16, 17, vt.scalar.maximum_scalars }, 1..) |count, row| {
+        try writer.print("\x1b[{d};1Ha", .{row});
+        for (1..count) |_| try writer.writeAll("\xcc\x81");
     }
-    const command = try std.fmt.allocPrint(a, "printf '{s}\\033]0;READY\\007'; sleep 30", .{output.buffered()});
-    defer a.free(command);
-    const owner = try instance.init(a, std.testing.environ, .{
-        .shell = "/bin/sh",
-        .command = command,
-        .rows = 4,
-        .columns = 8,
-        .history_rows = 0,
-    }, config);
-    defer instance.deinit(owner);
-
-    var attempts: u16 = 0;
-    while (attempts < 2000) : (attempts += 1) {
-        const progress = try instance.service(owner, true, true, 0);
-        try std.testing.expect(!progress.stream_closed);
-        if (std.mem.eql(u8, instance.terminal(owner).title() orelse "", "READY")) break;
-        try std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake);
-    }
-    try std.testing.expect(attempts < 2000);
-    var uploads: [instance.render.terminal.maximum_frame_resources]instance.render.terminal.FrameResourceUpload = undefined;
-    var removals: [instance.render.terminal.maximum_frame_resources]instance.render.terminal.ResourceRef = undefined;
-    var commands: [256]instance.render.terminal.Command = undefined;
-    const pixels = try a.alloc(u8, config.raster_bytes);
-    defer a.free(pixels);
-    const frame = try instance.renderFrame(owner, &.{}, .{
-        .uploads = &uploads,
-        .removals = &removals,
-        .commands = &commands,
-        .pixels = pixels,
+    const store = switch (config.text) {
+        .shared => |value| value,
+        .private => return error.ExpectedSharedStore,
+    };
+    const owner = try output_owner.Terminal.initShared(a, store, .{
+        .cursor_stroke_pixels = config.cursor_stroke_pixels,
+        .box_drawing = config.box_drawing,
+        .atlas = config.atlas,
     });
-    try std.testing.expect(frame.commands.len != 0);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test releases its only output lease before owner cleanup.
+    defer owner.deinit() catch unreachable;
+    try owner.feed(writer.buffered());
+    try owner.flush();
+    const held = try owner.hold();
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The test releases the exact live lease returned by this owner.
+    defer owner.release(held) catch unreachable;
+    for ([_]usize{ 16, 17, vt.scalar.maximum_scalars }, 0..) |count, row| {
+        var scalars: [vt.scalar.maximum_scalars]u21 = undefined;
+        const actual = owner.observation().semanticView(0).cellScalarsAt(@intCast(row), 0, &scalars);
+        try std.testing.expectEqual(count, actual.len);
+        try std.testing.expectEqual(@as(u21, 'a'), actual[0]);
+        for (actual[1..]) |value| try std.testing.expectEqual(@as(u21, 0x0301), value);
+        try std.testing.expect(held.snapshot.glyphs[row].len != 0);
+    }
 }
 
 test "desktop atlas ceilings respect the actual renderer and retain a finite unknown-limit policy" {

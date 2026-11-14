@@ -1,8 +1,7 @@
 const std = @import("std");
-const instance = @import("howl_instance");
 const vt_selection = @import("howl_vt").selection;
-const vt = instance.Terminal;
-const limits = instance.render.limits;
+const vt = @import("howl_vt").Terminal;
+const limits = @import("howl_vt_output_limits");
 
 /// Copied geometry/retention facts naming one canonical text domain.
 pub const Context = struct {
