@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) void {
         \\#include <fnmatch.h>
     );
     const translation = b.addTranslateC(.{ .root_source_file = header, .target = target, .optimize = optimize });
-    const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
     const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
@@ -28,16 +27,14 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     root.addImport("desktop", translation.createModule());
-    root.addImport("howl_instance", instance.module("howl_instance"));
     root.addImport("howl_pty", pty.module("howl_pty"));
     root.addImport("howl_vt", vt.module("howl_vt"));
-    // Until the remaining app type aliases leave Instance, reuse its output
-    // module identity; Zig cannot import the same source as two distinct modules.
-    root.addImport("howl_vt_output", instance.module("howl_vt_output"));
-    root.addImport("output_state", instance.module("howl_vt_output").import_table.get("output_state").?);
+    root.addImport("howl_text", text.module("howl_text"));
+    root.addImport("howl_vt_output", direct_output.owner);
+    root.addImport("output_state", direct_output.owner.import_table.get("output_state").?);
     root.addImport("howl_vt_output_commands", vt.module("howl_vt_output_commands"));
     root.addImport("howl_vt_output_limits", vt.module("howl_vt_output_limits"));
-    root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
+    root.addImport("test_fonts", text.module("howl_text_test_fonts"));
     root.linkSystemLibrary("SDL3", .{});
     root.linkSystemLibrary("SDL3_ttf", .{});
     root.linkSystemLibrary("fontconfig", .{});
@@ -46,9 +43,8 @@ pub fn build(b: *std.Build) void {
     const app = b.addExecutable(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
     b.installArtifact(app);
     const tests = b.addTest(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
-    // Direct-composition proof: no Instance or Render module is imported here.
-    // This independently verifies output composition without the app's temporary
-    // Instance type imports; the integrated worker owns Core and Projection.
+    // Independent direct-composition proof uses the same VT/Text output identity
+    // as the integrated app worker's Core and Projection.
     const direct_proof = b.createModule(.{ .root_source_file = b.path("src/direct_output_proof.zig"), .target = target, .optimize = optimize, .link_libc = true });
     direct_proof.addImport("howl_vt", vt.module("howl_vt"));
     direct_proof.addImport("howl_pty", pty.module("howl_pty"));

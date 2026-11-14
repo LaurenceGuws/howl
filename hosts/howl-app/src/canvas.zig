@@ -1,17 +1,18 @@
 //! Retains content pixels and paints the cursor from complete immutable frames.
 const std = @import("std");
 const c = @import("desktop");
-const instance = @import("howl_instance");
 const app_presentation = @import("presentation.zig");
 const terminal = @import("terminal.zig");
 const selection = @import("selection.zig");
 const cursor_effects = @import("cursor.zig");
-const render = instance.render.terminal;
+const output_commands = @import("howl_vt_output_commands");
+const output_limits = @import("howl_vt_output_limits");
 
 /// Host focus/blink composition over one immutable cursor frame.
 pub const CursorDisplay = enum { shown, hidden, outline };
 
-const resource_limit = render.maximum_frame_resources;
+// One alpha atlas, one optional colour atlas, and VT's bounded image resources.
+const resource_limit = output_limits.maximum_output_images + 2;
 // SDL3.4.18 merges queued geometry. Historical NVIDIA client-array uploads
 // above 4 MiB retained growing storage. Bound the whole content queue, including
 // colour-only copies: 2048 quads need at most 393216 bytes of GL vertex data.
@@ -27,7 +28,7 @@ const quad_indices = blk: {
 };
 
 const Texture = struct {
-    residency: render.Residency,
+    residency: output_commands.Residency,
     texture: *c.SDL_Texture,
 };
 
@@ -75,7 +76,7 @@ pub const Geometry = struct {
         clip: c.SDL_Rect,
         dest: c.SDL_FRect,
         source: c.SDL_FRect,
-        color: render.Color,
+        color: output_commands.Color,
     ) !void {
         if (self.count == batch_quads or self.texture != texture or !rectEqual(self.clip, clip)) try self.flush(renderer);
         self.texture = texture;
@@ -113,8 +114,8 @@ pub const Canvas = struct {
     visual_context: ?u64 = null,
     row_origin: u16 = 0,
     row_count: u16 = 0,
-    row_generations: [instance.render.limits.maximum_rows]u64 = @splat(0),
-    content_size: render.Size = .{ .width = 1, .height = 1 },
+    row_generations: [output_limits.maximum_rows]u64 = @splat(0),
+    content_size: output_commands.Size = .{ .width = 1, .height = 1 },
 
     /// Creates an empty backend resource owner with no canonical or frame authority.
     pub fn init(allocator: std.mem.Allocator) Canvas {
@@ -158,8 +159,8 @@ pub const Canvas = struct {
         self: *Canvas,
         renderer: *c.SDL_Renderer,
         presentation_generation: u64,
-        uploads: []const render.FrameResourceUpload,
-        removals: []const render.ResourceRef,
+        uploads: []const output_commands.FrameResourceUpload,
+        removals: []const output_commands.ResourceRef,
         pixels: []const u8,
     ) !void {
         if (self.generation != presentation_generation) {
@@ -237,18 +238,18 @@ pub const Canvas = struct {
             } else resident += 1;
         }
         if (self.find(snapshot.resource) == null) {
-            const upload: render.FrameResourceUpload = .{ .resource = snapshot.resource, .format = .alpha8, .size = .{ .width = snapshot.atlas_width, .height = snapshot.atlas_height }, .pixel_offset = 0, .pixel_count = snapshot.atlas_pixels.len, .stride = snapshot.atlas_width };
+            const upload: output_commands.FrameResourceUpload = .{ .resource = snapshot.resource, .format = .alpha8, .size = .{ .width = snapshot.atlas_width, .height = snapshot.atlas_height }, .pixel_offset = 0, .pixel_count = snapshot.atlas_pixels.len, .stride = snapshot.atlas_width };
             try self.applyResources(renderer, presentation_generation, &.{upload}, &.{}, snapshot.atlas_pixels);
         }
         if (snapshot.color_resource) |resource| {
             if (self.find(resource) == null) {
-                const upload: render.FrameResourceUpload = .{ .resource = resource, .format = .rgba8, .size = .{ .width = snapshot.color_atlas_width, .height = snapshot.color_atlas_height }, .pixel_offset = 0, .pixel_count = snapshot.color_atlas_pixels.len, .stride = @as(usize, snapshot.color_atlas_width) * 4 };
+                const upload: output_commands.FrameResourceUpload = .{ .resource = resource, .format = .rgba8, .size = .{ .width = snapshot.color_atlas_width, .height = snapshot.color_atlas_height }, .pixel_offset = 0, .pixel_count = snapshot.color_atlas_pixels.len, .stride = @as(usize, snapshot.color_atlas_width) * 4 };
                 try self.applyResources(renderer, presentation_generation, &.{upload}, &.{}, snapshot.color_atlas_pixels);
             }
         }
         for (snapshot.graphics.images) |image| {
             if (self.find(image.resource) != null) continue;
-            const upload: render.FrameResourceUpload = .{
+            const upload: output_commands.FrameResourceUpload = .{
                 .resource = image.resource,
                 .format = .rgba8,
                 .size = image.size,
@@ -336,7 +337,7 @@ pub const Canvas = struct {
                 const color = command.solid.color;
                 const width = @min(rect.width, outline_pixels);
                 const height = @min(rect.height, outline_pixels);
-                const commands = [_]render.Command{
+                const commands = [_]output_commands.Command{
                     .{ .solid = .{ .rect = .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = height }, .color = color } },
                     .{ .solid = .{ .rect = .{ .x = rect.x, .y = rect.y + @as(i32, rect.height - height), .width = rect.width, .height = height }, .color = color } },
                     .{ .solid = .{ .rect = .{ .x = rect.x, .y = rect.y, .width = width, .height = rect.height }, .color = color } },
@@ -354,7 +355,7 @@ pub const Canvas = struct {
         const body = (snapshot.cursor orelse return).solid;
         const ink = snapshot.cursor_text_color orelse return;
         std.debug.assert(visual.ghost_count <= visual.ghosts.len);
-        var ghosts: [4]render.Command = undefined;
+        var ghosts: [4]output_commands.Command = undefined;
         for (0..visual.ghost_count) |index| {
             const ghost = visual.ghosts[visual.ghost_count - 1 - index];
             var color = body.color;
@@ -384,7 +385,7 @@ pub const Canvas = struct {
                 },
                 .solid => continue,
             }
-            const replay = (try render.CursorRows.recolor(command, painted, ink, color_id)) orelse continue;
+            const replay = (try cursorRecolor(command, painted, ink, color_id)) orelse continue;
             try self.appendCommand(renderer, geometry, pane, pixelClip(pane), replay);
         };
         try geometry.finish(renderer);
@@ -438,7 +439,7 @@ pub const Canvas = struct {
     }
 
     /// Draws one flat final-command pass. Clear and redraw the target after failure.
-    pub fn drawCommands(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, commands: []const render.Command) !void {
+    pub fn drawCommands(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, commands: []const output_commands.Command) !void {
         const pane_clip = pixelClip(pane);
         try beginCommands(renderer, geometry);
         for (commands) |command| try self.appendCommand(renderer, geometry, pane, pane_clip, command);
@@ -494,14 +495,14 @@ pub const Canvas = struct {
         try geometry.finish(renderer);
     }
 
-    fn appendCommand(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, pane_clip: c.SDL_Rect, command: render.Command) !void {
+    fn appendCommand(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, pane_clip: c.SDL_Rect, command: output_commands.Command) !void {
         switch (command) {
             .solid => |solid| try geometry.append(renderer, null, pane_clip, destination(solid.rect, pane), .{ .x = 0, .y = 0, .w = 0, .h = 0 }, solid.color),
             .alpha_mask => |mask| {
                 const texture = self.find(mask.resource.resource) orelse return error.MissingTexture;
                 const dest = destination(mask.destination, pane);
                 const clip = commandClip(mask.destination, mask.clip, pane, pane_clip) orelse return;
-                const src: render.SourceRect = mask.resource.source orelse .{ .x = 0, .y = 0, .width = mask.resource.size.width, .height = mask.resource.size.height };
+                const src: output_commands.SourceRect = mask.resource.source orelse .{ .x = 0, .y = 0, .width = mask.resource.size.width, .height = mask.resource.size.height };
                 const width: f32 = @floatFromInt(mask.resource.size.width);
                 const height: f32 = @floatFromInt(mask.resource.size.height);
                 try geometry.append(renderer, texture, clip, dest, .{
@@ -515,7 +516,7 @@ pub const Canvas = struct {
                 try geometry.flush(renderer);
                 const texture = self.find(image.resource.resource) orelse return error.MissingTexture;
                 const clip = commandClip(image.destination, image.clip, pane, pane_clip) orelse return;
-                const src: render.SourceRect = image.resource.source orelse .{ .x = 0, .y = 0, .width = image.resource.size.width, .height = image.resource.size.height };
+                const src: output_commands.SourceRect = image.resource.source orelse .{ .x = 0, .y = 0, .width = image.resource.size.width, .height = image.resource.size.height };
                 const source: c.SDL_FRect = .{ .x = @floatFromInt(src.x), .y = @floatFromInt(src.y), .w = @floatFromInt(src.width), .h = @floatFromInt(src.height) };
                 const dest = destination(image.destination, pane);
                 try geometry.reserve(renderer, 1);
@@ -526,7 +527,7 @@ pub const Canvas = struct {
         }
     }
 
-    fn find(self: *const Canvas, resource: render.ResourceRef) ?*c.SDL_Texture {
+    fn find(self: *const Canvas, resource: output_commands.ResourceRef) ?*c.SDL_Texture {
         for (self.textures[0..self.count]) |texture| {
             if (texture.residency.resource.resource == resource.resource and
                 texture.residency.resource.generation == resource.generation) return texture.texture;
@@ -534,7 +535,7 @@ pub const Canvas = struct {
         return null;
     }
 
-    fn remove(self: *Canvas, resource: render.ResourceRef, exact: bool) void {
+    fn remove(self: *Canvas, resource: output_commands.ResourceRef, exact: bool) void {
         for (self.textures[0..self.count], 0..) |texture, index| {
             if (texture.residency.resource.resource != resource.resource or
                 (exact and texture.residency.resource.generation != resource.generation)) continue;
@@ -552,11 +553,67 @@ pub const Canvas = struct {
     }
 };
 
-fn cursorBody(body: render.Rect, origin: render.Rect, rect: render.Rect) render.Rect {
+/// Repaint stationary ink through a moving host cursor without changing VT.
+/// Alpha text uses cursor ink colour; intrinsic RGBA glyphs keep their pixels.
+fn cursorRecolor(command: output_commands.Command, rect: output_commands.Rect, color: output_commands.Color, color_id: ?output_commands.ResourceId) output_commands.Error!?output_commands.Command {
+    const Glyph = struct { destination: output_commands.Rect, clip: output_commands.Rect };
+    const glyph: Glyph = switch (command) {
+        .alpha_mask => |value| if (value.cursor_component) .{ .destination = value.destination, .clip = value.clip } else return null,
+        .rgba => |value| if (color_id != null and value.resource.resource.resource == color_id.?) .{ .destination = value.destination, .clip = value.clip } else return null,
+        .solid => return null,
+    };
+    const clip = (try output_commands.intersectRects(glyph.clip, rect)) orelse return null;
+    if (try output_commands.intersectRects(glyph.destination, clip) == null) return null;
+    var result = command;
+    switch (result) {
+        .alpha_mask => |*value| {
+            value.clip = clip;
+            value.color = color;
+            value.cursor_component = false;
+        },
+        .rgba => |*value| value.clip = clip,
+        .solid => return null,
+    }
+    return result;
+}
+
+test "moving cursor ink replays only clipped text and intrinsic colour glyphs" {
+    const alpha: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(1), .generation = @fromBackingInt(1) };
+    const rgba: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(2), .generation = @fromBackingInt(1) };
+    const mask: output_commands.Command = .{ .alpha_mask = .{
+        .destination = .{ .x = 1, .y = 1, .width = 5, .height = 5 },
+        .clip = .{ .x = 2, .y = 2, .width = 4, .height = 4 },
+        .resource = .{ .resource = alpha, .format = .alpha8, .size = .{ .width = 8, .height = 8 } },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+        .cursor_component = true,
+    } };
+    const cursor: output_commands.Rect = .{ .x = 4, .y = 3, .width = 3, .height = 5 };
+    const ink: output_commands.Color = .{ .r = 240, .g = 241, .b = 242, .a = 255 };
+    const recolored = (try cursorRecolor(mask, cursor, ink, null)).?.alpha_mask;
+    try std.testing.expectEqualDeep(output_commands.Rect{ .x = 4, .y = 3, .width = 2, .height = 3 }, recolored.clip);
+    try std.testing.expectEqualDeep(ink, recolored.color);
+    try std.testing.expect(!recolored.cursor_component);
+    var ordinary = mask;
+    ordinary.alpha_mask.cursor_component = false;
+    try std.testing.expect((try cursorRecolor(ordinary, cursor, ink, null)) == null);
+    try std.testing.expect((try cursorRecolor(mask, .{ .x = 20, .y = 20, .width = 1, .height = 1 }, ink, null)) == null);
+    try std.testing.expectError(error.InvalidRectangle, cursorRecolor(mask, .{ .x = 3, .y = 3, .width = 0, .height = 1 }, ink, null));
+    const image: output_commands.Command = .{ .rgba = .{
+        .destination = .{ .x = 1, .y = 1, .width = 5, .height = 5 },
+        .clip = .{ .x = 2, .y = 2, .width = 4, .height = 4 },
+        .resource = .{ .resource = rgba, .format = .rgba8, .size = .{ .width = 8, .height = 8 } },
+    } };
+    try std.testing.expect((try cursorRecolor(image, cursor, ink, alpha.resource)) == null);
+    const clipped = (try cursorRecolor(image, cursor, ink, rgba.resource)).?.rgba;
+    try std.testing.expectEqualDeep(recolored.clip, clipped.clip);
+    try std.testing.expectEqualDeep(image.rgba.resource, clipped.resource);
+}
+
+fn cursorBody(body: output_commands.Rect, origin: output_commands.Rect, rect: output_commands.Rect) output_commands.Rect {
     return .{ .x = body.x + rect.x - origin.x, .y = body.y + rect.y - origin.y, .width = body.width, .height = body.height };
 }
 
-fn stretchedBody(body: render.Rect, tail: [2]i32, surface: render.Size) render.Rect {
+fn stretchedBody(body: output_commands.Rect, tail: [2]i32, surface: output_commands.Size) output_commands.Rect {
     const left = @max(0, @min(body.x, body.x + tail[0]));
     const top = @max(0, @min(body.y, body.y + tail[1]));
     const right = @min(@as(i32, surface.width), @max(body.x, body.x + tail[0]) + @as(i32, body.width));
@@ -565,7 +622,7 @@ fn stretchedBody(body: render.Rect, tail: [2]i32, surface: render.Size) render.R
     return .{ .x = left, .y = top, .width = @intCast(right - left), .height = @intCast(bottom - top) };
 }
 
-fn destination(rect: render.Rect, pane: c.SDL_FRect) c.SDL_FRect {
+fn destination(rect: output_commands.Rect, pane: c.SDL_FRect) c.SDL_FRect {
     return .{
         .x = pane.x + @as(f32, @floatFromInt(rect.x)),
         .y = pane.y + @as(f32, @floatFromInt(rect.y)),
@@ -580,7 +637,7 @@ fn pixelClip(rect: c.SDL_FRect) c.SDL_Rect {
     return .{ .x = x, .y = y, .w = @as(c_int, @intFromFloat(@ceil(rect.x + rect.w))) - x, .h = @as(c_int, @intFromFloat(@ceil(rect.y + rect.h))) - y };
 }
 
-fn commandClip(ink: render.Rect, clip: render.Rect, pane: c.SDL_FRect, pane_clip: c.SDL_Rect) ?c.SDL_Rect {
+fn commandClip(ink: output_commands.Rect, clip: output_commands.Rect, pane: c.SDL_FRect, pane_clip: c.SDL_Rect) ?c.SDL_Rect {
     if (contained(ink, clip)) {
         if (pane_clip.w <= 0 or pane_clip.h <= 0) return null;
         return pane_clip;
@@ -600,7 +657,7 @@ test "fractional pane clips cover edge pixels without crossing the integer pane 
     try std.testing.expectEqual(c.SDL_Rect{ .x = 10, .y = 5, .w = 16, .h = 21 }, clip);
 }
 
-fn contained(a: render.Rect, b: render.Rect) bool {
+fn contained(a: output_commands.Rect, b: output_commands.Rect) bool {
     return a.x >= b.x and a.y >= b.y and
         @as(i64, a.x) + a.width <= @as(i64, b.x) + b.width and
         @as(i64, a.y) + a.height <= @as(i64, b.y) + b.height;
@@ -615,8 +672,8 @@ test "command clipping equals SDL for contained clipped fractional negative and 
             .h = @floatFromInt(if (i % 19 == 0) @as(usize, 0) else 1 + i % 193),
         };
         const pane_clip = pixelClip(pane);
-        const ink: render.Rect = .{ .x = @as(i32, @intCast(i % 43)) - 21, .y = @as(i32, @intCast(i % 37)) - 18, .width = @intCast(2 + i % 19), .height = @intCast(2 + i % 29) };
-        const clip: render.Rect = switch (i % 3) {
+        const ink: output_commands.Rect = .{ .x = @as(i32, @intCast(i % 43)) - 21, .y = @as(i32, @intCast(i % 37)) - 18, .width = @intCast(2 + i % 19), .height = @intCast(2 + i % 29) };
+        const clip: output_commands.Rect = switch (i % 3) {
             0 => ink,
             1 => .{ .x = ink.x + 1, .y = ink.y + 1, .width = ink.width - 1, .height = ink.height - 1 },
             else => .{ .x = 0, .y = 0, .width = 320, .height = 200 },
@@ -629,7 +686,7 @@ test "command clipping equals SDL for contained clipped fractional negative and 
 }
 
 test "overhanging commands keep their exact clip, contained quads share the pane clip" {
-    const clip: render.Rect = .{ .x = -3, .y = 7, .width = 12, .height = 14 };
+    const clip: output_commands.Rect = .{ .x = -3, .y = 7, .width = 12, .height = 14 };
     try std.testing.expect(contained(.{ .x = -3, .y = 7, .width = 12, .height = 14 }, clip));
     try std.testing.expect(!contained(.{ .x = -4, .y = 7, .width = 12, .height = 14 }, clip));
     try std.testing.expect(!contained(.{ .x = -3, .y = 7, .width = 13, .height = 14 }, clip));
@@ -1062,12 +1119,12 @@ test "pending drag requests retain accepted selection paint; accepted clear remo
 // Synthetic row input used only by the Canvas tests below.
 const CommandRow = struct {
     y: i32,
-    backgrounds: []const render.Command,
-    decorations: []const render.Command,
-    glyphs: []const render.Command,
+    backgrounds: []const output_commands.Command,
+    decorations: []const output_commands.Command,
+    glyphs: []const output_commands.Command,
 };
 
-fn testSnapshot(background: render.Command, rows: []const CommandRow, cursor: ?render.Command, ink: []const render.Command, cell_height: u16) @import("howl_vt_output").Snapshot {
+fn testSnapshot(background: output_commands.Command, rows: []const CommandRow, cursor: ?output_commands.Command, ink: []const output_commands.Command, cell_height: u16) @import("howl_vt_output").Snapshot {
     var snapshot: @import("howl_vt_output").Snapshot = .{
         .rows = @intCast(rows.len),
         .cols = 1,
@@ -1107,11 +1164,11 @@ test "row command phases share flat SDL traversal and preserve full pane clippin
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
-    const resource: render.ResourceRef = .{ .resource = try render.ResourceId.init(1), .generation = @fromBackingInt(1) };
+    const resource: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(1), .generation = @fromBackingInt(1) };
     try backend.applyResources(renderer, 1, &.{.{ .resource = resource, .format = .alpha8, .size = .{ .width = 2, .height = 2 }, .pixel_offset = 0, .pixel_count = 4, .stride = 2 }}, &.{}, &.{ 255, 255, 255, 255 });
-    const background: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 0, .g = 0, .b = 0, .a = 255 } } };
-    const row_background: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 4 }, .color = .{ .r = 0, .g = 0, .b = 255, .a = 255 } } };
-    const glyph: render.Command = .{ .alpha_mask = .{
+    const background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 0, .g = 0, .b = 0, .a = 255 } } };
+    const row_background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 4 }, .color = .{ .r = 0, .g = 0, .b = 255, .a = 255 } } };
+    const glyph: output_commands.Command = .{ .alpha_mask = .{
         .destination = .{ .x = -1, .y = -1, .width = 4, .height = 4 },
         .clip = .{ .x = 0, .y = 0, .width = 8, .height = 4 },
         .resource = .{ .resource = resource, .format = .alpha8, .size = .{ .width = 2, .height = 2 }, .source = null },
@@ -1126,7 +1183,7 @@ test "row command phases share flat SDL traversal and preserve full pane clippin
     var flat_glyph = glyph;
     flat_glyph.alpha_mask.destination.y += 4;
     flat_glyph.alpha_mask.clip.y += 4;
-    const cursor: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 2, .height = 4 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 } } };
+    const cursor: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 2, .height = 4 }, .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 } } };
     var cursor_ink = glyph;
     cursor_ink.alpha_mask.clip = .{ .x = 0, .y = 0, .width = 2, .height = 4 };
     cursor_ink.alpha_mask.color = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
@@ -1164,8 +1221,8 @@ test "synthetic row consumer crosses 2048 quads without producer command limits"
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
-    const solid: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 17, .g = 23, .b = 31, .a = 255 } } };
-    const commands = try std.testing.allocator.alloc(render.Command, batch_quads + 1);
+    const solid: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 17, .g = 23, .b = 31, .a = 255 } } };
+    const commands = try std.testing.allocator.alloc(output_commands.Command, batch_quads + 1);
     defer std.testing.allocator.free(commands);
     @memset(commands, solid);
     const rows = [_]CommandRow{.{ .y = 0, .backgrounds = &.{}, .decorations = &.{}, .glyphs = commands }};
@@ -1195,11 +1252,11 @@ test "failed row pass invalidates metadata without destroying an active target a
     backend.content = target;
     backend.content_revision = 123;
     if (!c.SDL_SetRenderTarget(renderer, target)) return error.SDL;
-    const background: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 17, .g = 23, .b = 31, .a = 255 } } };
-    const missing: render.Command = .{ .alpha_mask = .{
+    const background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 17, .g = 23, .b = 31, .a = 255 } } };
+    const missing: output_commands.Command = .{ .alpha_mask = .{
         .destination = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 8, .height = 8 },
-        .resource = .{ .resource = .{ .resource = try render.ResourceId.init(1), .generation = @fromBackingInt(1) }, .format = .alpha8, .size = .{ .width = 1, .height = 1 }, .source = null },
+        .resource = .{ .resource = .{ .resource = try output_commands.ResourceId.init(1), .generation = @fromBackingInt(1) }, .format = .alpha8, .size = .{ .width = 1, .height = 1 }, .source = null },
         .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 },
     } };
     const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = 8, .h = 8 };
@@ -1236,8 +1293,8 @@ test "clipped row subset repairs retained pixels exactly and intersects the pane
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
     const pane: c.SDL_FRect = .{ .x = 3, .y = 2, .w = 8, .h = 8 };
-    const background: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 0, .g = 0, .b = 0, .a = 255 } } };
-    const old: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 4 }, .color = .{ .r = 17, .g = 23, .b = 31, .a = 255 } } };
+    const background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 0, .g = 0, .b = 0, .a = 255 } } };
+    const old: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 4 }, .color = .{ .r = 17, .g = 23, .b = 31, .a = 255 } } };
     var changed = old;
     changed.solid.color.r = 255;
     // Ink spans outside the pane: the device clip must still be pane-bounded.
@@ -1287,7 +1344,7 @@ test "clipped row subset repairs retained pixels exactly and intersects the pane
 
 test "VT block cursor final commands paint fill and ink through Canvas" {
     const output = @import("howl_vt_output");
-    const font = try instance.text.FontSet.init(std.testing.allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } });
+    const font = try @import("howl_text").FontSet.init(std.testing.allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } });
     defer font.deinit();
     const owner = try output.Terminal.init(std.testing.allocator, font);
     // zig-audit: acknowledge catch_unreachable
@@ -1329,12 +1386,11 @@ test "VT block cursor final commands paint fill and ink through Canvas" {
     try std.testing.expect(fill != 0 and ink != 0);
 }
 
-fn expectDirectNativeCanvasParity(input: []const u8) !void {
+fn expectDirectCanvasPixelParity(input: []const u8) !void {
     const output = @import("howl_vt_output");
     const a = std.testing.allocator;
-    const font = try instance.text.FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
+    const font = try @import("howl_text").FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
     defer font.deinit();
-    const metrics = font.metrics();
     const atlas: output.AtlasConfig = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 };
     const direct = try output.Terminal.initConfig(a, font, .{ .atlas = atlas });
     // zig-audit: acknowledge catch_unreachable
@@ -1350,34 +1406,11 @@ fn expectDirectNativeCanvasParity(input: []const u8) !void {
     const snap = lease.snapshot;
     try std.testing.expect(snap.color_resource != null);
 
-    const vt = try a.create(instance.Terminal);
-    defer a.destroy(vt);
-    try instance.Terminal.initWithHistoryInto(vt, a, 8, 12, 0);
-    defer vt.deinit();
-    try vt.setCellPixelSize(metrics.advance_width, metrics.line_height);
-    try std.testing.expect((try vt.feed(input)).stateChanged());
-    const native = try render.initPrivate(a, .{ .regular = font }, .{
-        .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
-        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
-        .shape_cache = .{ .entry_capacity = 256, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
-        .atlas = atlas,
-        .shaped_capacity = 160,
-        .raster_bytes = 512 * 512,
-        .command_capacity = 512,
-    });
-    defer render.deinit(native);
-    try render.updateObservation(native, vt.observation(), 0, &.{});
-    var uploads: [render.maximum_frame_resources]render.FrameResourceUpload = undefined;
-    var removals: [render.maximum_frame_resources]render.ResourceRef = undefined;
-    var commands: [512]render.Command = undefined;
-    const pixels = try a.alloc(u8, 256 * 256 * 5);
-    defer a.free(pixels);
-    const old = try render.frame(native, &.{}, .{ .uploads = &uploads, .removals = &removals, .commands = &commands, .pixels = pixels });
     const context = try selection.Context.fromFrame(@import("frame_info.zig").Info.fromSnapshot(&snap, 1, 1));
     try std.testing.expectEqual(@as(u16, 8), context.rows);
     try std.testing.expectEqual(@as(u16, 12), context.columns);
     const cursor_view = @import("frame_info.zig").Info.fromSnapshot(&snap, 1, 1);
-    try std.testing.expectEqualDeep(old.cursor.?.rect, cursor_view.cursor.?.rect);
+    try std.testing.expectEqualDeep(snap.cursor_cell.?, cursor_view.cursor.?.rect);
     try std.testing.expectEqual(@as(@TypeOf(cursor_view.cursor.?.shape), .block), cursor_view.cursor.?.shape);
     try std.testing.expect(cursor_view.has_cursor_command);
 
@@ -1402,10 +1435,12 @@ fn expectDirectNativeCanvasParity(input: []const u8) !void {
     const alpha_texture = first.find(snap.resource) orelse return error.MissingTexture;
     try first.applySnapshotResources(first_renderer, 1, &snap);
     try std.testing.expect(alpha_texture == first.find(snap.resource).?);
-    try second.applyResources(second_renderer, 1, old.uploads, old.removals, old.pixels);
+    try second.applySnapshotResources(second_renderer, 1, &snap);
     const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snap.surface.width), .h = @floatFromInt(snap.surface.height) };
+    // Paint the same immutable direct-VT cut through independent Canvas paths:
+    // full immediate traversal versus retained content plus cursor overlay.
     try first.drawSnapshot(first_renderer, geometry, pane, &snap, 0, snap.rows, true, null);
-    try second.drawCommands(second_renderer, geometry, pane, old.commands);
+    try second.drawCut(second_renderer, geometry, pane, 1, .shown, 1, null, cursor_view, &snap);
     if (!c.SDL_RenderPresent(first_renderer) or !c.SDL_RenderPresent(second_renderer)) return error.SDL;
     for (0..snap.surface.height) |y| for (0..snap.surface.width) |x| {
         var one: [4]u8 = undefined;
@@ -1413,7 +1448,7 @@ fn expectDirectNativeCanvasParity(input: []const u8) !void {
         if (!c.SDL_ReadSurfacePixel(first_surface, @intCast(x), @intCast(y), &one[0], &one[1], &one[2], &one[3]) or
             !c.SDL_ReadSurfacePixel(second_surface, @intCast(x), @intCast(y), &two[0], &two[1], &two[2], &two[3])) return error.SDL;
         if (!std.mem.eql(u8, &two, &one)) {
-            std.debug.print("Canvas mismatch x={d} y={d} cell={d}x{d}: old={any} direct={any}\n", .{ x, y, snap.cell_width, snap.cell_height, two, one });
+            std.debug.print("Canvas mismatch x={d} y={d} cell={d}x{d}: retained={any} immediate={any}\n", .{ x, y, snap.cell_width, snap.cell_height, two, one });
             return error.TestUnexpectedResult;
         }
     };
@@ -1442,12 +1477,12 @@ fn expectDirectNativeCanvasParity(input: []const u8) !void {
     try std.testing.expectEqual(@as(u64, 2), first.generation);
 }
 
-test "direct sized text and block cursor match native software Canvas" {
-    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=1:w=2;WWW\x07\x1b[3;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H");
-    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b[4;9m\x1b]66;s=2;X\x07\x1b[0m\x1b[2;4H\x1b[4:4m\x1b]66;s=2:n=2:d=3:h=2:v=2;I\x07\x1b[0m\x1b[2;10H\x1b[4:5m\x1b]66;s=2:n=1:d=2:h=1:v=1;I\x07\x1b[0m\x1b[2;8H\x1b]66;s=1:n=1:d=2:h=1:v=1;W\x07\x1b[5;1H\x1b[4:2;9m\x1b]66;s=3;e\u{0301}\x07\x1b[0m\x1b[5;4H\x1b[4:3m\x1b]66;s=2:n=2:d=3:h=2:v=2;I\x07\x1b[0m\x1b[5;7H\x1b]66;s=2:n=1:d=2:h=2:v=2;X\x07\x1b[5;10H\x1b]66;s=2:n=2:d=3:h=1:v=1;W\x07\x1b[7;10H\x1b]66;s=2;─\x07\x1b[1;2H");
-    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=2;😀\x07\x1b[2;6H\x1b]66;s=2:n=1:d=2:h=2:v=2;😀\x07\x1b[1;2H");
-    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=2;→\x07\x1b[2;5H\x1b]66;s=2:n=1:d=2:h=2:v=2;◆\x07\x1b[1;2H");
-    try expectDirectNativeCanvasParity("M😀\x1b[2;1H\x1b]66;s=2:n=2:d=3:h=2:v=2;┼\x07\x1b[2;4H\x1b]66;s=3;█\x07\x1b[2;8H\x1b]66;s=2;⣿\x07\x1b[6;1H\x1b]66;s=2;\u{e0b0}\x07\x1b[1;2H");
+test "direct sized text and block cursor agree across independent Canvas paths" {
+    try expectDirectCanvasPixelParity("M😀\x1b[2;1H\x1b]66;s=1:w=2;WWW\x07\x1b[3;1H\x1b[1;4;9;38;2;200;80;50;48;5;17m\x1b]66;s=1:w=7;X\x07\x1b[0m\x1b[1;2H");
+    try expectDirectCanvasPixelParity("M😀\x1b[2;1H\x1b[4;9m\x1b]66;s=2;X\x07\x1b[0m\x1b[2;4H\x1b[4:4m\x1b]66;s=2:n=2:d=3:h=2:v=2;I\x07\x1b[0m\x1b[2;10H\x1b[4:5m\x1b]66;s=2:n=1:d=2:h=1:v=1;I\x07\x1b[0m\x1b[2;8H\x1b]66;s=1:n=1:d=2:h=1:v=1;W\x07\x1b[5;1H\x1b[4:2;9m\x1b]66;s=3;e\u{0301}\x07\x1b[0m\x1b[5;4H\x1b[4:3m\x1b]66;s=2:n=2:d=3:h=2:v=2;I\x07\x1b[0m\x1b[5;7H\x1b]66;s=2:n=1:d=2:h=2:v=2;X\x07\x1b[5;10H\x1b]66;s=2:n=2:d=3:h=1:v=1;W\x07\x1b[7;10H\x1b]66;s=2;─\x07\x1b[1;2H");
+    try expectDirectCanvasPixelParity("M😀\x1b[2;1H\x1b]66;s=2;😀\x07\x1b[2;6H\x1b]66;s=2:n=1:d=2:h=2:v=2;😀\x07\x1b[1;2H");
+    try expectDirectCanvasPixelParity("M😀\x1b[2;1H\x1b]66;s=2;→\x07\x1b[2;5H\x1b]66;s=2:n=1:d=2:h=2:v=2;◆\x07\x1b[1;2H");
+    try expectDirectCanvasPixelParity("M😀\x1b[2;1H\x1b]66;s=2:n=2:d=3:h=2:v=2;┼\x07\x1b[2;4H\x1b]66;s=3;█\x07\x1b[2;8H\x1b]66;s=2;⣿\x07\x1b[6;1H\x1b]66;s=2;\u{e0b0}\x07\x1b[1;2H");
 }
 
 test "direct worker retained Canvas matches its complete direct cut" {
@@ -1538,7 +1573,7 @@ test "direct worker retained Canvas matches its complete direct cut" {
 
 test "direct retained row repair matches full repaint across viewport changes and recovery" {
     const output = @import("howl_vt_output");
-    const font = try instance.text.FontSet.init(std.testing.allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    const font = try @import("howl_text").FontSet.init(std.testing.allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
     defer font.deinit();
     const owner = try output.Terminal.initConfig(std.testing.allocator, font, .{ .history_capacity = 8 });
     // zig-audit: acknowledge catch_unreachable
@@ -1622,7 +1657,7 @@ test "colour atlas survives alternating clipped scales" {
     const geometry = try a.create(Geometry);
     defer a.destroy(geometry);
     geometry.* = .{};
-    const id: render.ResourceRef = .{ .resource = try render.ResourceId.init(1), .generation = @fromBackingInt(1) };
+    const id: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(1), .generation = @fromBackingInt(1) };
     const pixels = try a.alloc(u8, 256 * 256 * 4);
     defer a.free(pixels);
     @memset(pixels, 0);
@@ -1630,12 +1665,12 @@ test "colour atlas survives alternating clipped scales" {
         const at = (y * 256 + x) * 4;
         pixels[at..][0..4].* = .{ 255, 0, 0, 255 };
     };
-    const upload: render.FrameResourceUpload = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .pixel_offset = 0, .pixel_count = pixels.len, .stride = 1024 };
+    const upload: output_commands.FrameResourceUpload = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .pixel_offset = 0, .pixel_count = pixels.len, .stride = 1024 };
     try canvas.applyResources(renderer, 1, &.{upload}, &.{}, pixels);
-    const view: render.ResourceView = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .source = .{ .x = 0, .y = 0, .width = 20, .height = 16 } };
-    const small: render.Command = .{ .rgba = .{ .destination = .{ .x = 104, .y = 48, .width = 20, .height = 16 }, .clip = .{ .x = 104, .y = 48, .width = 20, .height = 8 }, .resource = view } };
-    const large: render.Command = .{ .rgba = .{ .destination = .{ .x = 0, .y = 41, .width = 38, .height = 30 }, .clip = .{ .x = 0, .y = 56, .width = 38, .height = 15 }, .resource = view } };
-    const normal: render.Command = .{ .rgba = .{ .destination = .{ .x = 28, .y = 6, .width = 20, .height = 16 }, .clip = .{ .x = 28, .y = 6, .width = 20, .height = 16 }, .resource = view } };
+    const view: output_commands.ResourceView = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .source = .{ .x = 0, .y = 0, .width = 20, .height = 16 } };
+    const small: output_commands.Command = .{ .rgba = .{ .destination = .{ .x = 104, .y = 48, .width = 20, .height = 16 }, .clip = .{ .x = 104, .y = 48, .width = 20, .height = 8 }, .resource = view } };
+    const large: output_commands.Command = .{ .rgba = .{ .destination = .{ .x = 0, .y = 41, .width = 38, .height = 30 }, .clip = .{ .x = 0, .y = 56, .width = 38, .height = 15 }, .resource = view } };
+    const normal: output_commands.Command = .{ .rgba = .{ .destination = .{ .x = 28, .y = 6, .width = 20, .height = 16 }, .clip = .{ .x = 28, .y = 6, .width = 20, .height = 16 }, .resource = view } };
     const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = 228, .h = 224 };
     try canvas.drawCommands(renderer, geometry, pane, &.{ small, large });
     try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255));
@@ -1661,11 +1696,11 @@ test "direct Canvas cursor and selection pixels match an independent SDL composi
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
 
-    const background_color: render.Color = .{ .r = 10, .g = 20, .b = 30, .a = 255 };
-    const cursor_color: render.Color = .{ .r = 230, .g = 40, .b = 70, .a = 255 };
-    const background: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 40, .height = 20 }, .color = background_color } };
-    const cursor_rect: render.Rect = .{ .x = 10, .y = 0, .width = 10, .height = 10 };
-    const cursor_command: render.Command = .{ .solid = .{ .rect = cursor_rect, .color = cursor_color } };
+    const background_color: output_commands.Color = .{ .r = 10, .g = 20, .b = 30, .a = 255 };
+    const cursor_color: output_commands.Color = .{ .r = 230, .g = 40, .b = 70, .a = 255 };
+    const background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 40, .height = 20 }, .color = background_color } };
+    const cursor_rect: output_commands.Rect = .{ .x = 10, .y = 0, .width = 10, .height = 10 };
+    const cursor_command: output_commands.Command = .{ .solid = .{ .rect = cursor_rect, .color = cursor_color } };
     var snapshot = testSnapshot(background, &.{
         .{ .y = 0, .backgrounds = &.{}, .decorations = &.{}, .glyphs = &.{} },
         .{ .y = 10, .backgrounds = &.{}, .decorations = &.{}, .glyphs = &.{} },
@@ -1769,16 +1804,16 @@ test "direct graphics depth bands and removal repaint exact pixels" {
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
 
-    const black: render.Color = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
-    const blue: render.Color = .{ .r = 0, .g = 0, .b = 255, .a = 255 };
-    const cyan: render.Color = .{ .r = 0, .g = 255, .b = 255, .a = 255 };
-    const yellow: render.Color = .{ .r = 255, .g = 255, .b = 0, .a = 255 };
+    const black: output_commands.Color = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+    const blue: output_commands.Color = .{ .r = 0, .g = 0, .b = 255, .a = 255 };
+    const cyan: output_commands.Color = .{ .r = 0, .g = 255, .b = 255, .a = 255 };
+    const yellow: output_commands.Color = .{ .r = 255, .g = 255, .b = 0, .a = 255 };
     const solid = struct {
-        fn make(x: i32, width: u16, color: render.Color) render.Command {
+        fn make(x: i32, width: u16, color: output_commands.Color) output_commands.Command {
             return .{ .solid = .{ .rect = .{ .x = x, .y = 0, .width = width, .height = 10 }, .color = color } };
         }
     }.make;
-    const default_background: render.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 40, .height = 20 }, .color = black } };
+    const default_background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 40, .height = 20 }, .color = black } };
     var snapshot = testSnapshot(default_background, &.{
         .{ .y = 0, .backgrounds = &.{ solid(0, 8, blue), solid(10, 10, blue) }, .decorations = &.{solid(12, 2, cyan)}, .glyphs = &.{ solid(10, 2, yellow), solid(20, 10, yellow) } },
         .{ .y = 10, .backgrounds = &.{}, .decorations = &.{}, .glyphs = &.{} },
@@ -1790,9 +1825,9 @@ test "direct graphics depth bands and removal repaint exact pixels" {
     snapshot.content_revision = 1;
     snapshot.visual_context = 1;
 
-    const red_id: render.ResourceRef = .{ .resource = try render.ResourceId.init(3), .generation = @fromBackingInt(1) };
-    const green_id: render.ResourceRef = .{ .resource = try render.ResourceId.init(4), .generation = @fromBackingInt(1) };
-    const white_id: render.ResourceRef = .{ .resource = try render.ResourceId.init(5), .generation = @fromBackingInt(1) };
+    const red_id: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(3), .generation = @fromBackingInt(1) };
+    const green_id: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(4), .generation = @fromBackingInt(1) };
+    const white_id: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(5), .generation = @fromBackingInt(1) };
     const image_type = @TypeOf(snapshot.graphics.images[0]);
     const images = [_]image_type{
         .{ .resource = red_id, .size = .{ .width = 1, .height = 1 }, .pixels = &.{ 255, 0, 0, 255 } },
@@ -1800,7 +1835,7 @@ test "direct graphics depth bands and removal repaint exact pixels" {
         .{ .resource = white_id, .size = .{ .width = 1, .height = 1 }, .pixels = &.{ 255, 255, 255, 255 } },
     };
     const rgba = struct {
-        fn make(x: i32, resource: render.ResourceRef) render.Command {
+        fn make(x: i32, resource: output_commands.ResourceRef) output_commands.Command {
             return .{ .rgba = .{
                 .destination = .{ .x = x, .y = 0, .width = 10, .height = 10 },
                 .clip = .{ .x = 0, .y = 0, .width = 40, .height = 20 },
@@ -1808,9 +1843,9 @@ test "direct graphics depth bands and removal repaint exact pixels" {
             } };
         }
     }.make;
-    const deep = [_]render.Command{rgba(0, red_id)};
-    const negative = [_]render.Command{rgba(10, green_id)};
-    const positive = [_]render.Command{rgba(20, white_id)};
+    const deep = [_]output_commands.Command{rgba(0, red_id)};
+    const negative = [_]output_commands.Command{rgba(10, green_id)};
+    const positive = [_]output_commands.Command{rgba(20, white_id)};
     snapshot.graphics = .{ .deep = &deep, .negative = &negative, .positive = &positive, .images = &images };
     const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = 40, .h = 20 };
 
@@ -1849,7 +1884,7 @@ test "direct graphics depth bands and removal repaint exact pixels" {
 
 test "native VT image-only removal invalidates Canvas without synthetic revisions" {
     const output = @import("howl_vt_output");
-    const font = try instance.text.FontSet.init(std.testing.allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    const font = try @import("howl_text").FontSet.init(std.testing.allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
     defer font.deinit();
     const owner = try output.Terminal.init(std.testing.allocator, font);
     // zig-audit: acknowledge catch_unreachable

@@ -1,8 +1,9 @@
 # howl-app
 
-Local-only Zig/SDL3 desktop terminal beside Odin. Each pane owns one in-process
-Instance on an exclusive terminal worker. SDL consumes immutable Render leases;
-presentation delay cannot throttle canonical PTY/VT progress. The app has no
+Local-only Zig/SDL3 desktop terminal beside Odin. Each pane owns one canonical
+PTY/VT runtime and borrowed VT/Text output on an exclusive terminal worker.
+SDL consumes checked immutable direct-output cuts; presentation delay cannot
+throttle canonical PTY/VT progress. The app has no
 client transport, Server/Session identity, endpoint, attachment, detach operation
 or internal C ABI. Application allocations use Zig's SMP allocator.
 
@@ -195,7 +196,7 @@ Profiles may specify an explicit argument array (at most 16 arguments and 2 KiB
 of argument bytes), mutually exclusive with Command. Edit it as JSON in the
 profile's Arguments field; blank retains ordinary interactive-shell mode,
 while [] launches the executable without extra arguments. Arguments pass literally
-through the existing Instance program launch, without shell interpolation.
+through the app-owned PTY program launch, without shell interpolation.
 
 Colour schemes separates **App palette** from **Terminal palette**. App chrome
 keeps the existing howl_dark/slate/high_contrast presets with nine optional role

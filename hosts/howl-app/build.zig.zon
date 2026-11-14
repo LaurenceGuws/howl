@@ -4,7 +4,6 @@
     .fingerprint = 0xf47649779279c0da,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
-        .howl_instance = .{ .path = "../../mods/howl-instance" },
         .howl_pty = .{ .path = "../../mods/howl-pty" },
         .howl_vt = .{ .path = "../../mods/howl-vt" },
         .howl_text = .{ .path = "../../mods/howl-text" },

@@ -61,9 +61,11 @@ Server, socket or observation serialization. Optional Server -> Sessions ->
 Instances orchestration is a separately released consumer in howl-sessions;
 it depends down on Howl and never changes this local composition.
 
-Local howl-app uses a Zig/SDL frontend with its own Instance and immutable
-Render publications. howl-host consumes Instance-owned Render publications
-through Vulkan and Wayland without client transport or server routing.
+Local howl-app uses a Zig/SDL frontend with app-owned PTY, canonical VT and
+Text, borrowing VT's direct output for checked immutable drawing cuts. It does
+not construct Instance or Render. The separate howl-host still consumes
+Instance-owned Render publications through Vulkan and Wayland, without client
+transport or server routing.
 
 The former Flutter source remains in hosts/howl-flutter strictly as an
 **inactive, unsupported bring-up reference**. Its native/Dart/iOS build and
