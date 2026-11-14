@@ -1,5 +1,5 @@
 //! App-local canonical PTY/VT service, owned by the existing SDL worker.
-//! The direct worker integration is source-qualified, not yet a live GUI canary.
+//! The live SDL app worker owns this canonical PTY/VT and its borrowed output.
 //! No separate scheduler, ABI or second terminal is introduced here.
 const std = @import("std");
 const pty = @import("howl_pty");
