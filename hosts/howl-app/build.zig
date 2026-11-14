@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
+    const direct_output = vt_build.addOutputModules(b, vt.path("."), target, optimize, vt.module("howl_vt"), text.module("howl_text"), vt.module("howl_vt_output_commands"), vt.module("howl_vt_output_limits"));
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -28,8 +29,12 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("desktop", translation.createModule());
     root.addImport("howl_instance", instance.module("howl_instance"));
+    root.addImport("howl_pty", pty.module("howl_pty"));
     root.addImport("howl_vt", vt.module("howl_vt"));
+    // Until the remaining app type aliases leave Instance, reuse its output
+    // module identity; Zig cannot import the same source as two distinct modules.
     root.addImport("howl_vt_output", instance.module("howl_vt_output"));
+    root.addImport("output_state", instance.module("howl_vt_output").import_table.get("output_state").?);
     root.addImport("howl_vt_output_commands", vt.module("howl_vt_output_commands"));
     root.addImport("howl_vt_output_limits", vt.module("howl_vt_output_limits"));
     root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
@@ -42,8 +47,8 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(app);
     const tests = b.addTest(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
     // Direct-composition proof: no Instance or Render module is imported here.
-    // This is a small migration gate while the production worker still uses Instance.
-    const direct_output = vt_build.addOutputModules(b, vt.path("."), target, optimize, vt.module("howl_vt"), text.module("howl_text"), vt.module("howl_vt_output_commands"), vt.module("howl_vt_output_limits"));
+    // This independently verifies output composition without the app's temporary
+    // Instance type imports; the integrated worker owns Core and Projection.
     const direct_proof = b.createModule(.{ .root_source_file = b.path("src/direct_output_proof.zig"), .target = target, .optimize = optimize, .link_libc = true });
     direct_proof.addImport("howl_vt", vt.module("howl_vt"));
     direct_proof.addImport("howl_pty", pty.module("howl_pty"));

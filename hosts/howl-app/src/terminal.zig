@@ -1,6 +1,11 @@
 const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
+const canonical = @import("canonical.zig");
+const projection = @import("direct_projection.zig");
+const direct_desktop = @import("direct_desktop.zig");
+const vt_output = @import("howl_vt_output");
+const vt = @import("howl_vt");
 const policy = @import("publication.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
@@ -45,17 +50,19 @@ const Copy = struct {
 };
 
 /// Exact failures produced by this terminal worker's owned operations.
-pub const Failure = instance.InputError || instance.ResizeError ||
-    instance.ServiceError || std.posix.PollError || desktop.Error;
+pub const Failure = canonical.InputError || canonical.ResizeError ||
+    canonical.ServiceError || std.posix.PollError || direct_desktop.Error;
 
 /// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
-pub const PresentationFailure = instance.PrepareDirectError || error{SDLNotification};
+pub const PresentationFailure = @import("output_state").State(false).FlushError || error{SDLNotification};
 
 /// Immutable cut transfer or lease validation failure.
-pub const FrameError = instance.HoldDirectError || instance.ReleaseDirectError;
+pub const Frame = projection.Frame;
+/// Exact frame replacement and checked retirement failures.
+pub const FrameError = projection.ReplaceError;
 
 /// Exact transactional configuration/admission failures; old presentation survives failure.
-pub const ConfigureError = instance.ReconfigurePresentationError || error{ TerminalStopped, InputQueueFull };
+pub const ConfigureError = projection.ConfigureError || vt_output.PresentationStoreInitError || error{ TerminalStopped, InputQueueFull };
 
 const Configuration = struct {
     config: instance.PresentationConfig,
@@ -65,6 +72,15 @@ const Configuration = struct {
     complete: bool = false,
 };
 const Work = union(enum) { intent: Task, configure: *Configuration, copy: *Copy };
+
+fn sharedConfig(config: instance.PresentationConfig, history_rows: u16) @import("output_state").SharedConfig {
+    return .{
+        .history_capacity = history_rows,
+        .cursor_stroke_pixels = config.cursor_stroke_pixels,
+        .box_drawing = config.box_drawing,
+        .atlas = config.atlas,
+    };
+}
 
 /// Copied interaction/lifecycle facts; contains no borrowed canonical storage.
 pub const Status = struct {
@@ -84,10 +100,10 @@ pub const Status = struct {
     cursor_col: u16 = 0,
 };
 
-/// Typed ownership boundary. SDL cannot obtain the live canonical Instance.
+/// Typed ownership boundary. SDL cannot obtain the app-owned canonical Core.
 /// This is ordinary Zig composition; no C ABI, exported symbols or catalogue.
 // zig-audit: acknowledge opaque_type
-// reason: The terminal worker's canonical Instance and queue ownership must be inaccessible to the graphical consumer.
+// reason: The terminal worker's canonical PTY/VT and queue ownership must be inaccessible to the graphical consumer.
 pub const Terminal = opaque {
     /// Constructs one PTY/VT owner with final draw commands; rolls back on failure.
     pub fn create(
@@ -167,11 +183,11 @@ pub const Terminal = opaque {
         self.state().requestFrame();
     }
     /// Transfers a completed draw-command cut; no new cut preserves the held lease.
-    pub fn replaceFrame(self: *Terminal, previous: ?*instance.DirectLease, paint: ?*selection.Paint) FrameError!?instance.DirectLease {
+    pub fn replaceFrame(self: *Terminal, previous: ?*Frame, paint: ?*selection.Paint) FrameError!?Frame {
         return self.state().replaceFrame(previous, paint);
     }
     /// Retires the host's held cut before destroying the terminal worker.
-    pub fn releaseFrame(self: *Terminal, lease: instance.DirectLease) instance.ReleaseDirectError!void {
+    pub fn releaseFrame(self: *Terminal, lease: Frame) projection.ReleaseError!void {
         const owned = self.state();
         owned.frame_mutex.lockUncancelable(owned.io);
         defer {
@@ -180,7 +196,7 @@ pub const Terminal = opaque {
             // Retiring the pin must not strand a pending projection in the idle poll.
             if (owned.credit.load(.acquire)) owned.wake();
         }
-        try instance.releaseDirectOutput(owned.value, lease);
+        try owned.projection.release(lease);
     }
 
     fn state(self: *Terminal) *State {
@@ -192,12 +208,14 @@ pub const Terminal = opaque {
     }
 };
 
-/// Main owns lifetime; its terminal worker owns every live Instance mutation.
+/// Main owns lifetime; its terminal worker owns every canonical PTY/VT mutation.
 /// Main sees only immutable frame leases and bounded copied interaction facts.
 const State = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    value: *instance.Instance,
+    value: *canonical.Core,
+    projection: *projection.Projection,
+    history_capacity: u16,
     wake_fd: posix.fd_t,
     event_type: u32,
     thread: ?std.Thread = null,
@@ -232,6 +250,10 @@ const State = struct {
     clipboard: ?[]u8 = null,
     consequence_worked: bool = false,
 
+    fn observe(self: *const State) *const vt.Terminal.Observation {
+        return self.value.terminal.observation();
+    }
+
     fn create(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -243,8 +265,34 @@ const State = struct {
     ) !*State {
         const self = try allocator.create(State);
         errdefer allocator.destroy(self);
-        const value = try instance.initDirect(allocator, environ, launch, presentation);
-        errdefer instance.deinit(value);
+        const store = switch (presentation.text) {
+            .shared => |shared| shared,
+            .private => |fonts| try vt_output.initPresentationStore(allocator, io, fonts, .{
+                .shape_cache = presentation.shape_cache,
+                .shaped_capacity = presentation.shaped_capacity,
+                .raster_bytes = presentation.raster_bytes,
+            }),
+        };
+        defer if (presentation.text == .private) vt_output.releasePresentationStore(store);
+        const cell = vt_output.presentationStoreCellSize(store);
+        const value = try allocator.create(canonical.Core);
+        errdefer allocator.destroy(value);
+        try value.initInto(allocator, environ, .{
+            .shell = launch.shell,
+            .command = launch.command,
+            .arguments = launch.arguments,
+            .cwd = launch.cwd,
+            .rows = launch.rows,
+            .columns = launch.columns,
+            .history_rows = launch.history_rows,
+            .term = launch.term,
+            .colorterm = launch.colorterm,
+            .color_defaults = launch.color_defaults,
+            .cursor_style = launch.cursor_style,
+        }, .{ .width = cell.width, .height = cell.height });
+        errdefer value.deinit();
+        const direct = try projection.Projection.create(allocator, &value.terminal, store, sharedConfig(presentation, launch.history_rows));
+        errdefer direct.destroy();
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (fd < 0) return error.WakeFailed;
         errdefer closeWake(fd);
@@ -252,6 +300,8 @@ const State = struct {
             .allocator = allocator,
             .io = io,
             .value = value,
+            .projection = direct,
+            .history_capacity = launch.history_rows,
             .color_preference = desktop.colorPreference(launch.color_defaults.background),
             .wake_fd = fd,
             .event_type = event_type,
@@ -271,7 +321,9 @@ const State = struct {
         self.cancelPending();
         closeWake(self.wake_fd);
         if (self.clipboard) |bytes| self.allocator.free(bytes);
-        instance.deinit(self.value);
+        self.projection.destroy();
+        self.value.deinit();
+        self.allocator.destroy(self.value);
         const allocator = self.allocator;
         allocator.destroy(self);
     }
@@ -286,7 +338,7 @@ const State = struct {
         return copied;
     }
 
-    fn replaceFrame(self: *State, previous: ?*instance.DirectLease, paint: ?*selection.Paint) FrameError!?instance.DirectLease {
+    fn replaceFrame(self: *State, previous: ?*Frame, paint: ?*selection.Paint) FrameError!?Frame {
         if (!self.new_frame.load(.acquire)) return null;
         self.frame_mutex.lockUncancelable(self.io);
         defer {
@@ -294,7 +346,7 @@ const State = struct {
             if (self.credit.load(.acquire)) self.wake();
         }
         if (!self.new_frame.load(.acquire)) return null;
-        const lease = try instance.replaceDirectOutput(self.value, if (previous) |lease| lease.* else null);
+        const lease = try self.projection.replace(if (previous) |lease| lease.* else null);
         if (paint) |output| output.* = self.paint;
         self.new_frame.store(false, .release);
         return lease;
@@ -362,16 +414,26 @@ const State = struct {
     }
 
     fn applyConfiguration(self: *State, request: *Configuration) void {
-        const live = instance.terminal(self.value).semanticView(0);
-        const result = if (request.surface) |surface|
-            instance.reconfigurePresentationSurface(self.value, request.config, surface)
-        else keep_grid: {
-            const cell = instance.reconfigurePresentation(self.value, request.config) catch |failure| {
+        const live = self.observe().semanticView(0);
+        const store = switch (request.config.text) {
+            .shared => |shared| shared,
+            .private => |fonts| vt_output.initPresentationStore(self.allocator, self.io, fonts, .{
+                .shape_cache = request.config.shape_cache,
+                .shaped_capacity = request.config.shaped_capacity,
+                .raster_bytes = request.config.raster_bytes,
+            }) catch |failure| {
                 self.completeConfiguration(request, failure);
                 return;
-            };
-            break :keep_grid instance.PresentationGeometry{ .cell_size = cell, .rows = live.rows, .columns = live.cols };
+            },
         };
+        defer if (request.config.text == .private) vt_output.releasePresentationStore(store);
+        const target: projection.Target = if (request.surface) |surface|
+            .{ .surface = .{ .width = surface.width, .height = surface.height } }
+        else
+            .current;
+        self.frame_mutex.lockUncancelable(self.io);
+        defer self.frame_mutex.unlock(self.io);
+        const result = self.projection.reconfigure(self.value, store, sharedConfig(request.config, self.history_capacity), target);
         if (result) |geometry| {
             // The sole producer invalidates only notification authority, never an accepted lease.
             // Reconfiguration completes before the GUI can start its next transfer; only a later
@@ -384,7 +446,11 @@ const State = struct {
             self.mutex.unlock(self.io);
             self.gate.pending = true;
             self.credit.store(true, .release);
-            self.completeConfiguration(request, geometry);
+            self.completeConfiguration(request, instance.PresentationGeometry{
+                .cell_size = .{ .width = @intCast(geometry.cell_size.width), .height = @intCast(geometry.cell_size.height) },
+                .rows = geometry.rows,
+                .columns = geometry.columns,
+            });
         } else |failure| self.completeConfiguration(request, failure);
     }
 
@@ -418,10 +484,10 @@ const State = struct {
             self.completeCopy(request, self.selection_failure orelse error.NoSelection);
             return;
         };
-        self.completeCopy(request, range.copy(instance.terminal(self.value), request.allocator, request.max_bytes));
+        self.completeCopy(request, range.copy(self.observe(), request.allocator, request.max_bytes));
     }
     fn resolve(self: *State, context: selection.Context, point: instance.Terminal.TextPoint) SelectionError!struct { view: instance.Terminal.SemanticView, row: u16 } {
-        const observation = instance.terminal(self.value);
+        const observation = self.observe();
         const live = observation.semanticView(0);
         if (live.cols != context.columns or live.is_alternate_screen != context.alternate) return error.SelectionContextChanged;
         const first = try context.row(0);
@@ -437,7 +503,7 @@ const State = struct {
         const resolved = try self.resolve(link.context, link.point);
         const cell = resolved.view.cellInfoAt(resolved.row, link.point.col);
         if (cell.attrs.link_id == 0) return error.NoHyperlink;
-        const uri = instance.terminal(self.value).hyperlinkUri(cell.attrs.link_id) orelse return error.NoHyperlink;
+        const uri = self.observe().hyperlinkUri(cell.attrs.link_id) orelse return error.NoHyperlink;
         if (uri.len > max_bytes) return error.HyperlinkLimit;
         return allocator.dupe(u8, uri);
     }
@@ -472,7 +538,7 @@ const State = struct {
     fn selectMatch(self: *State, range: selection.Range) void {
         self.selected = range;
         self.selection_failure = null;
-        const live = instance.terminal(self.value).semanticView(0);
+        const live = self.observe().semanticView(0);
         const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
         self.history.seek(@intCast(@min(@as(i64, live.history_count), @max(0, top - range.anchor.row))), live.history_count, live.history_row_base, live.is_alternate_screen);
         self.gate.pending = true;
@@ -480,7 +546,7 @@ const State = struct {
     fn applyFind(self: *State, request: find.Request) void {
         self.selection_serial = request.serial;
         self.selection_failure = null;
-        const observation = instance.terminal(self.value);
+        const observation = self.observe();
         switch (request.kind) {
             .close => {
                 self.search = .{};
@@ -547,7 +613,7 @@ const State = struct {
     }
 
     fn apply(self: *State, task: Task) !void {
-        const live = instance.terminal(self.value).semanticView(0);
+        const live = self.observe().semanticView(0);
         switch (task) {
             .find => |request| self.applyFind(request),
             .select => |intent| self.applySelection(intent) catch |failure| {
@@ -564,12 +630,12 @@ const State = struct {
                         self.gate.pending = true;
                     }
                 }
-                try instance.input(self.value, input);
+                try self.value.input(input);
             },
             .resize => |size| {
                 if (size.rows != live.rows or size.columns != live.cols) {
                     if (size.columns != live.cols) self.history.reset();
-                    try instance.resize(self.value, size.rows, size.columns);
+                    try self.value.resize(size.rows, size.columns);
                     self.gate.pending = true;
                 }
             },
@@ -592,9 +658,9 @@ const State = struct {
         }
     }
 
-    fn service(self: *State, readable: bool, writable: bool, now: u64) !instance.Service {
-        const result = try instance.serviceWithConsequencePolicy(self.value, readable, writable, now, .retain);
-        var host = try desktop.drain(self.value, self.allocator, self.color_preference);
+    fn service(self: *State, readable: bool, writable: bool, now: u64) !canonical.Service {
+        const result = try self.value.service(readable, writable, now);
+        var host = try direct_desktop.drain(&self.value.terminal, self.allocator, self.color_preference);
         defer host.deinit(self.allocator);
         self.consequence_worked = host.worked;
         var host_notify = false;
@@ -609,7 +675,7 @@ const State = struct {
         }
         if (host.attention and !self.attention.swap(true, .acq_rel)) host_notify = true;
         if (host_notify) self.notify();
-        const observation = instance.terminal(self.value);
+        const observation = self.observe();
         const live = observation.semanticView(0);
         self.history.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
@@ -671,7 +737,7 @@ const State = struct {
             if (!self.frame_mutex.tryLock()) return result;
             defer self.frame_mutex.unlock(self.io);
             std.debug.assert(self.credit.swap(false, .acq_rel));
-            instance.prepareDirectOutput(self.value, self.history.offset) catch |failure| {
+            self.projection.prepare(self.history.offset) catch |failure| {
                 if (failure == error.PresentationBusy) {
                     self.store_busy = true;
                     self.credit.store(true, .release);
@@ -732,7 +798,7 @@ const State = struct {
         while (!self.stopRequested()) {
             // Blocked scalar work still targets the current screen and cursor.
             // Defer queued mutations until it has been applied.
-            const scalar_was_blocked = instance.inputBlocked(self.value);
+            const scalar_was_blocked = self.value.inputBlocked();
             if (!scalar_was_blocked) {
                 while (self.pop()) |work| switch (work) {
                     .intent => |task| {
@@ -743,18 +809,18 @@ const State = struct {
                     .copy => |request| self.applyCopy(request),
                 };
                 if (self.takeCursor()) |style| {
-                    instance.setDefaultCursorStyle(self.value, style);
+                    self.value.terminal.setDefaultCursorStyle(style);
                     self.gate.pending = true;
                 }
                 if (self.takeColors()) |defaults| {
-                    instance.setColorDefaults(self.value, defaults);
+                    self.value.terminal.setColorDefaults(defaults);
                     const preference = desktop.colorPreference(defaults.background);
                     self.preference_pending = self.preference_pending or preference != self.color_preference;
                     self.color_preference = preference;
                     self.gate.pending = true;
                 }
                 if (self.preference_pending) {
-                    const sent: ?bool = instance.reportColorSchemePreference(self.value, self.color_preference) catch |failure| switch (failure) {
+                    const sent: ?bool = self.value.terminal.reportColorSchemePreference(self.color_preference) catch |failure| switch (failure) {
                         error.ReplyLimit => null,
                         else => return failure,
                     };
@@ -764,7 +830,7 @@ const State = struct {
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
             // Queued work received while blocked must not wait for another wake.
-            if (scalar_was_blocked and !instance.inputBlocked(self.value)) continue;
+            if (scalar_was_blocked and !self.value.inputBlocked()) continue;
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.gate.waitMs(now),
@@ -774,12 +840,12 @@ const State = struct {
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
-            if (instance.bufferedOutputRunnable(self.value) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
-            const can_read = !result.stream_closed and !instance.inputBlocked(self.value);
-            const can_write = result.write_pending or instance.writePending(self.value);
+            if (self.value.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            const can_read = self.value.readAdmissible();
+            const can_write = result.write_pending or self.value.writePending();
             var fds = [_]posix.pollfd{
                 .{
-                    .fd = if (!can_read and !can_write) -1 else try instance.descriptor(self.value),
+                    .fd = if (!can_read and !can_write) -1 else try self.value.descriptor(),
                     .events = (if (can_read) @as(i16, posix.POLL.IN | posix.POLL.HUP) else 0) | (if (can_write) @as(i16, posix.POLL.OUT) else 0),
                     .revents = 0,
                 },
@@ -789,7 +855,7 @@ const State = struct {
             // reason: Readiness is consumed from each exact revents mask below; the aggregate ready count adds no authority.
             _ = try posix.poll(&fds, timeout);
             if (fds[1].revents & posix.POLL.IN != 0) self.drainWake();
-            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or instance.bufferedOutputRunnable(self.value);
+            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or self.value.bufferedOutputRunnable();
             writable = fds[0].revents & posix.POLL.OUT != 0;
         }
     }
@@ -907,7 +973,7 @@ test "OSC 52 sets become coalesced copied desktop facts without pacing canonical
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("Two", text);
     try std.testing.expect((try owner.takeClipboardSet(std.testing.allocator)) == null);
-    try std.testing.expectEqual(@as(u16, 0), instance.consequenceCount(owner.state().value));
+    try std.testing.expectEqual(@as(u16, 0), owner.state().value.terminal.consequenceCount());
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 
@@ -939,7 +1005,7 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .legacy_text = "borrowed" } } }));
 }
 
-fn waitFrame(owner: *Terminal, previous: ?*instance.DirectLease, paint: ?*selection.Paint) !instance.DirectLease {
+fn waitFrame(owner: *Terminal, previous: ?*Frame, paint: ?*selection.Paint) !Frame {
     for (0..5000) |_| {
         if (try owner.replaceFrame(previous, paint)) |lease| return lease;
         const status = owner.snapshot();
@@ -1705,7 +1771,7 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    var first: ?instance.DirectLease = null;
+    var first: ?Frame = null;
     for (0..5000) |_| {
         first = try owner.replaceFrame(null, null);
         if (first != null) break;
@@ -1729,7 +1795,7 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     try std.testing.expectEqual(initial, held.snapshot.terminal_revision);
     try std.testing.expectEqualDeep(old_first, held.snapshot.glyphs[0][0]);
     owner.requestFrame();
-    var next: ?instance.DirectLease = null;
+    var next: ?Frame = null;
     for (0..5000) |_| {
         next = try owner.replaceFrame(&held, null);
         if (next != null) break;
@@ -1852,7 +1918,7 @@ test "direct worker recovers on a clean alternate screen with primary image reta
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    var first: ?instance.DirectLease = null;
+    var first: ?Frame = null;
     for (0..5000) |_| {
         first = try owner.replaceFrame(null, null);
         if (first != null) break;
@@ -1919,7 +1985,7 @@ test "direct worker draws a multi-row continuation after history scroll" {
     }, testPresentation(), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     try waitTitle(owner, "READY");
-    var first: ?instance.DirectLease = null;
+    var first: ?Frame = null;
     for (0..5000) |_| {
         first = try owner.replaceFrame(null, null);
         if (first != null) break;
@@ -1935,7 +2001,7 @@ test "direct worker draws a multi-row continuation after history scroll" {
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "SCROLLED");
     owner.requestFrame();
-    var next: ?instance.DirectLease = null;
+    var next: ?Frame = null;
     for (0..5000) |_| {
         next = try owner.replaceFrame(&held, null);
         if (next != null) break;

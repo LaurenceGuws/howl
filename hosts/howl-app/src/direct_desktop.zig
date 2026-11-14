@@ -1,6 +1,5 @@
-//! App-owned desktop consequences on the one mutable canonical VT. This
-//! replaces Instance's forwarding path when the SDL worker changes owners.
-//! Until then it is an independent direct-owner proof, not live GUI policy.
+//! App-owned desktop consequences on the one mutable canonical VT. The SDL
+//! worker uses this policy directly, with its FIFO behavior covered by tests.
 const std = @import("std");
 const vt = @import("howl_vt");
 const runtime = @import("canonical.zig");

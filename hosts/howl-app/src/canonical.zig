@@ -1,6 +1,5 @@
-//! App-local canonical PTY/VT service. The SDL worker will own this concrete
-//! state directly after its checked output and configuration paths migrate.
-//! This is currently test-only: it is not a qualified live worker replacement.
+//! App-local canonical PTY/VT service, owned by the existing SDL worker.
+//! The direct worker integration is source-qualified, not yet a live GUI canary.
 //! No separate scheduler, ABI or second terminal is introduced here.
 const std = @import("std");
 const pty = @import("howl_pty");

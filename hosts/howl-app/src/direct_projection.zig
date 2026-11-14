@@ -1,6 +1,6 @@
 //! App-private checked handoff of VT-owned borrowed output. The SDL worker
 //! serializes prepare/replace/release; GUI consumers only hold immutable cuts.
-//! This is test-only until the app worker replaces its Instance ownership.
+//! The app worker owns this projection; the independent proof covers its boundary.
 const std = @import("std");
 const vt = @import("howl_vt");
 const output = @import("howl_vt_output");

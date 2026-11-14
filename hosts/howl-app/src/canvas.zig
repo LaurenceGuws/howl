@@ -100,7 +100,7 @@ pub const Geometry = struct {
 /// The producer retains two free/replaceable slots and never waits for this lease.
 pub const Canvas = struct {
     allocator: std.mem.Allocator,
-    lease: ?instance.DirectLease = null,
+    lease: ?terminal.Frame = null,
     owner: ?*terminal.Terminal = null,
     selection_paint: selection.Paint = .{},
     textures: [resource_limit]Texture = undefined,
