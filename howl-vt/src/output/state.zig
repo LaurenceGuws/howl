@@ -895,7 +895,8 @@ pub fn State(comptime instrumented: bool) type {
                 block.count = 0;
                 block.background_end = 0;
                 block.decoration_end = 0;
-                try self.ensureBlock(block, @min(screen.cols, self.command_limit));
+                // An untouched blank row emits no commands. Keep its staging
+                // storage empty; the first actual command earns a reservation.
                 const counts = while (true) {
                     const result = glyph_rows.buildSelectedRow(.{
                         .atlas = self.atlas,
@@ -913,7 +914,11 @@ pub fn State(comptime instrumented: bool) type {
                         .color_resource = self.committedColorResource() orelse .{ .resource = try frame.ResourceId.init(2), .generation = @fromBackingInt(1) },
                     }, self.vt, live_row, history, block.commands[0..@min(block.commands.len, self.command_limit)]) catch |err| {
                         if (err != error.CommandLimit or block.commands.len >= self.command_limit) return err;
-                        try self.ensureBlock(block, @min(self.command_limit, @max(1, block.commands.len * 2)));
+                        const next_capacity = if (block.commands.len == 0)
+                            @min(@as(usize, screen.cols), self.command_limit)
+                        else
+                            @min(self.command_limit, block.commands.len * 2);
+                        try self.ensureBlock(block, next_capacity);
                         continue;
                     };
                     break result;

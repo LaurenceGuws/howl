@@ -1,6 +1,7 @@
 //! Shared native lane proofs using the public opaque owner and internal claim boundary.
 const std = @import("std");
 const output = @import("howl_vt_output");
+const state = @import("output_state");
 const support = @import("text_support");
 const cache = @import("glyph_cache");
 const shaped_text = @import("howl_text");
@@ -29,6 +30,37 @@ fn ready(allocator: std.mem.Allocator, store: *output.PresentationStore) !*outpu
     try owner.feed("\x1b[?25lA");
     try owner.flush();
     return owner;
+}
+
+test "blank direct rows reserve no commands and later text preserves held blank output" {
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try makeStore(threaded.io());
+    defer output.releasePresentationStore(store);
+    const owner = try state.State(true).initShared(a, store, .{});
+    defer owner.deinit();
+
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 0), owner.retainedCommandBytes());
+    const blank = try owner.hold();
+    var blank_held = true;
+    defer if (blank_held) owner.release();
+    try std.testing.expectEqual(@as(usize, 0), blank.glyphs[0].len);
+    const pixels = try a.dupe(u8, blank.atlas_pixels);
+    defer a.free(pixels);
+
+    try owner.feed("\x1b[?25lA");
+    try owner.flush();
+    try std.testing.expect(owner.retainedCommandBytes() > 0);
+    try std.testing.expectEqualSlices(u8, pixels, blank.atlas_pixels);
+    try std.testing.expectEqual(@as(usize, 0), blank.glyphs[0].len);
+    owner.release();
+    blank_held = false;
+
+    const text_cut = try owner.hold();
+    defer owner.release();
+    try std.testing.expect(text_cut.glyphs[0].len > 0);
+    for (text_cut.glyphs[1..text_cut.rows]) |row| try std.testing.expectEqual(@as(usize, 0), row.len);
 }
 
 test "two public shared owners isolate held resources and remain live after caller release" {
