@@ -15,6 +15,7 @@ const desktop = @import("desktop.zig");
 const posix = std.posix;
 
 const queue_limit = 64;
+const queue_turn_limit = 16;
 const input_byte_limit = 1024 * 1024;
 
 /// Bounded asynchronous semantic input and presentation-geometry intent.
@@ -40,7 +41,7 @@ pub const Select = struct {
 /// Noncanonical selection failures never stop process/VT service.
 pub const SelectionError = error{ InvalidSelection, SelectionContextChanged, SelectionEvicted };
 /// Bounded canonical extraction and FIFO admission failures.
-pub const CopyError = vt.Terminal.TextError || SelectionError || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull };
+pub const CopyError = vt.Terminal.TextError || SelectionError || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull, InputBackpressured };
 const Link = struct { context: selection.Context, point: vt.Terminal.TextPoint };
 const Copy = struct {
     link: ?Link = null,
@@ -64,7 +65,7 @@ pub const Frame = projection.Frame;
 pub const FrameError = projection.ReplaceError;
 
 /// Exact transactional configuration/admission failures; old presentation survives failure.
-pub const ConfigureError = projection.ConfigureError || vt_output.PresentationStoreInitError || error{ TerminalStopped, InputQueueFull };
+pub const ConfigureError = projection.ConfigureError || vt_output.PresentationStoreInitError || error{ TerminalStopped, InputQueueFull, InputBackpressured };
 
 const Configuration = struct {
     config: app_presentation.Config,
@@ -228,6 +229,10 @@ const State = struct {
     head: usize = 0,
     count: usize = 0,
     input_bytes: usize = 0,
+    // Accepted GUI intents that could no longer enter the canonical PTY outbox.
+    // Core.undelivered_bytes accounts only for bytes already encoded there.
+    write_closed_intents: usize = 0,
+    write_closed_payload_bytes: usize = 0,
     stopping: bool = false,
     status: Status = .{},
     pending_colors: ?vt.Terminal.ColorDefaults = null,
@@ -428,7 +433,10 @@ const State = struct {
                 return;
             },
         };
-        defer if (request.config.text == .private) vt_output.releasePresentationStore(store);
+        // Completion releases the caller's stack request. Snapshot cleanup
+        // ownership before signaling; the defer must never inspect request.
+        const store_is_private = request.config.text == .private;
+        defer if (store_is_private) vt_output.releasePresentationStore(store);
         const target: projection.Target = if (request.surface) |surface|
             .{ .surface = .{ .width = surface.width, .height = surface.height } }
         else
@@ -609,12 +617,56 @@ const State = struct {
         return if (self.count == 0) null else self.tasks[self.head];
     }
 
-    /// Keep admitted input at the FIFO head until the bounded PTY outbox can accept it.
-    fn applyQueued(self: *State) !bool {
-        while (self.peek()) |work| {
+    /// An unwritable PTY must not hold GUI callers on borrowed stack requests.
+    /// Rejection has no canonical effect; retained intent keeps its exact FIFO order.
+    fn rejectBlockedControls(self: *State) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const count = self.count;
+        var retained: usize = 0;
+        var rejected = false;
+        for (0..count) |index| {
+            const work = self.tasks[(self.head + index) % queue_limit];
+            switch (work) {
+                .intent => {
+                    self.tasks[(self.head + retained) % queue_limit] = work;
+                    retained += 1;
+                },
+                .configure => |request| {
+                    request.failure = error.InputBackpressured;
+                    request.complete = true;
+                    rejected = true;
+                },
+                .copy => |request| {
+                    request.failure = error.InputBackpressured;
+                    request.complete = true;
+                    rejected = true;
+                },
+            }
+        }
+        self.count = retained;
+        if (rejected) self.configured.broadcast(self.io);
+    }
+
+    const QueueTurn = enum { empty, backpressured, more };
+
+    /// Service canonical reads after a bounded amount of work, even if callers
+    /// replenish the queue faster than the worker can retire late input.
+    fn applyQueued(self: *State) !QueueTurn {
+        for (0..queue_turn_limit) |_| {
+            const work = self.peek() orelse return .empty;
             switch (work) {
                 .intent => |task| self.apply(task) catch |failure| switch (failure) {
-                    error.WriteQueueFull => return true,
+                    error.WriteQueueFull => {
+                        self.rejectBlockedControls();
+                        return .backpressured;
+                    },
+                    error.ChildClosed => {
+                        // This is an ordinary half-closed PTY lifecycle event,
+                        // not a failed read-side worker. Retire only this intent.
+                        self.write_closed_intents +|= 1;
+                        self.write_closed_payload_bytes +|= taskBytes(task).len;
+                    },
                     else => return failure,
                 },
                 .configure => |request| self.applyConfiguration(request),
@@ -623,7 +675,8 @@ const State = struct {
             const completed = self.pop().?;
             if (completed == .intent) self.releaseTask(completed.intent);
         }
-        return false;
+        // The next worker turn must run without another external eventfd wake.
+        return .more;
     }
 
     fn releaseTask(self: *State, task: Task) void {
@@ -824,9 +877,9 @@ const State = struct {
             // Blocked scalar work still targets the current screen and cursor.
             // Defer queued mutations until it has been applied.
             const scalar_was_blocked = self.value.inputBlocked();
-            var input_deferred = false;
+            var queue_turn: QueueTurn = .empty;
             if (!scalar_was_blocked) {
-                input_deferred = try self.applyQueued();
+                queue_turn = try self.applyQueued();
                 if (self.takeCursor()) |style| {
                     self.value.terminal.setDefaultCursorStyle(style);
                     self.gate.pending = true;
@@ -845,13 +898,15 @@ const State = struct {
                     };
                     if (sent != null) self.preference_pending = false;
                 }
+            } else {
+                self.rejectBlockedControls();
             }
             const room_before = self.value.writeRoom();
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
-            if (input_deferred and self.value.writeRoom() > room_before) continue;
+            const retry_after_write_progress = queue_turn == .backpressured and self.value.writeRoom() > room_before;
             // Queued work received while blocked must not wait for another wake.
-            if (scalar_was_blocked and !self.value.inputBlocked()) continue;
+            const retry_after_scalar_recovery = scalar_was_blocked and !self.value.inputBlocked();
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.gate.waitMs(now),
@@ -861,7 +916,10 @@ const State = struct {
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
-            if (self.value.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            // Runnable queue work and newly available outbox room both need a
+            // fresh PTY readiness snapshot. A zero-timeout poll retries now
+            // without pinning readable=false through sustained input traffic.
+            if (queue_turn == .more or retry_after_write_progress or retry_after_scalar_recovery or self.value.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
             const can_read = self.value.readAdmissible();
             const can_write = result.write_pending or self.value.writePending();
             var fds = [_]posix.pollfd{
@@ -1075,16 +1133,111 @@ test "full PTY outbox retains accepted input in FIFO order until capacity return
     };
     defer state.cancelPending();
     try state.submit(.{ .input = .{ .bytes = "FIRST_123456789" } });
+    var configuration: Configuration = .{ .config = testPresentation(), .surface = null };
+    try state.admit(.{ .configure = &configuration });
     try state.submit(.{ .input = .{ .bytes = "SECOND\n" } });
-    try std.testing.expect(try state.applyQueued());
+    var copy_request: Copy = .{ .allocator = std.testing.allocator, .max_bytes = 128 };
+    try state.admit(.{ .copy = &copy_request });
+    try std.testing.expectEqual(State.QueueTurn.backpressured, try state.applyQueued());
     try std.testing.expectEqual(@as(usize, 2), state.count);
     try std.testing.expectEqual(room_before, core.writeRoom());
+    try std.testing.expect(configuration.complete);
+    try std.testing.expectEqual(@as(?ConfigureError, error.InputBackpressured), configuration.failure);
+    try std.testing.expect(copy_request.complete);
+    try std.testing.expectEqual(@as(?CopyError, error.InputBackpressured), copy_request.failure);
+    try std.testing.expectEqual(@as(usize, "FIRST_123456789SECOND\n".len), state.input_bytes);
 
     // The PTY accepted the previous bytes, so the same bounded queue can advance.
     core.writes = .{};
-    try std.testing.expect(!(try state.applyQueued()));
+    try std.testing.expectEqual(State.QueueTurn.empty, try state.applyQueued());
     try std.testing.expectEqual(@as(usize, 0), state.count);
     try std.testing.expectEqualStrings("FIRST_123456789SECOND\n", core.writes.bytes[0..core.writes.count]);
+}
+
+test "borrowed-control rejection compacts a wrapped queue without retiring later input" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const core = try std.testing.allocator.create(canonical.Core);
+    defer std.testing.allocator.destroy(core);
+    core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
+    defer core.terminal.deinit();
+    const wake_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (wake_fd < 0) return error.WakeFailed;
+    defer closeWake(wake_fd);
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .io = threaded.io(),
+        .value = core,
+        .projection = undefined,
+        .history_capacity = 8,
+        .wake_fd = wake_fd,
+        .event_type = 0,
+        .head = queue_limit - 2,
+    };
+    defer state.cancelPending();
+    try state.submit(.{ .input = .{ .bytes = "A" } });
+    var configuration: Configuration = .{ .config = testPresentation(), .surface = null };
+    try state.admit(.{ .configure = &configuration });
+    try state.submit(.{ .input = .{ .bytes = "B" } });
+    var copy_request: Copy = .{ .allocator = std.testing.allocator, .max_bytes = 32 };
+    try state.admit(.{ .copy = &copy_request });
+    state.rejectBlockedControls();
+    try std.testing.expect(configuration.complete);
+    try std.testing.expectEqual(@as(?ConfigureError, error.InputBackpressured), configuration.failure);
+    try std.testing.expect(copy_request.complete);
+    try std.testing.expectEqual(@as(?CopyError, error.InputBackpressured), copy_request.failure);
+    try std.testing.expectEqual(@as(usize, 2), state.count);
+    try std.testing.expectEqual(@as(usize, 2), state.input_bytes);
+    try std.testing.expectEqual(State.QueueTurn.empty, try state.applyQueued());
+    try std.testing.expectEqualStrings("AB", core.writes.bytes[0..core.writes.count]);
+    try std.testing.expectEqual(@as(usize, 0), state.input_bytes);
+}
+
+test "late accepted input after PTY write closure retires without killing read-side service" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const core = try std.testing.allocator.create(canonical.Core);
+    defer std.testing.allocator.destroy(core);
+    core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
+    defer core.terminal.deinit();
+    core.write_closed = true;
+
+    const wake_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (wake_fd < 0) return error.WakeFailed;
+    defer closeWake(wake_fd);
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .io = threaded.io(),
+        .value = core,
+        .projection = undefined,
+        .history_capacity = 8,
+        .wake_fd = wake_fd,
+        .event_type = 0,
+    };
+    defer state.cancelPending();
+    try state.submit(.{ .input = .{ .bytes = "LATE\n" } });
+    try state.submit(.{ .input = .{ .paste = "SECOND" } });
+    try std.testing.expectEqual(State.QueueTurn.empty, try state.applyQueued());
+    try std.testing.expectEqual(@as(usize, 0), state.count);
+    try std.testing.expectEqual(@as(usize, 0), state.input_bytes);
+    try std.testing.expectEqual(@as(usize, 2), state.write_closed_intents);
+    try std.testing.expectEqual(@as(usize, "LATE\nSECOND".len), state.write_closed_payload_bytes);
+    try std.testing.expectEqual(@as(usize, 0), core.undelivered_bytes);
+    try std.testing.expect(core.readAdmissible());
+    try std.testing.expectEqual(@as(?Failure, null), state.status.failure);
+
+    // Continuous late-input admission cannot monopolize a worker turn.
+    // Its caller immediately schedules another turn without a fresh wake.
+    for (0..queue_turn_limit * 2) |_| try state.submit(.{ .input = .{ .bytes = "x" } });
+    try std.testing.expectEqual(State.QueueTurn.more, try state.applyQueued());
+    try std.testing.expectEqual(@as(usize, queue_turn_limit), state.count);
+    try std.testing.expect(core.readAdmissible());
+    try std.testing.expectEqual(State.QueueTurn.more, try state.applyQueued());
+    try std.testing.expectEqual(@as(usize, 0), state.count);
+    try std.testing.expectEqual(State.QueueTurn.empty, try state.applyQueued());
+    try std.testing.expectEqual(@as(usize, 2 + queue_turn_limit * 2), state.write_closed_intents);
 }
 
 test "paused PTY reader eventually consumes every accepted input chunk" {
@@ -1105,6 +1258,85 @@ test "paused PTY reader eventually consumes every accepted input chunk" {
     const chunk: [32 * 1024]u8 = @splat('x');
     for (0..3) |_| try owner.submit(.{ .input = .{ .bytes = &chunk } });
     try waitTitle(owner, "DRAINED");
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+}
+
+test "sustained PTY write pressure cannot hide a fresh child output marker" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033]0;READY\\007'; sleep 1; dd iflag=fullblock bs=1024 count=128 of=/dev/null 2>/dev/null; printf '\\033]0;MARKER\\007'; cat > /dev/null",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+
+    const chunk: [32 * 1024]u8 = @splat('x');
+    var admitted: usize = 0;
+    var saw_marker = false;
+    for (0..5000) |_| {
+        if (owner.submit(.{ .input = .{ .bytes = &chunk } })) |_| {
+            admitted += 1;
+        } else |failure| switch (failure) {
+            error.InputQueueFull => {},
+            else => return failure,
+        }
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "MARKER")) {
+            saw_marker = true;
+            break;
+        }
+        if (status.failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(admitted >= 4);
+    try std.testing.expect(saw_marker);
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+}
+
+test "permanently unread PTY rejects borrowed GUI controls promptly without worker failure" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033]0;READY\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+
+    const chunk: [32 * 1024]u8 = @splat('x');
+    for (0..4) |_| try owner.submit(.{ .input = .{ .bytes = &chunk } });
+    var blocked = false;
+    for (0..1000) |_| {
+        const state = owner.state();
+        state.mutex.lockUncancelable(threaded.io());
+        const queued = state.count;
+        state.mutex.unlock(threaded.io());
+        if (queued != 0) {
+            blocked = true;
+            break;
+        }
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(blocked);
+
+    var invalid = testPresentation();
+    invalid.text.private.regular = .{ .path = .{ .primary = "/missing-font-unread-pty.ttf", .size = .{ .pixels = 18 } } };
+    const start = std.Io.Clock.awake.now(threaded.io());
+    try std.testing.expectError(error.InputBackpressured, owner.reconfigure(invalid, null));
+    try std.testing.expectError(error.InputBackpressured, owner.copySelection(std.testing.allocator, 128));
+    const elapsed_ns = std.Io.Clock.awake.now(threaded.io()).toNanoseconds() - start.toNanoseconds();
+    try std.testing.expect(elapsed_ns < 2_000_000_000);
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 

@@ -469,8 +469,10 @@ pub const Plane = struct {
         else
             std.base64.standard_no_pad.Decoder;
         const decoded_len = decoder.calcSizeForSlice(command_value.payload) catch {
+            const id = loading.id;
+            const quiet = loading.quiet;
             self.cancel();
-            return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet };
+            return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
         };
         if (loading.format == 100 and decoded_len > loading.bytes.len - loading.used) {
             const maximum = if (loading.compression == 'z')
@@ -2369,6 +2371,48 @@ test "static plane admission is transactional across chunks replacement put and 
     try std.testing.expect((try plane.command("a=d,d=I,i=7", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+}
+
+test "invalid Kitty base64 length cancels transfer without losing response metadata or retained pixels" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+
+    try std.testing.expect(!(try plane.command("a=T,f=32,s=1,v=1,i=7,m=1;/wA=", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("m=0;AP8=", .primary, 0, 0, 0, 1, 1)).changed);
+    const before = plane.generation();
+
+    const initial = try plane.command("a=t,f=32,s=1,v=1,i=91,q=0;A", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.invalid, initial.failure.?);
+    try std.testing.expectEqual(@as(?u32, 91), initial.response_id);
+    try std.testing.expectEqual(@as(u2, 0), initial.quiet);
+    try std.testing.expect(plane.loading == null);
+
+    const partial = try plane.command("a=t,f=32,s=1,v=1,i=92,q=2,m=1;/wA=", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(!partial.changed);
+    try std.testing.expect(plane.loading != null);
+    const continued = try plane.command("m=0;A", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.invalid, continued.failure.?);
+    try std.testing.expectEqual(@as(?u32, 92), continued.response_id);
+    try std.testing.expectEqual(@as(u2, 2), continued.quiet);
+    try std.testing.expect(plane.loading == null);
+
+    const bad_padding = try plane.command("a=t,f=32,s=1,v=1,i=94,q=1;A=", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.invalid, bad_padding.failure.?);
+    try std.testing.expectEqual(@as(?u32, 94), bad_padding.response_id);
+    try std.testing.expectEqual(@as(u2, 1), bad_padding.quiet);
+    try std.testing.expect(plane.loading == null);
+
+    try std.testing.expectEqual(before, plane.generation());
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
+
+    // A malformed transfer cannot poison the next valid transfer.
+    const recovered = try plane.command("a=t,f=32,s=1,v=1,i=93,q=0;/wAA/w==", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(recovered.changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
 }
 
 test "Kitty anonymous transmit-display retains distinct id-zero images" {

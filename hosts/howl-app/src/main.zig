@@ -56,6 +56,9 @@ const Pane = struct {
     finder: ?FindEditor = null,
     cell_size: ?commands.Size = null,
     font_failure: ?terminal.ConfigureError = null,
+    // A settings rollback may be rejected behind PTY input pressure. Until a
+    // later configuration reconciles it, the staged lattice remains canonical.
+    font_repair_pending: bool = false,
     graphics_failure: ?GraphicsFailure = null,
     wheel: pointer.Wheel = .{},
 
@@ -551,6 +554,7 @@ const App = struct {
         value.rows = geometry.rows;
         value.columns = geometry.columns;
         value.font_failure = null;
+        value.font_repair_pending = false;
     }
     fn displayScale(self: *App) void {
         const next = c.SDL_GetWindowDisplayScale(self.window);
@@ -612,7 +616,7 @@ const App = struct {
             var change: FontChange = .{ .pane = p, .size = size, .overridden = overridden };
             const status = p.snapshot();
             if (p.owner) |owner| {
-                if ((paths_changed or size != p.font_size or stroke_changed) and status.failure == null and !status.closed) {
+                if ((paths_changed or size != p.font_size or stroke_changed or p.font_repair_pending) and status.failure == null and !status.closed) {
                     const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(size)) * self.scale));
                     // Stage presentation with the canonical grid unchanged. A failed save must
                     // not reset history through a temporary column change.
@@ -633,6 +637,7 @@ const App = struct {
                 p.rows = geometry.rows;
                 p.columns = geometry.columns;
                 p.font_failure = null;
+                p.font_repair_pending = false;
                 if (p.graphics_failure != null) {
                     p.canvas.deinit();
                     p.canvas = canvas.Canvas.init(allocator);
@@ -671,16 +676,18 @@ const App = struct {
             const owner = p.owner orelse continue;
             const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(p.font_size)) * self.scale));
             const presentation = self.presentationConfig(self.fonts, pixels, self.configuration.value.cursor_stroke_pixels) catch |failure| {
-                p.font_failure = failure;
+                preserveStagedFont(change, failure);
                 continue;
             };
             const geometry = owner.reconfigure(presentation, null) catch |failure| {
-                p.font_failure = failure;
+                preserveStagedFont(change, failure);
                 continue;
             };
             p.cell_size = geometry.cell_size;
             p.rows = geometry.rows;
             p.columns = geometry.columns;
+            p.font_failure = null;
+            p.font_repair_pending = false;
         }
     }
     fn toggleSettings(self: *App) !void {
@@ -2705,6 +2712,19 @@ const FontChange = struct {
     overridden: bool,
     geometry: ?app_presentation.Geometry = null,
 };
+
+fn preserveStagedFont(change: FontChange, failure: terminal.ConfigureError) void {
+    const geometry = change.geometry.?;
+    const pane = change.pane;
+    // A failed rollback does not undo the worker's successful staged commit.
+    // Keep the observed lattice authoritative for drawing and future resizing;
+    // the next settings transaction retries the saved recipe explicitly.
+    pane.cell_size = geometry.cell_size;
+    pane.rows = geometry.rows;
+    pane.columns = geometry.columns;
+    pane.font_failure = failure;
+    pane.font_repair_pending = true;
+}
 fn profileEnvironment(gpa: std.mem.Allocator, parent: *const std.process.Environ.Map, entries: []const config.Environment) std.mem.Allocator.Error!std.process.Environ {
     var child = try parent.clone(gpa);
     defer child.deinit();
@@ -3248,6 +3268,32 @@ test "failed settings save restores fonts without changing canonical history or 
         }
         try std.testing.expect(attempts < 5000);
     }
+
+    // Simulate a staged A font commit followed by a rejected B transaction and
+    // rejected A rollback. The old saved recipe must not make GUI geometry lie.
+    proof_stage = "rejected rollback and later reconciliation";
+    app.scale = 1;
+    try app.configureFont(&panes[0], 23, false);
+    const saved_cell = panes[0].cell_size.?;
+    const staged = try panes[0].owner.?.reconfigure(try app.presentationConfig(&fonts, 27, current.value.cursor_stroke_pixels), null);
+    try std.testing.expect(!std.meta.eql(saved_cell, staged.cell_size));
+    preserveStagedFont(.{ .pane = &panes[0], .size = 23, .overridden = false, .geometry = staged }, error.InputBackpressured);
+    try std.testing.expect(panes[0].font_repair_pending);
+    try std.testing.expectEqual(@as(?terminal.ConfigureError, error.InputBackpressured), panes[0].font_failure);
+    try std.testing.expectEqualDeep(staged.cell_size, panes[0].cell_size.?);
+    try std.testing.expectEqual(staged.rows, panes[0].rows);
+    try std.testing.expectEqual(staged.columns, panes[0].columns);
+    try std.testing.expectEqual(@as(i32, 23), current.value.terminal_font_pixels);
+
+    var retry = try settings.change(&current, threaded.io(), .default_font, "23");
+    defer retry.deinit();
+    try app.updateConfiguration(&retry, temporary.dir, "unchanged.json", false);
+    try std.testing.expect(!panes[0].font_repair_pending);
+    try std.testing.expectEqual(@as(?terminal.ConfigureError, null), panes[0].font_failure);
+    try std.testing.expectEqual(@as(u16, 23), panes[0].font_size);
+    try std.testing.expectEqualDeep(saved_cell, panes[0].cell_size.?);
+    // The saved configuration did not change; the retry corrected the worker.
+    try std.testing.expectEqual(@as(i32, 23), current.value.terminal_font_pixels);
 }
 
 test {
