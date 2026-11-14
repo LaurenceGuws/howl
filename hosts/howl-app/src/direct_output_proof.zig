@@ -6,6 +6,10 @@ const pty = @import("howl_pty");
 const output = @import("howl_vt_output");
 const Borrowed = @import("output_state").State(false);
 
+test {
+    std.testing.refAllDecls(@import("canonical.zig"));
+}
+
 test "one canonical VT serves borrowed direct output with an independently retained Text store" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
