@@ -909,7 +909,8 @@ pub fn State(comptime instrumented: bool) type {
                         .command_bytes_written = if (instrumented) &self.stats.command_bytes_written else {},
                         .full_ascii_rows = if (instrumented) &self.stats.full_ascii_rows else {},
                         .presentation = &presentation,
-                        .pending_resource = .{ .resource = try frame.ResourceId.init(1), .generation = @fromBackingInt(1) },
+                        .alpha_resource = self.committedResource(),
+                        .color_resource = self.committedColorResource() orelse .{ .resource = try frame.ResourceId.init(2), .generation = @fromBackingInt(1) },
                     }, self.vt, live_row, history, block.commands[0..@min(block.commands.len, self.command_limit)]) catch |err| {
                         if (err != error.CommandLimit or block.commands.len >= self.command_limit) return err;
                         try self.ensureBlock(block, @min(self.command_limit, @max(1, block.commands.len * 2)));
@@ -981,7 +982,9 @@ pub fn State(comptime instrumented: bool) type {
             }
             const resource = self.resources[resource_next];
             const color = self.color_resources[color_stage.index];
-            for (staged, 0..) |next, physical| if (next) |index| {
+            // Emitted commands already name the accepted resource. A stable
+            // atlas needs no second command pass; changed planes still rebind.
+            if (changed or color_stage.changed) for (staged, 0..) |next, physical| if (next) |index| {
                 const block = &self.slots[physical].blocks[index];
                 for (block.commands[0..block.count]) |*command| switch (command.*) {
                     .alpha_mask => |*mask| {

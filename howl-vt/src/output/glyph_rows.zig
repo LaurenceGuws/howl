@@ -22,7 +22,8 @@ pub fn Emitter(comptime instrumented: bool) type {
             cell_width: u16,
             cell_height: u16,
             baseline: u16,
-            pending_resource: frame.ResourceRef,
+            alpha_resource: frame.ResourceRef,
+            color_resource: frame.ResourceRef,
             command_bytes_written: if (instrumented) ?*u64 else void = if (instrumented) null else {},
             full_ascii_rows: if (instrumented) ?*u64 else void = if (instrumented) null else {},
             presentation: *const VT.Presentation,
@@ -139,7 +140,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                     try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
                         .destination = destination,
                         .clip = allocation,
-                        .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = pattern.atlas_x, .y = pattern.atlas_y, .width = pattern.width, .height = pattern.height } },
+                        .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = pattern.atlas_x, .y = pattern.atlas_y, .width = pattern.width, .height = pattern.height } },
                         .color = color,
                     } });
                 },
@@ -153,7 +154,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                     try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
                         .destination = destination,
                         .clip = allocation,
-                        .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } },
+                        .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } },
                         .color = color,
                     } });
                 },
@@ -377,7 +378,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                         .clip = allocation,
                         .color = c.fg,
                         .cursor_component = true,
-                        .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = generated.atlas_x, .y = generated.atlas_y, .width = generated.width, .height = generated.height } },
+                        .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = generated.atlas_x, .y = generated.atlas_y, .width = generated.width, .height = generated.height } },
                     } });
                     continue;
                 }
@@ -399,7 +400,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                                     .clip = clip,
                                     .color = c.fg,
                                     .cursor_component = true,
-                                    .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                                    .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                                 } });
                             }
                             continue;
@@ -551,7 +552,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                         const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = y - wave.top, .width = wave.width, .height = wave.height });
                         if (try frame.intersectRects(destination, clip) != null) {
                             const size = cache.atlasSize(ctx.atlas);
-                            try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{ .destination = destination, .clip = clip, .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } }, .color = resolved.underline } });
+                            try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{ .destination = destination, .clip = clip, .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } }, .color = resolved.underline } });
                         }
                     },
                 }
@@ -575,7 +576,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                         .clip = clip,
                         .color = color,
                         .cursor_component = true,
-                        .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                        .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                     } });
                 }
                 return;
@@ -610,7 +611,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                             try append(ctx.command_bytes_written, output, used, .{ .rgba = .{
                                 .destination = fitted,
                                 .clip = clip,
-                                .resource = .{ .resource = ctx.pending_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                                .resource = .{ .resource = ctx.color_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                             } });
                         }
                     } else if (try frame.intersectRects(destination, strip)) |clip| {
@@ -620,7 +621,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                             .clip = clip,
                             .color = color,
                             .cursor_component = true,
-                            .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                            .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                         } });
                     }
                 }
@@ -676,7 +677,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                         try append(ctx.command_bytes_written, output, used, .{ .rgba = .{
                             .destination = fitColor(destination, allocation),
                             .clip = allocation,
-                            .resource = .{ .resource = ctx.pending_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                            .resource = .{ .resource = ctx.color_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                         } });
                     } else {
                         const clip = try frame.intersectRects(destination, if (bounded_symbol or (!cell.semantic_width and cell.width > 1)) allocation else row_clip);
@@ -687,7 +688,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                                 .clip = visible,
                                 .color = color,
                                 .cursor_component = true,
-                                .resource = .{ .resource = ctx.pending_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                                .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                             } });
                         }
                     }

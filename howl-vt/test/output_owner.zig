@@ -544,6 +544,42 @@ test "color glyph output unwinds all allocator failures" {
     try std.testing.checkAllAllocationFailures(a, colorAllocationProof, .{f});
 }
 
+test "warmed alpha and color rows keep accepted resource identities" {
+    const f = try text.FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.feed("\x1b[?25lA😀B");
+    try owner.flush();
+    const first = try owner.hold();
+    const alpha = first.snapshot.resource;
+    const color = first.snapshot.color_resource orelse return error.MissingColorResource;
+    try owner.release(first);
+
+    // Reuse already admitted alpha and color glyphs without growing either
+    // atlas; the emitter must name accepted resources without a rebind pass.
+    try owner.feed("\x1b[1;6HA😀");
+    try owner.flush();
+    const warmed = try owner.hold();
+    defer release(owner, warmed);
+    try std.testing.expectEqualDeep(alpha, warmed.snapshot.resource);
+    try std.testing.expectEqualDeep(color, warmed.snapshot.color_resource orelse return error.MissingColorResource);
+    var alpha_seen = false;
+    var color_seen = false;
+    for (warmed.snapshot.glyphs[0]) |command| switch (command) {
+        .alpha_mask => |mask| {
+            try std.testing.expectEqualDeep(alpha, mask.resource.resource);
+            alpha_seen = true;
+        },
+        .rgba => |image| {
+            try std.testing.expectEqualDeep(color, image.resource.resource);
+            color_seen = true;
+        },
+        else => {},
+    };
+    try std.testing.expect(alpha_seen and color_seen);
+}
+
 test "cursor cell geometry is retained independently of its painted shape" {
     const f = try font(12);
     defer f.deinit();
