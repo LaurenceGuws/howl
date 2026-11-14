@@ -36,12 +36,6 @@ test "root exposes the complete native consumer vocabulary" {
     // zig-audit: acknowledge discard
     // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
     _ = @import("howl_text_test_fonts");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("howl_vk");
-    // zig-audit: acknowledge discard
-    // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("howl_wayland");
 }
 
 test "readonly VT accessors retain ordinary function pointers" {

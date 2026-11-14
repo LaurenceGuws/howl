@@ -23,7 +23,7 @@ experimental:
     and limits are pure leaves. Render keeps substantive Input/projection/CursorRows
     and consumes the same single glyph cache. Bounded geometry/history, borrowed
     private font families or a shared Store claim, and one immutable lease.
-    howl-app now consumes its final commands directly through temporary Instance
+    howl-app now consumes its final commands directly through app-owned VT/Text
     composition. The output owner adds no new scheduler or native ABI;
     separately versioned VT/Instance native input-recovery ABIs remain in use.
     See mods/howl-vt/src/output/README.md.
@@ -87,17 +87,9 @@ experimental:
     Bounded shaping, font families, image upload/removal, cursor, decorations,
     frame commands and residency reconciliation remain its presentation work.
     Its separately usable limits module has no terminal-process owner.
-  howl-host: >-
-    native Linux direct-embed performance canary. It owns one in-process howl-instance,
-    services its PTY/VT lifetime directly and consumes Instance-owned immutable
-    Render frames through Vulkan/Wayland. Instance composes howl-text/howl-render. Host has no
-    client transport, HWLS, server-client, Server, Session, endpoint or
-    remote-target route; outside the core gate
-  howl-vk: Vulkan experiments; not part of the core gate
-  howl-wayland: Wayland experiments; not part of the core gate
   howl-app: >-
     experimental Local-only Zig/SDL3 daily-shell. Each
-    pane owns one direct canonical Instance on an exclusive terminal worker;
+    pane owns one app-local PTY and canonical VT on an exclusive terminal worker;
     SDL consumes immutable VT-owned direct-output leases and copied facts,
     with no semantic-observation-to-Render-input command translation.
     No client transport,

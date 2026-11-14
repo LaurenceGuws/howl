@@ -8,7 +8,6 @@ several modules. Being here does not make a package terminal core.
 | --- | --- |
 | howl-vt, howl-pty, howl-instance, howl-text | accepted terminal foundations |
 | howl-render | shared terminal-to-frame presentation machinery |
-| howl-vk, howl-wayland | experimental graphics/platform libraries |
 
 Server orchestration, its wire and observation codec, clients and presentation
 adapters now belong to the separately released howl-sessions repository.

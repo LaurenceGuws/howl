@@ -83,19 +83,6 @@ done < <(grep -RnE "$empty_lifecycle_pattern" mods/howl-vt/src --include='*.zig'
 # Old Flutter remains an inert source reference. Its FFI, Dart and iOS assets
 # are not Howl's current release contracts and must never gate core builds.
 
-# howl-host is the direct native performance canary, not another attachment
-# frontend. Keep transport/orchestration machinery mechanically outside its
-# build and source graph.
-if grep -REn 'howl_client|server_client|remote_target' \
-    hosts/howl-host/build.zig hosts/howl-host/build.zig.zon hosts/howl-host/src >/dev/null; then
-    printf 'howl-host: direct canary depends on transported client/server machinery\n'
-    status=1
-fi
-if grep -REn 'howl_render|howl_vt' hosts/howl-host/build.zig hosts/howl-host/build.zig.zon >/dev/null; then
-    printf 'howl-host: direct canary must consume VT/Render through howl-instance composition\n'
-    status=1
-fi
-
 # Canonical machinery never imports Server communications or client ownership.
 # The workspace may build every consumer; each core package remains independent.
 python3 - <<'PYCORE' || status=1

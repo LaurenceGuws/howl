@@ -63,9 +63,7 @@ it depends down on Howl and never changes this local composition.
 
 Local howl-app uses a Zig/SDL frontend with app-owned PTY, canonical VT and
 Text, borrowing VT's direct output for checked immutable drawing cuts. It does
-not construct Instance or Render. The separate howl-host still consumes
-Instance-owned Render publications through Vulkan and Wayland, without client
-transport or server routing.
+not construct Instance or Render.
 
 The former Flutter source remains in hosts/howl-flutter strictly as an
 **inactive, unsupported bring-up reference**. Its native/Dart/iOS build and
@@ -132,7 +130,7 @@ only the exact old Flutter native copybook root is exempt from active checks.
 
 Each maintained Zig package owns complete checks, tests, audits and its public
 consumer graph. The root forwards those child gates and the independent
-VT embedding example, howl-app and howl-host. The root does not compile or
+VT embedding example and howl-app. The root does not compile or
 install historical Flutter, and does not build any moved Server product.
 
 The root distribution exports exact child-owned Zig module identities,

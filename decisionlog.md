@@ -114,3 +114,20 @@ This is **scope approval**, not permission to skip the remaining app dogfood,
 accepted-versus-candidate measurements, final integrated-source gates, or
 independent review. It does not approve replacement of the installed
 `howl-app` binary. Main integration and installation remain separate gates.
+
+## Retire the superseded Vulkan/Wayland host (14 November 2026)
+
+With the direct PTY/VT/Text `howl-app` path accepted for dogfood, retire
+`hosts/howl-host`, `mods/howl-vk`, and `mods/howl-wayland`. Remove their
+workspace dependencies, consumer imports, snapshot inventory, and active
+build/audit/source-map claims. Their former presence in earlier decisions
+remains historical evidence, not a current release or compatibility contract.
+
+This is a repository-source cleanup, not a change to the installed daily app.
+`howl-instance` and `howl-render` remain independent, tested public packages
+with live native/consumer contracts; their possible retirement requires its
+own dependency-closure review. The old Flutter tree remains an explicitly
+inactive reference, not part of this deletion.
+
+The new workspace snapshot is `0.1.11-dev`. Qualification: `zig build check
+test -j4`, Zig formatting, source-reference sweep and Git diff checks passed.

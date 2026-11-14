@@ -24,13 +24,10 @@ composition:
   - every Instance owns exactly one canonical terminal geometry; external orchestration and clients receive no direct geometry authority
   - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
   - the old Flutter tree here is inactive historical reference, not an executable, release, or compatibility contract; new Flutter product work belongs to howl-sessions
-  - local desktop Instance composition belongs only to direct-local hosts here
+  - direct-local howl-app composition belongs here; Instance remains independently available to embedders
 
 experimental:
   - howl-render
-  - howl-host
-  - howl-vk
-  - howl-wayland
   - howl-app
 
 ownership:
