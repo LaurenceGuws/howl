@@ -1,11 +1,13 @@
 const std = @import("std");
 const c = @import("desktop");
-const instance = @import("howl_instance");
+const app_presentation = @import("presentation.zig");
 const canonical = @import("canonical.zig");
 const projection = @import("direct_projection.zig");
 const direct_desktop = @import("direct_desktop.zig");
 const vt_output = @import("howl_vt_output");
 const vt = @import("howl_vt");
+const pty = @import("howl_pty");
+const commands = @import("howl_vt_output_commands");
 const policy = @import("publication.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
@@ -17,7 +19,7 @@ const input_byte_limit = 1024 * 1024;
 
 /// Bounded asynchronous semantic input and presentation-geometry intent.
 pub const Task = union(enum) {
-    input: instance.Input,
+    input: vt.Terminal.InputEvent,
     resize: struct { rows: u16, columns: u16 },
     scroll: i32,
     seek: u32,
@@ -33,13 +35,13 @@ pub const Select = struct {
     serial: u64,
     kind: SelectKind,
     context: selection.Context,
-    point: instance.Terminal.TextPoint = .{ .row = 0, .col = 0 },
+    point: vt.Terminal.TextPoint = .{ .row = 0, .col = 0 },
 };
 /// Noncanonical selection failures never stop process/VT service.
 pub const SelectionError = error{ InvalidSelection, SelectionContextChanged, SelectionEvicted };
 /// Bounded canonical extraction and FIFO admission failures.
-pub const CopyError = instance.Terminal.TextError || SelectionError || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull };
-const Link = struct { context: selection.Context, point: instance.Terminal.TextPoint };
+pub const CopyError = vt.Terminal.TextError || SelectionError || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull };
+const Link = struct { context: selection.Context, point: vt.Terminal.TextPoint };
 const Copy = struct {
     link: ?Link = null,
     allocator: std.mem.Allocator,
@@ -65,15 +67,15 @@ pub const FrameError = projection.ReplaceError;
 pub const ConfigureError = projection.ConfigureError || vt_output.PresentationStoreInitError || error{ TerminalStopped, InputQueueFull };
 
 const Configuration = struct {
-    config: instance.PresentationConfig,
-    surface: ?instance.render.terminal.Size,
-    result: ?instance.PresentationGeometry = null,
+    config: app_presentation.Config,
+    surface: ?commands.Size,
+    result: ?app_presentation.Geometry = null,
     failure: ?ConfigureError = null,
     complete: bool = false,
 };
 const Work = union(enum) { intent: Task, configure: *Configuration, copy: *Copy };
 
-fn sharedConfig(config: instance.PresentationConfig, history_rows: u16) @import("output_state").SharedConfig {
+fn sharedConfig(config: app_presentation.Config, history_rows: u16) @import("output_state").SharedConfig {
     return .{
         .history_capacity = history_rows,
         .cursor_stroke_pixels = config.cursor_stroke_pixels,
@@ -90,12 +92,12 @@ pub const Status = struct {
     presentation_failure: ?PresentationFailure = null,
     revision: u64 = 0,
     closed: bool = false,
-    child_exit: ?instance.ChildExit = null,
+    child_exit: ?pty.ChildExit = null,
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
     selection_failure: ?SelectionError = null,
     search: find.Status = .{},
-    interaction: ?instance.Terminal.InteractionState = null,
+    interaction: ?vt.Terminal.InteractionState = null,
     cursor_row: u16 = 0,
     cursor_col: u16 = 0,
 };
@@ -110,8 +112,8 @@ pub const Terminal = opaque {
         allocator: std.mem.Allocator,
         io: std.Io,
         environ: std.process.Environ,
-        launch: instance.Launch,
-        presentation: instance.PresentationConfig,
+        launch: canonical.Launch,
+        presentation: app_presentation.Config,
         event_type: u32,
         initially_visible: bool,
     ) !*Terminal {
@@ -138,7 +140,7 @@ pub const Terminal = opaque {
     }
     /// Copies the latest app color preference into one bounded mailbox, without allocation.
     /// The sole worker applies it canonically; stopped panes use the saved preference on restart.
-    pub fn setColorDefaults(self: *Terminal, defaults: instance.Terminal.ColorDefaults) void {
+    pub fn setColorDefaults(self: *Terminal, defaults: vt.Terminal.ColorDefaults) void {
         const owned = self.state();
         owned.mutex.lockUncancelable(owned.io);
         owned.pending_colors = defaults;
@@ -146,7 +148,7 @@ pub const Terminal = opaque {
         owned.mutex.unlock(owned.io);
     }
     /// Coalesces cursor defaults without bypassing the sole canonical worker.
-    pub fn setDefaultCursorStyle(self: *Terminal, style: instance.Terminal.CursorStyle) void {
+    pub fn setDefaultCursorStyle(self: *Terminal, style: vt.Terminal.CursorStyle) void {
         const owned = self.state();
         owned.mutex.lockUncancelable(owned.io);
         owned.pending_cursor = style;
@@ -155,7 +157,7 @@ pub const Terminal = opaque {
     }
     /// Borrows a font recipe only until the sole worker completes its transaction.
     /// Waiting is uncancelable, so queued configuration cannot outlive these borrowed paths.
-    pub fn reconfigure(self: *Terminal, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
+    pub fn reconfigure(self: *Terminal, config: app_presentation.Config, surface: ?commands.Size) ConfigureError!app_presentation.Geometry {
         return self.state().reconfigure(config, surface);
     }
     /// Copies the FIFO-selected canonical range into bounded caller-owned UTF-8 storage.
@@ -163,7 +165,7 @@ pub const Terminal = opaque {
         return self.state().copySelection(allocator, max_bytes);
     }
     /// Copies one clicked canonical OSC 8 URI through the same bounded FIFO completion.
-    pub fn copyHyperlink(self: *Terminal, allocator: std.mem.Allocator, context: selection.Context, point: instance.Terminal.TextPoint) CopyError![]const u8 {
+    pub fn copyHyperlink(self: *Terminal, allocator: std.mem.Allocator, context: selection.Context, point: vt.Terminal.TextPoint) CopyError![]const u8 {
         return self.state().copy(allocator, desktop.uri_limit, .{ .context = context, .point = point });
     }
     /// Takes one coalesced copied attention fact without blocking canonical service.
@@ -228,9 +230,9 @@ const State = struct {
     input_bytes: usize = 0,
     stopping: bool = false,
     status: Status = .{},
-    pending_colors: ?instance.Terminal.ColorDefaults = null,
-    pending_cursor: ?instance.Terminal.CursorStyle = null,
-    color_preference: instance.ColorSchemePreference = .dark,
+    pending_colors: ?vt.Terminal.ColorDefaults = null,
+    pending_cursor: ?vt.Terminal.CursorStyle = null,
+    color_preference: vt.Terminal.ColorSchemePreference = .dark,
     preference_pending: bool = false,
     visible: std.atomic.Value(bool) = .init(true),
     credit: std.atomic.Value(bool) = .init(true),
@@ -258,8 +260,8 @@ const State = struct {
         allocator: std.mem.Allocator,
         io: std.Io,
         environ: std.process.Environ,
-        launch: instance.Launch,
-        presentation: instance.PresentationConfig,
+        launch: canonical.Launch,
+        presentation: app_presentation.Config,
         event_type: u32,
         initially_visible: bool,
     ) !*State {
@@ -394,7 +396,7 @@ const State = struct {
         self.wake();
     }
 
-    fn reconfigure(self: *State, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
+    fn reconfigure(self: *State, config: app_presentation.Config, surface: ?commands.Size) ConfigureError!app_presentation.Geometry {
         var request: Configuration = .{ .config = config, .surface = surface };
         try self.admit(.{ .configure = &request });
         self.mutex.lockUncancelable(self.io);
@@ -404,7 +406,7 @@ const State = struct {
         return request.result.?;
     }
 
-    fn completeConfiguration(self: *State, request: *Configuration, result: ConfigureError!instance.PresentationGeometry) void {
+    fn completeConfiguration(self: *State, request: *Configuration, result: ConfigureError!app_presentation.Geometry) void {
         self.mutex.lockUncancelable(self.io);
         if (result) |geometry| request.result = geometry else |failure| request.failure = failure;
         request.complete = true;
@@ -446,7 +448,7 @@ const State = struct {
             self.mutex.unlock(self.io);
             self.gate.pending = true;
             self.credit.store(true, .release);
-            self.completeConfiguration(request, instance.PresentationGeometry{
+            self.completeConfiguration(request, app_presentation.Geometry{
                 .cell_size = .{ .width = @intCast(geometry.cell_size.width), .height = @intCast(geometry.cell_size.height) },
                 .rows = geometry.rows,
                 .columns = geometry.columns,
@@ -486,7 +488,7 @@ const State = struct {
         };
         self.completeCopy(request, range.copy(self.observe(), request.allocator, request.max_bytes));
     }
-    fn resolve(self: *State, context: selection.Context, point: instance.Terminal.TextPoint) SelectionError!struct { view: instance.Terminal.SemanticView, row: u16 } {
+    fn resolve(self: *State, context: selection.Context, point: vt.Terminal.TextPoint) SelectionError!struct { view: vt.Terminal.SemanticView, row: u16 } {
         const observation = self.observe();
         const live = observation.semanticView(0);
         if (live.cols != context.columns or live.is_alternate_screen != context.alternate) return error.SelectionContextChanged;
@@ -776,7 +778,7 @@ const State = struct {
         };
     }
 
-    fn takeColors(self: *State) ?instance.Terminal.ColorDefaults {
+    fn takeColors(self: *State) ?vt.Terminal.ColorDefaults {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const result = self.pending_colors;
@@ -784,7 +786,7 @@ const State = struct {
         return result;
     }
 
-    fn takeCursor(self: *State) ?instance.Terminal.CursorStyle {
+    fn takeCursor(self: *State) ?vt.Terminal.CursorStyle {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const result = self.pending_cursor;
@@ -924,7 +926,7 @@ fn inputActivity(task: Task) bool {
     };
 }
 
-fn testPresentation() instance.PresentationConfig {
+fn testPresentation() app_presentation.Config {
     return .{
         .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
@@ -932,8 +934,6 @@ fn testPresentation() instance.PresentationConfig {
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
     };
 }
 
@@ -1122,28 +1122,28 @@ test "font configuration rolls back failure and replaces geometry while an older
     try waitTitle(owner, "READY");
     var held = try waitFrame(owner, null, null);
     const old_generation = held.presentation_generation;
-    const old_size: instance.render.terminal.Size = .{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height };
+    const old_size: commands.Size = .{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height };
     var invalid = testPresentation();
     invalid.text.private.regular = .{ .path = .{ .primary = "/missing-howl-live-font.ttf", .size = .{ .pixels = 18 } } };
     try std.testing.expectError(error.FontOpen, owner.reconfigure(invalid, null));
     try std.testing.expectEqual(old_generation, held.presentation_generation);
-    try std.testing.expectEqualDeep(old_size, instance.render.terminal.Size{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height });
+    try std.testing.expectEqualDeep(old_size, commands.Size{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height });
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "CONTINUED");
     var larger = testPresentation();
     larger.text.private.regular.path.size = .{ .pixels = 18 };
-    const surface: instance.render.terminal.Size = .{ .width = 200, .height = 150 };
+    const surface: commands.Size = .{ .width = 200, .height = 150 };
     const geometry = try owner.reconfigure(larger, surface);
     try std.testing.expectEqual(surface.width / geometry.cell_size.width, geometry.columns);
     try std.testing.expectEqual(surface.height / geometry.cell_size.height, geometry.rows);
     try std.testing.expectEqual(old_generation, held.presentation_generation);
-    try std.testing.expectEqualDeep(old_size, instance.render.terminal.Size{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height });
+    try std.testing.expectEqualDeep(old_size, commands.Size{ .width = held.snapshot.cell_width, .height = held.snapshot.cell_height });
     const changed = try waitFrame(owner, &held, null);
     // zig-audit: acknowledge catch_unreachable
     // reason: This test defers the exact live pin's release before destroying its terminal owner.
     defer owner.releaseFrame(changed) catch unreachable;
     try std.testing.expect(changed.presentation_generation > old_generation);
-    try std.testing.expectEqualDeep(geometry.cell_size, instance.render.terminal.Size{ .width = changed.snapshot.cell_width, .height = changed.snapshot.cell_height });
+    try std.testing.expectEqualDeep(geometry.cell_size, commands.Size{ .width = changed.snapshot.cell_width, .height = changed.snapshot.cell_height });
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 
@@ -1272,7 +1272,7 @@ test "semantic mouse reports and copied caret facts survive without a graphical 
     defer owner.destroy();
     try waitTitle(owner, "READY");
     const before = owner.snapshot();
-    try std.testing.expectEqual(instance.Terminal.MouseTrackingMode.button_event, before.interaction.?.mouse_tracking);
+    try std.testing.expectEqual(vt.Terminal.MouseTrackingMode.button_event, before.interaction.?.mouse_tracking);
     try owner.submit(.{ .input = .{ .mouse = .{ .kind = .press, .button = .left, .row = 2, .col = 3, .mod = .{}, .buttons_down = 1 } } });
     try owner.submit(.{ .input = .{ .mouse = .{ .kind = .release, .button = .left, .row = 2, .col = 3, .mod = .{}, .buttons_down = 0 } } });
     try waitTitle(owner, "1b5b3c303b343b334d1b5b3c303b343b336d");
@@ -1650,13 +1650,13 @@ test "shared text serves concurrent workers while one observer stalls and native
     config.shape_cache.entry_capacity = 4;
     config.shape_cache.scalar_capacity = 16;
     config.shape_cache.glyph_capacity = 16;
-    const shared = try instance.initPresentationStore(a, threaded.io(), config.text.private, .{
+    const shared = try vt_output.initPresentationStore(a, threaded.io(), config.text.private, .{
         .shape_cache = config.shape_cache,
         .shaped_capacity = config.shaped_capacity,
         .raster_bytes = config.raster_bytes,
     });
     var caller_live = true;
-    defer if (caller_live) instance.releasePresentationStore(shared);
+    defer if (caller_live) vt_output.releasePresentationStore(shared);
     config.text = .{ .shared = shared };
     var owners: [2]*Terminal = undefined;
     var count: usize = 0;
@@ -1680,7 +1680,7 @@ test "shared text serves concurrent workers while one observer stalls and native
     defer owners[0].releaseFrame(held) catch unreachable;
     const before = held.snapshot.terminal_revision;
     const glyph_count = held.snapshot.glyphs[0].len;
-    instance.releasePresentationStore(shared);
+    vt_output.releasePresentationStore(shared);
     caller_live = false;
     for (owners) |owner| try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     var attempts: u16 = 0;
@@ -1833,7 +1833,7 @@ const ScalarPressureAllocator = struct {
     // reason: The standard allocator vtable supplies the test owner as opaque context.
     fn allocate(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
         const self = cast(ctx);
-        const ScreenState = @FieldType(instance.Terminal, "screen_state");
+        const ScreenState = @FieldType(vt.Terminal, "screen_state");
         const Screen = @FieldType(ScreenState, "primary");
         const Storage = @typeInfo(@FieldType(Screen, "scalars")).optional.child;
         const Page = @typeInfo(@FieldType(Storage, "pages")).pointer.child;

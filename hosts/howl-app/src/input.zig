@@ -1,7 +1,6 @@
 const std = @import("std");
 const c = @import("desktop");
 const VT = @import("howl_vt").Terminal;
-const limits = @import("howl_vt_output_limits");
 const terminal = @import("terminal.zig");
 const mappings = @import("keybindings.zig");
 
@@ -280,8 +279,6 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = limits.maximum_frame_commands,
     }, c.SDL_RegisterEvents(1), false);
     defer owner.destroy();
     var attempt: u16 = 0;

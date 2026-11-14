@@ -2,7 +2,9 @@
 
 const std = @import("std");
 const c = @import("desktop");
-const instance = @import("howl_instance");
+const app_presentation = @import("presentation.zig");
+const output = @import("howl_vt_output");
+const canonical_vt = @import("howl_vt");
 
 /// Owns the exact desktop regular/style/fallback recipe and supplies bounded presentation policy.
 pub const Fonts = struct {
@@ -10,7 +12,7 @@ pub const Fonts = struct {
     paths: [7][]const u8 = @splat(""),
     atlas_height_limit: u16 = 4096,
     // At most 8 tabs × 8 panes, plus one staged replacement size.
-    stores: [65]?struct { pixels: u16, owner: *instance.PresentationStore } = @splat(null),
+    stores: [65]?struct { pixels: u16, owner: *output.PresentationStore } = @splat(null),
 
     /// Resolves saved paths, then environment paths, then exact installed family/style matches; required faces fail explicitly.
     pub fn discover(allocator: std.mem.Allocator, env: *const std.process.Environ.Map, saved: [6][]const u8) !Fonts {
@@ -48,16 +50,16 @@ pub const Fonts = struct {
 
     /// Frees the owned path strings after all borrowers have retired.
     pub fn deinit(self: *Fonts) void {
-        for (self.stores) |slot| if (slot) |store| instance.releasePresentationStore(store.owner);
+        for (self.stores) |slot| if (slot) |store| output.releasePresentationStore(store.owner);
         for (self.paths) |path| if (path.len != 0) self.allocator.free(path);
         self.* = undefined;
     }
 
-    /// Releases idle native owners. Live Instances retain their own references.
+    /// Releases idle native owners. Live direct projections retain references.
     pub fn collect(self: *Fonts) void {
         for (&self.stores) |*slot| if (slot.*) |store| {
-            if (instance.presentationStoreReferences(store.owner) != 1) continue;
-            instance.releasePresentationStore(store.owner);
+            if (output.presentationStoreReferences(store.owner) != 1) continue;
+            output.releasePresentationStore(store.owner);
             slot.* = null;
         };
     }
@@ -70,13 +72,13 @@ pub const Fonts = struct {
     }
 
     /// Borrows a matching text owner for the immediate construction/reconfigure
-    /// call. Io must outlive the Instances; do not retain this config across collect.
-    pub fn config(self: *Fonts, io: std.Io, pixels: u16) (instance.PresentationStoreInitError || error{PresentationStoreLimit})!instance.PresentationConfig {
-        const shape_cache: instance.render.terminal.ShapeCacheConfig = .{
+    /// call. Io must outlive all direct projections; do not retain this config across collect.
+    pub fn config(self: *Fonts, io: std.Io, pixels: u16) (output.PresentationStoreInitError || error{PresentationStoreLimit})!app_presentation.Config {
+        const shape_cache: @FieldType(output.StoreConfig, "shape_cache") = .{
             .entry_capacity = 256,
             .scalar_capacity = 512,
             .glyph_capacity = 512,
-            .max_sequence_scalars = instance.maximum_cell_scalars,
+            .max_sequence_scalars = canonical_vt.scalar.maximum_scalars,
             .growth = .{ .entry_limit = 8192, .scalar_limit = 32768, .glyph_limit = 16384 },
         };
         for (self.stores) |slot| if (slot) |store| {
@@ -85,7 +87,7 @@ pub const Fonts = struct {
         self.collect();
         const fallbacks = self.paths[4..@as(usize, if (self.paths[6].len == 0) 6 else 7)];
         for (&self.stores) |*slot| if (slot.* == null) {
-            const owner = try instance.initPresentationStore(self.allocator, io, .{
+            const owner = try output.initPresentationStore(self.allocator, io, .{
                 .regular = .{ .path = .{ .primary = self.paths[0], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .italic = if (self.paths[1].len == 0) null else .{ .path = .{ .primary = self.paths[1], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .bold = if (self.paths[2].len == 0) null else .{ .path = .{ .primary = self.paths[2], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
@@ -97,7 +99,7 @@ pub const Fonts = struct {
         return error.PresentationStoreLimit;
     }
 
-    fn presentation(owner: *instance.PresentationStore, shape_cache: instance.render.terminal.ShapeCacheConfig, height_limit: u16) instance.PresentationConfig {
+    fn presentation(owner: *output.PresentationStore, shape_cache: @FieldType(output.StoreConfig, "shape_cache"), height_limit: u16) app_presentation.Config {
         return .{
             .text = .{ .shared = owner },
             .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
@@ -111,10 +113,6 @@ pub const Fonts = struct {
             },
             .shaped_capacity = 32,
             .raster_bytes = 512 * 512,
-            .command_capacity = 4 * 1024,
-            .command_limit = instance.render.limits.maximum_frame_commands,
-            .incremental_row_capacity = instance.render.limits.maximum_rows,
-            .incremental_command_capacity = instance.render.limits.maximum_frame_commands,
         };
     }
 };

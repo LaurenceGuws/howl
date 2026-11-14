@@ -2,6 +2,7 @@
 const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
+const app_presentation = @import("presentation.zig");
 const terminal = @import("terminal.zig");
 const selection = @import("selection.zig");
 const cursor_effects = @import("cursor.zig");
@@ -639,15 +640,13 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const presentation: instance.PresentationConfig = .{
+    const presentation: app_presentation.Config = .{
         .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
     };
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
@@ -729,15 +728,13 @@ test "repeated alternate-screen blank and text cuts retain exact backend residen
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const presentation: instance.PresentationConfig = .{
+    const presentation: app_presentation.Config = .{
         .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
     };
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
@@ -803,15 +800,13 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const presentation: instance.PresentationConfig = .{
+    const presentation: app_presentation.Config = .{
         .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
     };
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
@@ -936,15 +931,13 @@ test "cursor shapes blink and outline above selection at fractional scales witho
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const presentation: instance.PresentationConfig = .{
+    const presentation: app_presentation.Config = .{
         .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
     };
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
@@ -1462,15 +1455,13 @@ test "direct worker retained Canvas matches its complete direct cut" {
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const presentation: instance.PresentationConfig = .{
+    const presentation: app_presentation.Config = .{
         .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
-        .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
     };
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",

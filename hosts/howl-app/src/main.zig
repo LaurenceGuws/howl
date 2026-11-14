@@ -1,7 +1,10 @@
 //! Owns the local SDL window, pane layout, input routing and terminal workers.
 const std = @import("std");
 const c = @import("desktop");
-const instance = @import("howl_instance");
+const vt = @import("howl_vt");
+const commands = @import("howl_vt_output_commands");
+const limits = @import("howl_vt_output_limits");
+const app_presentation = @import("presentation.zig");
 const font_owner = @import("fonts.zig");
 const terminal = @import("terminal.zig");
 const canvas = @import("canvas.zig");
@@ -51,7 +54,7 @@ const Pane = struct {
     selection_failure_reported: u64 = 0,
     selection_hit: ?SelectionHit = null,
     finder: ?FindEditor = null,
-    cell_size: ?instance.render.terminal.Size = null,
+    cell_size: ?commands.Size = null,
     font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
     wheel: pointer.Wheel = .{},
@@ -89,7 +92,7 @@ const Drag = union(enum) { none, divider: layout.Drag, tab: chrome.Drag };
 const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
 const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u32 = null };
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
-const SelectionHit = struct { point: instance.Terminal.TextPoint, columns: u16, alternate: bool };
+const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, alternate: bool };
 const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
@@ -191,7 +194,7 @@ const App = struct {
     fn startup(self: *const App) !config.Profile {
         return self.configuration.profile(try self.configuration.defaultProfile());
     }
-    fn presentationConfig(self: *App, fonts: *font_owner.Fonts, pixels: u16, stroke: u8) !instance.PresentationConfig {
+    fn presentationConfig(self: *App, fonts: *font_owner.Fonts, pixels: u16, stroke: u8) !app_presentation.Config {
         var result = try fonts.config(self.init.io, pixels);
         result.cursor_stroke_pixels = drawing.cursorStroke(pixels, stroke);
         return result;
@@ -517,7 +520,7 @@ const App = struct {
             },
         }
     }
-    fn surfaceFor(self: *App, value: *Pane) ?instance.render.terminal.Size {
+    fn surfaceFor(self: *App, value: *Pane) ?commands.Size {
         if (!value.size_control) return null;
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
@@ -1479,7 +1482,7 @@ const App = struct {
             else => {},
         }
     }
-    fn pointerDown(self: *App, x: f32, y: f32, button: instance.MouseButton, mods: instance.InputModifier, clicks: u8) !void {
+    fn pointerDown(self: *App, x: f32, y: f32, button: vt.Terminal.MouseButton, mods: vt.Terminal.InputModifier, clicks: u8) !void {
         if (self.rename_editor != null) {
             if (button == .left and (try self.renameField()).contains(x, y)) return self.renameClick(x, clicks, mods.shift);
             // Commit an outside click, but do not deliver that same click to the
@@ -1702,7 +1705,7 @@ const App = struct {
         return null;
     }
     // SDL automatically captures held button gestures; this state binds their semantic owner.
-    fn pointerPress(self: *App, p: *Pane, point: pointer.Location, button: instance.MouseButton, mods: instance.InputModifier) !void {
+    fn pointerPress(self: *App, p: *Pane, point: pointer.Location, button: vt.Terminal.MouseButton, mods: vt.Terminal.InputModifier) !void {
         const bit = pointer.buttonBit(button);
         const before: u8 = if (self.capture) |held| held.buttons else 0;
         if (before & bit != 0) return;
@@ -1710,7 +1713,7 @@ const App = struct {
         try p.submit(.{ .input = point.event(.press, button, mods, after) });
         self.capture = .{ .pane = p, .buttons = after, .last = point };
     }
-    fn pointerRelease(self: *App, button: instance.MouseButton, x: f32, y: f32, mods: instance.InputModifier) !void {
+    fn pointerRelease(self: *App, button: vt.Terminal.MouseButton, x: f32, y: f32, mods: vt.Terminal.InputModifier) !void {
         const held = self.capture orelse return;
         const bit = pointer.buttonBit(button);
         if (held.buttons & bit == 0) return;
@@ -1722,7 +1725,7 @@ const App = struct {
         self.capture = if (after == 0) null else .{ .pane = held.pane, .buttons = after, .last = point };
     }
     fn finishPointer(self: *App) !void {
-        for ([_]instance.MouseButton{ .left, .middle, .right }) |button|
+        for ([_]vt.Terminal.MouseButton{ .left, .middle, .right }) |button|
             try self.pointerRelease(button, -std.math.inf(f32), -std.math.inf(f32), .{});
     }
     fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
@@ -1761,11 +1764,11 @@ const App = struct {
             .history => try p.submit(.{ .scroll = steps }),
             .terminal => {
                 const point = self.pointerLocation(p, wheel.mouse_x, wheel.mouse_y, false) orelse return;
-                const button: instance.MouseButton = if (steps > 0) .wheel_up else .wheel_down;
+                const button: vt.Terminal.MouseButton = if (steps > 0) .wheel_up else .wheel_down;
                 for (0..@abs(steps)) |_| try p.submit(.{ .input = point.event(.wheel, button, mods, if (self.capture) |held| if (held.pane == p) held.buttons else 0 else 0) });
             },
             .alternate => {
-                const key: instance.Key = .{ .named = if (steps > 0) .up else .down };
+                const key: vt.Terminal.Key = .{ .named = if (steps > 0) .up else .down };
                 for (0..@abs(steps)) |_| {
                     try p.submit(.{ .input = .{ .key = .{ .key = key, .action = .press } } });
                     try p.submit(.{ .input = .{ .key = .{ .key = key, .action = .release } } });
@@ -1973,7 +1976,7 @@ const App = struct {
         const bar = self.colorBar(0);
         return .{ .x = body.x + body.width - 82, .y = bar.y, .width = 78, .height = 62 };
     }
-    fn editedColor(self: *App) !instance.Terminal.Rgb {
+    fn editedColor(self: *App) !vt.Terminal.Rgb {
         const e = self.settings_editor.?;
         return color_config.parse(e.buffer[0..e.len]) catch (try self.settingRgb(.{ .page = e.page, .label = "", .target = e.editing.? })).?;
     }
@@ -2096,7 +2099,7 @@ const App = struct {
         defer clearClip(self.renderer);
         try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color);
     }
-    fn settingRgb(self: *const App, row: settings.Row) !?instance.Terminal.Rgb {
+    fn settingRgb(self: *const App, row: settings.Row) !?vt.Terminal.Rgb {
         switch (row.target) {
             .app_color => |index| {
                 const resolved = try self.uiPalette();
@@ -2536,8 +2539,8 @@ const App = struct {
                 // A completed font transaction supplies the new lattice before its frame arrives.
                 // An older accepted lease must not resize canonical geometry back to its old font.
                 const cell = p.cell_size orelse frame.cell_size;
-                const rows: u16 = @intFromFloat(std.math.clamp(@floor(rect.h * self.scale / @as(f32, @floatFromInt(cell.height))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_rows))));
-                const columns: u16 = @intFromFloat(std.math.clamp(@floor(rect.w * self.scale / @as(f32, @floatFromInt(cell.width))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_columns))));
+                const rows: u16 = @intFromFloat(std.math.clamp(@floor(rect.h * self.scale / @as(f32, @floatFromInt(cell.height))), 1, @as(f32, @floatFromInt(limits.maximum_rows))));
+                const columns: u16 = @intFromFloat(std.math.clamp(@floor(rect.w * self.scale / @as(f32, @floatFromInt(cell.width))), 1, @as(f32, @floatFromInt(limits.maximum_columns))));
                 if (p.size_control and status.failure == null and !status.closed and (rows != p.rows or columns != p.columns)) {
                     try p.submit(.{ .resize = .{ .rows = rows, .columns = columns } });
                     p.rows = rows;
@@ -2697,7 +2700,7 @@ const FontChange = struct {
     pane: *Pane,
     size: u16,
     overridden: bool,
-    geometry: ?instance.PresentationGeometry = null,
+    geometry: ?app_presentation.Geometry = null,
 };
 fn profileEnvironment(gpa: std.mem.Allocator, parent: *const std.process.Environ.Map, entries: []const config.Environment) std.mem.Allocator.Error!std.process.Environ {
     var child = try parent.clone(gpa);
@@ -2741,7 +2744,7 @@ fn windowHitTest(window: ?*c.SDL_Window, point: [*c]const c.SDL_Point, data: ?*a
 }
 const outline = drawing.outline;
 const fill = drawing.fill;
-fn mouseButton(button: u8) ?instance.MouseButton {
+fn mouseButton(button: u8) ?vt.Terminal.MouseButton {
     return switch (button) {
         c.SDL_BUTTON_LEFT => .left,
         c.SDL_BUTTON_MIDDLE => .middle,
@@ -2762,7 +2765,7 @@ fn paneContent(rect: layout.Rect) c.SDL_FRect {
 }
 // Split sub-cell slack evenly around the accepted frame; the pane remains resize authority.
 // Align absolute origins to physical pixels.
-fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.Size, scale: f32) c.SDL_FRect {
+fn terminalPlacement(available: c.SDL_FRect, surface: commands.Size, scale: f32) c.SDL_FRect {
     const width = @min(available.w, @as(f32, @floatFromInt(surface.width)) / scale);
     const height = @min(available.h, @as(f32, @floatFromInt(surface.height)) / scale);
     // Subtract extents before adding the origin. An oversized stale frame
@@ -2776,7 +2779,7 @@ fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.S
         .h = height,
     };
 }
-fn physicalSurface(rect: layout.Rect, scale: f32) instance.render.terminal.Size {
+fn physicalSurface(rect: layout.Rect, scale: f32) commands.Size {
     const content = paneContent(rect);
     return .{
         .width = @intFromFloat(std.math.clamp(@round(@as(f64, content.w) * scale), 1, @as(f64, @floatFromInt(std.math.maxInt(u32))))),
@@ -3385,9 +3388,9 @@ test "Local child keeps copied profile environment after caller retirement and t
 
 test "centred terminal lattice shares slack, clips stale frames and maps input at fractional scale" {
     const available: c.SDL_FRect = .{ .x = 9, .y = 55, .w = 983, .h = 527 };
-    const cell: instance.render.terminal.Size = .{ .width = 17, .height = 41 };
+    const cell: commands.Size = .{ .width = 17, .height = 41 };
     for ([_]f32{ 1, 1.7, 2 }) |scale| {
-        const surface: instance.render.terminal.Size = .{ .width = 850, .height = 492 };
+        const surface: commands.Size = .{ .width = 850, .height = 492 };
         const placed = terminalPlacement(available, surface, scale);
         try std.testing.expect(placed.x >= available.x and placed.y >= available.y);
         try std.testing.expect(placed.x + placed.w <= available.x + available.w);
@@ -3693,7 +3696,7 @@ test "split reversal clips an oversized stale frame at fractional pane origins" 
                 .{ .x = first, .y = 34, .w = 2392 - first, .h = 1308 },
                 .{ .x = 0, .y = first, .w = 2392, .h = 2392 - first },
             }) |pane| {
-                for ([_]instance.render.terminal.Size{
+                for ([_]commands.Size{
                     .{ .width = 4000, .height = 4000 },
                     .{ .width = 17, .height = 41 },
                     .{ .width = 2670, .height = 2072 },
