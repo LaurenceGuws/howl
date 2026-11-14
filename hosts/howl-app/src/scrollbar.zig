@@ -1,5 +1,4 @@
 const std = @import("std");
-const instance = @import("howl_instance");
 const layout = @import("layout.zig");
 
 /// Copied history geometry; neither frame storage nor canonical text is retained.

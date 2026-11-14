@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("desktop");
-const instance = @import("howl_instance");
+const VT = @import("howl_vt").Terminal;
+const limits = @import("howl_vt_output_limits");
 const terminal = @import("terminal.zig");
 const mappings = @import("keybindings.zig");
 
@@ -8,8 +9,8 @@ const Kind = enum { none, application, overlay, terminal, text };
 const Held = struct {
     kind: Kind = .none,
     target: ?*terminal.Terminal = null,
-    key: ?instance.Key = null,
-    mods: instance.InputModifier = .{},
+    key: ?VT.Key = null,
+    mods: VT.InputModifier = .{},
 };
 
 /// Keyboard routing result; terminal delivery happens synchronously through bounded admission.
@@ -89,13 +90,13 @@ pub const Keyboard = struct {
         const status = owner.snapshot();
         if (status.failure != null or status.closed) return .handled;
         const mods = semanticModifiers(event.mod);
-        const key: instance.Key = if (namedKey(event.key)) |named| .{ .named = named } else if ((mods.control or mods.alt or mods.super) and event.key >= 0x20 and event.key < 0x7f)
-            try instance.Key.initUnicode(@intCast(event.key))
+        const key: VT.Key = if (namedKey(event.key)) |named| .{ .named = named } else if ((mods.control or mods.alt or mods.super) and event.key >= 0x20 and event.key < 0x7f)
+            try VT.Key.initUnicode(@intCast(event.key))
         else {
             entry.* = .{ .kind = .text };
             if (status.interaction != null and status.interaction.?.kitty_keyboard_flags & 8 != 0 and event.key >= 0x20 and event.key <= 0x10ffff) {
                 entry.target = owner;
-                entry.key = try instance.Key.initUnicode(@intCast(event.key));
+                entry.key = try VT.Key.initUnicode(@intCast(event.key));
                 entry.mods = mods;
                 self.pending_text = event.scancode;
                 self.pending_repeat = false;
@@ -165,7 +166,7 @@ pub const Keyboard = struct {
 };
 
 /// Full factual modifiers forwarded to canonical VT; lock state is preserved here.
-pub fn semanticModifiers(mod: c.SDL_Keymod) instance.InputModifier {
+pub fn semanticModifiers(mod: c.SDL_Keymod) VT.InputModifier {
     return .{
         .shift = mod & c.SDL_KMOD_SHIFT != 0,
         .control = mod & c.SDL_KMOD_CTRL != 0,
@@ -177,7 +178,7 @@ pub fn semanticModifiers(mod: c.SDL_Keymod) instance.InputModifier {
 }
 
 /// Named physical keys, including function, lock and keypad identities.
-pub fn namedKey(key: c.SDL_Keycode) ?instance.KeyName {
+pub fn namedKey(key: c.SDL_Keycode) ?VT.NamedKey {
     return switch (key) {
         c.SDLK_RETURN => .enter,
         c.SDLK_TAB => .tab,
@@ -255,7 +256,7 @@ test "overlay and unclaimed releases cannot become terminal keys; standalone mod
     try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .overlay);
     try std.testing.expect((try keyboard.route(event, false, null, null, false)) == .handled);
     try std.testing.expect(namedKey(c.SDLK_LCTRL) == null);
-    try std.testing.expectEqual(@as(?instance.KeyName, .keypad_enter), namedKey(c.SDLK_KP_ENTER));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .keypad_enter), namedKey(c.SDLK_KP_ENTER));
 }
 
 test "report-all alphabet keys carry committed text repeat release and focus cleanup exactly once" {
@@ -280,7 +281,7 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
         .shaped_capacity = 128,
         .raster_bytes = 256 * 256,
         .command_capacity = 256,
-        .command_limit = instance.render.limits.maximum_frame_commands,
+        .command_limit = limits.maximum_frame_commands,
     }, c.SDL_RegisterEvents(1), false);
     defer owner.destroy();
     var attempt: u16 = 0;

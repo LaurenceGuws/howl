@@ -1,12 +1,14 @@
 const std = @import("std");
-const instance = @import("howl_instance");
+const VT = @import("howl_vt").Terminal;
+const commands = @import("howl_vt_output_commands");
+const limits = @import("howl_vt_output_limits");
 const layout = @import("layout.zig");
 
 /// Desktop wheel policy; terminal encoding remains exclusively VT-owned.
 pub const WheelRoute = enum { wait, history, terminal, alternate, ignore };
 
 /// UI routing uses copied interaction facts and the accepted immutable frame.
-pub fn wheelRoute(history: bool, shift: bool, state: ?instance.Terminal.InteractionState, alternate: bool) WheelRoute {
+pub fn wheelRoute(history: bool, shift: bool, state: ?VT.InteractionState, alternate: bool) WheelRoute {
     if (history) return .history;
     const known = state orelse return if (shift) .history else .wait;
     if (known.mouse_tracking != .off) return .terminal;
@@ -39,7 +41,7 @@ pub const Location = struct {
     pixel_y: u32,
 
     /// Supplies semantic facts without assembling protocol bytes.
-    pub fn event(self: Location, kind: instance.MouseEventKind, button: instance.MouseButton, mods: instance.InputModifier, buttons: u8) instance.Input {
+    pub fn event(self: Location, kind: VT.MouseEventKind, button: VT.MouseButton, mods: VT.InputModifier, buttons: u8) VT.InputEvent {
         return .{ .mouse = .{
             .kind = kind,
             .button = button,
@@ -54,7 +56,7 @@ pub const Location = struct {
 };
 
 /// Maps only the visible accepted lattice; captured drags clamp to its clipped surface.
-pub fn locate(rect: layout.Rect, scale: f32, cell: instance.render.terminal.Size, surface: instance.render.terminal.Size, x: f32, y: f32, captured: bool) ?Location {
+pub fn locate(rect: layout.Rect, scale: f32, cell: commands.Size, surface: commands.Size, x: f32, y: f32, captured: bool) ?Location {
     if (!std.math.isFinite(x) or !std.math.isFinite(y) or !std.math.isFinite(scale) or scale <= 0 or
         cell.width == 0 or cell.height == 0 or surface.width == 0 or surface.height == 0) return null;
     const width = @min(@as(f64, @floatFromInt(surface.width)), @floor(@as(f64, rect.width) * scale));
@@ -68,12 +70,12 @@ pub fn locate(rect: layout.Rect, scale: f32, cell: instance.render.terminal.Size
     } else if (px < 0 or py < 0 or px >= width or py >= height) return null;
     const column = @floor(px / @as(f64, @floatFromInt(cell.width)));
     const row = @floor(py / @as(f64, @floatFromInt(cell.height)));
-    if (column >= instance.render.limits.maximum_columns or row >= instance.render.limits.maximum_rows) return null;
+    if (column >= limits.maximum_columns or row >= limits.maximum_rows) return null;
     return .{ .row = @intFromFloat(row), .col = @intFromFloat(column), .pixel_x = @intFromFloat(px), .pixel_y = @intFromFloat(py) };
 }
 
 /// Maps only the three capturable physical buttons to their held-state bits.
-pub fn buttonBit(button: instance.MouseButton) u8 {
+pub fn buttonBit(button: VT.MouseButton) u8 {
     return switch (button) {
         .left => 1,
         .middle => 2,
@@ -83,7 +85,7 @@ pub fn buttonBit(button: instance.MouseButton) u8 {
 }
 
 test "wheel routing preserves history while negotiated mouse receives modifiers" {
-    var state = std.mem.zeroes(instance.Terminal.InteractionState);
+    var state = std.mem.zeroes(VT.InteractionState);
     try std.testing.expectEqual(WheelRoute.wait, wheelRoute(false, false, null, false));
     try std.testing.expectEqual(WheelRoute.history, wheelRoute(false, true, null, true));
     try std.testing.expectEqual(WheelRoute.history, wheelRoute(true, false, null, true));
@@ -113,8 +115,8 @@ test "fractional wheel input accumulates without crossing policy ownership or fl
 
 test "pointer coordinates honor fractional scale, clipping, capture and hostile bounds" {
     const rect: layout.Rect = .{ .x = 10, .y = 20, .width = 30, .height = 40 };
-    const cell: instance.render.terminal.Size = .{ .width = 10, .height = 20 };
-    const surface: instance.render.terminal.Size = .{ .width = 100, .height = 100 };
+    const cell: commands.Size = .{ .width = 10, .height = 20 };
+    const surface: commands.Size = .{ .width = 100, .height = 100 };
     const point = locate(rect, 1.7, cell, surface, 22, 33, false).?;
     try std.testing.expectEqual(@as(i32, 1), point.row);
     try std.testing.expectEqual(@as(u16, 2), point.col);
@@ -130,8 +132,8 @@ test "pointer coordinates honor fractional scale, clipping, capture and hostile 
 
 test "Shift wheel routed to application preserves canonical SGR modifier bytes" {
     const allocator = std.testing.allocator;
-    var vt: instance.Terminal = undefined;
-    try instance.Terminal.initWithHistoryInto(&vt, allocator, 24, 80, 0);
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 24, 80, 0);
     defer vt.deinit();
     // zig-audit: acknowledge discard
     // reason: The resulting application wheel route and exact encoded reports are asserted below.
@@ -139,8 +141,8 @@ test "Shift wheel routed to application preserves canonical SGR modifier bytes" 
     const state = vt.interactionState();
     try std.testing.expectEqual(WheelRoute.terminal, wheelRoute(false, true, state, true));
     const point: Location = .{ .row = 4, .col = 6, .pixel_x = 63, .pixel_y = 95 };
-    var scratch: instance.Terminal.InputScratch = undefined;
-    for ([_]instance.MouseButton{ .wheel_up, .wheel_down }, [_][]const u8{ "\x1b[<68;7;5M", "\x1b[<69;7;5M" }) |button, expected| {
+    var scratch: VT.InputScratch = undefined;
+    for ([_]VT.MouseButton{ .wheel_up, .wheel_down }, [_][]const u8{ "\x1b[<68;7;5M", "\x1b[<69;7;5M" }) |button, expected| {
         const event = point.event(.wheel, button, .{ .shift = true }, 0);
         var encoded = try vt.encodeInput(allocator, &scratch, event);
         defer encoded.deinit();

@@ -1,6 +1,7 @@
 //! App-only cursor clocks over retained frames; never mutates VT or requests projection.
 const std = @import("std");
-const instance = @import("howl_instance");
+const VT = @import("howl_vt").Terminal;
+const commands = @import("howl_vt_output_commands");
 
 /// Configured visible baseline; applications may still select or hide their cursor.
 pub const Shape = enum {
@@ -9,7 +10,7 @@ pub const Shape = enum {
     underline,
 
     /// Converts the host preference to canonical cursor defaults.
-    pub fn style(self: Shape) instance.Terminal.CursorStyle {
+    pub fn style(self: Shape) VT.CursorStyle {
         return .{ .shape = switch (self) {
             .block => .block,
             .bar => .bar,
@@ -109,7 +110,7 @@ pub const MotionOptions = struct {
     }
 };
 
-const Rect = instance.render.terminal.Rect;
+const Rect = commands.Rect;
 const trail_limit = 4;
 
 /// One translucent historic cursor body; never carries translated glyph ink.
@@ -138,8 +139,8 @@ pub const Motion = struct {
     alternate: bool = false,
     options: MotionOptions = .{},
     placement: [4]f32 = @splat(0),
-    surface: instance.render.terminal.Size = .{ .width = 1, .height = 1 },
-    cell_size: instance.render.terminal.Size = .{ .width = 1, .height = 1 },
+    surface: commands.Size = .{ .width = 1, .height = 1 },
+    cell_size: commands.Size = .{ .width = 1, .height = 1 },
     style: ?@TypeOf(@as(@import("frame_info.zig").Cursor, undefined).shape) = null,
     samples: [trail_limit]Sample = undefined,
     sample_count: u8 = 0,

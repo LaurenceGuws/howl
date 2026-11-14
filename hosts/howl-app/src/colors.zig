@@ -1,6 +1,6 @@
 //! App-owned palette names and strict RGB configuration; VT owns resolved terminal colors.
 const std = @import("std");
-const Terminal = @import("howl_instance").Terminal;
+const Terminal = @import("howl_vt").Terminal;
 const themes = @import("themes.zig");
 
 /// Optional chrome role overrides; empty strings inherit the selected application theme.
