@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
     );
     const translation = b.addTranslateC(.{ .root_source_file = header, .target = target, .optimize = optimize });
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
+    const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     const root = b.createModule(.{
@@ -45,6 +46,7 @@ pub fn build(b: *std.Build) void {
     const direct_output = vt_build.addOutputModules(b, vt.path("."), target, optimize, vt.module("howl_vt"), text.module("howl_text"), vt.module("howl_vt_output_commands"), vt.module("howl_vt_output_limits"));
     const direct_proof = b.createModule(.{ .root_source_file = b.path("src/direct_output_proof.zig"), .target = target, .optimize = optimize, .link_libc = true });
     direct_proof.addImport("howl_vt", vt.module("howl_vt"));
+    direct_proof.addImport("howl_pty", pty.module("howl_pty"));
     direct_proof.addImport("howl_vt_output", direct_output.owner);
     direct_proof.addImport("output_state", direct_output.owner.import_table.get("output_state").?);
     direct_proof.addImport("test_fonts", text.module("howl_text_test_fonts"));

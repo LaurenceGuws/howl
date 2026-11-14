@@ -2,6 +2,7 @@
 //! direct-output owner without importing Instance or the legacy Renderer.
 const std = @import("std");
 const vt = @import("howl_vt");
+const pty = @import("howl_pty");
 const output = @import("howl_vt_output");
 const Borrowed = @import("output_state").State(false);
 
@@ -47,4 +48,60 @@ test "one canonical VT serves borrowed direct output with an independently retai
     try std.testing.expectEqual(@as(u16, 3), direct.accepted_rows);
     try std.testing.expectEqual(@as(u16, 5), direct.accepted_cols);
     try std.testing.expectEqualDeep(original, pinned.glyphs[0]);
+}
+
+test "a direct PTY feeds the same canonical VT projected by borrowed output" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const store = try output.initPresentationStore(allocator, threaded.io(), .{
+        .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } } },
+    }, .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 160,
+        .raster_bytes = 512 * 512,
+    });
+    defer output.releasePresentationStore(store);
+
+    var canonical: vt.Terminal = undefined;
+    try vt.Terminal.initWithHistoryInto(&canonical, allocator, 3, 12, 8);
+    defer canonical.deinit();
+    const cell = output.presentationStoreCellSize(store);
+    try canonical.setCellPixelSize(cell.width, cell.height);
+    const direct = try Borrowed.initBorrowedShared(allocator, &canonical, store, .{ .history_capacity = 8 });
+    defer direct.deinit();
+
+    var transport = try pty.Owned.init(allocator, std.testing.environ, "/bin/sh", "printf HOWL; sleep 2", null, .{
+        .term = "xterm-256color",
+        .colorterm = "truecolor",
+    });
+    defer transport.deinit();
+    const pixel_width = std.math.cast(u16, @as(u32, 12) * cell.width) orelse return error.InvalidCellExtent;
+    const pixel_height = std.math.cast(u16, @as(u32, 3) * cell.height) orelse return error.InvalidCellExtent;
+    try transport.startWithPixels(12, 3, pixel_width, pixel_height);
+
+    var buffer: [128]u8 = undefined;
+    var received = false;
+    for (0..2000) |_| {
+        const count = transport.read(&buffer) catch |failure| switch (failure) {
+            error.WouldBlock, error.Interrupted => 0,
+            else => return failure,
+        };
+        if (count != 0) {
+            const change = try canonical.feed(buffer[0..count]);
+            try std.testing.expect(change.stateChanged());
+            const view = canonical.semanticView(0);
+            received = view.cellAt(0, 0) == 'H' and
+                view.cellAt(0, 1) == 'O' and
+                view.cellAt(0, 2) == 'W' and
+                view.cellAt(0, 3) == 'L';
+            if (received) break;
+        }
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(received);
+    try direct.flush();
+    const pinned = try direct.hold();
+    defer direct.release();
+    try std.testing.expect(pinned.glyphs[0].len != 0);
 }
