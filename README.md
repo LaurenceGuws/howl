@@ -108,7 +108,7 @@ their named contracts.
 `.zig-audit.json` uses schema 2 and ruleset 3 over the accepted core source, its build
 glue, and the VT unit-proof root. Intentional sharp constructs are acknowledged beside
 the exact source with a reason. Every active child has its own required audit;
-only the exact old Flutter native copybook root is exempt from active checks.
+the retired Flutter copybook has no active source or audit exception.
 
 Each maintained Zig package owns complete checks, tests, audits and its public
 consumer graph. The root forwards those child gates and the independent
