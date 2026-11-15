@@ -3376,25 +3376,37 @@ pub const Screen = struct {
             properties.separatesSingleOther(unicode.properties(@intCast(lead_cell.codepoint))))
             return null;
 
-        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
-        const accepted = @call(.always_inline, Screen.cellScalarsAt, .{ self, anchor_row, anchor_col, &scalars });
-        std.debug.assert(accepted.len != 0);
         var previous: ?unicode.Properties = null;
         const fast_join = if (properties.isGraphemeExtend()) fast: {
-            previous = unicode.properties(@intCast(accepted[accepted.len - 1]));
+            // GCB Extend needs only the preceding scalar, not a copy of the
+            // entire grapheme. Inline marks are owned directly by the lead.
+            const last: u32 = if (lead_cell.combining_len == 0)
+                lead_cell.codepoint
+            else if (lead_cell.combining_len <= lead_cell.combining.len)
+                lead_cell.combining[lead_cell.combining_len - 1]
+            else tail: {
+                const retained = acceptedTail(&self.scalars.?, idx, lead_cell.combining_len);
+                break :tail retained[retained.len - 1];
+            };
+            previous = unicode.properties(@intCast(last));
             break :fast properties.extendJoinsAfter(previous.?);
         } else false;
         if (!fast_join) {
+            var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+            const accepted = @call(.always_inline, Screen.cellScalarsAt, .{ self, anchor_row, anchor_col, &scalars });
+            std.debug.assert(accepted.len != 0);
             var state = unicode.GraphemeState{};
             for (accepted) |scalar|
                 state = state.step(unicode.properties(@intCast(scalar)));
             if (!state.step(properties).joinsCurrent()) return null;
+            if (cp == 0xfe0f or cp == 0xfe0e)
+                previous = unicode.properties(@intCast(accepted[accepted.len - 1]));
         }
         if (lead_cell.combining_len + 1 >= scalar_storage.maximum_scalars) {
             if (grow) return error.ScalarCapacity;
             return false;
         }
-        const changes_presentation = (previous orelse unicode.properties(@intCast(accepted[accepted.len - 1]))).isEmojiPresentationBase();
+        const changes_presentation = if (previous) |last| last.isEmojiPresentationBase() else false;
         if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
             self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
         {
