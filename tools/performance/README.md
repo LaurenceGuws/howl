@@ -6,6 +6,19 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Physical Hyprland Unicode race · 15 November
+
+[The U30 four-horse Unicode comparison](HYPRLAND_U30_UNICODE.md) contains 40
+qualified fresh six-second terminal trials at the full 384×83/240 Hz DP-1
+track. Five independently selectable loads cover ASCII, world scripts, emoji
+ZWJ, Indic conjuncts and mixed Unicode. U29 Howl is efficient on ASCII/emoji,
+while Kitty uses less CPU on world scripts/Indic; Kitty misses approximately
+12% of producer slots on emoji in both orders. The report keeps delivered
+throughput separate from CPU and documents WMIO seat-control recovery and
+the interrupted/resumed batches. It does not claim displayed FPS or
+pixel-equivalent fallback coverage. The historical race.html snapshot is
+unchanged by this new cohort.
+
 ## Cold admission and retry scheduling · 24 October
 
 [The private cold-admission experiment](COLD_ADMISSION.md) cuts cold CJK worker
