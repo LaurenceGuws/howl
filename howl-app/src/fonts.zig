@@ -5,6 +5,7 @@ const c = @import("desktop");
 const app_presentation = @import("presentation.zig");
 const output = @import("howl_vt_output");
 const canonical_vt = @import("howl_vt");
+const fallback = @import("font_fallback.zig");
 
 /// Owns the exact desktop regular/style/fallback recipe and supplies bounded presentation policy.
 pub const Fonts = struct {
@@ -107,6 +108,7 @@ pub const Fonts = struct {
                 .italic = if (self.paths[1].len == 0) null else .{ .path = .{ .primary = self.paths[1], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .bold = if (self.paths[2].len == 0) null else .{ .path = .{ .primary = self.paths[2], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .bold_italic = if (self.paths[3].len == 0) null else .{ .path = .{ .primary = self.paths[3], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
+                .fallback_factory = fallback.factory,
             }, .{ .shape_cache = shape_cache, .shaped_capacity = 32, .raster_bytes = 512 * 512 });
             slot.* = .{ .pixels = pixels, .owner = owner };
             return presentation(owner, shape_cache, self.atlas_height_limit);

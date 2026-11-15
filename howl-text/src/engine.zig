@@ -103,6 +103,16 @@ pub const Config = struct {
     size: Size,
 };
 
+/// Identifies one on-demand file face, including its index inside a collection.
+/// The caller lends the path until admission returns; the native owner copies it.
+pub const FallbackFile = struct {
+    path: []const u8,
+    collection_index: u32 = 0,
+};
+
+/// A failed optional face admission leaves the existing ordered face set intact.
+pub const AppendError = InitError || error{ InvalidText, TextTooLong };
+
 /// Borrows font bytes only during construction. A successful FontSet owns
 /// independent copies, retained until the corresponding native faces close.
 pub const MemoryConfig = struct {
@@ -266,7 +276,29 @@ const Face = struct {
     ft: c.FT_Face,
     hb: *c.hb_font_t,
     scale: RasterScale,
+    collection_index: u32,
+
+    fn deinit(self: Face, allocator: std.mem.Allocator) void {
+        c.hb_font_destroy(self.hb);
+        doneFace(self.ft);
+        self.storage.deinit(allocator);
+    }
 };
+
+fn openFace(library: c.FT_Library, storage: FontStorage, collection_index: u32, size: Size) InitError!Face {
+    const index = std.math.cast(c.FT_Long, collection_index) orelse return error.InvalidConfig;
+    var ft: c.FT_Face = undefined;
+    const opened = switch (storage) {
+        .path => |path| c.FT_New_Face(library, path.ptr, index, &ft),
+        .memory => |bytes| c.FT_New_Memory_Face(library, bytes.ptr, @intCast(bytes.len), index, &ft),
+    };
+    if (opened != 0) return error.FontOpen;
+    errdefer doneFace(ft);
+    if (c.FT_Select_Charmap(ft, c.FT_ENCODING_UNICODE) != 0) return error.UnicodeCharmap;
+    const scale = try setConfiguredSize(ft, size);
+    const hb = try createHbFont(ft);
+    return .{ .storage = storage, .ft = ft, .hb = hb, .scale = scale, .collection_index = collection_index };
+}
 
 // Native font construction, shaping, and rasterization.
 
@@ -283,6 +315,8 @@ pub const FontSet = struct {
     faces: []Face,
     /// Retains validated font metrics for the configured size.
     metrics: Metrics,
+    /// Preserves the exact size for on-demand faces without changing cell geometry.
+    size: Size,
 
     /// Copies and transactionally opens the complete config. Invalid config,
     /// native initialization, metrics, and allocation failures release all
@@ -315,11 +349,7 @@ pub const FontSet = struct {
         errdefer allocator.free(faces);
         var loaded: usize = 0;
         errdefer {
-            for (faces[0..loaded]) |face| {
-                c.hb_font_destroy(face.hb);
-                doneFace(face.ft);
-                face.storage.deinit(allocator);
-            }
+            for (faces[0..loaded]) |face| face.deinit(allocator);
         }
 
         while (loaded < count) : (loaded += 1) {
@@ -329,17 +359,7 @@ pub const FontSet = struct {
             else
                 .{ .path = allocator.dupeSentinel(u8, source, 0) catch return error.OutOfMemory };
             errdefer storage.deinit(allocator);
-            var ft: c.FT_Face = undefined;
-            const opened = if (memory_backed)
-                c.FT_New_Memory_Face(library, storage.memory.ptr, @intCast(storage.memory.len), 0, &ft)
-            else
-                c.FT_New_Face(library, storage.path.ptr, 0, &ft);
-            if (opened != 0) return error.FontOpen;
-            errdefer doneFace(ft);
-            if (c.FT_Select_Charmap(ft, c.FT_ENCODING_UNICODE) != 0) return error.UnicodeCharmap;
-            const scale = try setConfiguredSize(ft, size);
-            const hb = try createHbFont(ft);
-            faces[loaded] = .{ .storage = storage, .ft = ft, .hb = hb, .scale = scale };
+            faces[loaded] = try openFace(library, storage, 0, size);
         }
 
         const nominal_height_px = try nominalPixelHeight(size);
@@ -349,18 +369,50 @@ pub const FontSet = struct {
             .library = library,
             .faces = faces,
             .metrics = metrics,
+            .size = size,
         };
+    }
+
+    /// Tries one file only after a missing sequence has been observed.
+    /// Keeps native face indices stable; an unsupported, repeated, or over-limit
+    /// source is not retained. Admission does not change terminal metrics.
+    pub fn appendFallback(self: *FontSet, source: FallbackFile, codepoints: []const u32) AppendError!bool {
+        try validateCodepoints(codepoints);
+        try validatePath(source.path);
+        if (self.faces.len >= @as(usize, max_fallbacks) + 1) return false;
+        for (self.faces) |face| switch (face.storage) {
+            .path => |path| if (face.collection_index == source.collection_index and
+                std.mem.eql(u8, path, source.path)) return false,
+            .memory => {},
+        };
+        const storage: FontStorage = .{ .path = self.allocator.dupeSentinel(u8, source.path, 0) catch return error.OutOfMemory };
+        errdefer storage.deinit(self.allocator);
+        const face = try openFace(self.library, storage, source.collection_index, self.size);
+        var retained = false;
+        defer if (!retained) {
+            c.hb_font_destroy(face.hb);
+            doneFace(face.ft);
+        };
+        // The borrowed storage is released by errdefer on errors; unsupported
+        // sources complete normally and must release it explicitly.
+        if (!faceSupportsSequence(face.hb, codepoints, false) and
+            !faceSupportsSequence(face.hb, codepoints, true))
+        {
+            storage.deinit(self.allocator);
+            return false;
+        }
+        const enlarged = self.allocator.realloc(self.faces, self.faces.len + 1) catch return error.OutOfMemory;
+        self.faces = enlarged;
+        self.faces[self.faces.len - 1] = face;
+        retained = true;
+        return true;
     }
 
     /// Exclusively releases every HB font, FT face, copied source, and FT
     /// library after all method borrows end. Independent runs and rasters may
     /// outlive this owner.
     pub fn deinit(self: *FontSet) void {
-        for (self.faces) |face| {
-            c.hb_font_destroy(face.hb);
-            doneFace(face.ft);
-            face.storage.deinit(self.allocator);
-        }
+        for (self.faces) |face| face.deinit(self.allocator);
         self.allocator.free(self.faces);
         doneLibrary(self.library);
         self.* = undefined;
@@ -802,9 +854,17 @@ fn validatePath(path: []const u8) error{InvalidConfig}!void {
 
 fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32, allow_nominal_variant: bool) bool {
     var index: usize = 0;
+    var visible = false;
     while (index < codepoints.len) {
         const base = codepoints[index];
+        // These controls participate in shaping but require no standalone
+        // glyph: demanding a cmap entry would reject valid emoji ZWJ/tag runs.
+        if (isShapingControl(base)) {
+            index += 1;
+            continue;
+        }
         if (isVariationSelector(base)) return false;
+        visible = true;
         const selector = if (index + 1 < codepoints.len and
             isVariationSelector(codepoints[index + 1]))
             codepoints[index + 1]
@@ -817,7 +877,7 @@ fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32, allow_nomin
         }
         index += if (selector == 0) 1 else 2;
     }
-    return true;
+    return visible;
 }
 
 fn validateGlyphInfo(
@@ -874,6 +934,11 @@ fn validateCodepoints(codepoints: []const u32) error{ InvalidText, TextTooLong }
 fn isVariationSelector(codepoint: u32) bool {
     return codepoint >= 0xfe00 and codepoint <= 0xfe0f or
         codepoint >= 0xe0100 and codepoint <= 0xe01ef;
+}
+
+fn isShapingControl(codepoint: u32) bool {
+    return codepoint == 0x200c or codepoint == 0x200d or
+        (codepoint >= 0xe0020 and codepoint <= 0xe007f);
 }
 
 fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!Metrics {

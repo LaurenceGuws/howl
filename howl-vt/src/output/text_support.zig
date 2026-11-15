@@ -142,12 +142,22 @@ pub const FontConfig = union(enum) {
     memory: text.MemoryConfig,
 };
 
+/// Optional host discovery, owned for the exact lifetime of a presentation store.
+/// Creation may decline availability; existing configured fonts still render.
+/// Only cache misses call find, while the owning native text lane is claimed.
+pub const FallbackFactory = struct {
+    create: *const fn (std.mem.Allocator) ?glyph_cache.FallbackContext,
+    find: *const fn (glyph_cache.FallbackContext, glyph_cache.FontVariant, []const u32) ?text.FallbackFile,
+    destroy: *const fn (glyph_cache.FallbackContext) void,
+};
+
 /// Supplies one required regular font and optional style variants.
 pub const FontFamilyConfig = struct {
     regular: FontConfig,
     italic: ?FontConfig = null,
     bold: ?FontConfig = null,
     bold_italic: ?FontConfig = null,
+    fallback_factory: ?FallbackFactory = null,
 };
 
 fn initFont(allocator: std.mem.Allocator, config: FontConfig) text.InitError!*text.FontSet {
@@ -180,12 +190,13 @@ const OwnedFonts = struct {
         };
     }
 
-    fn faces(self: *const OwnedFonts) FontFaces {
+    fn faces(self: *const OwnedFonts, fallback_lookup: ?glyph_cache.FallbackLookup) FontFaces {
         return .{
             .regular = self.regular,
             .italic = self.italic,
             .bold = self.bold,
             .bold_italic = self.bold_italic,
+            .fallback_lookup = fallback_lookup,
         };
     }
 
@@ -221,6 +232,7 @@ pub fn release(self: *PresentationStore) void {
     if (before != 1) return;
     deinitStore(value.store);
     value.fonts.deinit();
+    if (value.fallback_context) |context| value.fallback_destroy.?(context);
     value.allocator.destroy(value);
 }
 /// Waits for exclusive native-face use; keep this outside transfer-critical paths.
@@ -247,6 +259,8 @@ const OwnerImpl = struct {
     io: std.Io,
     fonts: OwnedFonts,
     store: *Store,
+    fallback_context: ?glyph_cache.FallbackContext = null,
+    fallback_destroy: ?*const fn (glyph_cache.FallbackContext) void = null,
     mutex: std.Io.Mutex = .init,
     references: std.atomic.Value(u32) = .init(1),
 };
@@ -264,10 +278,23 @@ pub const PresentationStoreInitError = text.InitError || StoreInitError || error
 pub fn initPresentationStore(allocator: std.mem.Allocator, io: std.Io, config: FontFamilyConfig, lane_config: StoreConfig) PresentationStoreInitError!*PresentationStore {
     const owner = try allocator.create(OwnerImpl);
     errdefer allocator.destroy(owner);
+    const fallback_context = if (config.fallback_factory) |factory| factory.create(allocator) else null;
+    errdefer if (fallback_context) |context| config.fallback_factory.?.destroy(context);
     var fonts = try OwnedFonts.init(allocator, config);
     errdefer fonts.deinit();
-    const lane = try initStore(allocator, fonts.faces(), lane_config);
-    owner.* = .{ .allocator = allocator, .io = io, .fonts = fonts, .store = lane };
+    const lookup: ?glyph_cache.FallbackLookup = if (fallback_context) |context| .{
+        .context = context,
+        .find = config.fallback_factory.?.find,
+    } else null;
+    const lane = try initStore(allocator, fonts.faces(lookup), lane_config);
+    owner.* = .{
+        .allocator = allocator,
+        .io = io,
+        .fonts = fonts,
+        .store = lane,
+        .fallback_context = fallback_context,
+        .fallback_destroy = if (fallback_context != null) config.fallback_factory.?.destroy else null,
+    };
     // zig-audit: acknowledge ptr_cast
     // reason: Opaque ownership preserves the exact allocator-owned OwnerImpl address.
     return @ptrCast(owner);

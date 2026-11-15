@@ -52,6 +52,12 @@ pub const PresentationStore = support.PresentationStore;
 pub const FontConfig = support.FontConfig;
 /// Owned regular and optional style faces.
 pub const FontFamilyConfig = support.FontFamilyConfig;
+/// Optional host-owned on-demand font discovery for owning presentation stores.
+pub const FallbackFactory = support.FallbackFactory;
+/// Borrowed opaque host discovery context, retained by its factory.
+pub const FallbackContext = cache.FallbackContext;
+/// Effective native font variant used when requesting host discovery.
+pub const FontVariant = cache.FontVariant;
 /// Shared shaping and raster scratch bounds.
 pub const StoreConfig = support.StoreConfig;
 /// Owned store construction errors.

@@ -77,6 +77,48 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     for (variation_fallback.glyphs) |glyph| try std.testing.expect(glyph.id != 0);
 }
 
+test "on-demand fallback preserves selected face indices and releases rejected candidates" {
+    const set = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 18 },
+    });
+    defer set.deinit();
+
+    const symbol = [_]u32{0xe0b0};
+    try std.testing.expectEqual(@as(?u8, 0), try set.faceFor(&.{'a'}));
+    try std.testing.expectEqual(@as(?u8, null), try set.faceFor(&symbol));
+    try std.testing.expectError(error.InvalidConfig, set.appendFallback(.{ .path = "" }, &symbol));
+    try std.testing.expectError(error.InvalidText, set.appendFallback(.{ .path = fonts.symbol_font }, &.{0xd800}));
+    try std.testing.expectError(error.FontOpen, set.appendFallback(.{ .path = "/font-does-not-exist-for-howl-u29" }, &symbol));
+    try std.testing.expect(!try set.appendFallback(.{ .path = fonts.symbol_font }, &.{0x10ffff}));
+    try std.testing.expectEqual(@as(?u8, null), try set.faceFor(&symbol));
+
+    try std.testing.expect(try set.appendFallback(.{ .path = fonts.symbol_font }, &symbol));
+    try std.testing.expect(!try set.appendFallback(.{ .path = fonts.symbol_font }, &symbol));
+    try std.testing.expectEqual(@as(?u8, 0), try set.faceFor(&.{'a'}));
+    try std.testing.expectEqual(@as(?u8, 1), try set.faceFor(&symbol));
+    var run = try shapeOwned(set, std.testing.allocator, .{
+        .codepoints = &symbol,
+        .clusters = &.{0},
+    });
+    defer run.deinit();
+    try std.testing.expectEqual(@as(u8, 1), run.face_index);
+    try std.testing.expectError(error.FontOpen, set.appendFallback(.{ .path = fonts.symbol_font, .collection_index = 123456 }, &symbol));
+    try std.testing.expectEqual(@as(?u8, 1), try set.faceFor(&symbol));
+}
+
+test "on-demand fallback respects the same finite configured face bound" {
+    const fallbacks: [text.max_fallbacks][]const u8 = @splat(fonts.symbol_font);
+    const set = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &fallbacks,
+        .size = .{ .pixels = 18 },
+    });
+    defer set.deinit();
+    try std.testing.expect(!try set.appendFallback(.{ .path = fonts.symbol_font }, &.{0xe0b0}));
+    try std.testing.expectEqual(@as(?u8, 1), try set.faceFor(&.{0xe0b0}));
+}
+
 test "OpenType shaping preserves caller clusters and applies substitutions" {
     const fira = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.normal_ligature_font,
@@ -790,6 +832,9 @@ test "intrinsic colour is straight RGBA while the alpha API keeps its contract" 
     defer set.deinit();
     const face = (try set.faceFor(&.{0x1f600})).?;
     try std.testing.expectEqual(@as(u8, 1), face);
+    // ZWJ is a shaping instruction, not a requirement for a visible cmap glyph.
+    try std.testing.expectEqual(@as(?u8, 1), try set.faceFor(&.{ 0x1f600, 0x200d, 0x1f600 }));
+    try std.testing.expectEqual(@as(?u8, null), try set.faceFor(&.{0x200d}));
     const id = try set.glyphForCodepoint(face, 0x1f600);
     var color = try set.rasterizeGlyph(std.testing.allocator, face, id);
     defer color.deinit();

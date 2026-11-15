@@ -41,6 +41,10 @@ pub const PointSize = engine.PointSize;
 pub const Size = engine.Size;
 /// Borrows bounded font paths and one exact native size during construction.
 pub const Config = engine.Config;
+/// One borrowed on-demand font file and collection face index.
+pub const FallbackFile = engine.FallbackFile;
+/// Names optional native face admission failures.
+pub const AppendError = engine.AppendError;
 /// Borrows font bytes only during construction; successful owners retain independent copies.
 pub const MemoryConfig = engine.MemoryConfig;
 /// Describes validated nonzero font-derived text geometry.
@@ -100,6 +104,12 @@ pub const FontSet = opaque {
     /// Copies the validated native metrics for this configured font set.
     pub fn metrics(self: *const FontSet) Metrics {
         return fontOwnerConst(self).value.metrics;
+    }
+
+    /// Adds a supporting native fallback without relocating existing face indices.
+    /// Unsupported, repeated, or over-limit candidates do not change this owner.
+    pub fn appendFallback(self: *FontSet, source: FallbackFile, codepoints: []const u32) AppendError!bool {
+        return fontOwner(self).value.appendFallback(source, codepoints);
     }
 
     /// Shapes one validated sequence into caller-owned glyph storage.

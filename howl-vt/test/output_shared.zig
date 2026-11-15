@@ -7,12 +7,97 @@ const cache = @import("glyph_cache");
 const shaped_text = @import("howl_text");
 const a = std.testing.allocator;
 
+const DiscoveryProof = struct {
+    allocator: std.mem.Allocator,
+    calls: u32 = 0,
+};
+var discovery_created: std.atomic.Value(u32) = .init(0);
+var discovery_destroyed: std.atomic.Value(u32) = .init(0);
+var discovery_calls: std.atomic.Value(u32) = .init(0);
+
+fn proofCreate(allocator: std.mem.Allocator) ?output.FallbackContext {
+    const proof = allocator.create(DiscoveryProof) catch return null;
+    proof.* = .{ .allocator = allocator };
+    const previous = discovery_created.fetchAdd(1, .monotonic);
+    std.debug.assert(previous == 0);
+    // zig-audit: acknowledge ptr_cast
+    // reason: The proof factory passes its exact owned DiscoveryProof address to the owning store.
+    return @ptrCast(proof);
+}
+fn proofState(context: output.FallbackContext) *DiscoveryProof {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Only the test factory creates this opaque context.
+    // zig-audit: acknowledge align_cast
+    // reason: The original test allocation supplies the exact DiscoveryProof alignment.
+    return @ptrCast(@alignCast(context));
+}
+fn proofFind(context: output.FallbackContext, variant: output.FontVariant, codepoints: []const u32) ?shaped_text.FallbackFile {
+    if (variant != .regular) return null;
+    proofState(context).calls += 1;
+    const previous = discovery_calls.fetchAdd(1, .monotonic);
+    std.debug.assert(previous < 4);
+    if (codepoints.len == 1 and codepoints[0] == 0xe0b0)
+        return .{ .path = @import("test_fonts").symbol_font };
+    return null;
+}
+fn proofDestroy(context: output.FallbackContext) void {
+    const proof = proofState(context);
+    proof.allocator.destroy(proof);
+    const previous = discovery_destroyed.fetchAdd(1, .monotonic);
+    std.debug.assert(previous == 0);
+}
+
 fn makeStore(io: std.Io) !*output.PresentationStore {
     return output.initPresentationStore(a, io, .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } } } }, .{
         .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
         .shaped_capacity = 160,
         .raster_bytes = 512 * 512,
     });
+}
+
+test "owning discovery admits a missing font exactly once and retires its context" {
+    discovery_created.store(0, .monotonic);
+    discovery_destroyed.store(0, .monotonic);
+    discovery_calls.store(0, .monotonic);
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try output.initPresentationStore(a, threaded.io(), .{
+        .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 16 } } },
+        .fallback_factory = .{ .create = proofCreate, .find = proofFind, .destroy = proofDestroy },
+    }, .{
+        .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
+        .shaped_capacity = 32,
+        .raster_bytes = 4096,
+    });
+    var live = true;
+    defer if (live) output.releasePresentationStore(store);
+    try std.testing.expectEqual(@as(u32, 1), discovery_created.load(.monotonic));
+    try std.testing.expectEqual(@as(u32, 0), discovery_destroyed.load(.monotonic));
+
+    support.claim(store);
+    var claimed = true;
+    defer if (claimed) support.unclaim(store);
+    const lane = support.work(support.borrowStore(store));
+    var clusters: [16]u32 = undefined;
+    var glyphs: [32]shaped_text.Glyph = undefined;
+    const symbol = [_]u32{0xe0b0};
+    const first = try cache.resolveShape(lane.shape_cache, .regular, &symbol, &clusters, &glyphs);
+    try std.testing.expectEqual(@as(u8, 1), first.face_index);
+    const repeated = try cache.resolveShape(lane.shape_cache, .regular, &symbol, &clusters, &glyphs);
+    try std.testing.expectEqual(@as(u8, 1), repeated.face_index);
+    try std.testing.expectEqual(@as(u32, 1), discovery_calls.load(.monotonic));
+    const missing = [_]u32{0x10ffff};
+    const first_missing = try cache.resolveShape(lane.shape_cache, .regular, &missing, &clusters, &glyphs);
+    try std.testing.expectEqual(@as(u8, 0), first_missing.face_index);
+    const repeated_missing = try cache.resolveShape(lane.shape_cache, .regular, &missing, &clusters, &glyphs);
+    try std.testing.expectEqual(first_missing.face_index, repeated_missing.face_index);
+    try std.testing.expectEqual(@as(u32, 2), discovery_calls.load(.monotonic));
+    support.unclaim(store);
+    claimed = false;
+
+    output.releasePresentationStore(store);
+    live = false;
+    try std.testing.expectEqual(@as(u32, 1), discovery_destroyed.load(.monotonic));
 }
 fn destroy(owner: *output.Terminal) void {
     // zig-audit: acknowledge catch_unreachable

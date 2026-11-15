@@ -19,6 +19,18 @@ pub const FontVariant = enum(u2) {
     bold_italic,
 };
 
+/// An optional host-owned lookup, used only for an uncached, unsupported
+/// sequence. The borrowed result must remain valid through native admission.
+/// Its context outlives every shape cache that holds it.
+// zig-audit: acknowledge anyopaque
+// reason: A host-owned discovery provider keeps its exact typed context opaque to VT; its presentation owner controls the lifetime.
+pub const FallbackContext = *anyopaque;
+/// Borrows discovery state retained by the surrounding presentation owner.
+pub const FallbackLookup = struct {
+    context: FallbackContext,
+    find: *const fn (FallbackContext, FontVariant, []const u32) ?text.FallbackFile,
+};
+
 const font_variant_count: usize = 4;
 
 /// Borrows one required regular face plus optional style variants.
@@ -30,6 +42,7 @@ pub const FontFaces = struct {
     italic: ?*text.FontSet = null,
     bold: ?*text.FontSet = null,
     bold_italic: ?*text.FontSet = null,
+    fallback_lookup: ?FallbackLookup = null,
 
     /// Constructs one face family whose missing style variants resolve to regular.
     pub fn single(regular: *text.FontSet) FontFaces {
@@ -747,6 +760,21 @@ fn shapeAndRetain(
         glyph_scratch,
     ) catch |failure| switch (failure) {
         error.MissingGlyph => replacement: {
+            if (impl.fonts.fallback_lookup) |lookup| {
+                if (lookup.find(lookup.context, resolved_variant, sequence)) |candidate| {
+                    if (fonts.appendFallback(candidate, sequence) catch false) {
+                        const recovered = fonts.shape(
+                            impl.shape,
+                            .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
+                            glyph_scratch,
+                        ) catch |retry_failure| switch (retry_failure) {
+                            error.MissingGlyph => null,
+                            else => return retry_failure,
+                        };
+                        if (recovered) |run| break :replacement run;
+                    }
+                }
+            }
             const replacement_codepoints = [_]u32{0xfffd};
             cluster_scratch[0] = 0;
             break :replacement try fonts.shape(
