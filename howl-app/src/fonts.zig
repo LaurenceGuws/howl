@@ -9,7 +9,8 @@ const canonical_vt = @import("howl_vt");
 /// Owns the exact desktop regular/style/fallback recipe and supplies bounded presentation policy.
 pub const Fonts = struct {
     allocator: std.mem.Allocator,
-    paths: [7][]const u8 = @splat(""),
+    // 0..3 styles; 4 Arabic; 5 CJK; 6 emoji; 7 Devanagari; 8 Bengali.
+    paths: [9][]const u8 = @splat(""),
     atlas_height_limit: u16 = 4096,
     // At most 8 tabs × 8 panes, plus one staged replacement size.
     stores: [65]?struct { pixels: u16, owner: *output.PresentationStore } = @splat(null),
@@ -41,10 +42,17 @@ pub const Fonts = struct {
                 return failure;
             };
         }
-        self.paths[6] = match(allocator, "Noto Color Emoji") catch |failure| switch (failure) {
-            error.FontMissing => "",
-            else => return failure,
+        const optional = [_][:0]const u8{
+            "Noto Color Emoji",
+            "Noto Sans Devanagari",
+            "Noto Sans Bengali",
         };
+        for (optional, 6..) |pattern, index| {
+            self.paths[index] = match(allocator, pattern) catch |failure| switch (failure) {
+                error.FontMissing => "",
+                else => return failure,
+            };
+        }
         return self;
     }
 
@@ -85,7 +93,14 @@ pub const Fonts = struct {
             if (store.pixels == pixels) return presentation(store.owner, shape_cache, self.atlas_height_limit);
         };
         self.collect();
-        const fallbacks = self.paths[4..@as(usize, if (self.paths[6].len == 0) 6 else 7)];
+        var ordered_fallbacks: [5][]const u8 = undefined;
+        var fallback_count: usize = 0;
+        for (self.paths[4..]) |path| {
+            if (path.len == 0) continue;
+            ordered_fallbacks[fallback_count] = path;
+            fallback_count += 1;
+        }
+        const fallbacks = ordered_fallbacks[0..fallback_count];
         for (&self.stores) |*slot| if (slot.* == null) {
             const owner = try output.initPresentationStore(self.allocator, io, .{
                 .regular = .{ .path = .{ .primary = self.paths[0], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
@@ -202,7 +217,9 @@ test "desktop presentation renders the full canonical cell scalar bound" {
     const output_owner = @import("howl_vt_output");
     var fonts: Fonts = .{ .allocator = a };
     defer fonts.deinit();
-    for ([_]usize{ 0, 4, 5 }) |index| fonts.paths[index] = try a.dupe(u8, @import("test_fonts").primary_font);
+    // The absent optional emoji face between existing and new optional faces
+    // must not be passed as an empty path to the text engine.
+    for ([_]usize{ 0, 4, 5, 7, 8 }) |index| fonts.paths[index] = try a.dupe(u8, @import("test_fonts").primary_font);
     const config = try fonts.config(std.testing.io, 15);
     var bytes: [512]u8 = undefined;
     var writer = std.Io.Writer.fixed(&bytes);
