@@ -362,6 +362,26 @@ pub const Parser = struct {
         return eligible;
     }
 
+    /// One already validated scalar and its exact borrowed UTF-8 byte extent.
+    pub const GroundUtf8Scalar = struct {
+        codepoint: u21,
+        byte_count: u3,
+    };
+
+    /// Recognizes one complete UTF-8 scalar without advancing parser state.
+    /// Partial or invalid input still belongs to the incremental decoder, so
+    /// byte boundaries, C1 controls, and replacement/recovery remain canonical.
+    pub inline fn groundUtf8Scalar(self: *const Parser, bytes: []const u8) ?GroundUtf8Scalar {
+        if (bytes.len < 2 or bytes[0] < 0xc2 or bytes[0] > 0xf4 or
+            self.state != .ground or self.utf8.needed != 0 or
+            self.latin1 or self.osc.alloc_failed) return null;
+        const byte_count = std.unicode.utf8ByteSequenceLength(bytes[0]) catch return null;
+        if (byte_count > bytes.len) return null;
+        const codepoint = std.unicode.utf8Decode(bytes[0..byte_count]) catch return null;
+        std.debug.assert(self.activeControlCount() == 0);
+        return .{ .codepoint = codepoint, .byte_count = @intCast(byte_count) };
+    }
+
     /// Counts a leading printable-ASCII APC payload run whose scalar parser
     /// actions would all be `apc_put`, with no parser-state transition. The
     /// caller captures those bytes once; controls, escaping and non-ASCII stay
@@ -955,6 +975,38 @@ fn expectPhaseTags(
             try std.testing.expectEqual(@as(?Action, null), phase);
         }
     }
+}
+
+test "ground UTF-8 scalar preflight accepts only complete validated ground input" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+
+    const valid = [_]struct { bytes: []const u8, scalar: u21 }{
+        .{ .bytes = "\xc2\x9c", .scalar = 0x9c }, // encoded C1 must remain text, not a raw ST
+        .{ .bytes = "é", .scalar = 0xe9 },
+        .{ .bytes = "中", .scalar = 0x4e2d },
+        .{ .bytes = "🦊", .scalar = 0x1f98a },
+    };
+    for (valid) |case| {
+        const candidate = parser.groundUtf8Scalar(case.bytes) orelse return error.MissingScalar;
+        try std.testing.expectEqual(case.scalar, candidate.codepoint);
+        try std.testing.expectEqual(case.bytes.len, candidate.byte_count);
+        try std.testing.expectEqual(ParseState.ground, parser.state);
+        try std.testing.expectEqual(@as(u8, 0), parser.utf8.needed);
+    }
+    for ([_][]const u8{
+        "",                 "\xc3",     "\xf0\x9f\xa6", "\xc0\xaf", "\xed\xa0\x80",
+        "\xf4\x90\x80\x80", "\xc3\x20", "\x80",         "\x9c",     "\xf5\x80\x80\x80",
+    }) |bytes| try std.testing.expect(parser.groundUtf8Scalar(bytes) == null);
+
+    try expectPhaseTags(parser.next(0xe4), null, null, null);
+    try std.testing.expect(parser.groundUtf8Scalar("中") == null);
+    parser.reset();
+    try std.testing.expect(parser.selectLatin1(true));
+    try std.testing.expect(parser.groundUtf8Scalar("é") == null);
+    parser.reset();
+    try expectPhaseTags(parser.next(0x1b), null, null, null);
+    try std.testing.expect(parser.groundUtf8Scalar("é") == null);
 }
 
 test "parser ground escape preserves reset encoding and incomplete UTF-8 phases" {

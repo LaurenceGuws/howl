@@ -4156,7 +4156,17 @@ const TerminalStream = struct {
         return effect.mutations;
     }
 
-    fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
+    const SliceAction = struct {
+        byte_count: usize,
+        mutations: MutationSet,
+    };
+
+    // The canonical non-ASCII/control action owner can consume a complete
+    // parser-proven ground UTF-8 scalar or advance one ordinary parser byte.
+    // Keep that choice out of the already optimized ASCII row-prefix loop.
+    fn nextSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!SliceAction {
+        std.debug.assert(bytes.len != 0);
+        const byte = bytes[0];
         var mutations: MutationSet = .{};
         const state = &self.terminal.stream_state;
 
@@ -4166,10 +4176,17 @@ const TerminalStream = struct {
             state.string.reset();
         }
 
+        if (byte >= 0xc2) {
+            if (state.parser.groundUtf8Scalar(bytes)) |scalar| {
+                const effect = try self.applyPrint(scalar.codepoint);
+                if (effect.changed) self.synchronized_output.trailing_effect = true;
+                return .{ .byte_count = scalar.byte_count, .mutations = effect.mutations };
+            }
+        }
         if (state.parser.consumeOrdinarySgrFinal(byte)) |sgr| {
             const changed = self.applyOrdinarySgr(sgr.params[0..sgr.count], sgr.separators);
             if (changed) self.synchronized_output.trailing_effect = true;
-            return .{ .text = changed };
+            return .{ .byte_count = 1, .mutations = .{ .text = changed } };
         }
 
         const phases = state.parser.next(byte);
@@ -4204,7 +4221,7 @@ const TerminalStream = struct {
             }
         }
 
-        return mutations;
+        return .{ .byte_count = 1, .mutations = mutations };
     }
 
     // Consume only parser-proven inert scratch/payload. Mutations, replies and
@@ -4252,8 +4269,9 @@ const TerminalStream = struct {
                 consumed += payload_bytes;
                 continue;
             }
-            summary.mutations.merge(try self.nextSummary(byte));
-            consumed += 1;
+            const action = try self.nextSummary(bytes[consumed..]);
+            summary.mutations.merge(action.mutations);
+            consumed += action.byte_count;
             if (self.terminal.stream_state.pending_input) |pending| return pending.failure;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
@@ -4350,9 +4368,10 @@ const TerminalStream = struct {
                 consumed += payload_bytes;
                 continue;
             }
-            const mutations = try self.nextSummary(byte);
+            const action = try self.nextSummary(bytes[consumed..]);
+            const mutations = action.mutations;
             summary.mutations.merge(mutations);
-            consumed += 1;
+            consumed += action.byte_count;
             if (self.terminal.stream_state.pending_input) |pending| {
                 input_blocked = pending.failure;
                 break;
@@ -11150,7 +11169,7 @@ test "ASCII row prefixes preserve fragmented feed semantics cursor identities an
         "a\xcc\x81\r",       "\x1b]8;;https://example.invalid/\x1b\\", "\xe4",            "\x1b[",
         "\x1b]2;pending",
     };
-    const payload = "abCDEFGHIJK\r\nopqé中áxyz\r\n\x1b[6n\x1b[?2026l0123456789\r\n";
+    const payload = "abCDEFGHIJK\r\nopqé中á👩🏽‍💻🇿🇦❤️xyz\r\n\xc2\x9c\xed\xa0\x80\xf4\x90\x80\x80\x1b[6n\x1b[?2026l0123456789\r\n";
     for (modes) |mode| {
         var direct = try Terminal.initWithHistory(std.testing.allocator, 3, 7, 8);
         defer direct.deinit();
@@ -11203,14 +11222,14 @@ test "ASCII row prefixes preserve fragmented feed semantics cursor identities an
     }
 }
 
-test "ASCII row prefixes preserve exact reply and synchronized service boundaries" {
+test "ground ASCII and Unicode prefixes preserve exact reply and synchronized service boundaries" {
     for ([_][]const u8{ "\x1b[6n", "\x1b[?2026l" }) |boundary| {
         var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 7, 8);
         defer terminal.deinit();
         try std.testing.expect((try terminal.feed("\x1b[?2026h")).stateChanged());
         var payload_buffer: std.ArrayList(u8) = .empty;
         defer payload_buffer.deinit(std.testing.allocator);
-        const prefix = "abcdefghijklmnop";
+        const prefix = "🦊🇿🇦é中abcdefghijklmnop";
         try payload_buffer.appendSlice(std.testing.allocator, prefix);
         try payload_buffer.appendSlice(std.testing.allocator, boundary);
         try payload_buffer.appendSlice(std.testing.allocator, "remaining");
