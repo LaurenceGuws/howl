@@ -3377,9 +3377,9 @@ pub const Screen = struct {
             return null;
 
         var previous: ?unicode.Properties = null;
-        const fast_join = if (properties.isGraphemeExtend()) fast: {
-            // GCB Extend needs only the preceding scalar, not a copy of the
-            // entire grapheme. Inline marks are owned directly by the lead.
+        const fast_join = if (properties.isGraphemeExtend() or properties.isHangulJamoContinuation()) fast: {
+            // Extend and a narrow Hangul Jamo GB6-GB8 path need the preceding scalar,
+            // not reconstruction of the entire retained grapheme.
             const last: u32 = if (lead_cell.combining_len == 0)
                 lead_cell.codepoint
             else if (lead_cell.combining_len <= lead_cell.combining.len)
@@ -3389,7 +3389,7 @@ pub const Screen = struct {
                 break :tail retained[retained.len - 1];
             };
             previous = unicode.properties(@intCast(last));
-            break :fast properties.extendJoinsAfter(previous.?);
+            break :fast properties.extendJoinsAfter(previous.?) or properties.hangulJoinsAfter(previous.?);
         } else false;
         if (!fast_join) {
             var scalars: [scalar_storage.maximum_scalars]u32 = undefined;

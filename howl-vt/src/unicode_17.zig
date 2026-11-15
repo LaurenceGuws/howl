@@ -26,7 +26,19 @@ comptime {
 }
 
 // These class values are encoded by tools/generate_unicode_17.py.
-const GraphemeBreak = enum(u4) { none = 1, cr = 3, lf = 4, control = 5, extend = 6, _ };
+const GraphemeBreak = enum(u4) {
+    none = 1,
+    cr = 3,
+    lf = 4,
+    control = 5,
+    extend = 6,
+    l = 9,
+    v = 10,
+    t = 11,
+    lv = 12,
+    lvt = 13,
+    _,
+};
 
 /// Borrows the generated Unicode 17 properties for one validated scalar.
 pub const Properties = struct {
@@ -83,6 +95,25 @@ pub const Properties = struct {
     pub fn extendJoinsAfter(self: Properties, previous: Properties) bool {
         const last = previous.graphemeBreak();
         return self.isGraphemeExtend() and last != .cr and last != .lf and last != .control;
+    }
+
+    /// Only Jamo vowel/tail inputs enter the narrow GB6-GB8 shortcut.
+    /// Precomposed Hangul and leading Jamo retain their existing fast break.
+    pub fn isHangulJamoContinuation(self: Properties) bool {
+        return switch (self.graphemeBreak()) {
+            .v, .t => true,
+            else => false,
+        };
+    }
+
+    /// Reports precisely the affirmative GB6-GB8 pairs proven by the state table.
+    pub fn hangulJoinsAfter(self: Properties, previous: Properties) bool {
+        const last = previous.graphemeBreak();
+        return switch (self.graphemeBreak()) {
+            .v => last == .l or last == .lv or last == .v,
+            .t => last == .lv or last == .v or last == .lvt or last == .t,
+            else => false,
+        };
     }
 
     fn graphemeProperty(self: Properties) u7 {
@@ -203,6 +234,24 @@ test "extend shortcut agrees with every generated grapheme state" {
             }
         }
     }
+}
+
+test "hangul shortcut agrees with every generated grapheme state" {
+    var checked: usize = 0;
+    for (0..char_property_count) |next_index| {
+        const next: Properties = .{ .value = readU32(char_property_offset + next_index * 4) };
+        if (!next.isHangulJamoContinuation()) continue;
+        for (0..char_property_count) |previous_index| {
+            const previous: Properties = .{ .value = readU32(char_property_offset + previous_index * 4) };
+            if (!next.hangulJoinsAfter(previous)) continue;
+            for (0..512) |state_index| {
+                const prior: GraphemeState = .{ .value = @intCast(state_index << 7) };
+                try std.testing.expect(prior.step(previous).step(next).joinsCurrent());
+            }
+            checked += 1;
+        }
+    }
+    try std.testing.expect(checked > 0);
 }
 
 test "single-scalar GCB None pairs break across every generated property pair" {
