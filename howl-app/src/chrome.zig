@@ -3,28 +3,40 @@ const std = @import("std");
 const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
 
-/// Logical-pixel chrome rhythm. Hit targets keep their full size; the two-pixel
-/// inset applies only to hover paint. Switchyard's four-pixel rounding is the
-/// deliberately modest starting point, not a global application theme.
+/// Logical-pixel chrome rhythm. Four-pixel outer and peer gaps keep full-size
+/// interactive surfaces aligned; the close highlight is deliberately smaller
+/// than its hit target so it clears the active-tab underline.
 pub const Geometry = struct {
     /// Top resize margin and chip offset.
     pub const top: f32 = 4;
+    /// Blank space between the chips and terminal body.
+    pub const bottom: f32 = 4;
     /// Left margin before the first tab.
-    pub const left: f32 = 8;
+    pub const left: f32 = 4;
+    /// Matching resize margin after the last window control.
+    pub const right: f32 = 4;
     /// Shared vertical extent of chip and button hit targets.
     pub const chip_height: f32 = 30;
     /// Clear space between neighboring chips.
-    pub const chip_gap: f32 = 3;
+    pub const chip_gap: f32 = 4;
+    /// Clear space between neighboring compact action buttons.
+    pub const action_gap: f32 = 4;
     /// Smallest permitted tab stride when the header is crowded.
     pub const min_stride: f32 = 20;
     /// Widest fixed-mode tab stride.
     pub const max_stride: f32 = 200;
     /// Corner radius of the chip and standard action highlights.
     pub const chip_radius: f32 = 4;
-    /// Spacing between a hover highlight and its pointer target.
-    pub const hover_inset: f32 = 2;
+    /// Inset of the dragged tab's visible border.
+    pub const drag_border: f32 = 2;
     /// Nested close-button and drag-placeholder corner radius.
     pub const hover_radius: f32 = 3;
+    /// Side insets center the close hover within its independent hit target.
+    pub const close_hover_side: f32 = 3;
+    /// Top inset of the close hover.
+    pub const close_hover_top: f32 = 2;
+    /// Bottom clearance above the active underline.
+    pub const close_hover_bottom: f32 = 4;
     /// Left inset from tab edge to clipped title ink.
     pub const label_left: f32 = 8;
     /// Reserved trailing inset after clipped title ink.
@@ -33,8 +45,10 @@ pub const Geometry = struct {
     pub const action_width: f32 = 32;
     /// Independent close hit width on sufficiently wide tabs.
     pub const close_width: f32 = 30;
-    /// Minimum tab width before the close target is shown.
-    pub const close_min_chip_width: f32 = 96;
+    /// Retain a selectable tab body alongside the independent close target.
+    pub const min_body_width: f32 = 16;
+    /// The label yields to the close target; only genuinely tiny chips hide it.
+    pub const close_min_chip_width: f32 = close_width + min_body_width;
     /// Glyph's horizontal and vertical offsets inside a close-enabled chip.
     pub const close_glyph_right: f32 = 18;
     /// Glyph's top offset from chip top.
@@ -47,17 +61,22 @@ pub const Geometry = struct {
     pub const caption_width: f32 = 42;
     /// Native caption space before Settings.
     pub const caption_gap: f32 = 4;
-    /// Fixed allocation for Settings, window controls and their gap.
-    pub const settings_reserved: f32 = 166;
+    /// Settings, three window controls, their group gap, and the right margin.
+    pub const settings_reserved: f32 = action_width + 3 * caption_width + action_gap + right;
     /// Fixed allocation for right-side chrome plus flexible caption space.
     pub const tab_strip_reserved: f32 = 266;
 };
 
-/// Header is four pixels above its chips; the terminal starts below them.
-pub const height: f32 = Geometry.top + Geometry.chip_height;
-/// A painted hover sits inside the full pointer target, preserving easy hits.
-pub fn hoverSurface(rect: Rect) Rect {
-    return .{ .x = rect.x + Geometry.hover_inset, .y = rect.y + Geometry.hover_inset, .width = @max(0, rect.width - Geometry.hover_inset * 2), .height = @max(0, rect.height - Geometry.hover_inset * 2) };
+/// The header gives 30-pixel chips four pixels above and below.
+pub const height: f32 = Geometry.top + Geometry.chip_height + Geometry.bottom;
+/// Interior of a dragged chip, leaving a visible two-pixel rounded border.
+pub fn dragInterior(rect: Rect) Rect {
+    return .{ .x = rect.x + Geometry.drag_border, .y = rect.y + Geometry.drag_border, .width = @max(0, rect.width - Geometry.drag_border * 2), .height = @max(0, rect.height - Geometry.drag_border * 2) };
+}
+/// Only the close hover is smaller than its parent chip. Its hit target stays
+/// 30 pixels tall, but its paint leaves two pixels above the active underline.
+pub fn closeSurface(rect: Rect) Rect {
+    return .{ .x = rect.x + Geometry.close_hover_side, .y = rect.y + Geometry.close_hover_top, .width = @max(0, rect.width - Geometry.close_hover_side * 2), .height = @max(0, rect.height - Geometry.close_hover_top - Geometry.close_hover_bottom) };
 }
 /// Window caption control identity.
 pub const Button = enum { none, minimize, maximize, close };
@@ -80,11 +99,11 @@ pub const Tabs = struct {
         std.debug.assert(count <= 8);
         return .{ .count = count, .window_width = width, .stride = if (fit) @max(Geometry.min_stride, (width - Geometry.tab_strip_reserved) / @as(f32, @floatFromInt(@max(1, count)))) else step(count, width) };
     }
-    /// Chip geometry including the shared three-pixel gap.
+    /// Chip geometry excluding the shared four-pixel gap.
     pub fn tab(self: Tabs, index: u8) Rect {
         return .{ .x = Geometry.left + @as(f32, @floatFromInt(index)) * self.stride, .y = Geometry.top, .width = self.stride - Geometry.chip_gap, .height = Geometry.chip_height };
     }
-    /// Close is an independent target; narrow and single tabs have none.
+    /// Close takes the trailing 30 pixels whenever an independent body still fits.
     pub fn close(self: Tabs, index: u8) ?Rect {
         const rect = self.tab(index);
         return if (self.count > 1 and rect.width >= Geometry.close_min_chip_width) .{ .x = rect.x + rect.width - Geometry.close_width, .y = rect.y, .width = Geometry.close_width, .height = rect.height } else null;
@@ -99,18 +118,23 @@ pub const Tabs = struct {
     pub fn plus(self: Tabs) Rect {
         return .{ .x = Geometry.left + @as(f32, @floatFromInt(self.count)) * self.stride, .y = Geometry.top, .width = Geometry.action_width, .height = Geometry.chip_height };
     }
-    /// Profile-menu button beside New Tab.
+    /// Profile-menu button with one chip gap after New Tab.
     pub fn profiles(self: Tabs) Rect {
         var rect = self.plus();
-        rect.x += rect.width;
+        rect.x += rect.width + Geometry.action_gap;
         return rect;
     }
     /// Only unused caption space belongs to compositor dragging.
     pub fn caption(self: Tabs) Rect {
-        const left = self.profiles().x + Geometry.action_width;
+        const left = self.profiles().x + Geometry.action_width + Geometry.action_gap;
         return .{ .x = left, .y = Geometry.top, .width = @max(0, settings(self.window_width).x - left - Geometry.caption_gap), .height = Geometry.chip_height };
     }
 };
+/// Title ink never enters the close lane, regardless of title length.
+pub fn titleArea(chip: Rect, has_close: bool) Rect {
+    const reserved = if (has_close) Geometry.close_width else 0;
+    return .{ .x = chip.x + Geometry.label_left, .y = chip.y, .width = @max(0, chip.width - Geometry.label_left - Geometry.label_right - reserved), .height = chip.height };
+}
 /// Fixed chip geometry for callers without fitted title measurements.
 pub fn tab(index: u8, count: u8, width: f32) Rect {
     return Tabs.init(count, width, false).tab(index);
@@ -130,7 +154,7 @@ pub fn caption(count: u8, width: f32) Rect {
 /// One caption button; none has no hit area.
 pub fn control(button: Button, width: f32) Rect {
     if (button == .none) return .{ .x = 0, .y = 0, .width = 0, .height = 0 };
-    return .{ .x = width - @as(f32, @floatFromInt(4 - @as(u8, @backingInt(button)))) * Geometry.caption_width, .y = Geometry.top, .width = Geometry.caption_width, .height = Geometry.chip_height };
+    return .{ .x = width - Geometry.right - @as(f32, @floatFromInt(4 - @as(u8, @backingInt(button)))) * Geometry.caption_width, .y = Geometry.top, .width = Geometry.caption_width, .height = Geometry.chip_height };
 }
 /// Resolves a caption control with the same painted geometry.
 pub fn buttonAt(x: f32, y: f32, width: f32) Button {
@@ -204,9 +228,9 @@ test "custom caption excludes controls and tabs; maximized/fullscreen never resi
 test "dragged chip preserves grab offset, reorders at midpoint and clamps outside header" {
     const rect = tab(0, 3, 1000);
     var dragging = Drag.begin(rect, rect.x + 20);
-    try std.testing.expectEqual(@as(u8, 0), dragging.move(28, Tabs.init(3, 1000, false)));
-    try std.testing.expectEqual(@as(u8, 1), dragging.move(28 + step(3, 1000), Tabs.init(3, 1000, false)));
-    try std.testing.expectEqual(@as(f32, 8 + step(3, 1000)), dragging.x);
+    try std.testing.expectEqual(@as(u8, 0), dragging.move(rect.x + 20, Tabs.init(3, 1000, false)));
+    try std.testing.expectEqual(@as(u8, 1), dragging.move(rect.x + 20 + step(3, 1000), Tabs.init(3, 1000, false)));
+    try std.testing.expectEqual(@as(f32, Geometry.left + step(3, 1000)), dragging.x);
     try std.testing.expectEqual(@as(u8, 2), dragging.move(4000, Tabs.init(3, 1000, false)));
     try std.testing.expectEqual(@as(u8, 0), dragging.move(-100, Tabs.init(3, 1000, false)));
 }
@@ -247,7 +271,7 @@ test "compact header keeps controls and caption above terminal at fractional wid
         for ([_]u8{ 1, 8 }) |count| {
             const chip = tab(0, count, width);
             const cap = caption(count, width);
-            try std.testing.expect(chip.y + chip.height == height);
+            try std.testing.expect(chip.y + chip.height == height - Geometry.bottom);
             try std.testing.expect(cap.y + cap.height <= height);
             try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, height + 0.01, width, 700, Tabs.init(count, width, false), c.SDL_WINDOW_MAXIMIZED, true));
             try std.testing.expect(!chip.contains(chip.x + 1, height));
@@ -276,7 +300,7 @@ test "profile button never becomes caption; hidden header retains only native ed
         for ([_]u8{ 1, 8 }) |count| {
             const plus_rect = plus(count, width);
             const menu = profiles(count, width);
-            try std.testing.expectEqual(plus_rect.x + plus_rect.width, menu.x);
+            try std.testing.expectEqual(plus_rect.x + plus_rect.width + Geometry.action_gap, menu.x);
             try std.testing.expect(menu.x + menu.width <= settings(width).x);
             try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(menu.x + 16, 20, width, 650, Tabs.init(count, width, false), 0, true));
             const cap = caption(count, width);
@@ -326,17 +350,81 @@ test "each header hover target is separate from its parent chip at fractional an
     };
 }
 
-test "hover surfaces stay inside hit targets with equal two-pixel inset" {
-    for ([_]f32{ 401.25, 1000, 1536.5 }) |width| for ([_]u8{ 1, 2, 8 }) |count| {
-        const tabs = Tabs.init(count, width, false);
-        for ([_]Rect{ tabs.tab(0), tabs.plus(), tabs.profiles(), settings(width), control(.close, width) }) |target| {
-            const visual = hoverSurface(target);
-            try std.testing.expectEqual(target.x + Geometry.hover_inset, visual.x);
-            try std.testing.expectEqual(target.y + Geometry.hover_inset, visual.y);
-            try std.testing.expectEqual(target.width - Geometry.hover_inset * 2, visual.width);
-            try std.testing.expectEqual(target.height - Geometry.hover_inset * 2, visual.height);
-            try std.testing.expect(target.contains(visual.x, visual.y));
-            try std.testing.expect(target.contains(visual.x + visual.width - 0.01, visual.y + visual.height - 0.01));
+test "four-pixel header rhythm preserves full-height peer hits at fractional and fitted widths" {
+    for ([_]bool{ false, true }) |fit| for ([_]f32{ 401.25, 1000, 1536.5 }) |width| for ([_]u8{ 1, 2, 8 }) |count| {
+        const tabs = Tabs.init(count, width, fit);
+        const first = tabs.tab(0);
+        const last = tabs.tab(count - 1);
+        const add = tabs.plus();
+        const menu = tabs.profiles();
+        try std.testing.expectEqual(Geometry.left, first.x);
+        try std.testing.expectEqual(Geometry.top, first.y);
+        try std.testing.expectEqual(Geometry.bottom, height - first.y - first.height);
+        if (count > 1) try std.testing.expectApproxEqAbs(Geometry.chip_gap, tabs.tab(1).x - first.x - first.width, 0.001);
+        try std.testing.expectApproxEqAbs(Geometry.chip_gap, add.x - last.x - last.width, 0.001);
+        try std.testing.expectEqual(Geometry.action_gap, menu.x - add.x - add.width);
+        try std.testing.expectEqual(Geometry.action_gap, tabs.caption().x - menu.x - menu.width);
+        try std.testing.expectEqual(Geometry.action_gap, control(.minimize, width).x - settings(width).x - settings(width).width);
+        const rightmost = control(.close, width);
+        try std.testing.expectEqual(Geometry.left, Geometry.right);
+        try std.testing.expectEqual(Geometry.right, width - rightmost.x - rightmost.width);
+        try std.testing.expect(headerAt(tabs, rightmost.x + rightmost.width - 1, 12) == .window);
+        try std.testing.expect(headerAt(tabs, width - Geometry.right / 2, 12) == .none);
+        try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_RIGHT), hit(width - 1, 12, width, 700, tabs, 0, true));
+        for ([_]Rect{ add, menu, settings(width), control(.minimize, width), control(.maximize, width), control(.close, width) }) |target| {
+            try std.testing.expectEqual(first.y, target.y);
+            try std.testing.expectEqual(first.height, target.height);
+            try std.testing.expect(!target.contains(target.x + 1, height));
         }
     };
+}
+
+test "nested close hover clears the active underline without shrinking its hit target" {
+    for ([_]bool{ false, true }) |fit| for ([_]f32{ 401.25, 1000, 1536.5 }) |width| for ([_]u8{ 2, 3, 8 }) |count| {
+        const tabs = Tabs.init(count, width, fit);
+        for (0..count) |number| {
+            const index: u8 = @intCast(number);
+            const target = tabs.close(index) orelse continue;
+            const visual = closeSurface(target);
+            const chip = tabs.tab(index);
+            try std.testing.expectEqual(@as(f32, 24), visual.width);
+            try std.testing.expectEqual(@as(f32, 24), visual.height);
+            try std.testing.expectEqual(target.x + Geometry.close_hover_side, visual.x);
+            try std.testing.expectEqual(target.y + Geometry.close_hover_top, visual.y);
+            try std.testing.expectEqual(target.y + target.height - Geometry.close_hover_bottom, visual.y + visual.height);
+            try std.testing.expect(visual.y + visual.height <= chip.y + chip.height - Geometry.accent_bottom - Geometry.accent_height);
+            try std.testing.expect(target.contains(visual.x, visual.y));
+            try std.testing.expect(target.contains(target.x + target.width - 1, target.y + target.height - 1));
+            const outline = dragInterior(chip);
+            try std.testing.expectEqual(chip.y + Geometry.drag_border, outline.y);
+            try std.testing.expectEqual(chip.height - Geometry.drag_border * 2, outline.height);
+        }
+    };
+}
+
+test "crowded tab titles yield to close targets while truly tiny chips remain selectable" {
+    for ([_]bool{ false, true }) |fit| for ([_]f32{ 400, 600, 700, 1000, 1536.5 }) |width| {
+        const tabs = Tabs.init(8, width, fit);
+        for (0..tabs.count) |number| {
+            const index: u8 = @intCast(number);
+            const chip = tabs.tab(index);
+            const body = tabs.body(index);
+            const close_rect = tabs.close(index);
+            const label = titleArea(chip, close_rect != null);
+            try std.testing.expectEqual(chip.y, label.y);
+            try std.testing.expect(label.x >= chip.x and label.x + label.width <= chip.x + chip.width);
+            try std.testing.expect(headerAt(tabs, body.x + body.width / 2, body.y + 12) == .tab);
+            if (close_rect) |close| {
+                try std.testing.expect(chip.width >= Geometry.close_min_chip_width);
+                try std.testing.expect(body.width >= Geometry.min_body_width);
+                try std.testing.expectEqual(body.x + body.width, close.x);
+                try std.testing.expectEqual(chip.x + chip.width, close.x + close.width);
+                try std.testing.expect(label.x + label.width <= close.x - Geometry.label_right);
+                const target = headerAt(tabs, close.x + close.width / 2, close.y + 12);
+                try std.testing.expect(target == .tab_close and target.tab_close == index);
+            } else try std.testing.expect(chip.width < Geometry.close_min_chip_width);
+        }
+    };
+    try std.testing.expect(Tabs.init(8, 1000, false).close(7) != null);
+    try std.testing.expect(Tabs.init(8, 600, false).close(7) == null);
 }

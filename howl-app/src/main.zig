@@ -2452,11 +2452,11 @@ const App = struct {
         const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) chrome.Geometry.close_width else 0;
         if (target == .tab_close and target.tab_close == index) {
             const close_rect: layout.Rect = .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height };
-            try drawing.fillRounded(self.renderer, chrome.hoverSurface(close_rect), appearance.hover(base), chrome.Geometry.hover_radius);
+            try drawing.fillRounded(self.renderer, chrome.closeSurface(close_rect), appearance.hover(base), chrome.Geometry.hover_radius);
         }
         if (index == self.active) try fill(self.renderer, .{ .x = rect.x + chrome.Geometry.chip_radius, .y = rect.y + rect.height - chrome.Geometry.accent_bottom, .width = @max(0, rect.width - chrome.Geometry.chip_radius * 2), .height = chrome.Geometry.accent_height }, colors.accent);
-        const text_x = rect.x + chrome.Geometry.label_left;
-        try self.clippedText(value.title.resolve(status.title[0..status.title_len]), .{ .x = text_x, .y = rect.y, .width = @max(1, rect.width - close_width - chrome.Geometry.label_left - chrome.Geometry.label_right), .height = rect.height }, text_x);
+        const title = chrome.titleArea(rect, close_width != 0);
+        if (title.width > 0) try self.clippedText(value.title.resolve(status.title[0..status.title_len]), title, title.x);
         if (close_width != 0) try self.drawText("×", rect.x + rect.width - chrome.Geometry.close_glyph_right, rect.y + chrome.Geometry.close_glyph_top);
     }
     fn drawWindowControls(self: *App) !void {
@@ -2465,7 +2465,7 @@ const App = struct {
             const rect = chrome.control(button, self.width);
             const target = self.headerHover();
             const hovered = target == .window and target.window == button;
-            if (hovered) try drawing.fillRounded(self.renderer, chrome.hoverSurface(rect), appearance.hover(colors.title), chrome.Geometry.chip_radius);
+            if (hovered) try drawing.fillRounded(self.renderer, rect, if (button == .close) appearance.closeHover(colors.title) else appearance.hover(colors.title), chrome.Geometry.chip_radius);
             const color = if (hovered) colors.text else colors.muted;
             // Switchyard's hand-tuned glyphs in a 42x26 box, centred in our caption.
             const y = rect.y + (rect.height - 26) / 2;
@@ -2493,17 +2493,17 @@ const App = struct {
             const rect = self.headerTabs(self.width).tab(index);
             if (self.drag == .tab and index == self.active) {
                 try drawing.fillRounded(self.renderer, rect, colors.border, chrome.Geometry.chip_radius);
-                try drawing.fillRounded(self.renderer, chrome.hoverSurface(rect), colors.title, chrome.Geometry.hover_radius);
+                try drawing.fillRounded(self.renderer, chrome.dragInterior(rect), colors.title, chrome.Geometry.hover_radius);
             } else try self.drawTab(index, rect);
         }
         if (self.drag == .tab) {
             var rect = self.headerTabs(self.width).tab(self.active);
             rect.x = self.drag.tab.x;
             try drawing.fillRounded(self.renderer, rect, colors.accent, chrome.Geometry.chip_radius);
-            try self.drawTab(self.active, chrome.hoverSurface(rect));
+            try self.drawTab(self.active, chrome.dragInterior(rect));
         }
         for ([_]layout.Rect{ self.headerTabs(self.width).plus(), self.headerTabs(self.width).profiles(), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.profile_icon, chrome.settings_icon }) |rect, glyph| {
-            if (self.isHovered(rect)) try drawing.fillRounded(self.renderer, chrome.hoverSurface(rect), appearance.hover(colors.title), chrome.Geometry.chip_radius);
+            if (self.isHovered(rect)) try drawing.fillRounded(self.renderer, rect, appearance.hover(colors.idle), chrome.Geometry.chip_radius);
             for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = rect.y + part.y, .width = part.width, .height = part.height }, colors.text);
         }
         try self.drawWindowControls();

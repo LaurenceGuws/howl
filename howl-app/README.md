@@ -27,13 +27,17 @@ Staggered crossings keep the uninterrupted border shared; returning a half withi
 8 logical pixels of its neighbor snaps them together and lets either axis detach
 again. Pointer and keyboard resizing use the same geometry-aware border choice.
 The move cursor and highlights show all borders captured by a junction grab.
-A neutral light tint serves header
-controls, list/category chips and scrollbars. Tab chips have modest four-pixel
-rounding and explicit title padding. Hovering a tab body lifts the whole chip;
-its close target gets an independent inset rounded highlight. The compact
-buttons and window controls use inset hover paint too, while retaining their
-full pointer hit rectangles. The empty caption remains an unpainted native
-drag surface.
+A neutral light tint serves header controls, list/category chips and scrollbars.
+Tab chips use four-pixel rounding and a four-pixel outer, bottom and peer gap,
+with eight-pixel title padding. New Tab, Profiles and Settings have matching
+30-pixel-tall hover surfaces and four-pixel gaps, but are transparent at rest.
+Hovering a tab body lifts its whole chip; its close target retains the 30-pixel
+click height but shows a smaller 24-pixel rounded highlight above the active
+underline. When tabs crowd together, titles clip before their independent close
+targets; only chips too narrow for both a selectable body and close hit area
+omit the close target. Native window controls use full-height hover paint, have
+a matching four-pixel right margin and reserve a subtle rose-red hover only for
+window close. The empty caption remains an unpainted native drag surface.
 One bounded mapping registry supplies shortcuts; the command palette exposes
 every mappable command, including directional focus/resize/swap; Ctrl+Shift+Space opens the profile menu. The compact
 `>` button beside `+` opens the profile menu; `⋯` opens Settings, and

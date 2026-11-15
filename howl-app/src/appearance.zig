@@ -94,6 +94,12 @@ test "every application preset resolves independently and preserves role overrid
 pub fn hover(base: c.SDL_Color) c.SDL_Color {
     return .{ .r = @intCast((@as(u16, base.r) * 9 + 255) / 10), .g = @intCast((@as(u16, base.g) * 9 + 255) / 10), .b = @intCast((@as(u16, base.b) * 9 + 255) / 10), .a = 255 };
 }
+/// A restrained rose cast for the window-close hover, blended from the same
+/// neutral hover so it stays legible across different application palettes.
+pub fn closeHover(base: c.SDL_Color) c.SDL_Color {
+    const neutral = hover(base);
+    return .{ .r = @intCast((@as(u16, neutral.r) * 7 + 216) / 8), .g = @intCast((@as(u16, neutral.g) * 7 + 64) / 8), .b = @intCast((@as(u16, neutral.b) * 7 + 120) / 8), .a = 255 };
+}
 /// Text selection has its own contrasting ink; list-active colors are not text-selection roles.
 pub fn selection(value: Palette) struct { background: c.SDL_Color, foreground: c.SDL_Color } {
     const background = value.accent;
@@ -118,4 +124,10 @@ test "every theme has contrasting selected text and a neutral brighter hover tin
         try std.testing.expect(tint.r >= value.idle.r and tint.g >= value.idle.g and tint.b >= value.idle.b);
         try std.testing.expect(luminance(tint) > luminance(value.idle));
     }
+}
+test "window close hover adds a subtle rose cast without changing neutral hover" {
+    const base = (try palette("howl_dark")).title;
+    try std.testing.expectEqual(rgb(35, 38, 43), hover(base));
+    try std.testing.expectEqual(rgb(57, 41, 52), closeHover(base));
+    try std.testing.expectEqual(rgb(35, 38, 43), hover(base));
 }
