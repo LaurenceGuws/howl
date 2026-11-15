@@ -26,7 +26,7 @@ comptime {
 }
 
 // These class values are encoded by tools/generate_unicode_17.py.
-const GraphemeBreak = enum(u4) { cr = 3, lf = 4, control = 5, extend = 6, _ };
+const GraphemeBreak = enum(u4) { none = 1, cr = 3, lf = 4, control = 5, extend = 6, _ };
 
 /// Borrows the generated Unicode 17 properties for one validated scalar.
 pub const Properties = struct {
@@ -69,6 +69,13 @@ pub const Properties = struct {
     /// Reports the generated Grapheme_Cluster_Break Extend class.
     pub fn isGraphemeExtend(self: Properties) bool {
         return self.graphemeBreak() == .extend;
+    }
+
+    /// Two GCB None/Other scalars cannot join when the previous cluster has
+    /// exactly one scalar. The generated transition proof below covers the
+    /// encoded emoji and Indic flags, not just the public GCB class.
+    pub fn separatesSingleOther(self: Properties, previous: Properties) bool {
+        return self.graphemeBreak() == .none and previous.graphemeBreak() == .none;
     }
 
     /// Extend joins every retained grapheme except after CR, LF or Control.
@@ -196,4 +203,19 @@ test "extend shortcut agrees with every generated grapheme state" {
             }
         }
     }
+}
+
+test "single-scalar GCB None pairs break across every generated property pair" {
+    var checked: usize = 0;
+    for (0..char_property_count) |next_index| {
+        const next: Properties = .{ .value = readU32(char_property_offset + next_index * 4) };
+        for (0..char_property_count) |previous_index| {
+            const previous: Properties = .{ .value = readU32(char_property_offset + previous_index * 4) };
+            if (!next.separatesSingleOther(previous)) continue;
+            const accepted = (GraphemeState{}).step(previous).step(next);
+            try std.testing.expect(!accepted.joinsCurrent());
+            checked += 1;
+        }
+    }
+    try std.testing.expect(checked > 0);
 }

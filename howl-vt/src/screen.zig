@@ -3370,6 +3370,12 @@ pub const Screen = struct {
         const lead_cell = &cells[@intCast(idx)];
         if (lead_cell.codepoint == 0) return null;
 
+        // A single GCB None/Other lead followed by another None/Other scalar
+        // always breaks. Avoid reconstructing and replaying its grapheme state.
+        if (lead_cell.combining_len == 0 and
+            properties.separatesSingleOther(unicode.properties(@intCast(lead_cell.codepoint))))
+            return null;
+
         var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
         const accepted = @call(.always_inline, Screen.cellScalarsAt, .{ self, anchor_row, anchor_col, &scalars });
         std.debug.assert(accepted.len != 0);
