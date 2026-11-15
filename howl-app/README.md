@@ -28,8 +28,12 @@ Staggered crossings keep the uninterrupted border shared; returning a half withi
 again. Pointer and keyboard resizing use the same geometry-aware border choice.
 The move cursor and highlights show all borders captured by a junction grab.
 A neutral light tint serves header
-controls, list/category chips and scrollbars. Tab bodies and their close buttons
-have independent hover rectangles shared with pointer hit geometry.
+controls, list/category chips and scrollbars. Tab chips have modest four-pixel
+rounding and explicit title padding. Hovering a tab body lifts the whole chip;
+its close target gets an independent inset rounded highlight. The compact
+buttons and window controls use inset hover paint too, while retaining their
+full pointer hit rectangles. The empty caption remains an unpainted native
+drag surface.
 One bounded mapping registry supplies shortcuts; the command palette exposes
 every mappable command, including directional focus/resize/swap; Ctrl+Shift+Space opens the profile menu. The compact
 `>` button beside `+` opens the profile menu; `⋯` opens Settings, and

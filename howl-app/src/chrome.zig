@@ -3,17 +3,71 @@ const std = @import("std");
 const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
 
-/// Explicit client header: four pixels above the 30-pixel chips; canvas starts immediately below.
-pub const height: f32 = 34;
+/// Logical-pixel chrome rhythm. Hit targets keep their full size; the two-pixel
+/// inset applies only to hover paint. Switchyard's four-pixel rounding is the
+/// deliberately modest starting point, not a global application theme.
+pub const Geometry = struct {
+    /// Top resize margin and chip offset.
+    pub const top: f32 = 4;
+    /// Left margin before the first tab.
+    pub const left: f32 = 8;
+    /// Shared vertical extent of chip and button hit targets.
+    pub const chip_height: f32 = 30;
+    /// Clear space between neighboring chips.
+    pub const chip_gap: f32 = 3;
+    /// Smallest permitted tab stride when the header is crowded.
+    pub const min_stride: f32 = 20;
+    /// Widest fixed-mode tab stride.
+    pub const max_stride: f32 = 200;
+    /// Corner radius of the chip and standard action highlights.
+    pub const chip_radius: f32 = 4;
+    /// Spacing between a hover highlight and its pointer target.
+    pub const hover_inset: f32 = 2;
+    /// Nested close-button and drag-placeholder corner radius.
+    pub const hover_radius: f32 = 3;
+    /// Left inset from tab edge to clipped title ink.
+    pub const label_left: f32 = 8;
+    /// Reserved trailing inset after clipped title ink.
+    pub const label_right: f32 = 4;
+    /// Compact toolbar button hit width.
+    pub const action_width: f32 = 32;
+    /// Independent close hit width on sufficiently wide tabs.
+    pub const close_width: f32 = 30;
+    /// Minimum tab width before the close target is shown.
+    pub const close_min_chip_width: f32 = 96;
+    /// Glyph's horizontal and vertical offsets inside a close-enabled chip.
+    pub const close_glyph_right: f32 = 18;
+    /// Glyph's top offset from chip top.
+    pub const close_glyph_top: f32 = 6;
+    /// Distance from the bottom of an active chip to its accent stripe.
+    pub const accent_bottom: f32 = 2;
+    /// Thickness of the active stripe.
+    pub const accent_height: f32 = 1;
+    /// Native minimize, maximize and close hit width.
+    pub const caption_width: f32 = 42;
+    /// Native caption space before Settings.
+    pub const caption_gap: f32 = 4;
+    /// Fixed allocation for Settings, window controls and their gap.
+    pub const settings_reserved: f32 = 166;
+    /// Fixed allocation for right-side chrome plus flexible caption space.
+    pub const tab_strip_reserved: f32 = 266;
+};
+
+/// Header is four pixels above its chips; the terminal starts below them.
+pub const height: f32 = Geometry.top + Geometry.chip_height;
+/// A painted hover sits inside the full pointer target, preserving easy hits.
+pub fn hoverSurface(rect: Rect) Rect {
+    return .{ .x = rect.x + Geometry.hover_inset, .y = rect.y + Geometry.hover_inset, .width = @max(0, rect.width - Geometry.hover_inset * 2), .height = @max(0, rect.height - Geometry.hover_inset * 2) };
+}
 /// Window caption control identity.
 pub const Button = enum { none, minimize, maximize, close };
 /// Compact Settings entry beside the caption controls.
 pub fn settings(width: f32) Rect {
-    return .{ .x = width - 166, .y = 4, .width = 32, .height = 30 };
+    return .{ .x = width - Geometry.settings_reserved, .y = Geometry.top, .width = Geometry.action_width, .height = Geometry.chip_height };
 }
 /// Bounded tab stride leaving room for header controls.
 pub fn step(count: u8, width: f32) f32 {
-    return std.math.clamp((width - 266) / @as(f32, @floatFromInt(@max(1, count))), 20, 200);
+    return std.math.clamp((width - Geometry.tab_strip_reserved) / @as(f32, @floatFromInt(@max(1, count))), Geometry.min_stride, Geometry.max_stride);
 }
 /// One bounded strip used by painting, pointer actions and native caption hit tests.
 pub const Tabs = struct {
@@ -24,26 +78,26 @@ pub const Tabs = struct {
     /// Fit shares the available tab area equally; Fixed retains its 200-pixel cap.
     pub fn init(count: u8, width: f32, fit: bool) Tabs {
         std.debug.assert(count <= 8);
-        return .{ .count = count, .window_width = width, .stride = if (fit) @max(20, (width - 266) / @as(f32, @floatFromInt(@max(1, count)))) else step(count, width) };
+        return .{ .count = count, .window_width = width, .stride = if (fit) @max(Geometry.min_stride, (width - Geometry.tab_strip_reserved) / @as(f32, @floatFromInt(@max(1, count)))) else step(count, width) };
     }
     /// Chip geometry including the shared three-pixel gap.
     pub fn tab(self: Tabs, index: u8) Rect {
-        return .{ .x = 8 + @as(f32, @floatFromInt(index)) * self.stride, .y = 4, .width = self.stride - 3, .height = 30 };
+        return .{ .x = Geometry.left + @as(f32, @floatFromInt(index)) * self.stride, .y = Geometry.top, .width = self.stride - Geometry.chip_gap, .height = Geometry.chip_height };
     }
     /// Close is an independent target; narrow and single tabs have none.
     pub fn close(self: Tabs, index: u8) ?Rect {
         const rect = self.tab(index);
-        return if (self.count > 1 and rect.width >= 96) .{ .x = rect.x + rect.width - 30, .y = rect.y, .width = 30, .height = rect.height } else null;
+        return if (self.count > 1 and rect.width >= Geometry.close_min_chip_width) .{ .x = rect.x + rect.width - Geometry.close_width, .y = rect.y, .width = Geometry.close_width, .height = rect.height } else null;
     }
     /// Body hover excludes the independent close button.
     pub fn body(self: Tabs, index: u8) Rect {
         var rect = self.tab(index);
-        if (self.close(index) != null) rect.width -= 30;
+        if (self.close(index) != null) rect.width -= Geometry.close_width;
         return rect;
     }
     /// New-tab button immediately follows the occupied strip.
     pub fn plus(self: Tabs) Rect {
-        return .{ .x = 8 + @as(f32, @floatFromInt(self.count)) * self.stride, .y = 4, .width = 32, .height = 30 };
+        return .{ .x = Geometry.left + @as(f32, @floatFromInt(self.count)) * self.stride, .y = Geometry.top, .width = Geometry.action_width, .height = Geometry.chip_height };
     }
     /// Profile-menu button beside New Tab.
     pub fn profiles(self: Tabs) Rect {
@@ -53,8 +107,8 @@ pub const Tabs = struct {
     }
     /// Only unused caption space belongs to compositor dragging.
     pub fn caption(self: Tabs) Rect {
-        const left = self.profiles().x + 32;
-        return .{ .x = left, .y = 4, .width = @max(0, settings(self.window_width).x - left - 4), .height = height - 4 };
+        const left = self.profiles().x + Geometry.action_width;
+        return .{ .x = left, .y = Geometry.top, .width = @max(0, settings(self.window_width).x - left - Geometry.caption_gap), .height = Geometry.chip_height };
     }
 };
 /// Fixed chip geometry for callers without fitted title measurements.
@@ -76,7 +130,7 @@ pub fn caption(count: u8, width: f32) Rect {
 /// One caption button; none has no hit area.
 pub fn control(button: Button, width: f32) Rect {
     if (button == .none) return .{ .x = 0, .y = 0, .width = 0, .height = 0 };
-    return .{ .x = width - @as(f32, @floatFromInt(4 - @as(u8, @backingInt(button)))) * 42, .y = 4, .width = 42, .height = 30 };
+    return .{ .x = width - @as(f32, @floatFromInt(4 - @as(u8, @backingInt(button)))) * Geometry.caption_width, .y = Geometry.top, .width = Geometry.caption_width, .height = Geometry.chip_height };
 }
 /// Resolves a caption control with the same painted geometry.
 pub fn buttonAt(x: f32, y: f32, width: f32) Button {
@@ -128,7 +182,7 @@ pub const Drag = struct {
     }
     /// Moves the chip and selects its midpoint reorder destination.
     pub fn move(self: *Drag, pointer: f32, tabs: Tabs) u8 {
-        self.x = std.math.clamp(pointer - self.grab, 8, tabs.tab(tabs.count - 1).x);
+        self.x = std.math.clamp(pointer - self.grab, Geometry.left, tabs.tab(tabs.count - 1).x);
         var destination: u8 = 0;
         while (destination + 1 < tabs.count) {
             const midpoint = (tabs.tab(destination).x + tabs.tab(destination + 1).x) / 2;
@@ -269,5 +323,20 @@ test "each header hover target is separate from its parent chip at fractional an
         try std.testing.expect(headerAt(tabs, profiles_rect.x + 2, 12) == .profiles);
         try std.testing.expect(headerAt(tabs, settings(width).x + 2, 12) == .settings);
         try std.testing.expect(headerAt(tabs, 20, height + 2) == .none);
+    };
+}
+
+test "hover surfaces stay inside hit targets with equal two-pixel inset" {
+    for ([_]f32{ 401.25, 1000, 1536.5 }) |width| for ([_]u8{ 1, 2, 8 }) |count| {
+        const tabs = Tabs.init(count, width, false);
+        for ([_]Rect{ tabs.tab(0), tabs.plus(), tabs.profiles(), settings(width), control(.close, width) }) |target| {
+            const visual = hoverSurface(target);
+            try std.testing.expectEqual(target.x + Geometry.hover_inset, visual.x);
+            try std.testing.expectEqual(target.y + Geometry.hover_inset, visual.y);
+            try std.testing.expectEqual(target.width - Geometry.hover_inset * 2, visual.width);
+            try std.testing.expectEqual(target.height - Geometry.hover_inset * 2, visual.height);
+            try std.testing.expect(target.contains(visual.x, visual.y));
+            try std.testing.expect(target.contains(visual.x + visual.width - 0.01, visual.y + visual.height - 0.01));
+        }
     };
 }

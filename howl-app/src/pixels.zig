@@ -80,6 +80,39 @@ pub fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, value: c.SDL_Color) er
     try paint(renderer, &.{bounds(rect, factor)}, factor, value);
 }
 
+/// Small rounded chrome surfaces, rasterized as disjoint whole-physical-pixel
+/// bands. The radius follows display scale; one paint transaction preserves
+/// the caller's viewport, clipping, target and blend semantics.
+pub fn fillRounded(renderer: *c.SDL_Renderer, rect: layout.Rect, value: c.SDL_Color, radius: f32) error{SDL}!void {
+    if (rect.width <= 0 or rect.height <= 0) return;
+    std.debug.assert(std.math.isFinite(radius) and radius >= 0);
+    const factor = try scale(renderer);
+    const r = bounds(rect, factor);
+    // The chrome uses a four-pixel radius; the cap bounds stack work if a
+    // future caller supplies an excessively large radius or display scale.
+    const rx = @min(@floor(r.w / 2), @min(@round(radius * factor[0]), 32));
+    const ry = @min(@floor(r.h / 2), @min(@round(radius * factor[1]), 32));
+    if (rx < 1 or ry < 1) return paint(renderer, &.{r}, factor, value);
+
+    var bands: [65]c.SDL_FRect = undefined;
+    var count: usize = 0;
+    for (0..@as(usize, @intFromFloat(ry))) |row| {
+        const y = @as(f32, @floatFromInt(row));
+        const distance = (ry - (y + 0.5)) / ry;
+        const inset = @round(rx * (1 - @sqrt(@max(0, 1 - distance * distance))));
+        if (r.w <= inset * 2) continue;
+        bands[count] = .{ .x = r.x + inset, .y = r.y + y, .w = r.w - inset * 2, .h = 1 };
+        count += 1;
+        bands[count] = .{ .x = r.x + inset, .y = r.y + r.h - y - 1, .w = r.w - inset * 2, .h = 1 };
+        count += 1;
+    }
+    if (r.h > ry * 2) {
+        bands[count] = .{ .x = r.x, .y = r.y + ry, .w = r.w, .h = r.h - ry * 2 };
+        count += 1;
+    }
+    try paint(renderer, bands[0..count], factor, value);
+}
+
 /// One logical-pixel outline, rounded to at least one physical pixel. Disjoint
 /// filled bands keep translucent corners from blending twice.
 pub fn outline(renderer: *c.SDL_Renderer, rect: layout.Rect, value: c.SDL_Color) error{SDL}!void {
@@ -123,6 +156,47 @@ test "cursor strokes follow font pixels including display scale and bounded extr
     try std.testing.expectEqual(@as(u8, 2), cursorStroke(30, 1));
     try std.testing.expectEqual(@as(u8, 1), cursorStroke(0, 16));
     try std.testing.expectEqual(@as(u8, 16), cursorStroke(std.math.maxInt(u16), 16));
+}
+
+test "rounded chrome raster preserves corners, opacity and render scale" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(128, 128, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    const rect: layout.Rect = .{ .x = 6, .y = 8, .width = 32, .height = 30 };
+    for ([_]f32{ 1, 1.25, 1.5, 2 }) |factor| {
+        try std.testing.expect(c.SDL_SetRenderScale(renderer, factor, factor));
+        try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+        try std.testing.expect(c.SDL_RenderClear(renderer));
+        try fillRounded(renderer, rect, .{ .r = 200, .g = 0, .b = 0, .a = 128 }, 4);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        const x: i32 = @intFromFloat(@round(rect.x * factor));
+        const y: i32 = @intFromFloat(@round(rect.y * factor));
+        const width: i32 = @as(i32, @intFromFloat(@round((rect.x + rect.width) * factor))) - x;
+        const height: i32 = @as(i32, @intFromFloat(@round((rect.y + rect.height) * factor))) - y;
+        for ([_]struct { x: i32, y: i32, ink: u8 }{
+            .{ .x = x, .y = y, .ink = 0 },
+            .{ .x = x + width - 1, .y = y, .ink = 0 },
+            .{ .x = x, .y = y + height - 1, .ink = 0 },
+            .{ .x = x + width - 1, .y = y + height - 1, .ink = 0 },
+            .{ .x = x + @divTrunc(width, 2), .y = y, .ink = 100 },
+            .{ .x = x, .y = y + @divTrunc(height, 2), .ink = 100 },
+            .{ .x = x + @divTrunc(width, 2), .y = y + @divTrunc(height, 2), .ink = 100 },
+        }) |probe| {
+            var red: u8 = 0;
+            try std.testing.expect(c.SDL_ReadSurfacePixel(surface, probe.x, probe.y, &red, null, null, null));
+            try std.testing.expectEqual(probe.ink, red);
+        }
+        var observed_x: f32 = 0;
+        var observed_y: f32 = 0;
+        try std.testing.expect(c.SDL_GetRenderScale(renderer, &observed_x, &observed_y));
+        try std.testing.expectEqual(factor, observed_x);
+        try std.testing.expectEqual(factor, observed_y);
+        try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
+    }
 }
 
 test "fractional UI strokes cover exact pixels without double blending or state changes" {

@@ -2445,14 +2445,19 @@ const App = struct {
         const colors = try self.uiPalette();
         const value = self.tabs[index].?;
         const status = value.panes[value.tree.active].?.snapshot();
-        try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
-        if (index == self.active) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + rect.height - 1, .width = rect.width, .height = 1 }, colors.accent);
         const target = self.headerHover();
-        const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) 30 else 0;
-        if (target == .tab and target.tab == index) try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.width - close_width, .height = rect.height - 1 }, appearance.hover(if (index == self.active) colors.active else colors.idle));
-        if (target == .tab_close and target.tab_close == index) try fill(self.renderer, .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height - 1 }, appearance.hover(if (index == self.active) colors.active else colors.idle));
-        try self.clippedText(value.title.resolve(status.title[0..status.title_len]), .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
-        if (close_width != 0) try self.drawText("×", rect.x + rect.width - 18, rect.y + 6);
+        const base = if (index == self.active) colors.active else colors.idle;
+        const body_hovered = target == .tab and target.tab == index;
+        try drawing.fillRounded(self.renderer, rect, if (body_hovered) appearance.hover(base) else base, chrome.Geometry.chip_radius);
+        const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) chrome.Geometry.close_width else 0;
+        if (target == .tab_close and target.tab_close == index) {
+            const close_rect: layout.Rect = .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height };
+            try drawing.fillRounded(self.renderer, chrome.hoverSurface(close_rect), appearance.hover(base), chrome.Geometry.hover_radius);
+        }
+        if (index == self.active) try fill(self.renderer, .{ .x = rect.x + chrome.Geometry.chip_radius, .y = rect.y + rect.height - chrome.Geometry.accent_bottom, .width = @max(0, rect.width - chrome.Geometry.chip_radius * 2), .height = chrome.Geometry.accent_height }, colors.accent);
+        const text_x = rect.x + chrome.Geometry.label_left;
+        try self.clippedText(value.title.resolve(status.title[0..status.title_len]), .{ .x = text_x, .y = rect.y, .width = @max(1, rect.width - close_width - chrome.Geometry.label_left - chrome.Geometry.label_right), .height = rect.height }, text_x);
+        if (close_width != 0) try self.drawText("×", rect.x + rect.width - chrome.Geometry.close_glyph_right, rect.y + chrome.Geometry.close_glyph_top);
     }
     fn drawWindowControls(self: *App) !void {
         const colors = try self.uiPalette();
@@ -2460,7 +2465,7 @@ const App = struct {
             const rect = chrome.control(button, self.width);
             const target = self.headerHover();
             const hovered = target == .window and target.window == button;
-            if (hovered) try fill(self.renderer, rect, appearance.hover(colors.title));
+            if (hovered) try drawing.fillRounded(self.renderer, chrome.hoverSurface(rect), appearance.hover(colors.title), chrome.Geometry.chip_radius);
             const color = if (hovered) colors.text else colors.muted;
             // Switchyard's hand-tuned glyphs in a 42x26 box, centred in our caption.
             const y = rect.y + (rect.height - 26) / 2;
@@ -2487,18 +2492,18 @@ const App = struct {
             const index: u8 = @intCast(number);
             const rect = self.headerTabs(self.width).tab(index);
             if (self.drag == .tab and index == self.active) {
-                try outline(self.renderer, rect, colors.border);
+                try drawing.fillRounded(self.renderer, rect, colors.border, chrome.Geometry.chip_radius);
+                try drawing.fillRounded(self.renderer, chrome.hoverSurface(rect), colors.title, chrome.Geometry.hover_radius);
             } else try self.drawTab(index, rect);
         }
         if (self.drag == .tab) {
             var rect = self.headerTabs(self.width).tab(self.active);
             rect.x = self.drag.tab.x;
-            try self.drawTab(self.active, rect);
-            try outline(self.renderer, rect, colors.accent);
+            try drawing.fillRounded(self.renderer, rect, colors.accent, chrome.Geometry.chip_radius);
+            try self.drawTab(self.active, chrome.hoverSurface(rect));
         }
-        if (self.headerHover() == .caption) try fill(self.renderer, self.headerTabs(self.width).caption(), appearance.hover(colors.title));
         for ([_]layout.Rect{ self.headerTabs(self.width).plus(), self.headerTabs(self.width).profiles(), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.profile_icon, chrome.settings_icon }) |rect, glyph| {
-            if (self.isHovered(rect)) try fill(self.renderer, rect, appearance.hover(colors.title));
+            if (self.isHovered(rect)) try drawing.fillRounded(self.renderer, chrome.hoverSurface(rect), appearance.hover(colors.title), chrome.Geometry.chip_radius);
             for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = rect.y + part.y, .width = part.width, .height = part.height }, colors.text);
         }
         try self.drawWindowControls();
