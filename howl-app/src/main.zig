@@ -99,6 +99,57 @@ const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, altern
 const SettingsHeaderAction = enum { search, close };
 const settings_header_height: f32 = chrome.height;
 const settings_nav_top: f32 = settings_header_height + chrome.Geometry.bottom;
+const HeaderLabel = struct {
+    bytes: [1024]u8 = @splat(0),
+    len: usize = 0,
+
+    fn set(self: *HeaderLabel, title: []const u8) void {
+        std.debug.assert(title.len <= self.bytes.len);
+        self.len = title.len;
+        @memcpy(self.bytes[0..title.len], title);
+    }
+    fn text(self: *const HeaderLabel) []const u8 {
+        return self.bytes[0..self.len];
+    }
+};
+
+/// Exact current chrome paint inputs; terminal content changes are deliberately
+/// absent. The host can reuse this image even while panes publish new frames.
+const HeaderPicture = struct {
+    width: f32,
+    scale: f32,
+    count: u8,
+    active: u8,
+    fitted: bool,
+    hovered: chrome.HeaderTarget,
+    dragging_tab: bool,
+    drag_x: f32,
+    maximized: bool,
+    colors: appearance.Palette,
+    labels: [tab_limit]HeaderLabel = @splat(.{}),
+
+    fn eql(a: *const HeaderPicture, b: *const HeaderPicture) bool {
+        if (a.width != b.width or a.scale != b.scale or a.count != b.count or a.active != b.active or
+            a.fitted != b.fitted or !std.meta.eql(a.hovered, b.hovered) or a.dragging_tab != b.dragging_tab or
+            a.drag_x != b.drag_x or a.maximized != b.maximized or !std.meta.eql(a.colors, b.colors)) return false;
+        for (a.labels[0..a.count], b.labels[0..b.count]) |left, right| {
+            if (!std.mem.eql(u8, left.text(), right.text())) return false;
+        }
+        return true;
+    }
+};
+
+const HeaderCache = struct {
+    texture: ?*c.SDL_Texture = null,
+    width: c_int = 0,
+    height: c_int = 0,
+    picture: ?HeaderPicture = null,
+
+    fn deinit(self: *HeaderCache) void {
+        if (self.texture) |texture| c.SDL_DestroyTexture(texture);
+        self.* = .{};
+    }
+};
 /// Startup's two field groups share one scrolled coordinate space with pointer
 /// hits, keyboard focus and the profile dropdown. Other settings pages retain
 /// their existing row editor while form controls mature here.
@@ -135,6 +186,7 @@ const App = struct {
     fonts: *font_owner.Fonts,
     window: *c.SDL_Window,
     renderer: *c.SDL_Renderer,
+    header_cache: HeaderCache = .{},
     ui_fonts: *font_owner.TextFonts,
     geometry: *canvas.Geometry,
     wake_event: u32,
@@ -174,6 +226,7 @@ const App = struct {
     notice_until: u64 = 0,
 
     fn deinit(self: *App) void {
+        self.header_cache.deinit();
         if (!c.SDL_SetCursor(c.SDL_GetDefaultCursor())) self.report(error.SDL);
         for (self.cursors) |cursor| if (cursor) |owned| c.SDL_DestroyCursor(owned);
         if (self.discovered) |catalogue| catalogue.destroy(allocator);
@@ -694,6 +747,7 @@ const App = struct {
         if (next_ui) |owned| {
             self.ui_fonts.deinit();
             self.ui_fonts.* = owned;
+            self.header_cache.picture = null;
             next_ui = null;
         }
         if (next_fonts) |owned| {
@@ -2694,10 +2748,8 @@ const App = struct {
         }
         return false;
     }
-    fn drawTab(self: *App, index: u8, rect: layout.Rect) !void {
+    fn drawTab(self: *App, picture: *const HeaderPicture, index: u8, rect: layout.Rect) !void {
         const colors = try self.uiPalette();
-        const value = self.tabs[index].?;
-        const status = value.panes[value.tree.active].?.snapshot();
         const target = self.headerHover();
         const base = if (index == self.active) colors.active else colors.idle;
         const body_hovered = target == .tab and target.tab == index;
@@ -2709,7 +2761,7 @@ const App = struct {
         }
         if (index == self.active) try fill(self.renderer, .{ .x = rect.x + chrome.Geometry.chip_radius, .y = rect.y + rect.height - chrome.Geometry.accent_bottom, .width = @max(0, rect.width - chrome.Geometry.chip_radius * 2), .height = chrome.Geometry.accent_height }, colors.accent);
         const title = chrome.titleArea(rect, close_width != 0);
-        if (title.width > 0) try self.clippedText(value.title.resolve(status.title[0..status.title_len]), title, title.x);
+        if (title.width > 0) try self.clippedText(picture.labels[index].text(), title, title.x);
         if (close_width != 0) try icons.draw(self.renderer, .x, .{ .x = rect.x + rect.width - close_width + 7, .y = rect.y + 7, .width = 16, .height = 16 }, colors.text);
     }
     fn drawWindowControls(self: *App) !void {
@@ -2735,7 +2787,31 @@ const App = struct {
             }
         }
     }
-    fn drawHeader(self: *App) !void {
+    fn headerPicture(self: *App) !HeaderPicture {
+        var picture: HeaderPicture = .{
+            .width = self.width,
+            .scale = self.scale,
+            .count = self.tab_count,
+            .active = self.active,
+            .fitted = self.configuration.value.tab_width == .fit,
+            .hovered = self.headerHover(),
+            .dragging_tab = self.drag == .tab,
+            .drag_x = if (self.drag == .tab) self.drag.tab.x else 0,
+            .maximized = c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_MAXIMIZED != 0,
+            .colors = try self.uiPalette(),
+        };
+        for (0..self.tab_count) |index| {
+            const value = self.tabs[index].?;
+            if (value.title.len != 0) {
+                picture.labels[index].set(value.title.bytes[0..value.title.len]);
+            } else {
+                const status = value.panes[value.tree.active].?.snapshot();
+                picture.labels[index].set(status.title[0..status.title_len]);
+            }
+        }
+        return picture;
+    }
+    fn drawHeader(self: *App, picture: *const HeaderPicture) !void {
         if (self.headerHeight() == 0) return;
         const colors = try self.uiPalette();
         try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = chrome.height }, colors.title);
@@ -2745,19 +2821,59 @@ const App = struct {
             if (self.drag == .tab and index == self.active) {
                 try drawing.fillRounded(self.renderer, rect, colors.border, chrome.Geometry.chip_radius);
                 try drawing.fillRounded(self.renderer, chrome.dragInterior(rect), colors.title, chrome.Geometry.hover_radius);
-            } else try self.drawTab(index, rect);
+            } else try self.drawTab(picture, index, rect);
         }
         if (self.drag == .tab) {
             var rect = self.headerTabs(self.width).tab(self.active);
             rect.x = self.drag.tab.x;
             try drawing.fillRounded(self.renderer, rect, colors.accent, chrome.Geometry.chip_radius);
-            try self.drawTab(self.active, chrome.dragInterior(rect));
+            try self.drawTab(picture, self.active, chrome.dragInterior(rect));
         }
         for ([_]layout.Rect{ self.headerTabs(self.width).plus(), self.headerTabs(self.width).profiles(), chrome.settings(self.width) }, [_]icons.Name{ .plus, .chevron_right, .ellipsis }) |rect, glyph| {
             if (self.isHovered(rect)) try drawing.fillRounded(self.renderer, rect, appearance.hover(colors.idle), chrome.Geometry.chip_radius);
             try icons.draw(self.renderer, glyph, .{ .x = rect.x + 6, .y = rect.y + 5, .width = 20, .height = 20 }, colors.text);
         }
         try self.drawWindowControls();
+    }
+    fn drawRetainedHeader(self: *App) !void {
+        if (self.headerHeight() == 0) {
+            self.header_cache.deinit();
+            return;
+        }
+        const picture = try self.headerPicture();
+        const width: c_int = @intFromFloat(@ceil(self.width * self.scale));
+        const height: c_int = @intFromFloat(@ceil(chrome.height * self.scale));
+        // A single bounded chrome surface, not one allocation per tab/icon.
+        if (width <= 0 or height <= 0 or @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * 4 > 2 * 1024 * 1024) {
+            self.header_cache.deinit();
+            return self.drawHeader(&picture);
+        }
+        if (self.header_cache.width != width or self.header_cache.height != height) self.header_cache.deinit();
+        if (self.header_cache.texture == null) {
+            const texture = c.SDL_CreateTexture(self.renderer, c.SDL_PIXELFORMAT_RGBA32, c.SDL_TEXTUREACCESS_TARGET, width, height) orelse return self.drawHeader(&picture);
+            if (!c.SDL_SetTextureBlendMode(texture, c.SDL_BLENDMODE_NONE) or !c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_NEAREST)) {
+                c.SDL_DestroyTexture(texture);
+                return self.drawHeader(&picture);
+            }
+            self.header_cache.texture = texture;
+            self.header_cache.width = width;
+            self.header_cache.height = height;
+        }
+        if (self.header_cache.picture == null or !self.header_cache.picture.?.eql(&picture)) {
+            self.header_cache.picture = null;
+            if (!c.SDL_SetRenderTarget(self.renderer, self.header_cache.texture)) return error.SDL;
+            // zig-audit: acknowledge discard
+            // reason: On a failed chrome paint the window target must be restored best-effort before unwinding.
+            errdefer _ = c.SDL_SetRenderTarget(self.renderer, null);
+            if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or
+                !c.SDL_SetRenderDrawColor(self.renderer, picture.colors.title.r, picture.colors.title.g, picture.colors.title.b, 255) or
+                !c.SDL_RenderClear(self.renderer)) return error.SDL;
+            try self.drawHeader(&picture);
+            if (!c.SDL_SetRenderTarget(self.renderer, null) or !c.SDL_SetRenderScale(self.renderer, self.scale, self.scale)) return error.SDL;
+            self.header_cache.picture = picture;
+        }
+        const destination: c.SDL_FRect = .{ .x = 0, .y = 0, .w = self.width, .h = chrome.height };
+        if (!c.SDL_RenderTexture(self.renderer, self.header_cache.texture, null, &destination)) return error.SDL;
     }
     fn drawDivider(self: *App, divider: layout.Divider, color: c.SDL_Color) !void {
         try drawing.divider(self.renderer, divider.rect, divider.axis, 2, color);
@@ -2776,7 +2892,7 @@ const App = struct {
         const colors = try self.uiPalette();
         if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
             !c.SDL_SetRenderDrawColor(self.renderer, colors.window.r, colors.window.g, colors.window.b, colors.window.a) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
-        try self.drawHeader();
+        try self.drawRetainedHeader();
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
@@ -3109,6 +3225,52 @@ test {
     std.testing.refAllDecls(appearance);
     std.testing.refAllDecls(drawing);
     std.testing.refAllDecls(color_config);
+}
+
+test "retained chrome identity ignores terminal work and detects every painted header input" {
+    var initial: HeaderPicture = .{
+        .width = 900,
+        .scale = 1,
+        .count = 2,
+        .active = 0,
+        .fitted = false,
+        .hovered = .none,
+        .dragging_tab = false,
+        .drag_x = 0,
+        .maximized = false,
+        .colors = try appearance.palette("howl_dark"),
+    };
+    initial.labels[0].set("shell");
+    initial.labels[1].set("editor");
+    var changed = initial;
+    try std.testing.expect(initial.eql(&changed));
+    changed.labels[1].set("build");
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.hovered = .{ .tab_close = 1 };
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.dragging_tab = true;
+    changed.drag_x = 70;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.width = 901;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.scale = 1.25;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.colors.accent.r +%= 1;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.maximized = true;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.fitted = true;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
+    changed.active = 1;
+    try std.testing.expect(!initial.eql(&changed));
 }
 
 test "command palette exposes every mapping including directional multiplexing commands" {
