@@ -153,8 +153,7 @@ const HeaderCache = struct {
     }
 };
 /// Startup's two field groups share one scrolled coordinate space with pointer
-/// hits, keyboard focus and the profile dropdown. Other settings pages retain
-/// their existing row editor while form controls mature here.
+/// hits, keyboard focus and the profile dropdown.
 const StartupForm = struct {
     view: widgets.FormViewport,
     compact: bool,
@@ -184,6 +183,76 @@ const StartupForm = struct {
     fn toggle(self: StartupForm, number: usize) layout.Rect {
         const field = self.row(number);
         return .{ .x = field.x + field.width - 46, .y = field.y + 12, .width = 46, .height = 26 };
+    }
+};
+/// Appearance keeps its existing row controls, but groups them into cards in
+/// one scrolled coordinate space. Painting, editing and pointer hits all use
+/// the same row rectangles, including when a card is partly off-screen.
+const AppearanceForm = struct {
+    view: widgets.FormViewport,
+
+    const Section = struct { title: []const u8, hint: []const u8, first: usize, count: usize };
+    const sections = [_]Section{
+        .{ .title = "Tab bar", .hint = "Visibility and tab sizing.", .first = 0, .count = 2 },
+        .{ .title = "Fonts", .hint = "Typefaces and fallback coverage.", .first = 2, .count = 8 },
+        .{ .title = "Cursor", .hint = "Shape, motion, and blink behavior.", .first = 10, .count = 10 },
+    };
+    const top_inset: f32 = settings_card_gutter;
+    const outer_inset: f32 = settings_card_gutter;
+    const inner_inset: f32 = settings_card_padding;
+    const card_gap: f32 = 14;
+    const heading_height: f32 = 66;
+    const row_stride: f32 = 48;
+    const row_height: f32 = 44;
+    const card_bottom: f32 = 12;
+    const count: usize = sections[sections.len - 1].first + sections[sections.len - 1].count;
+
+    fn cardHeight(number: usize) f32 {
+        return heading_height + @as(f32, @floatFromInt(sections[number].count)) * row_stride + card_bottom;
+    }
+    fn cardTop(number: usize) f32 {
+        var top = top_inset;
+        for (0..number) |index| top += cardHeight(index) + card_gap;
+        return top;
+    }
+    fn rowTop(number: usize) f32 {
+        std.debug.assert(number < count);
+        var index: usize = 0;
+        while (index + 1 < sections.len and number >= sections[index + 1].first) : (index += 1) {}
+        return cardTop(index) + heading_height + @as(f32, @floatFromInt(number - sections[index].first)) * row_stride;
+    }
+    fn contentHeight() f32 {
+        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + top_inset;
+    }
+    fn firstTop(first: usize) f32 {
+        // Advance by the virtual distance between rows, retaining the initial
+        // heading inset rather than jumping the first row against the lip.
+        return rowTop(first) - rowTop(0);
+    }
+    fn visible(bounds: layout.Rect, first: usize) usize {
+        const first_row = @min(first, count - 1);
+        const top = firstTop(first_row);
+        var shown: usize = 0;
+        while (first_row + shown < count and rowTop(first_row + shown) + row_height + 8 <= top + bounds.height) : (shown += 1) {}
+        return @max(1, shown);
+    }
+    fn init(bounds: layout.Rect, first: usize, selected: usize) AppearanceForm {
+        const top = firstTop(@min(first, count - 1));
+        const selected_bottom = rowTop(@min(selected, count - 1)) + row_height + 12;
+        const offset = std.math.clamp(@max(top, selected_bottom - bounds.height), 0, @max(0, contentHeight() - bounds.height));
+        return .{ .view = .{ .bounds = bounds, .offset = offset, .content_height = contentHeight() } };
+    }
+    fn card(self: AppearanceForm, number: usize) layout.Rect {
+        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
+    }
+    fn row(self: AppearanceForm, number: usize) layout.Rect {
+        const inset = outer_inset + inner_inset;
+        return self.view.place(inset, rowTop(number), @max(1, self.view.bounds.width - 2 * inset), row_height);
+    }
+    fn hit(self: AppearanceForm, x: f32, y: f32) ?usize {
+        if (!self.view.bounds.contains(x, y)) return null;
+        for (0..count) |number| if (self.row(number).contains(x, y)) return number;
+        return null;
     }
 };
 const App = struct {
@@ -2104,6 +2173,14 @@ const App = struct {
     fn startupForm(self: *const App) StartupForm {
         return StartupForm.init(self.settingsBody(), self.settings_editor.?.list.selected);
     }
+    fn appearanceForm(self: *const App) AppearanceForm {
+        const list = self.settings_editor.?.list;
+        return AppearanceForm.init(self.settingsBody(), list.first, list.selected);
+    }
+    fn appearanceSettings(self: *const App) bool {
+        const editor = self.settings_editor.?;
+        return !editor.search and editor.page == .appearance;
+    }
     fn simpleSettingsForm(self: *const App) bool {
         const editor = self.settings_editor.?;
         return !editor.search and switch (editor.page) {
@@ -2140,6 +2217,7 @@ const App = struct {
         if (self.settings_editor.?.editing != null) {
             const e = self.settings_editor.?;
             if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
+            if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.list.selected));
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
             return settingsRowField(rect);
         }
@@ -2153,6 +2231,7 @@ const App = struct {
             const body = self.settingsBody();
             return if (body.height >= (if (body.width < 390) @as(f32, 380) else 350)) 3 else 1;
         }
+        if (self.appearanceSettings()) return AppearanceForm.visible(self.settingsBody(), self.settings_editor.?.list.first);
         return self.settingsRows().visible();
     }
     fn settingsStart(self: *App, count: usize) usize {
@@ -2369,13 +2448,15 @@ const App = struct {
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.settingsConfiguration(), &all);
         const visible = e.indices(all[0..count], &indices);
-        const row = self.settingsRows().hit(x, y) orelse return;
-        const chosen = row + self.settingsStart(visible);
+        const appearance_form = self.appearanceSettings();
+        const start = self.settingsStart(visible);
+        const row = if (appearance_form) self.appearanceForm().hit(x, y) orelse return else self.settingsRows().hit(x, y) orelse return;
+        const chosen = if (appearance_form) row else row + start;
         if (chosen >= visible) return;
         if (e.list.selected != chosen) e.delete_pending = null;
         e.list.selected = chosen;
         const selected_row = all[indices[chosen]];
-        const row_rect = self.settingsRows().row(row);
+        const row_rect = if (appearance_form) self.appearanceForm().row(chosen) else self.settingsRows().row(row);
         if (selected_row.editable() and settingsEditButton(row_rect).contains(x, y)) {
             e.content_focus = true;
             if (e.search) try self.activateSetting(selected_row);
@@ -2535,6 +2616,18 @@ const App = struct {
             try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
         }
     }
+    fn drawAppearanceCards(self: *App, form: AppearanceForm) !void {
+        const colors = try self.uiPalette();
+        for (AppearanceForm.sections, 0..) |section, number| {
+            const card = form.card(number);
+            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
+            try self.drawSettingsCard(card);
+            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
+            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
+            try self.clippedText(section.title, heading, heading.x);
+            try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
+        }
+    }
     fn drawSettingsHeaderButtons(self: *App) !void {
         const colors = try self.uiPalette();
         const pending = self.settings_draft != null or self.settings_editor.?.editing != null;
@@ -2580,6 +2673,7 @@ const App = struct {
         }
         const startup_form = !e.search and e.page == .startup;
         const simple_form = self.simpleSettingsForm();
+        const appearance_form = self.appearanceSettings();
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
             const labels: [3][]const u8 = if (e.page == .defaults) .{ "New profile", "Duplicate", if (e.delete_pending != null) "Delete?" else "Delete" } else .{ "< Profiles", "Duplicate", "Set default" };
             for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
@@ -2598,7 +2692,7 @@ const App = struct {
             try self.drawSettingsDropdown();
             return;
         }
-        if (simple_form) {
+        if (simple_form and !appearance_form) {
             try self.drawSettingsCard(self.settingsListCard());
         }
         var all: [settings.row_limit]settings.Row = undefined;
@@ -2608,9 +2702,20 @@ const App = struct {
         e.list.selected = @min(e.list.selected, visible -| 1);
         const start = self.settingsStart(visible);
         const rows = self.settingsRows();
-        for (indices[start..@min(visible, start + self.settingsVisible())], start..) |index, number| {
+        const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
+        var clipped_appearance = false;
+        defer if (clipped_appearance) clearClip(self.renderer);
+        if (appearance_form) {
+            try setClip(self.renderer, body);
+            clipped_appearance = true;
+            try self.drawAppearanceCards(form);
+        }
+        const paint_start = if (appearance_form) @as(usize, 0) else start;
+        const paint_end = if (appearance_form) visible else @min(visible, start + self.settingsVisible());
+        for (indices[paint_start..paint_end], paint_start..) |index, number| {
             const row = all[index];
-            const rect = rows.row(number - start);
+            const rect = if (appearance_form) form.row(number) else rows.row(number - start);
+            if (appearance_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
             if (simple_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else {
                 try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
                 try outline(self.renderer, rect, colors.border);
@@ -2693,7 +2798,16 @@ const App = struct {
                 try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
             }
         }
-        try self.drawListScroll(rows, start, visible);
+        if (clipped_appearance) {
+            clearClip(self.renderer);
+            clipped_appearance = false;
+        }
+        if (appearance_form) {
+            if (form.view.scrollbar()) |bar| {
+                try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
+                try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
+            }
+        } else try self.drawListScroll(rows, start, visible);
         try self.drawSettingsDropdown();
         if (e.editing != null and e.edit.kind == .color) {
             try self.drawColorEditor();
@@ -2851,7 +2965,7 @@ const App = struct {
             const count = try settings.rows(self.settingsConfiguration(), &all);
             const shown = e.indices(all[0..count], &indices);
             const start = self.settingsStart(shown);
-            e.list.hovered = if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
+            e.list.hovered = if (self.appearanceSettings()) self.appearanceForm().hit(x, y) else if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
             return self.setPointer(if ((e.search or (e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice())) and self.settingsField().contains(x, y)) 2 else null);
         }
         if (self.rename_editor != null) return self.setPointer(if ((try self.renameField()).contains(x, y)) 2 else null);
@@ -4386,7 +4500,7 @@ test "startup form keeps selector and switches inside their groups at compact wi
     }
 }
 
-test "simple settings cards share symmetric painted and pointer geometry" {
+test "settings cards share symmetric painted and pointer geometry" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
     defer c.SDL_Quit();
@@ -4415,20 +4529,47 @@ test "simple settings cards share symmetric painted and pointer geometry" {
     }) |size| {
         app.width = size.width;
         app.height = size.height;
-        for ([_]settings.Page{ .appearance, .mappings }) |page| {
-            app.settings_editor.?.page = page;
-            const body = app.settingsBody();
-            const card = app.settingsListCard();
-            const rows = app.settingsRows();
-            try std.testing.expect(app.simpleSettingsForm());
-            try std.testing.expectApproxEqAbs(card.x - body.x, body.x + body.width - card.x - card.width, 0.01);
-            try std.testing.expect(card.y >= body.y and card.y + card.height <= body.y + body.height);
-            try std.testing.expectApproxEqAbs(rows.rect.x - card.x, card.x + card.width - rows.rect.x - rows.rect.width, 0.01);
-            try std.testing.expect(rows.rect.y >= card.y and rows.rect.y + rows.rect.height <= card.y + card.height);
-            const first = rows.row(0);
-            try std.testing.expectEqual(@as(?usize, 0), rows.hit(first.x + 1, first.y + 1));
-            try std.testing.expect(rows.hit(card.x + 1, first.y + 1) == null);
+        app.settings_editor.?.page = .mappings;
+        const body = app.settingsBody();
+        const card = app.settingsListCard();
+        const rows = app.settingsRows();
+        try std.testing.expect(app.simpleSettingsForm());
+        try std.testing.expectApproxEqAbs(card.x - body.x, body.x + body.width - card.x - card.width, 0.01);
+        try std.testing.expect(card.y >= body.y and card.y + card.height <= body.y + body.height);
+        try std.testing.expectApproxEqAbs(rows.rect.x - card.x, card.x + card.width - rows.rect.x - rows.rect.width, 0.01);
+        try std.testing.expect(rows.rect.y >= card.y and rows.rect.y + rows.rect.height <= card.y + card.height);
+        const first = rows.row(0);
+        try std.testing.expectEqual(@as(?usize, 0), rows.hit(first.x + 1, first.y + 1));
+        try std.testing.expect(rows.hit(card.x + 1, first.y + 1) == null);
+
+        app.settings_editor.?.page = .appearance;
+        const form = app.appearanceForm();
+        try std.testing.expect(app.simpleSettingsForm());
+        try std.testing.expectApproxEqAbs(body.y + AppearanceForm.top_inset, form.card(0).y, 0.01);
+        for (AppearanceForm.sections, 0..) |section, number| {
+            const group = form.card(number);
+            const group_first = form.row(section.first);
+            const group_last = form.row(section.first + section.count - 1);
+            try std.testing.expectApproxEqAbs(group.x - body.x, body.x + body.width - group.x - group.width, 0.01);
+            try std.testing.expectApproxEqAbs(group_first.x - group.x, group.x + group.width - group_first.x - group_first.width, 0.01);
+            try std.testing.expect(group_first.y >= group.y + AppearanceForm.heading_height);
+            try std.testing.expect(group_last.y + group_last.height < group.y + group.height);
+            if (number > 0) try std.testing.expect(group.y >= form.card(number - 1).y + form.card(number - 1).height + AppearanceForm.card_gap);
         }
+        const first_appearance = form.row(0);
+        try std.testing.expectEqual(@as(?usize, 0), form.hit(first_appearance.x + 1, first_appearance.y + 1));
+        try std.testing.expect(form.hit(form.card(0).x + 16, form.card(0).y + 16) == null);
+        const next_row = AppearanceForm.init(body, 1, 1);
+        try std.testing.expectApproxEqAbs(AppearanceForm.row_stride, next_row.view.offset, 0.01);
+        const fonts = AppearanceForm.init(body, 2, 2);
+        try std.testing.expectApproxEqAbs(AppearanceForm.rowTop(2) - AppearanceForm.rowTop(0), fonts.view.offset, 0.01);
+        app.settings_editor.?.list = .{ .selected = AppearanceForm.count - 1, .first = AppearanceForm.count - 2 };
+        const scrolled = app.appearanceForm();
+        const last_appearance = scrolled.row(AppearanceForm.count - 1);
+        try std.testing.expect(last_appearance.y >= body.y);
+        try std.testing.expect(last_appearance.y + last_appearance.height <= body.y + body.height);
+        try std.testing.expectEqual(@as(?usize, AppearanceForm.count - 1), scrolled.hit(last_appearance.x + 1, last_appearance.y + 1));
+        app.settings_editor.?.list = .{};
         app.settings_editor.?.page = .colors;
         try std.testing.expect(!app.simpleSettingsForm());
         try std.testing.expectEqual(app.settingsBody().x, app.settingsRows().rect.x);
@@ -4450,13 +4591,20 @@ test "simple settings cards share symmetric painted and pointer geometry" {
         try std.testing.expectEqual(@as(u8, @intCast(number)), all[index].target.binding);
     }
     app.settings_editor.?.page = .appearance;
-    const row = app.settingsRows().row(0);
+    try std.testing.expectEqual(AppearanceForm.count, app.settings_editor.?.indices(all[0..count], &indices));
+    const starts = [_]settings.Target{ .hide_single_tab, .font_family, .cursor_blink };
+    const ends = [_]settings.Target{ .tab_width, .{ .font = 5 }, .cursor_blink_idle_ms };
+    for (AppearanceForm.sections, 0..) |section, number| {
+        try std.testing.expectEqualDeep(starts[number], all[indices[section.first]].target);
+        try std.testing.expectEqualDeep(ends[number], all[indices[section.first + section.count - 1]].target);
+    }
+    const row = app.appearanceForm().row(0);
     try app.settingsClick(row.x + row.width * 0.75, row.y + 15, 1);
     try std.testing.expect(app.settings_editor.?.editing == null);
     const edit_button = App.settingsEditButton(row);
     try app.settingsClick(edit_button.x + 8, edit_button.y + 8, 1);
     try std.testing.expectEqual(settings.Target.hide_single_tab, app.settings_editor.?.editing.?);
-    const edited_row = app.settingsRows().row(0);
+    const edited_row = app.appearanceForm().row(0);
     const field = app.settingsField();
     try std.testing.expectEqualDeep(App.settingsRowField(edited_row), field);
     try std.testing.expect(field.x >= edited_row.x and field.x + field.width <= edited_row.x + edited_row.width);
