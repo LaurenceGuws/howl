@@ -156,19 +156,23 @@ const HeaderCache = struct {
 const StartupForm = struct {
     view: widgets.FormViewport,
     compact: bool,
+    const outer_inset: f32 = 12;
+    const inner_inset: f32 = 16;
+    const top_inset: f32 = 12;
 
     fn init(bounds: layout.Rect, selected: usize) StartupForm {
         const compact = bounds.width < 390;
         const ends: [3]f32 = if (compact) .{ 158, 299, 357 } else .{ 126, 271, 330 };
-        return .{ .view = widgets.FormViewport.init(bounds, if (compact) 376 else 350, ends[@min(selected, 2)]), .compact = compact };
+        return .{ .view = widgets.FormViewport.init(bounds, (if (compact) @as(f32, 372) else 350) + top_inset, ends[@min(selected, 2)] + top_inset), .compact = compact };
     }
     fn card(self: StartupForm, number: usize) layout.Rect {
-        return self.view.place(0, if (number == 0) 2 else if (self.compact) 179 else 148, @max(1, self.view.bounds.width - 8), if (number == 0) (if (self.compact) 164 else 132) else if (self.compact) 190 else 200);
+        return self.view.place(outer_inset, (if (number == 0) @as(f32, 2) else if (self.compact) @as(f32, 179) else 148) + top_inset, @max(1, self.view.bounds.width - 2 * outer_inset), if (number == 0) (if (self.compact) 164 else 132) else if (self.compact) 190 else 200);
     }
     fn row(self: StartupForm, number: usize) layout.Rect {
         const top: f32 = if (number == 0) (if (self.compact) 70 else 74) else if (number == 1) (if (self.compact) 249 else 221) else (if (self.compact) 307 else 280);
         const height: f32 = if (number == 0) (if (self.compact) 88 else 52) else 50;
-        return self.view.place(16, top, @max(1, self.view.bounds.width - 40), height);
+        const inset = outer_inset + inner_inset;
+        return self.view.place(inset, top + top_inset, @max(1, self.view.bounds.width - 2 * inset), height);
     }
     fn select(self: StartupForm) layout.Rect {
         const field = self.row(0);
@@ -2385,7 +2389,7 @@ const App = struct {
         else
             (try self.configuration.profile(try self.configuration.defaultProfile())).name;
         try self.clippedText(profile_name, selector.label, selector.label.x);
-        try self.clippedText(if (editor.editing != null and editor.editing.? == .default_profile) "▴" else "▾", selector.arrow, selector.arrow.x);
+        try icons.draw(self.renderer, if (editor.editing != null and editor.editing.? == .default_profile) .chevron_up else .chevron_down, selector.arrow, colors.text);
         const switches = [_]struct { label: []const u8, hint: []const u8, enabled: bool }{
             .{ .label = "Local shells & REPLs", .hint = "Detect local shells", .enabled = self.configuration.value.discover_shells },
             .{ .label = "SSH hosts", .hint = "From your SSH config", .enabled = self.configuration.value.discover_ssh_hosts },
@@ -2491,7 +2495,7 @@ const App = struct {
                     try outline(self.renderer, self.settingsField(), colors.accent);
                     const select_rect = self.settingsField();
                     try self.clippedText(display, .{ .x = select_rect.x + 7, .y = select_rect.y, .width = @max(1, select_rect.width - 32), .height = select_rect.height }, select_rect.x + 7);
-                    try self.clippedText("▴", .{ .x = select_rect.x + select_rect.width - 23, .y = select_rect.y, .width = 20, .height = select_rect.height }, select_rect.x + select_rect.width - 22);
+                    try icons.draw(self.renderer, .chevron_up, .{ .x = select_rect.x + select_rect.width - 23, .y = select_rect.y, .width = 20, .height = select_rect.height }, colors.text);
                 } else try self.drawField(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null);
             } else if (row.target == .set_default and !e.search) {
                 try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
@@ -4135,6 +4139,12 @@ test "startup form keeps selector and switches inside their groups at compact wi
             const first = form.card(0);
             const last = form.card(1);
             const selector = form.select();
+            try std.testing.expectEqual(first.x - bounds.x, bounds.x + bounds.width - first.x - first.width);
+            try std.testing.expectEqual(last.x - bounds.x, bounds.x + bounds.width - last.x - last.width);
+            try std.testing.expect(first.y >= bounds.y + StartupForm.top_inset - form.view.offset);
+            try std.testing.expect(last.y >= first.y + first.height + 12);
+            const first_row = form.row(0);
+            try std.testing.expectEqual(first_row.x - first.x, first.x + first.width - first_row.x - first_row.width);
             try std.testing.expect(selector.x >= first.x);
             try std.testing.expect(selector.x + selector.width <= first.x + first.width);
             try std.testing.expect(selector.y >= first.y and selector.y + selector.height <= first.y + first.height);

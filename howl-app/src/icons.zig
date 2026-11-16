@@ -6,7 +6,7 @@ const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
 
 /// Bounded icons used by the native host shell; source paths are 24x24.
-pub const Name = enum { search, x, plus, chevron_right, ellipsis, minus };
+pub const Name = enum { search, x, plus, chevron_right, chevron_up, chevron_down, ellipsis, minus };
 const Point = struct { x: f32, y: f32 };
 
 const Geometry = struct {
@@ -123,6 +123,14 @@ const Geometry = struct {
                 self.stroke(.{ .x = 9, .y = 18 }, .{ .x = 15, .y = 12 });
                 self.stroke(.{ .x = 15, .y = 12 }, .{ .x = 9, .y = 6 });
             },
+            .chevron_up => {
+                self.stroke(.{ .x = 18, .y = 15 }, .{ .x = 12, .y = 9 });
+                self.stroke(.{ .x = 12, .y = 9 }, .{ .x = 6, .y = 15 });
+            },
+            .chevron_down => {
+                self.stroke(.{ .x = 6, .y = 9 }, .{ .x = 12, .y = 15 });
+                self.stroke(.{ .x = 12, .y = 15 }, .{ .x = 18, .y = 9 });
+            },
             .ellipsis => {
                 for ([_]f32{ 5, 12, 19 }) |x| self.disc(.{ .x = x, .y = 12 }, 2);
             },
@@ -140,7 +148,7 @@ pub fn draw(renderer: *c.SDL_Renderer, name: Name, rect: Rect, color: c.SDL_Colo
 }
 
 test "Lucide paths stay inside their 24-unit viewbox at arbitrary shell positions" {
-    for ([_]Name{ .search, .x, .plus, .chevron_right, .ellipsis, .minus }) |name| {
+    for (std.meta.tags(Name)) |name| {
         var geometry = Geometry.init(.{ .x = 5.25, .y = 9.5, .width = 20, .height = 20 }, .{ .r = 255, .g = 100, .b = 40, .a = 255 });
         geometry.compose(name);
         try std.testing.expect(geometry.vertex_count > 0 and geometry.index_count > 0);
