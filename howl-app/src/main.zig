@@ -97,6 +97,8 @@ const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
 const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, alternate: bool };
 const SettingsHeaderAction = enum { search, close };
+const settings_header_height: f32 = chrome.height;
+const settings_nav_top: f32 = settings_header_height + chrome.Geometry.bottom;
 /// Startup's two field groups share one scrolled coordinate space with pointer
 /// hits, keyboard focus and the profile dropdown. Other settings pages retain
 /// their existing row editor while form controls mature here.
@@ -1932,7 +1934,7 @@ const App = struct {
     }
     fn settingsHeaderButton(self: *const App, action: SettingsHeaderAction) layout.Rect {
         const box = self.settingsRect();
-        return .{ .x = box.x + box.width - (if (action == .search) @as(f32, 74) else 40), .y = box.y + 8, .width = 30, .height = 30 };
+        return .{ .x = box.x + box.width - (if (action == .search) @as(f32, 74) else 40), .y = box.y + chrome.Geometry.top, .width = chrome.Geometry.chip_height, .height = chrome.Geometry.chip_height };
     }
     fn settingsSetSearch(self: *App, enabled: bool) void {
         const e = &self.settings_editor.?;
@@ -1949,7 +1951,7 @@ const App = struct {
         const box = self.settingsRect();
         const e = self.settings_editor.?;
         const sidebar = @min(160, box.width / 3);
-        const top: f32 = if (e.search or (e.editing != null and e.page != .startup) or e.page == .defaults or e.page == .profiles) 90 else 48;
+        const top: f32 = settings_header_height + (if (e.search or (e.editing != null and e.page != .startup) or e.page == .defaults or e.page == .profiles) @as(f32, 42) else 0);
         const bottom: f32 = if (!e.search and (e.page == .colors or (e.editing != null and e.edit.kind == .color))) 106 else if (!e.search and e.page == .defaults) 54 else 12;
         return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - bottom) };
     }
@@ -1970,7 +1972,7 @@ const App = struct {
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
             return .{ .x = rect.x + rect.width * 0.46, .y = rect.y + 5, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height - 10 };
         }
-        return .{ .x = body.x, .y = box.y + 48, .width = body.width, .height = 32 };
+        return .{ .x = body.x, .y = box.y + settings_header_height, .width = body.width, .height = 32 };
     }
     fn settingsDropdown(self: *const App) widgets.Dropdown {
         return widgets.Dropdown.init(self.settingsField(), self.settingsBody(), settings.choiceCount(self.settings_editor.?.editing.?, self.configuration));
@@ -1994,7 +1996,7 @@ const App = struct {
         const body = self.settingsBody();
         const count: f32 = @floatFromInt(self.settingsToolbarCount());
         const width = @max(1, (body.width - (count - 1) * 6) / count);
-        return .{ .x = body.x + @as(f32, @floatFromInt(number)) * (width + 6), .y = box.y + 48, .width = width, .height = 32 };
+        return .{ .x = body.x + @as(f32, @floatFromInt(number)) * (width + 6), .y = box.y + settings_header_height, .width = width, .height = 32 };
     }
     fn settingsToolbarAction(self: *App, number: usize) !void {
         const e = &self.settings_editor.?;
@@ -2156,8 +2158,8 @@ const App = struct {
         }
         if (!box.contains(x, y)) return;
         const body = self.settingsBody();
-        if (x < body.x - 12 and y >= box.y + 52) {
-            const page: usize = @intFromFloat(@floor((y - box.y - 52) / 34));
+        if (x < body.x - 12 and y >= box.y + settings_nav_top) {
+            const page: usize = @intFromFloat(@floor((y - box.y - settings_nav_top) / 34));
             if (page < settings.titles.len) {
                 self.cancelComposition();
                 e.page = @fromBackingInt(@intCast(page));
@@ -2355,7 +2357,7 @@ const App = struct {
             const rect = self.settingsHeaderButton(action);
             const hovered = self.isHovered(rect);
             if (hovered or (action == .search and self.settings_editor.?.search)) {
-                try drawing.fillRounded(self.renderer, rect, if (hovered) (if (action == .close) appearance.closeHover(colors.title) else appearance.hover(colors.title)) else colors.active, 4);
+                try drawing.fillRounded(self.renderer, rect, if (hovered) (if (action == .close) appearance.closeHover(colors.idle) else appearance.hover(colors.idle)) else colors.active, chrome.Geometry.chip_radius);
             }
             const color = if (hovered) colors.text else colors.muted;
             try icons.draw(self.renderer, if (action == .search) .search else .x, .{ .x = rect.x + 5, .y = rect.y + 5, .width = 20, .height = 20 }, color);
@@ -2370,13 +2372,13 @@ const App = struct {
         try fill(self.renderer, box, colors.title);
         try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = body.x - box.x - 12, .height = box.height }, colors.idle);
         // Join the header to the sidebar for one continuous Settings chrome.
-        try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = box.width, .height = @min(48, box.height) }, colors.idle);
+        try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = box.width, .height = @min(settings_header_height, box.height) }, colors.idle);
         try outline(self.renderer, box, colors.border);
-        try self.drawText("Settings", box.x + 14, box.y + 14);
-        try self.clippedText(if (e.search) "Search settings" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + 8, .width = @max(1, self.settingsHeaderButton(.search).x - body.x - 10), .height = 32 }, body.x);
+        try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
+        try self.clippedText(if (e.search) "Search settings" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = @max(1, self.settingsHeaderButton(.search).x - body.x - 10), .height = chrome.Geometry.chip_height }, body.x);
         try self.drawSettingsHeaderButtons();
         for (settings.titles, 0..) |title, index| {
-            const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + 52 + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
+            const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + settings_nav_top + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
             if (!e.search and @backingInt(e.page) == index) {
                 try fill(self.renderer, row, colors.active);
                 try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
@@ -2703,7 +2705,7 @@ const App = struct {
         const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) chrome.Geometry.close_width else 0;
         if (target == .tab_close and target.tab_close == index) {
             const close_rect: layout.Rect = .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height };
-            try drawing.fillRounded(self.renderer, chrome.closeSurface(close_rect), appearance.hover(base), chrome.Geometry.hover_radius);
+            try drawing.fillRounded(self.renderer, chrome.closeSurface(close_rect), appearance.closeHover(base), chrome.Geometry.hover_radius);
         }
         if (index == self.active) try fill(self.renderer, .{ .x = rect.x + chrome.Geometry.chip_radius, .y = rect.y + rect.height - chrome.Geometry.accent_bottom, .width = @max(0, rect.width - chrome.Geometry.chip_radius * 2), .height = chrome.Geometry.accent_height }, colors.accent);
         const title = chrome.titleArea(rect, close_width != 0);
@@ -3935,6 +3937,14 @@ test "startup profile selector stages choices and Escape restores the form witho
     app.height = 490;
     try std.testing.expect(app.startupForm().view.scrollbar() == null);
     const search_button = app.settingsHeaderButton(.search);
+    const settings_box = app.settingsRect();
+    try std.testing.expectEqual(chrome.height, settings_header_height);
+    try std.testing.expectEqual(settings_box.y + chrome.Geometry.top, search_button.y);
+    try std.testing.expectEqual(settings_box.y + settings_header_height, app.settingsBody().y);
+    try app.settingsClick(settings_box.x + 12, settings_box.y + settings_nav_top + 34 + 16, 1);
+    try std.testing.expectEqual(settings.Page.interaction, app.settings_editor.?.page);
+    try app.settingsClick(settings_box.x + 12, settings_box.y + settings_nav_top + 16, 1);
+    try std.testing.expectEqual(settings.Page.startup, app.settings_editor.?.page);
     try app.settingsClick(search_button.x + 10, search_button.y + 10, 1);
     try std.testing.expect(app.settings_editor.?.search);
     try app.settingsClick(search_button.x + 10, search_button.y + 10, 1);
