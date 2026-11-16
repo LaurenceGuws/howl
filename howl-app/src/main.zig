@@ -2368,8 +2368,10 @@ const App = struct {
         const body = self.settingsBody();
         e.profile = @min(e.profile, self.configuration.profileCount() - 1);
         try fill(self.renderer, box, colors.title);
-        try outline(self.renderer, box, colors.border);
         try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = body.x - box.x - 12, .height = box.height }, colors.idle);
+        // Join the header to the sidebar for one continuous Settings chrome.
+        try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = box.width, .height = @min(48, box.height) }, colors.idle);
+        try outline(self.renderer, box, colors.border);
         try self.drawText("Settings", box.x + 14, box.y + 14);
         try self.clippedText(if (e.search) "Search settings" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + 8, .width = @max(1, self.settingsHeaderButton(.search).x - body.x - 10), .height = 32 }, body.x);
         try self.drawSettingsHeaderButtons();
