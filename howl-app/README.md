@@ -246,7 +246,26 @@ unchanged. ReleaseSafe retains bounds and safety checks.
 Build with the repository's exact compiler pin:
 zig build install check test -Doptimize=ReleaseSafe
 
+For a native Linux build with pinned, statically linked SDL3 (3.4.20),
+SDL3_ttf (3.2.2), and the howl-text-owned FreeType/HarfBuzz engines:
+
+    zig build test -Dstatic-gui=true -Doptimize=ReleaseFast
+    zig build install -Dstatic-gui=true -Doptimize=ReleaseFast --prefix /path/to/disposable/staging
+
+This optional path needs CMake, Ninja, a C compiler, and FreeType/HarfBuzz
+development headers **at build time**. Zig fetches pinned SDL source revisions;
+the default build remains system-linked and does not need these tools.
+The static build still uses system libc and Fontconfig (including Fontconfig's
+transitive native libraries). Linux Wayland/X11, input and graphics drivers
+remain OS-provided; this is not a fully-static or cross-OS executable.
+SDL3_ttf's optional SVG-colour backend is disabled, matching the current
+Arch package; Howl's terminal glyph and colour-emoji coverage remains owned
+by howl-text. Cross-target builds need a separate platform SDK/toolchain path.
+
 Hand-drawn UI fills, outlines and split indicators align to whole physical pixels.
+App-shell search, close, plus, chevron, ellipsis and minimize strokes use a
+small Lucide 0.456.0 subset with retained ISC/Feather attribution in
+assets/lucide; there is no runtime icon-font or SVG-parser dependency.
 Pane outlines compose after terminal content; split boundaries remain visible when
 not hovered. Cursor reference widths scale with physical font size (including the
 display scale), rounded and bounded to 1–16 physical pixels. Block cursors continue

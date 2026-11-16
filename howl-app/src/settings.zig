@@ -55,6 +55,42 @@ pub const Target = union(enum) {
     move_environment: struct { profile: u8, index: u8, delta: i8 },
     information: []const u8,
 };
+/// Finite settings expose exact persisted values and separate human-facing labels.
+pub const Choice = struct { value: []const u8, label: []const u8 };
+
+/// Bounded catalogue size for a native settings select; text editors are not valid selectors.
+pub fn choiceCount(target: Target, current: *const config.Config) usize {
+    return switch (target) {
+        .default_profile => current.profileCount(),
+        .theme => themes.app_ids.len,
+        .terminal_theme => colors.terminal_themes.len,
+        .cursor_blink, .cursor_shape, .cursor_effect => 3,
+        .cursor_easing, .tab_width, .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts => 2,
+        else => 0,
+    };
+}
+/// Returns one typed option without allocating or retaining a borrowed configuration value.
+pub fn choiceAt(target: Target, current: *const config.Config, index: usize) !Choice {
+    if (index >= choiceCount(target, current)) return error.InvalidChoice;
+    if (target == .default_profile) {
+        const profile = try current.profile(@intCast(index));
+        return .{ .value = profile.id, .label = profile.name };
+    }
+    const options: []const []const u8 = switch (target) {
+        .theme => &themes.app_ids,
+        .terminal_theme => &colors.terminal_themes,
+        .cursor_blink => &.{ "Off", "Application", "Always" },
+        .cursor_shape => &.{ "Block", "Bar", "Underline" },
+        .cursor_effect => &.{ "None", "Stretch", "Trail" },
+        .cursor_easing => &.{ "Linear", "Ease out" },
+        .tab_width => &.{ "Fixed", "Fit available space" },
+        .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts => &.{ "Off", "On" },
+        else => return error.InvalidChoice,
+    };
+    const value = options[index];
+    return .{ .value = value, .label = if (target == .theme or target == .terminal_theme) themes.label(value) else value };
+}
+
 /// A borrowed derived row; rebuilt after every accepted configuration replacement.
 pub const Row = struct {
     page: Page,
@@ -390,6 +426,7 @@ pub const Editor = struct {
     recording: bool = false,
     edit: widgets.Text = .{},
     button: ?u8 = null,
+    choice_list: widgets.List = .{},
     buffer: [4096]u8 = @splat(0),
     len: usize = 0,
     delete_pending: ?u8 = null,
@@ -439,6 +476,14 @@ pub const Editor = struct {
         } };
         self.button = null;
         self.recording = false;
+        self.choice_list = .{};
+        if (row.choice()) for (0..choiceCount(row.target, current)) |index| {
+            const option = try choiceAt(row.target, current, index);
+            if (std.mem.eql(u8, self.buffer[0..self.len], option.value)) {
+                self.choice_list.selected = index;
+                break;
+            }
+        };
     }
     /// Cycles a staged finite setting. Saving remains an explicit separate action.
     pub fn cycle(self: *Editor, current: *const config.Config, delta: i8) !void {
@@ -492,6 +537,23 @@ pub const Editor = struct {
         @memcpy(self.buffer[0..next.len], next);
         self.len = next.len;
         self.edit = .{ .cursor = next.len };
+        for (0..choiceCount(target, current)) |index| {
+            const option = try choiceAt(target, current, index);
+            if (std.mem.eql(u8, option.value, next)) {
+                self.choice_list.selected = index;
+                break;
+            }
+        }
+    }
+    /// Stages one indexed option through the same bounded editor transaction.
+    pub fn selectChoice(self: *Editor, current: *const config.Config, index: usize) !void {
+        const target = self.editing orelse return error.ReadOnlySetting;
+        const value = (try choiceAt(target, current, index)).value;
+        if (value.len >= self.buffer.len) return error.SettingsTextLimit;
+        @memcpy(self.buffer[0..value.len], value);
+        self.len = value.len;
+        self.edit = .{ .cursor = value.len };
+        self.choice_list.selected = index;
     }
     /// Inserts only in a text field or active search. Choices cannot be typed into.
     pub fn append(self: *Editor, text: []const u8) error{ SettingsTextLimit, InvalidSettingsText }!void {
@@ -519,6 +581,7 @@ pub const Editor = struct {
         self.recording = false;
         self.edit = .{};
         self.button = null;
+        self.choice_list = .{};
         self.len = 0;
         self.delete_pending = null;
     }
@@ -589,6 +652,49 @@ test "settings text and global search stay bounded and preserve complete Unicode
     try std.testing.expectEqual(before, editor.len);
     editor.cancel();
     try std.testing.expect(editor.editing == null);
+}
+test "finite settings expose labeled dropdown options and stage one typed value" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try accept(&current, .add_profile, "");
+    const target: Target = .default_profile;
+    try std.testing.expectEqual(@as(usize, 2), choiceCount(target, &current));
+    try std.testing.expectEqualStrings("local", (try choiceAt(target, &current, 0)).value);
+    try std.testing.expectEqualStrings("New profile", (try choiceAt(target, &current, 1)).label);
+    try std.testing.expectError(error.InvalidChoice, choiceAt(target, &current, 2));
+    const preset: Target = .theme;
+    try std.testing.expectEqualStrings("Howl Dark", (try choiceAt(preset, &current, 0)).label);
+    try std.testing.expectEqualStrings("howl_dark", (try choiceAt(preset, &current, 0)).value);
+    var editor: Editor = .{};
+    const row: Row = .{ .page = .appearance, .label = "Cursor blink", .target = .cursor_blink };
+    try editor.begin(row, &current);
+    try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
+    try editor.selectChoice(&current, 2);
+    try std.testing.expectEqualStrings("Always", editor.buffer[0..editor.len]);
+    try std.testing.expectEqual(@as(usize, 2), editor.choice_list.selected);
+    try std.testing.expectEqual(@as(usize, 0), @backingInt(current.value.cursor_blink));
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("Off", editor.buffer[0..editor.len]);
+    try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
+    editor.cancel();
+    try std.testing.expect(editor.editing == null);
+    try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
+}
+test "startup discovery switches toggle independently and produce validated owned settings" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    const before_shells = current.value.discover_shells;
+    const before_ssh = current.value.discover_ssh_hosts;
+    try accept(&current, .discover_shells, "");
+    try std.testing.expectEqual(!before_shells, current.value.discover_shells);
+    try std.testing.expectEqual(before_ssh, current.value.discover_ssh_hosts);
+    try accept(&current, .discover_ssh_hosts, "");
+    try std.testing.expectEqual(!before_shells, current.value.discover_shells);
+    try std.testing.expectEqual(!before_ssh, current.value.discover_ssh_hosts);
+    try accept(&current, .discover_shells, "");
+    try accept(&current, .discover_ssh_hosts, "");
+    try std.testing.expectEqual(before_shells, current.value.discover_shells);
+    try std.testing.expectEqual(before_ssh, current.value.discover_ssh_hosts);
 }
 fn allocationProof(a: std.mem.Allocator) !void {
     var current = config.Config.defaults(a);

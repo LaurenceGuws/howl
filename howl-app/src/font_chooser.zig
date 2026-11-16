@@ -5,6 +5,8 @@ const config = @import("config.zig");
 
 const family_limit = 256;
 const path_limit = 512;
+/// A family pick updates all four faces; a face pick changes only one explicit override.
+pub const Mode = union(enum) { family, face: u2 };
 const Family = struct {
     name_bytes: [128]u8 = undefined,
     name_len: u8 = 0,
@@ -23,6 +25,7 @@ const Family = struct {
 /// Bounded installed-family chooser; owns its catalogue and cancellation recipe.
 pub const Chooser = struct {
     original: config.Config,
+    mode: Mode = .family,
     families: [family_limit]Family = undefined,
     count: u16 = 0,
     results: [family_limit]u16 = undefined,
@@ -39,17 +42,36 @@ pub const Chooser = struct {
     sample_scale: f32 = 0,
 
     /// Copies the cancellation recipe before querying owned terminal-width font families.
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, current: *const config.Config, regular: []const u8) !*Chooser {
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, current: *const config.Config, mode: Mode, selected_path: []const u8) !*Chooser {
         const self = try allocator.create(Chooser);
         errdefer allocator.destroy(self);
-        self.* = .{ .original = try config.Config.fromValue(allocator, io, current.value) };
+        self.* = .{ .original = try config.Config.fromValue(allocator, io, current.value), .mode = mode };
         errdefer self.original.deinit();
         try self.load();
         self.refresh();
         for (self.results[0..self.result_count], 0..) |index, number| {
-            if (std.mem.eql(u8, self.families[index].path(0), regular)) self.list.selected = @intCast(number);
+            if (std.mem.eql(u8, self.families[index].path(self.face()), selected_path)) self.list.selected = @intCast(number);
         }
         return self;
+    }
+    /// Resolves the one face used by filtering, preview and exact selection.
+    pub fn face(self: *const Chooser) usize {
+        return switch (self.mode) {
+            .family => 0,
+            .face => |index| index,
+        };
+    }
+    /// Gives the currently configured picker a human-readable heading.
+    pub fn title(self: *const Chooser) []const u8 {
+        return switch (self.mode) {
+            .family => "Installed terminal font families",
+            .face => |index| switch (index) {
+                0 => "Installed regular fonts",
+                1 => "Installed italic fonts",
+                2 => "Installed bold fonts",
+                3 => "Installed bold italic fonts",
+            },
+        };
     }
     /// Closes the sample and retires the original config after commit/cancellation or app shutdown.
     pub fn destroy(self: *Chooser, allocator: std.mem.Allocator) void {
@@ -136,6 +158,7 @@ pub const Chooser = struct {
         self.result_count = 0;
         const query = self.query[0..self.query_len];
         for (0..2) |pass| for (self.families[0..self.count], 0..) |*family, index| {
+            if (family.lengths[self.face()] == 0) continue;
             const strong = contains(family.name(), query);
             if ((pass == 0 and strong) or (pass == 1 and !strong and subsequence(family.name(), query))) {
                 self.results[self.result_count] = @intCast(index);
@@ -169,20 +192,30 @@ pub const Chooser = struct {
         if (result >= self.result_count) return error.InvalidFontSelection;
         return self.families[self.results[result]].name();
     }
-    /// Borrows the exact owned regular path for the currently selected result.
-    pub fn regularPath(self: *const Chooser) error{InvalidFontSelection}![]const u8 {
+    /// Borrows the exact selected face path from the owned installed-font catalogue.
+    pub fn selectedPath(self: *const Chooser) error{InvalidFontSelection}![]const u8 {
         if (self.list.selected >= self.result_count) return error.InvalidFontSelection;
-        return self.families[self.results[self.list.selected]].path(0);
+        return self.families[self.results[self.list.selected]].path(self.face());
     }
-    /// Builds an owned exact four-face candidate while preserving the original fallback recipe.
+    /// Builds an owned four-face family or one-face candidate, preserving every unrelated override.
     pub fn candidate(self: *const Chooser, allocator: std.mem.Allocator, io: std.Io) !config.Config {
         if (self.list.selected >= self.result_count) return error.InvalidFontSelection;
         const family = &self.families[self.results[self.list.selected]];
         var value = self.original.value;
-        value.font.regular = family.path(0);
-        value.font.italic = family.path(1);
-        value.font.bold = family.path(2);
-        value.font.bold_italic = family.path(3);
+        switch (self.mode) {
+            .family => {
+                value.font.regular = family.path(0);
+                value.font.italic = family.path(1);
+                value.font.bold = family.path(2);
+                value.font.bold_italic = family.path(3);
+            },
+            .face => |index| switch (index) {
+                0 => value.font.regular = family.path(0),
+                1 => value.font.italic = family.path(1),
+                2 => value.font.bold = family.path(2),
+                3 => value.font.bold_italic = family.path(3),
+            },
+        }
         return config.Config.fromValue(allocator, io, value);
     }
     /// Owns one sample font independently of the terminal transaction and rescales it for the display.
@@ -192,8 +225,8 @@ pub const Chooser = struct {
         if (self.sample_index != index) {
             const family = &self.families[index];
             var path: [path_limit:0]u8 = undefined;
-            @memcpy(path[0..family.lengths[0]], family.path(0));
-            path[family.lengths[0]] = 0;
+            @memcpy(path[0..family.lengths[self.face()]], family.path(self.face()));
+            path[family.lengths[self.face()]] = 0;
             const font = c.TTF_OpenFont(&path, 18 * scale) orelse return error.TTF;
             if (self.sample_font) |old| c.TTF_CloseFont(old);
             self.sample_font = font;
@@ -342,5 +375,37 @@ test "font catalogue and query bounds reject overlong paths without inventing a 
     try chooser.append("No result");
     chooser.move(100);
     try std.testing.expectEqual(@as(u16, 0), chooser.list.selected);
-    try std.testing.expectError(error.InvalidFontSelection, chooser.regularPath());
+    try std.testing.expectError(error.InvalidFontSelection, chooser.selectedPath());
+}
+
+test "face chooser lists only installed faces and changes one override" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    const font = try std.Io.Dir.cwd().realPathFileAlloc(io, @import("test_fonts").primary_font, a);
+    defer a.free(font);
+    const chooser = try a.create(Chooser);
+    defer a.destroy(chooser);
+    chooser.* = .{ .original = config.Config.defaults(a), .mode = .{ .face = 2 } };
+    defer chooser.original.deinit();
+    chooser.add("No Bold", "Regular", font, c.FC_MONO);
+    chooser.add("Bold Present", "Regular", font, c.FC_MONO);
+    chooser.add("Bold Present", "Bold", font, c.FC_MONO);
+    chooser.refresh();
+    try std.testing.expectEqualStrings("Installed bold fonts", chooser.title());
+    try std.testing.expectEqual(@as(u16, 1), chooser.result_count);
+    try std.testing.expectEqualStrings("Bold Present", try chooser.label(0));
+    try std.testing.expectEqualStrings(font, try chooser.selectedPath());
+    var candidate = try chooser.candidate(a, io);
+    defer candidate.deinit();
+    try std.testing.expectEqualStrings(font, candidate.value.font.bold);
+    try std.testing.expectEqualStrings("", candidate.value.font.regular);
+    try std.testing.expectEqualStrings("", candidate.value.font.italic);
+    try std.testing.expectEqualStrings("", candidate.value.font.bold_italic);
+    try std.testing.expectEqualStrings("", candidate.value.font.fallback);
+    try std.testing.expectEqualStrings("", candidate.value.font.secondary_fallback);
+    try std.testing.expectEqualStrings("", chooser.original.value.font.bold);
+    chooser.mode = .{ .face = 1 };
+    chooser.refresh();
+    try std.testing.expectEqual(@as(u16, 0), chooser.result_count);
+    try std.testing.expectError(error.InvalidFontSelection, chooser.candidate(a, io));
 }

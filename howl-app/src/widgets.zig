@@ -150,6 +150,176 @@ pub const Rows = struct {
     }
 };
 
+/// A value and an explicit trailing action share one bounded row without hiding either hit target.
+/// Painting and pointer routing consume these same rectangles.
+pub const InlineAction = struct {
+    value: layout.Rect,
+    button: layout.Rect,
+
+    /// Splits an available value rectangle using explicit insets and button width.
+    pub fn init(right: layout.Rect, preferred_width: f32) InlineAction {
+        const inset = @min(3, @max(0, right.width / 10));
+        const usable = @max(1, right.width - 2 * inset);
+        const button_width = @min(preferred_width, @max(1, usable * 0.44));
+        const gap = @min(6, @max(0, usable - button_width - 1));
+        const value_width = @max(1, usable - button_width - gap);
+        return .{
+            .value = .{ .x = right.x + inset, .y = right.y, .width = value_width, .height = right.height },
+            .button = .{ .x = right.x + inset + value_width + gap, .y = right.y + 5, .width = button_width, .height = @max(1, right.height - 10) },
+        };
+    }
+};
+
+/// A finite choice menu anchored to its field, opening upward near the form's lower edge.
+pub const Dropdown = struct {
+    rect: layout.Rect,
+    rows: Rows,
+
+    /// Keeps the menu inside a bounded form while showing up to six complete options.
+    pub fn init(field: layout.Rect, bounds: layout.Rect, count: usize) Dropdown {
+        const stride: f32 = 32;
+        const padding: f32 = 4;
+        const below = @max(0, bounds.y + bounds.height - (field.y + field.height) - padding);
+        const above = @max(0, field.y - bounds.y - padding);
+        const available = @max(below, above);
+        const wanted = @max(1, @min(count, 6));
+        const rows: usize = @max(1, @min(wanted, @as(usize, @intFromFloat(@floor(@max(0, available - 2 * padding) / stride)))));
+        const height = @min(@max(1, bounds.height), @as(f32, @floatFromInt(rows)) * stride + 2 * padding);
+        const width = @min(@max(1, bounds.width), @max(field.width, 210));
+        const x = std.math.clamp(field.x, bounds.x, bounds.x + @max(0, bounds.width - width));
+        const opening_down = below >= height or below >= above;
+        const desired_y = if (opening_down) field.y + field.height + padding else field.y - height - padding;
+        const y = std.math.clamp(desired_y, bounds.y, bounds.y + @max(0, bounds.height - height));
+        const rect: layout.Rect = .{ .x = x, .y = y, .width = width, .height = height };
+        return .{ .rect = rect, .rows = .{ .rect = .{ .x = x + padding, .y = y + padding, .width = @max(1, width - 2 * padding), .height = @max(1, height - 2 * padding) }, .stride = stride, .gap = 2 } };
+    }
+};
+
+/// A bounded form viewport. Keyboard focus reveals a field without moving
+/// controls independently of their labels or their pointer hit rectangles.
+pub const FormViewport = struct {
+    bounds: layout.Rect,
+    offset: f32,
+    content_height: f32,
+
+    /// Scrolls only enough to reveal the focused field, never past the content.
+    pub fn init(bounds: layout.Rect, content_height: f32, focused_bottom: f32) FormViewport {
+        const max_offset = @max(0, content_height - bounds.height);
+        return .{ .bounds = bounds, .offset = std.math.clamp(focused_bottom + 8 - bounds.height, 0, max_offset), .content_height = content_height };
+    }
+    /// Places one immutable form rectangle in the shared scrolled coordinates.
+    pub fn place(self: FormViewport, left: f32, top: f32, width: f32, height: f32) layout.Rect {
+        return .{ .x = self.bounds.x + left, .y = self.bounds.y + top - self.offset, .width = @max(1, width), .height = @max(1, height) };
+    }
+    /// Painted track and proportional thumb for clipped forms.
+    pub const Scrollbar = struct { track: layout.Rect, thumb: layout.Rect };
+    /// A proportional scroll cue whenever part of the form is out of view.
+    pub fn scrollbar(self: FormViewport) ?Scrollbar {
+        if (self.content_height <= self.bounds.height) return null;
+        const track: layout.Rect = .{ .x = self.bounds.x + self.bounds.width - 4, .y = self.bounds.y, .width = 3, .height = self.bounds.height };
+        const thumb_height = @min(track.height, @max(18, track.height * track.height / self.content_height));
+        const travel = track.height - thumb_height;
+        return .{ .track = track, .thumb = .{ .x = track.x, .y = track.y + self.offset / (self.content_height - self.bounds.height) * travel, .width = track.width, .height = thumb_height } };
+    }
+};
+
+/// A select's label and indicator have separate clipping bounds; the entire
+/// surface remains one hit target and cannot lose its arrow to long values.
+pub const Select = struct {
+    surface: layout.Rect,
+    label: layout.Rect,
+    arrow: layout.Rect,
+
+    /// Reserves a trailing arrow rectangle no matter how long the label is.
+    pub fn init(rect: layout.Rect) Select {
+        const inset: f32 = @min(10, @max(1, rect.width / 12));
+        const arrow_width: f32 = @min(18, @max(1, rect.width / 8));
+        const arrow_x = rect.x + rect.width - inset - arrow_width;
+        return .{
+            .surface = rect,
+            .label = .{ .x = rect.x + inset, .y = rect.y, .width = @max(1, arrow_x - (rect.x + inset) - 6), .height = rect.height },
+            .arrow = .{ .x = arrow_x, .y = rect.y, .width = arrow_width, .height = rect.height },
+        };
+    }
+};
+
+/// A fixed-height switch with a complete pointer target and a thumb inside
+/// its track in both states. The caller owns persistence and focus policy.
+pub const Switch = struct {
+    track: layout.Rect,
+    thumb: layout.Rect,
+
+    /// Moves the contained thumb between off and on without changing hit size.
+    pub fn init(track: layout.Rect, enabled: bool) Switch {
+        const inset = @min(4, @max(1, track.height / 8));
+        const diameter = @max(1, @min(track.height - 2 * inset, track.width - 2 * inset));
+        return .{
+            .track = track,
+            .thumb = .{
+                .x = track.x + (if (enabled) track.width - diameter - inset else inset),
+                .y = track.y + (track.height - diameter) / 2,
+                .width = diameter,
+                .height = diameter,
+            },
+        };
+    }
+};
+
+test "form controls keep their labels, indicators, switches and focused fields bounded" {
+    const viewport: layout.Rect = .{ .x = 20, .y = 40, .width = 300, .height = 120 };
+    const first = FormViewport.init(viewport, 344, 120);
+    const last = FormViewport.init(viewport, 344, 330);
+    try std.testing.expectEqual(@as(f32, 8), first.offset);
+    try std.testing.expectEqual(@as(f32, 218), last.offset);
+    const bar = last.scrollbar().?;
+    try std.testing.expect(bar.thumb.y >= bar.track.y);
+    try std.testing.expect(bar.thumb.y + bar.thumb.height <= bar.track.y + bar.track.height);
+    try std.testing.expect(FormViewport.init(viewport, 100, 80).scrollbar() == null);
+    const focused = last.place(8, 280, 280, 50);
+    try std.testing.expect(focused.y >= viewport.y);
+    try std.testing.expect(focused.y + focused.height <= viewport.y + viewport.height);
+    for ([_]f32{ 290, 180, 72 }) |width| {
+        const selection = Select.init(.{ .x = 10, .y = 20, .width = width, .height = 36 });
+        try std.testing.expect(selection.label.x + selection.label.width <= selection.arrow.x);
+        try std.testing.expect(selection.arrow.x + selection.arrow.width <= selection.surface.x + selection.surface.width);
+    }
+    for ([_]bool{ false, true }) |enabled| {
+        const toggle = Switch.init(.{ .x = 90, .y = 25, .width = 46, .height = 26 }, enabled);
+        try std.testing.expect(toggle.track.contains(toggle.thumb.x, toggle.thumb.y));
+        try std.testing.expect(toggle.thumb.x + toggle.thumb.width <= toggle.track.x + toggle.track.width);
+    }
+    try std.testing.expect(Switch.init(.{ .x = 90, .y = 25, .width = 46, .height = 26 }, true).thumb.x > Switch.init(.{ .x = 90, .y = 25, .width = 46, .height = 26 }, false).thumb.x);
+}
+
+test "dropdowns stay in the form and reverse direction near its bottom" {
+    const bounds: layout.Rect = .{ .x = 100, .y = 80, .width = 430, .height = 330 };
+    const first = Dropdown.init(.{ .x = 300, .y = 105, .width = 210, .height = 36 }, bounds, 20);
+    const last = Dropdown.init(.{ .x = 300, .y = 365, .width = 210, .height = 36 }, bounds, 20);
+    try std.testing.expect(first.rect.y > 105);
+    try std.testing.expect(last.rect.y < 365);
+    for ([_]Dropdown{ first, last }) |menu| {
+        try std.testing.expect(menu.rect.x >= bounds.x);
+        try std.testing.expect(menu.rect.x + menu.rect.width <= bounds.x + bounds.width);
+        try std.testing.expect(menu.rect.y >= bounds.y);
+        try std.testing.expect(menu.rect.y + menu.rect.height <= bounds.y + bounds.height);
+        try std.testing.expect(menu.rows.visible() <= 6);
+        try std.testing.expectEqual(@as(?usize, 0), menu.rows.hit(menu.rows.rect.x + 1, menu.rows.rect.y + 1));
+    }
+}
+
+test "inline actions keep exact value and button hits disjoint at form widths" {
+    for ([_]f32{ 300, 160, 72, 24 }) |width| {
+        const right: layout.Rect = .{ .x = 10, .y = 30, .width = width, .height = 44 };
+        const action = InlineAction.init(right, 76);
+        try std.testing.expect(action.value.x >= right.x);
+        try std.testing.expect(action.value.x + action.value.width <= action.button.x);
+        try std.testing.expect(action.button.x + action.button.width <= right.x + right.width);
+        try std.testing.expect(action.button.y >= right.y);
+        try std.testing.expect(action.button.y + action.button.height <= right.y + right.height);
+        try std.testing.expect(!action.value.contains(action.button.x + action.button.width / 2, action.button.y + action.button.height / 2));
+    }
+}
+
 /// Intersects measured text/hover geometry with its actual content box.
 pub fn intersection(a: layout.Rect, b: layout.Rect) ?layout.Rect {
     const x = @max(a.x, b.x);

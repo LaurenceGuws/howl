@@ -49,10 +49,6 @@ pub const Geometry = struct {
     pub const min_body_width: f32 = 16;
     /// The label yields to the close target; only genuinely tiny chips hide it.
     pub const close_min_chip_width: f32 = close_width + min_body_width;
-    /// Glyph's horizontal and vertical offsets inside a close-enabled chip.
-    pub const close_glyph_right: f32 = 18;
-    /// Glyph's top offset from chip top.
-    pub const close_glyph_top: f32 = 6;
     /// Distance from the bottom of an active chip to its accent stripe.
     pub const accent_bottom: f32 = 2;
     /// Thickness of the active stripe.
@@ -235,18 +231,6 @@ test "dragged chip preserves grab offset, reorders at midpoint and clamps outsid
     try std.testing.expectEqual(@as(u8, 0), dragging.move(-100, Tabs.init(3, 1000, false)));
 }
 
-/// Font-independent New Tab strokes in the existing 32x30 header box.
-pub const plus_icon: []const Rect = &.{
-    .{ .x = 10, .y = 14, .width = 11, .height = 1 },
-    .{ .x = 15, .y = 9, .width = 1, .height = 11 },
-};
-/// Font-independent Settings dots in the same header box.
-pub const settings_icon: []const Rect = &.{
-    .{ .x = 9, .y = 14, .width = 2, .height = 2 },
-    .{ .x = 15, .y = 14, .width = 2, .height = 2 },
-    .{ .x = 21, .y = 14, .width = 2, .height = 2 },
-};
-
 /// Switchyard maximize outline in the standard 42x26 caption box.
 pub const maximize_icon: []const Rect = &.{
     .{ .x = 15, .y = 7, .width = 12, .height = 1 },
@@ -279,21 +263,6 @@ test "compact header keeps controls and caption above terminal at fractional wid
         }
     }
 }
-
-/// Font-independent right chevron beside New Tab.
-pub const profile_icon: []const Rect = &.{
-    .{ .x = 12, .y = 10, .width = 1, .height = 1 },
-    .{ .x = 13, .y = 11, .width = 1, .height = 1 },
-    .{ .x = 14, .y = 12, .width = 1, .height = 1 },
-    .{ .x = 15, .y = 13, .width = 1, .height = 1 },
-    .{ .x = 16, .y = 14, .width = 1, .height = 1 },
-    .{ .x = 17, .y = 15, .width = 1, .height = 1 },
-    .{ .x = 16, .y = 16, .width = 1, .height = 1 },
-    .{ .x = 15, .y = 17, .width = 1, .height = 1 },
-    .{ .x = 14, .y = 18, .width = 1, .height = 1 },
-    .{ .x = 13, .y = 19, .width = 1, .height = 1 },
-    .{ .x = 12, .y = 20, .width = 1, .height = 1 },
-};
 
 test "profile button never becomes caption; hidden header retains only native edge resizing" {
     for ([_]f32{ 401.25, 1000, 1536.5 }) |width| {
