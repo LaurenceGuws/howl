@@ -152,8 +152,7 @@ const HeaderCache = struct {
         self.* = .{};
     }
 };
-/// Startup's two field groups share one scrolled coordinate space with pointer
-/// hits, keyboard focus and the profile dropdown.
+/// Startup's two field groups share one pixel-scrolled coordinate space.
 const StartupForm = struct {
     view: widgets.FormViewport,
     compact: bool,
@@ -161,10 +160,9 @@ const StartupForm = struct {
     const inner_inset: f32 = settings_card_padding;
     const top_inset: f32 = settings_card_gutter;
 
-    fn init(bounds: layout.Rect, selected: usize) StartupForm {
+    fn init(bounds: layout.Rect, offset: f32) StartupForm {
         const compact = bounds.width < 390;
-        const ends: [3]f32 = if (compact) .{ 158, 299, 357 } else .{ 126, 271, 330 };
-        return .{ .view = widgets.FormViewport.init(bounds, (if (compact) @as(f32, 372) else 350) + top_inset, ends[@min(selected, 2)] + top_inset), .compact = compact };
+        return .{ .view = widgets.FormViewport.atOffset(bounds, (if (compact) @as(f32, 372) else 350) + top_inset, offset), .compact = compact };
     }
     fn card(self: StartupForm, number: usize) layout.Rect {
         return self.view.place(outer_inset, (if (number == 0) @as(f32, 2) else if (self.compact) @as(f32, 179) else 148) + top_inset, @max(1, self.view.bounds.width - 2 * outer_inset), if (number == 0) (if (self.compact) 164 else 132) else if (self.compact) 190 else 200);
@@ -185,9 +183,7 @@ const StartupForm = struct {
         return .{ .x = field.x + field.width - 46, .y = field.y + 12, .width = 46, .height = 26 };
     }
 };
-/// Appearance keeps its existing row controls, but groups them into cards in
-/// one scrolled coordinate space. Painting, editing and pointer hits all use
-/// the same row rectangles, including when a card is partly off-screen.
+/// Appearance groups independent controls in cards and uses pixel scrolling.
 const AppearanceForm = struct {
     view: widgets.FormViewport,
 
@@ -224,23 +220,8 @@ const AppearanceForm = struct {
     fn contentHeight() f32 {
         return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + top_inset;
     }
-    fn firstTop(first: usize) f32 {
-        // Advance by the virtual distance between rows, retaining the initial
-        // heading inset rather than jumping the first row against the lip.
-        return rowTop(first) - rowTop(0);
-    }
-    fn visible(bounds: layout.Rect, first: usize) usize {
-        const first_row = @min(first, count - 1);
-        const top = firstTop(first_row);
-        var shown: usize = 0;
-        while (first_row + shown < count and rowTop(first_row + shown) + row_height + 8 <= top + bounds.height) : (shown += 1) {}
-        return @max(1, shown);
-    }
-    fn init(bounds: layout.Rect, first: usize, selected: usize) AppearanceForm {
-        const top = firstTop(@min(first, count - 1));
-        const selected_bottom = rowTop(@min(selected, count - 1)) + row_height + 12;
-        const offset = std.math.clamp(@max(top, selected_bottom - bounds.height), 0, @max(0, contentHeight() - bounds.height));
-        return .{ .view = .{ .bounds = bounds, .offset = offset, .content_height = contentHeight() } };
+    fn init(bounds: layout.Rect, offset: f32) AppearanceForm {
+        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
     }
     fn card(self: AppearanceForm, number: usize) layout.Rect {
         return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
@@ -282,6 +263,8 @@ const App = struct {
     discovered: ?*discovery.Catalogue = null,
     settings_editor: ?settings.Editor = null,
     settings_draft: ?config.Config = null,
+    settings_scroll_offset: f32 = 0,
+    settings_scroll_grab: ?f32 = null,
     chooser: ?*font_chooser.Chooser = null,
     chooser_preview_base: ?config.Config = null,
     drag: Drag = .none,
@@ -866,6 +849,8 @@ const App = struct {
         try self.loseKeyboard();
         self.palette = null;
         self.settings_editor = .{};
+        self.settings_scroll_offset = 0;
+        self.settings_scroll_grab = null;
     }
     fn settingsConfiguration(self: *const App) *const config.Config {
         return if (self.settings_draft) |*draft| draft else self.configuration;
@@ -879,6 +864,7 @@ const App = struct {
         const pending = self.settings_draft != null or (if (self.settings_editor) |editor| editor.editing != null else false);
         self.discardSettings();
         self.settings_editor = null;
+        self.settings_scroll_grab = null;
         if (pending) self.setNotice("Unsaved settings discarded");
     }
     fn settingsCancel(self: *App) void {
@@ -940,6 +926,8 @@ const App = struct {
                 else => editor.profile,
             };
             editor.list = .{};
+            self.settings_scroll_offset = 0;
+            self.settings_scroll_grab = null;
             editor.content_focus = true;
             var all: [settings.row_limit]settings.Row = undefined;
             var shown: [settings.row_limit]u16 = undefined;
@@ -948,6 +936,10 @@ const App = struct {
             for (shown[0..visible], 0..) |index, number| {
                 if (std.meta.eql(all[index].target, row.target)) {
                     editor.list.selected = number;
+                    if (editor.page == .appearance) {
+                        editor.form_row = number;
+                        self.settings_scroll_offset = AppearanceForm.rowTop(number) - AppearanceForm.rowTop(0);
+                    }
                     break;
                 }
             }
@@ -1366,16 +1358,7 @@ const App = struct {
         if (key == c.SDLK_ESCAPE) {
             self.cancelComposition();
             if (e.search) {
-                e.search = false;
-                e.query_len = 0;
-                e.query_edit = .{};
-                e.list = .{};
-                e.content_focus = true;
-            } else if (e.page == .profiles) {
-                e.page = .defaults;
-                e.list = .{ .selected = e.profile };
-            } else if (e.content_focus) {
-                e.content_focus = false;
+                self.settingsSetSearch(false);
             } else try self.toggleSettings();
             return;
         }
@@ -1383,54 +1366,8 @@ const App = struct {
             if (try self.textKey(&e.query_edit, &e.query, &e.query_len, event_value)) e.list = .{};
             return;
         }
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = e.indices(all[0..count], &indices);
-        if (key == c.SDLK_TAB) {
-            e.content_focus = !e.content_focus;
-            return;
-        }
-        if (!e.search and !e.content_focus) {
-            if (key == c.SDLK_UP or key == c.SDLK_DOWN) {
-                const page_number = @as(i16, @backingInt(e.page)) + @as(i16, if (key == c.SDLK_UP) -1 else 1);
-                e.page = @fromBackingInt(@intCast(std.math.clamp(page_number, 0, settings.titles.len - 1)));
-                e.list = .{};
-                e.delete_pending = null;
-            } else if (key == c.SDLK_RETURN or key == c.SDLK_RIGHT) e.content_focus = true;
-            return;
-        }
-        if (visible == 0) return;
-        e.list.selected = @min(e.list.selected, visible - 1);
-        const row = all[indices[e.list.selected]];
-        switch (key) {
-            c.SDLK_UP, c.SDLK_PAGEUP => {
-                e.list.selected -|= if (key == c.SDLK_UP) 1 else self.settingsVisible();
-                e.delete_pending = null;
-            },
-            c.SDLK_DOWN, c.SDLK_PAGEDOWN => {
-                e.list.selected = @min(visible - 1, e.list.selected + (if (key == c.SDLK_DOWN) @as(usize, 1) else self.settingsVisible()));
-                e.delete_pending = null;
-            },
-            c.SDLK_RETURN => try self.activateSetting(row),
-            c.SDLK_SPACE => if (!e.search and e.page == .startup) try self.activateSetting(row),
-            c.SDLK_BACKSPACE, c.SDLK_DELETE => if (row.target == .binding or row.target == .font) {
-                try e.begin(row, self.settingsConfiguration());
-                e.edit.selectAll(e.len);
-                try e.append(if (key == c.SDLK_BACKSPACE and row.target == .binding) keybindings.definitions[row.target.binding].default_shortcut else "");
-            },
-            c.SDLK_LEFT, c.SDLK_RIGHT => {
-                if (mods.alt and row.target == .environment) {
-                    const field = row.target.environment;
-                    try self.changeSetting(.{ .move_environment = .{ .profile = field.profile, .index = field.index, .delta = if (key == c.SDLK_LEFT) -1 else 1 } }, "");
-                } else if (row.choice()) {
-                    try e.begin(row, self.settingsConfiguration());
-                    try e.cycle(self.settingsConfiguration(), if (key == c.SDLK_LEFT) -1 else 1);
-                } else if (key == c.SDLK_LEFT) e.content_focus = false;
-            },
-            else => {},
-        }
-        if (!e.search and e.page == .defaults) e.profile = @intCast(e.list.selected);
+        // The Settings sidebar and form controls are pointer navigated.
+        // Keyboard input is reserved for active editors and the search field.
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
@@ -1441,6 +1378,10 @@ const App = struct {
     }
     fn cancelDrag(self: *App) void {
         self.color_drag = null;
+        if (self.settings_scroll_grab != null) {
+            self.settings_scroll_grab = null;
+            self.consume_left_release = true;
+        }
         if (self.scrolling != null) {
             self.scrolling = null;
             self.consume_left_release = true;
@@ -1653,6 +1594,11 @@ const App = struct {
                 try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState()), value.button.clicks),
             c.SDL_EVENT_MOUSE_BUTTON_UP => {
                 const button = mouseButton(value.button.button) orelse return;
+                if (button == .left and self.settings_scroll_grab != null) {
+                    defer self.settings_scroll_grab = null;
+                    self.settingsScrollbarMove(value.button.y);
+                    return;
+                }
                 if (button == .left and self.color_drag != null) {
                     const channel = self.color_drag.?;
                     self.color_drag = null;
@@ -1678,7 +1624,9 @@ const App = struct {
                 if (button == .left) self.drag = .none;
             },
             c.SDL_EVENT_MOUSE_MOTION => {
-                if (self.color_drag) |channel| {
+                if (self.settings_scroll_grab != null) {
+                    self.settingsScrollbarMove(value.motion.y);
+                } else if (self.color_drag) |channel| {
                     try self.colorPoint(channel, value.motion.x);
                 } else if (self.scrolling != null) {
                     try self.scrollPoint(value.motion.y);
@@ -1984,14 +1932,19 @@ const App = struct {
                     const offset: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
                     editor.choice_list.scroll(offset, settings.choiceCount(target, self.settingsConfiguration()), self.settingsDropdown().rows.visible());
                     try editor.selectChoice(self.settingsConfiguration(), editor.choice_list.selected);
+                    return;
                 }
+            }
+            if (self.settingsFormView()) |view| {
+                if (view.bounds.contains(wheel.mouse_x, wheel.mouse_y)) self.settingsScrollBy(-wheel.y * 48);
                 return;
             }
+            if (editor.editing != null) return;
             var rows: [settings.row_limit]settings.Row = undefined;
             var filtered: [settings.row_limit]u16 = undefined;
             const count = try settings.rows(self.settingsConfiguration(), &rows);
             const visible = editor.indices(rows[0..count], &filtered);
-            const offset: i32 = @intFromFloat(if (!editor.search and editor.page == .startup) std.math.clamp(-wheel.y, -3, 3) else std.math.clamp(-wheel.y * 3, -256, 256));
+            const offset: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
             editor.list.scroll(offset, visible, self.settingsVisible());
             editor.content_focus = true;
             return;
@@ -2161,6 +2114,8 @@ const App = struct {
         e.query_edit = .{};
         e.list = .{};
         e.delete_pending = null;
+        self.settings_scroll_offset = 0;
+        self.settings_scroll_grab = null;
     }
     fn settingsBody(self: *const App) layout.Rect {
         const box = self.settingsRect();
@@ -2171,15 +2126,44 @@ const App = struct {
         return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - bottom) };
     }
     fn startupForm(self: *const App) StartupForm {
-        return StartupForm.init(self.settingsBody(), self.settings_editor.?.list.selected);
+        return StartupForm.init(self.settingsBody(), self.settings_scroll_offset);
     }
     fn appearanceForm(self: *const App) AppearanceForm {
-        const list = self.settings_editor.?.list;
-        return AppearanceForm.init(self.settingsBody(), list.first, list.selected);
+        return AppearanceForm.init(self.settingsBody(), self.settings_scroll_offset);
     }
     fn appearanceSettings(self: *const App) bool {
         const editor = self.settings_editor.?;
         return !editor.search and editor.page == .appearance;
+    }
+    fn settingsFormView(self: *const App) ?widgets.FormViewport {
+        const editor = self.settings_editor orelse return null;
+        if (editor.search) return null;
+        return switch (editor.page) {
+            .startup => self.startupForm().view,
+            .appearance => self.appearanceForm().view,
+            else => null,
+        };
+    }
+    fn settingsScrollBy(self: *App, delta: f32) void {
+        const view = self.settingsFormView() orelse return;
+        self.settings_scroll_offset = std.math.clamp(view.offset + delta, 0, @max(0, view.content_height - view.bounds.height));
+    }
+    fn settingsScrollbarPress(self: *App, x: f32, y: f32) bool {
+        const view = self.settingsFormView() orelse return false;
+        const bar = view.scrollbar() orelse return false;
+        if (x < bar.track.x - 11 or x >= bar.track.x + bar.track.width + 1 or y < bar.track.y or y >= bar.track.y + bar.track.height) return false;
+        self.settings_scroll_grab = if (y >= bar.thumb.y and y < bar.thumb.y + bar.thumb.height) y - bar.thumb.y else bar.thumb.height / 2;
+        self.settingsScrollbarMove(y);
+        return true;
+    }
+    fn settingsScrollbarMove(self: *App, y: f32) void {
+        const grab = self.settings_scroll_grab orelse return;
+        const view = self.settingsFormView() orelse return;
+        const bar = view.scrollbar() orelse return;
+        const travel = bar.track.height - bar.thumb.height;
+        if (travel <= 0) return;
+        const thumb_y = std.math.clamp(y - grab - bar.track.y, 0, travel);
+        self.settings_scroll_offset = thumb_y / travel * (view.content_height - view.bounds.height);
     }
     fn simpleSettingsForm(self: *const App) bool {
         const editor = self.settings_editor.?;
@@ -2217,7 +2201,7 @@ const App = struct {
         if (self.settings_editor.?.editing != null) {
             const e = self.settings_editor.?;
             if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
-            if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.list.selected));
+            if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.form_row));
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
             return settingsRowField(rect);
         }
@@ -2227,11 +2211,6 @@ const App = struct {
         return widgets.Dropdown.init(self.settingsField(), self.settingsBody(), settings.choiceCount(self.settings_editor.?.editing.?, self.settingsConfiguration()));
     }
     fn settingsVisible(self: *const App) usize {
-        if (!self.settings_editor.?.search and self.settings_editor.?.page == .startup) {
-            const body = self.settingsBody();
-            return if (body.height >= (if (body.width < 390) @as(f32, 380) else 350)) 3 else 1;
-        }
-        if (self.appearanceSettings()) return AppearanceForm.visible(self.settingsBody(), self.settings_editor.?.list.first);
         return self.settingsRows().visible();
     }
     fn settingsStart(self: *App, count: usize) usize {
@@ -2401,6 +2380,7 @@ const App = struct {
         }
         if (!box.contains(x, y)) return;
         const body = self.settingsBody();
+        if (self.settingsScrollbarPress(x, y)) return;
         if (x < body.x - 12 and y >= box.y + settings_nav_top) {
             const page: usize = @intFromFloat(@floor((y - box.y - settings_nav_top) / 34));
             if (page < settings.titles.len) {
@@ -2411,22 +2391,24 @@ const App = struct {
                 e.query_len = 0;
                 e.list = .{};
                 e.delete_pending = null;
+                e.form_row = 0;
+                self.settings_scroll_offset = 0;
+                self.settings_scroll_grab = null;
             }
             return;
         }
         if (!e.search and e.page == .startup) {
             if (!body.contains(x, y)) return;
             const form = self.startupForm();
-            for (0..3) |index| if (form.row(index).contains(x, y)) {
-                e.list.selected = index;
-                e.content_focus = true;
-                const target: settings.Target = switch (index) {
-                    0 => .default_profile,
-                    1 => .discover_shells,
-                    else => .discover_ssh_hosts,
-                };
+            if (form.select().contains(x, y)) return self.activateSetting(.{ .page = .startup, .label = "", .target = .default_profile });
+            for (1..3) |index| if (form.toggle(index).contains(x, y)) {
+                const target: settings.Target = if (index == 1) .discover_shells else .discover_ssh_hosts;
                 return self.activateSetting(.{ .page = .startup, .label = "", .target = target });
             };
+            return;
+        }
+        if (self.appearanceSettings()) {
+            if (body.contains(x, y)) try self.settingsAppearanceClick(x, y);
             return;
         }
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
@@ -2448,15 +2430,14 @@ const App = struct {
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.settingsConfiguration(), &all);
         const visible = e.indices(all[0..count], &indices);
-        const appearance_form = self.appearanceSettings();
         const start = self.settingsStart(visible);
-        const row = if (appearance_form) self.appearanceForm().hit(x, y) orelse return else self.settingsRows().hit(x, y) orelse return;
-        const chosen = if (appearance_form) row else row + start;
+        const row = self.settingsRows().hit(x, y) orelse return;
+        const chosen = row + start;
         if (chosen >= visible) return;
         if (e.list.selected != chosen) e.delete_pending = null;
         e.list.selected = chosen;
         const selected_row = all[indices[chosen]];
-        const row_rect = if (appearance_form) self.appearanceForm().row(chosen) else self.settingsRows().row(row);
+        const row_rect = self.settingsRows().row(row);
         if (selected_row.editable() and settingsEditButton(row_rect).contains(x, y)) {
             e.content_focus = true;
             if (e.search) try self.activateSetting(selected_row);
@@ -2478,6 +2459,38 @@ const App = struct {
         if (selected_row.target == .set_default) e.profile = selected_row.target.set_default;
         e.content_focus = true;
         if (clicks >= 2 and !selected_row.editable()) try self.activateSetting(selected_row);
+    }
+    fn settingsAppearanceClick(self: *App, x: f32, y: f32) !void {
+        const form = self.appearanceForm();
+        const number = form.hit(x, y) orelse return;
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.settingsConfiguration(), &all);
+        const visible = self.settings_editor.?.indices(all[0..count], &indices);
+        if (number >= visible) return;
+        const row = all[indices[number]];
+        const rect = form.row(number);
+        const field = settingsRowField(rect);
+        const edit_button = settingsEditButton(rect);
+        if (row.editable() and edit_button.contains(x, y)) {
+            self.settings_editor.?.form_row = number;
+            return self.activateSetting(row);
+        }
+        if (row.target == .font_family and field.contains(x, y)) {
+            self.settings_editor.?.form_row = number;
+            return self.activateSetting(row);
+        }
+        if (row.target == .font and row.target.font < 4) {
+            const right: layout.Rect = .{ .x = field.x, .y = rect.y, .width = field.width, .height = rect.height };
+            if (widgets.InlineAction.init(right, 76).button.contains(x, y)) {
+                const face: u2 = @intCast(row.target.font);
+                return self.openFontChooser(.{ .face = face }, self.settingsConfiguration().value.font.paths()[face]);
+            }
+        }
+        if (row.editable() and row.choice() and field.contains(x, y)) {
+            self.settings_editor.?.form_row = number;
+            return self.activateSetting(row);
+        }
     }
 
     fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
@@ -2591,7 +2604,7 @@ const App = struct {
         const label_width = if (form.compact) first.width else @max(1, form.select().x - first.x - 12);
         try self.clippedText("Default profile", .{ .x = first.x, .y = first.y + 3, .width = label_width, .height = 24 }, first.x);
         if (!form.compact) try self.clippedTextColor("For future tabs only", .{ .x = first.x, .y = first.y + 24, .width = label_width, .height = 24 }, first.x, colors.muted);
-        const focused = editor.content_focus and editor.list.selected == 0 or (editor.editing != null and editor.editing.? == .default_profile);
+        const focused = self.isHovered(form.select()) or (editor.editing != null and editor.editing.? == .default_profile);
         const profile_name = if (editor.editing != null and editor.editing.? == .default_profile)
             (try settings.choiceAt(.default_profile, self.settingsConfiguration(), editor.choice_list.selected)).label
         else
@@ -2609,7 +2622,7 @@ const App = struct {
             try self.clippedText(field.label, .{ .x = row.x, .y = row.y + 1, .width = text_width, .height = 25 }, row.x);
             try self.clippedTextColor(field.hint, .{ .x = row.x, .y = row.y + 23, .width = text_width, .height = 23 }, row.x, colors.muted);
             try self.clippedTextColor(if (field.enabled) "On" else "Off", .{ .x = toggle.x - 35, .y = row.y + 7, .width = 30, .height = 26 }, toggle.x - 35, colors.muted);
-            try self.drawStartupSwitch(toggle, field.enabled, editor.content_focus and editor.list.selected == number);
+            try self.drawStartupSwitch(toggle, field.enabled, self.isHovered(toggle));
         }
         if (form.view.scrollbar()) |bar| {
             try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
@@ -2699,8 +2712,8 @@ const App = struct {
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.settingsConfiguration(), &all);
         const visible = e.indices(all[0..count], &indices);
-        e.list.selected = @min(e.list.selected, visible -| 1);
-        const start = self.settingsStart(visible);
+        if (!appearance_form) e.list.selected = @min(e.list.selected, visible -| 1);
+        const start = if (appearance_form) @as(usize, 0) else self.settingsStart(visible);
         const rows = self.settingsRows();
         const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
         var clipped_appearance = false;
@@ -2716,15 +2729,16 @@ const App = struct {
             const row = all[index];
             const rect = if (appearance_form) form.row(number) else rows.row(number - start);
             if (appearance_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
-            if (simple_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else {
+            if (simple_form and !appearance_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else if (!appearance_form) {
                 try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
                 try outline(self.renderer, rect, colors.border);
             }
+            const editing_row = e.editing != null and (if (appearance_form) number == e.form_row else number == e.list.selected);
             var label: [512]u8 = undefined;
             const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
             var value: [4096]u8 = undefined;
-            const raw_contents = if (number == e.list.selected and e.editing != null) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.settingsConfiguration(), &value);
-            const contents = if (raw_contents.len != 0 or (number == e.list.selected and e.editing != null)) raw_contents else switch (row.target) {
+            const raw_contents = if (editing_row) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.settingsConfiguration(), &value);
+            const contents = if (raw_contents.len != 0 or editing_row) raw_contents else switch (row.target) {
                 .binding => "Unbound",
                 .app_color, .terminal_color => "Preset",
                 .font => "Inherited",
@@ -2738,7 +2752,7 @@ const App = struct {
             };
             const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.46 - 12), .height = rect.height };
             const right: layout.Rect = .{ .x = rect.x + rect.width * 0.46, .y = rect.y, .width = @max(1, rect.width * 0.54 - (if (row.editable()) @as(f32, 42) else 6)), .height = rect.height };
-            if (number == e.list.selected and e.editing != null and !e.recording) {
+            if (editing_row and !e.recording) {
                 try self.clippedText(name, left, left.x);
                 if (row.choice()) {
                     const display = (try settings.choiceAt(row.target, self.settingsConfiguration(), e.choice_list.selected)).label;
@@ -2756,13 +2770,13 @@ const App = struct {
             } else {
                 try self.clippedText(name, left, left.x);
                 if (simple_form and row.choice()) {
-                    try self.drawSettingsSelect(settingsRowField(rect), contents, number == e.list.selected and e.content_focus, false);
+                    try self.drawSettingsSelect(settingsRowField(rect), contents, if (appearance_form) self.isHovered(settingsRowField(rect)) else number == e.list.selected and e.content_focus, false);
                 } else {
                     const rgb = try self.settingRgb(row);
                     var value_rect = right;
                     if (row.target == .font_family and !e.search) {
                         if (simple_form) {
-                            try self.drawSettingsControl(right, number == e.list.selected and e.content_focus);
+                            try self.drawSettingsControl(right, if (appearance_form) self.isHovered(right) else number == e.list.selected and e.content_focus);
                         } else {
                             try fill(self.renderer, right, if (self.isHovered(right)) appearance.hover(colors.idle) else colors.idle);
                             try outline(self.renderer, right, colors.border);
@@ -2775,7 +2789,7 @@ const App = struct {
                         const action = widgets.InlineAction.init(right, 76);
                         value_rect = action.value;
                         if (simple_form) {
-                            try self.drawSettingsControl(action.button, number == e.list.selected and e.content_focus);
+                            try self.drawSettingsControl(action.button, if (appearance_form) self.isHovered(action.button) else number == e.list.selected and e.content_focus);
                         } else {
                             try fill(self.renderer, action.button, if (self.isHovered(action.button)) appearance.hover(colors.idle) else colors.idle);
                             try outline(self.renderer, action.button, colors.border);
@@ -2793,7 +2807,7 @@ const App = struct {
             }
             if (row.editable()) {
                 const edit_button = settingsEditButton(rect);
-                const active = number == e.list.selected and e.editing != null;
+                const active = editing_row;
                 if (simple_form or active or self.isHovered(edit_button)) try self.drawSettingsControl(edit_button, active);
                 try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
             }
@@ -2960,12 +2974,17 @@ const App = struct {
             return self.setPointer(if (self.chooserField().contains(x, y)) 2 else null);
         }
         if (self.settings_editor) |*e| {
+            if (self.settingsFormView() != null) {
+                e.list.hovered = null;
+                const text_field = e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice();
+                return self.setPointer(if (text_field and self.settingsField().contains(x, y)) 2 else null);
+            }
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
             const count = try settings.rows(self.settingsConfiguration(), &all);
             const shown = e.indices(all[0..count], &indices);
             const start = self.settingsStart(shown);
-            e.list.hovered = if (self.appearanceSettings()) self.appearanceForm().hit(x, y) else if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
+            e.list.hovered = if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
             return self.setPointer(if ((e.search or (e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice())) and self.settingsField().contains(x, y)) 2 else null);
         }
         if (self.rename_editor != null) return self.setPointer(if ((try self.renameField()).contains(x, y)) 2 else null);
@@ -4323,7 +4342,7 @@ test "large discovered menus filter and page independently of saved settings" {
     try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, catalogue, &indices));
 }
 
-test "startup profile selector stages choices and Escape restores the form without changing configuration" {
+test "startup controls own clicks; choice editing and global Cancel preserve the live configuration" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
     defer c.SDL_Quit();
@@ -4349,6 +4368,14 @@ test "startup profile selector stages choices and Escape restores the form witho
     var event_value = std.mem.zeroes(c.SDL_KeyboardEvent);
     event_value.key = c.SDLK_RETURN;
     try app.settingsKey(event_value);
+    try std.testing.expect(app.settings_editor.?.editing == null);
+    const ssh_label = app.startupForm().row(2);
+    try app.settingsClick(ssh_label.x + 8, ssh_label.y + 10, 1);
+    try std.testing.expect(app.settings_draft == null);
+    try std.testing.expect(app.settings_editor.?.editing == null);
+
+    const control = app.startupForm().select();
+    try app.settingsClick(control.x + 10, control.y + 10, 1);
     try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
     try app.settings_editor.?.append("not a profile");
     try std.testing.expectEqualStrings("local", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
@@ -4360,7 +4387,6 @@ test "startup profile selector stages choices and Escape restores the form witho
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor.?.editing == null);
 
-    const control = app.startupForm().select();
     try app.settingsClick(control.x + 10, control.y + 10, 1);
     try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
     try std.testing.expectEqual(control.y, app.startupForm().select().y);
@@ -4375,7 +4401,14 @@ test "startup profile selector stages choices and Escape restores the form witho
     try std.testing.expect(app.settings_editor.?.editing == null);
     event_value.key = c.SDLK_DOWN;
     try app.settingsKey(event_value);
-    try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.list.selected);
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.selected);
+
+    const ssh_toggle = app.startupForm().toggle(2);
+    try app.settingsClick(ssh_toggle.x + 10, ssh_toggle.y + 10, 1);
+    try std.testing.expect(app.settings_draft != null);
+    try std.testing.expect(app.settingsConfiguration().value.discover_ssh_hosts != configuration.value.discover_ssh_hosts);
+    app.settingsCancel();
+    try std.testing.expect(app.settings_draft == null);
 
     app.width = 788;
     app.height = 528;
@@ -4417,8 +4450,6 @@ test "startup profile selector stages choices and Escape restores the form witho
     event_value.key = c.SDLK_ESCAPE;
     try app.settingsKey(event_value);
     try std.testing.expect(!app.settings_editor.?.search and app.settings_editor.?.content_focus);
-    try app.settingsKey(event_value);
-    try std.testing.expect(app.settings_editor != null and !app.settings_editor.?.content_focus);
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor == null);
 }
@@ -4476,8 +4507,8 @@ test "Settings Save commits the complete draft once; Cancel and failed Save pres
 test "startup form keeps selector and switches inside their groups at compact widths" {
     for ([_]f32{ 554, 320, 180 }) |width| {
         const bounds: layout.Rect = .{ .x = 400, .y = 150, .width = width, .height = 210 };
-        for (0..3) |selection_index| {
-            const form = StartupForm.init(bounds, selection_index);
+        for ([_]f32{ 0, 72, 400 }) |scroll_offset| {
+            const form = StartupForm.init(bounds, scroll_offset);
             const first = form.card(0);
             const last = form.card(1);
             const selector = form.select();
@@ -4559,17 +4590,17 @@ test "settings cards share symmetric painted and pointer geometry" {
         const first_appearance = form.row(0);
         try std.testing.expectEqual(@as(?usize, 0), form.hit(first_appearance.x + 1, first_appearance.y + 1));
         try std.testing.expect(form.hit(form.card(0).x + 16, form.card(0).y + 16) == null);
-        const next_row = AppearanceForm.init(body, 1, 1);
+        const next_row = AppearanceForm.init(body, AppearanceForm.row_stride);
         try std.testing.expectApproxEqAbs(AppearanceForm.row_stride, next_row.view.offset, 0.01);
-        const fonts = AppearanceForm.init(body, 2, 2);
+        const fonts = AppearanceForm.init(body, AppearanceForm.rowTop(2) - AppearanceForm.rowTop(0));
         try std.testing.expectApproxEqAbs(AppearanceForm.rowTop(2) - AppearanceForm.rowTop(0), fonts.view.offset, 0.01);
-        app.settings_editor.?.list = .{ .selected = AppearanceForm.count - 1, .first = AppearanceForm.count - 2 };
+        app.settings_scroll_offset = 100000;
         const scrolled = app.appearanceForm();
         const last_appearance = scrolled.row(AppearanceForm.count - 1);
         try std.testing.expect(last_appearance.y >= body.y);
         try std.testing.expect(last_appearance.y + last_appearance.height <= body.y + body.height);
         try std.testing.expectEqual(@as(?usize, AppearanceForm.count - 1), scrolled.hit(last_appearance.x + 1, last_appearance.y + 1));
-        app.settings_editor.?.list = .{};
+        app.settings_scroll_offset = 0;
         app.settings_editor.?.page = .colors;
         try std.testing.expect(!app.simpleSettingsForm());
         try std.testing.expectEqual(app.settingsBody().x, app.settingsRows().rect.x);
@@ -4599,8 +4630,20 @@ test "settings cards share symmetric painted and pointer geometry" {
         try std.testing.expectEqualDeep(ends[number], all[indices[section.first + section.count - 1]].target);
     }
     const row = app.appearanceForm().row(0);
-    try app.settingsClick(row.x + row.width * 0.75, row.y + 15, 1);
+    try app.settingsClick(row.x + 8, row.y + 15, 1);
     try std.testing.expect(app.settings_editor.?.editing == null);
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.form_row);
+    const form_body = app.settingsBody();
+    var wheel = std.mem.zeroes(c.SDL_MouseWheelEvent);
+    wheel.y = -2;
+    wheel.mouse_x = form_body.x + 60;
+    wheel.mouse_y = form_body.y + 60;
+    try app.pointerWheel(wheel);
+    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
+    wheel.mouse_x = form_body.x - 10;
+    try app.pointerWheel(wheel);
+    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
+    app.settings_scroll_offset = 0;
     const edit_button = App.settingsEditButton(row);
     try app.settingsClick(edit_button.x + 8, edit_button.y + 8, 1);
     try std.testing.expectEqual(settings.Target.hide_single_tab, app.settings_editor.?.editing.?);
@@ -4611,6 +4654,12 @@ test "settings cards share symmetric painted and pointer geometry" {
     try std.testing.expect(field.y >= edited_row.y and field.y + field.height <= edited_row.y + edited_row.height);
     try app.settingsClick(field.x + 2, field.y + 2, 1);
     try std.testing.expect(app.settings_editor.?.editing == null);
+    const bar = app.appearanceForm().view.scrollbar().?;
+    try std.testing.expect(app.settingsScrollbarPress(bar.track.x - 5, bar.track.y + bar.track.height - 5));
+    try std.testing.expect(app.settings_scroll_offset > 0);
+    app.settingsScrollbarMove(bar.track.y + 5);
+    try std.testing.expectEqual(@as(f32, 0), app.settings_scroll_offset);
+    app.settings_scroll_grab = null;
 }
 
 fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {

@@ -202,10 +202,9 @@ pub const FormViewport = struct {
     offset: f32,
     content_height: f32,
 
-    /// Scrolls only enough to reveal the focused field, never past the content.
-    pub fn init(bounds: layout.Rect, content_height: f32, focused_bottom: f32) FormViewport {
-        const max_offset = @max(0, content_height - bounds.height);
-        return .{ .bounds = bounds, .offset = std.math.clamp(focused_bottom + 8 - bounds.height, 0, max_offset), .content_height = content_height };
+    /// Pixel-scrolled forms own their position independently of row selection.
+    pub fn atOffset(bounds: layout.Rect, content_height: f32, offset: f32) FormViewport {
+        return .{ .bounds = bounds, .offset = std.math.clamp(offset, 0, @max(0, content_height - bounds.height)), .content_height = content_height };
     }
     /// Places one immutable form rectangle in the shared scrolled coordinates.
     pub fn place(self: FormViewport, left: f32, top: f32, width: f32, height: f32) layout.Rect {
@@ -265,16 +264,17 @@ pub const Switch = struct {
     }
 };
 
-test "form controls keep their labels, indicators, switches and focused fields bounded" {
+test "form controls keep their labels, indicators, switches and scrolled fields bounded" {
     const viewport: layout.Rect = .{ .x = 20, .y = 40, .width = 300, .height = 120 };
-    const first = FormViewport.init(viewport, 344, 120);
-    const last = FormViewport.init(viewport, 344, 330);
+    const first = FormViewport.atOffset(viewport, 344, 8);
+    const last = FormViewport.atOffset(viewport, 344, 218);
     try std.testing.expectEqual(@as(f32, 8), first.offset);
     try std.testing.expectEqual(@as(f32, 218), last.offset);
     const bar = last.scrollbar().?;
     try std.testing.expect(bar.thumb.y >= bar.track.y);
     try std.testing.expect(bar.thumb.y + bar.thumb.height <= bar.track.y + bar.track.height);
-    try std.testing.expect(FormViewport.init(viewport, 100, 80).scrollbar() == null);
+    try std.testing.expectEqual(@as(f32, 224), FormViewport.atOffset(viewport, 344, 1000).offset);
+    try std.testing.expect(FormViewport.atOffset(viewport, 100, 80).scrollbar() == null);
     const focused = last.place(8, 280, 280, 50);
     try std.testing.expect(focused.y >= viewport.y);
     try std.testing.expect(focused.y + focused.height <= viewport.y + viewport.height);

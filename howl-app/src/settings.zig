@@ -412,6 +412,7 @@ fn environmentName(entries: []const config.Environment, buffer: []u8) ![]const u
 pub const Editor = struct {
     page: Page = .startup,
     list: widgets.List = .{},
+    form_row: usize = 0,
     profile: u8 = 0,
     content_focus: bool = false,
     search: bool = false,
