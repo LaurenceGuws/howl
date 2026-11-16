@@ -236,6 +236,58 @@ const AppearanceForm = struct {
         return null;
     }
 };
+/// App chrome and terminal colors share a scrolled form, not list selection.
+/// The color editor and terminal sample remain in the fixed footer.
+const ColorForm = struct {
+    view: widgets.FormViewport,
+
+    const Section = struct { title: []const u8, hint: []const u8, first: usize, count: usize };
+    const app_count = 1 + color_config.app_labels.len + 1;
+    const sections = [_]Section{
+        .{ .title = "Application", .hint = "Window chrome, tabs, and controls.", .first = 0, .count = app_count },
+        .{ .title = "Terminal", .hint = "Text, cursor, and the ANSI palette.", .first = app_count, .count = 1 + color_config.terminal_labels.len + 2 },
+    };
+    const count = sections[sections.len - 1].first + sections[sections.len - 1].count;
+    const outer_inset: f32 = settings_card_gutter;
+    const inner_inset: f32 = settings_card_padding;
+    const heading_height: f32 = 66;
+    const row_stride: f32 = 48;
+    const row_height: f32 = 44;
+    const card_gap: f32 = 14;
+    const card_bottom: f32 = 12;
+
+    fn cardHeight(number: usize) f32 {
+        return heading_height + @as(f32, @floatFromInt(sections[number].count)) * row_stride + card_bottom;
+    }
+    fn cardTop(number: usize) f32 {
+        var top = outer_inset;
+        for (0..number) |index| top += cardHeight(index) + card_gap;
+        return top;
+    }
+    fn rowTop(number: usize) f32 {
+        std.debug.assert(number < count);
+        const section: usize = if (number < app_count) 0 else 1;
+        return cardTop(section) + heading_height + @as(f32, @floatFromInt(number - sections[section].first)) * row_stride;
+    }
+    fn contentHeight() f32 {
+        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + outer_inset;
+    }
+    fn init(bounds: layout.Rect, offset: f32) ColorForm {
+        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
+    }
+    fn card(self: ColorForm, number: usize) layout.Rect {
+        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
+    }
+    fn row(self: ColorForm, number: usize) layout.Rect {
+        const inset = outer_inset + inner_inset;
+        return self.view.place(inset, rowTop(number), @max(1, self.view.bounds.width - 2 * inset), row_height);
+    }
+    fn hit(self: ColorForm, x: f32, y: f32) ?usize {
+        if (!self.view.bounds.contains(x, y)) return null;
+        for (0..count) |number| if (self.row(number).contains(x, y)) return number;
+        return null;
+    }
+};
 const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
@@ -939,6 +991,9 @@ const App = struct {
                     if (editor.page == .appearance) {
                         editor.form_row = number;
                         self.settings_scroll_offset = AppearanceForm.rowTop(number) - AppearanceForm.rowTop(0);
+                    } else if (editor.page == .colors) {
+                        editor.form_row = number;
+                        self.settings_scroll_offset = ColorForm.rowTop(number) - ColorForm.rowTop(0);
                     }
                     break;
                 }
@@ -2131,9 +2186,16 @@ const App = struct {
     fn appearanceForm(self: *const App) AppearanceForm {
         return AppearanceForm.init(self.settingsBody(), self.settings_scroll_offset);
     }
+    fn colorForm(self: *const App) ColorForm {
+        return ColorForm.init(self.settingsBody(), self.settings_scroll_offset);
+    }
     fn appearanceSettings(self: *const App) bool {
         const editor = self.settings_editor.?;
         return !editor.search and editor.page == .appearance;
+    }
+    fn colorSettings(self: *const App) bool {
+        const editor = self.settings_editor.?;
+        return !editor.search and editor.page == .colors;
     }
     fn settingsFormView(self: *const App) ?widgets.FormViewport {
         const editor = self.settings_editor orelse return null;
@@ -2141,6 +2203,7 @@ const App = struct {
         return switch (editor.page) {
             .startup => self.startupForm().view,
             .appearance => self.appearanceForm().view,
+            .colors => self.colorForm().view,
             else => null,
         };
     }
@@ -2168,7 +2231,7 @@ const App = struct {
     fn simpleSettingsForm(self: *const App) bool {
         const editor = self.settings_editor.?;
         return !editor.search and switch (editor.page) {
-            .appearance, .mappings => true,
+            .appearance, .colors, .mappings => true,
             else => false,
         };
     }
@@ -2195,6 +2258,9 @@ const App = struct {
     fn settingsEditButton(rect: layout.Rect) layout.Rect {
         return .{ .x = rect.x + rect.width - 33, .y = rect.y + 6, .width = 29, .height = @max(1, rect.height - 12) };
     }
+    fn settingsResetButton(rect: layout.Rect) layout.Rect {
+        return settingsRowField(rect);
+    }
     fn settingsField(self: *const App) layout.Rect {
         const box = self.settingsRect();
         const body = self.settingsBody();
@@ -2202,6 +2268,7 @@ const App = struct {
             const e = self.settings_editor.?;
             if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
             if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.form_row));
+            if (self.colorSettings()) return settingsRowField(self.colorForm().row(e.form_row));
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
             return settingsRowField(rect);
         }
@@ -2411,6 +2478,10 @@ const App = struct {
             if (body.contains(x, y)) try self.settingsAppearanceClick(x, y);
             return;
         }
+        if (self.colorSettings()) {
+            if (body.contains(x, y)) try self.settingsColorClick(x, y);
+            return;
+        }
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
             for (0..self.settingsToolbarCount()) |number| {
                 if (self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
@@ -2489,6 +2560,25 @@ const App = struct {
         }
         if (row.editable() and row.choice() and field.contains(x, y)) {
             self.settings_editor.?.form_row = number;
+            return self.activateSetting(row);
+        }
+    }
+    fn settingsColorClick(self: *App, x: f32, y: f32) !void {
+        const form = self.colorForm();
+        const number = form.hit(x, y) orelse return;
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.settingsConfiguration(), &all);
+        const visible = self.settings_editor.?.indices(all[0..count], &indices);
+        if (number >= visible) return;
+        const row = all[indices[number]];
+        const rect = form.row(number);
+        const field = settingsRowField(rect);
+        if (row.editable() and (settingsEditButton(rect).contains(x, y) or (row.choice() and field.contains(x, y)))) {
+            self.settings_editor.?.form_row = number;
+            return self.activateSetting(row);
+        }
+        if ((row.target == .reset_app_colors or row.target == .reset_terminal_colors) and settingsResetButton(rect).contains(x, y)) {
             return self.activateSetting(row);
         }
     }
@@ -2641,6 +2731,18 @@ const App = struct {
             try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
         }
     }
+    fn drawColorCards(self: *App, form: ColorForm) !void {
+        const colors = try self.uiPalette();
+        for (ColorForm.sections, 0..) |section, number| {
+            const card = form.card(number);
+            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
+            try self.drawSettingsCard(card);
+            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
+            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
+            try self.clippedText(section.title, heading, heading.x);
+            try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
+        }
+    }
     fn drawSettingsHeaderButtons(self: *App) !void {
         const colors = try self.uiPalette();
         const pending = self.settings_draft != null or self.settings_editor.?.editing != null;
@@ -2687,6 +2789,8 @@ const App = struct {
         const startup_form = !e.search and e.page == .startup;
         const simple_form = self.simpleSettingsForm();
         const appearance_form = self.appearanceSettings();
+        const color_form = self.colorSettings();
+        const card_form = appearance_form or color_form;
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
             const labels: [3][]const u8 = if (e.page == .defaults) .{ "New profile", "Duplicate", if (e.delete_pending != null) "Delete?" else "Delete" } else .{ "< Profiles", "Duplicate", "Set default" };
             for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
@@ -2705,35 +2809,36 @@ const App = struct {
             try self.drawSettingsDropdown();
             return;
         }
-        if (simple_form and !appearance_form) {
+        if (simple_form and !card_form) {
             try self.drawSettingsCard(self.settingsListCard());
         }
         var all: [settings.row_limit]settings.Row = undefined;
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.settingsConfiguration(), &all);
         const visible = e.indices(all[0..count], &indices);
-        if (!appearance_form) e.list.selected = @min(e.list.selected, visible -| 1);
-        const start = if (appearance_form) @as(usize, 0) else self.settingsStart(visible);
+        if (!card_form) e.list.selected = @min(e.list.selected, visible -| 1);
+        const start = if (card_form) @as(usize, 0) else self.settingsStart(visible);
         const rows = self.settingsRows();
         const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
-        var clipped_appearance = false;
-        defer if (clipped_appearance) clearClip(self.renderer);
-        if (appearance_form) {
+        const colors_form: ColorForm = if (color_form) self.colorForm() else undefined;
+        var clipped_cards = false;
+        defer if (clipped_cards) clearClip(self.renderer);
+        if (card_form) {
             try setClip(self.renderer, body);
-            clipped_appearance = true;
-            try self.drawAppearanceCards(form);
+            clipped_cards = true;
+            if (appearance_form) try self.drawAppearanceCards(form) else try self.drawColorCards(colors_form);
         }
-        const paint_start = if (appearance_form) @as(usize, 0) else start;
-        const paint_end = if (appearance_form) visible else @min(visible, start + self.settingsVisible());
+        const paint_start = if (card_form) @as(usize, 0) else start;
+        const paint_end = if (card_form) visible else @min(visible, start + self.settingsVisible());
         for (indices[paint_start..paint_end], paint_start..) |index, number| {
             const row = all[index];
-            const rect = if (appearance_form) form.row(number) else rows.row(number - start);
-            if (appearance_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
-            if (simple_form and !appearance_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else if (!appearance_form) {
+            const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else rows.row(number - start);
+            if (card_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
+            if (simple_form and !card_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else if (!card_form) {
                 try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
                 try outline(self.renderer, rect, colors.border);
             }
-            const editing_row = e.editing != null and (if (appearance_form) number == e.form_row else number == e.list.selected);
+            const editing_row = e.editing != null and (if (card_form) number == e.form_row else number == e.list.selected);
             var label: [512]u8 = undefined;
             const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
             var value: [4096]u8 = undefined;
@@ -2769,14 +2874,18 @@ const App = struct {
                 try self.clippedText("Edit", .{ .x = rect.x + rect.width - 74, .y = rect.y, .width = 70, .height = rect.height }, rect.x + rect.width - 66);
             } else {
                 try self.clippedText(name, left, left.x);
-                if (simple_form and row.choice()) {
-                    try self.drawSettingsSelect(settingsRowField(rect), contents, if (appearance_form) self.isHovered(settingsRowField(rect)) else number == e.list.selected and e.content_focus, false);
+                if (color_form and (row.target == .reset_app_colors or row.target == .reset_terminal_colors)) {
+                    const reset_button = settingsResetButton(rect);
+                    try self.drawSettingsControl(reset_button, self.isHovered(reset_button));
+                    try self.clippedText("Reset", reset_button, reset_button.x + 8);
+                } else if (simple_form and row.choice()) {
+                    try self.drawSettingsSelect(settingsRowField(rect), contents, if (card_form) self.isHovered(settingsRowField(rect)) else number == e.list.selected and e.content_focus, false);
                 } else {
                     const rgb = try self.settingRgb(row);
                     var value_rect = right;
                     if (row.target == .font_family and !e.search) {
                         if (simple_form) {
-                            try self.drawSettingsControl(right, if (appearance_form) self.isHovered(right) else number == e.list.selected and e.content_focus);
+                            try self.drawSettingsControl(right, if (card_form) self.isHovered(right) else number == e.list.selected and e.content_focus);
                         } else {
                             try fill(self.renderer, right, if (self.isHovered(right)) appearance.hover(colors.idle) else colors.idle);
                             try outline(self.renderer, right, colors.border);
@@ -2789,7 +2898,7 @@ const App = struct {
                         const action = widgets.InlineAction.init(right, 76);
                         value_rect = action.value;
                         if (simple_form) {
-                            try self.drawSettingsControl(action.button, if (appearance_form) self.isHovered(action.button) else number == e.list.selected and e.content_focus);
+                            try self.drawSettingsControl(action.button, if (card_form) self.isHovered(action.button) else number == e.list.selected and e.content_focus);
                         } else {
                             try fill(self.renderer, action.button, if (self.isHovered(action.button)) appearance.hover(colors.idle) else colors.idle);
                             try outline(self.renderer, action.button, colors.border);
@@ -2812,12 +2921,13 @@ const App = struct {
                 try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
             }
         }
-        if (clipped_appearance) {
+        if (clipped_cards) {
             clearClip(self.renderer);
-            clipped_appearance = false;
+            clipped_cards = false;
         }
-        if (appearance_form) {
-            if (form.view.scrollbar()) |bar| {
+        if (card_form) {
+            const view = if (appearance_form) form.view else colors_form.view;
+            if (view.scrollbar()) |bar| {
                 try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
                 try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
             }
@@ -4602,8 +4712,17 @@ test "settings cards share symmetric painted and pointer geometry" {
         try std.testing.expectEqual(@as(?usize, AppearanceForm.count - 1), scrolled.hit(last_appearance.x + 1, last_appearance.y + 1));
         app.settings_scroll_offset = 0;
         app.settings_editor.?.page = .colors;
-        try std.testing.expect(!app.simpleSettingsForm());
-        try std.testing.expectEqual(app.settingsBody().x, app.settingsRows().rect.x);
+        try std.testing.expect(app.simpleSettingsForm());
+        const color_form = app.colorForm();
+        for (ColorForm.sections, 0..) |section, number| {
+            const group = color_form.card(number);
+            const first_color = color_form.row(section.first);
+            const last_color = color_form.row(section.first + section.count - 1);
+            try std.testing.expectApproxEqAbs(group.x - body.x, body.x + body.width - group.x - group.width, 0.01);
+            try std.testing.expectApproxEqAbs(first_color.x - group.x, group.x + group.width - first_color.x - first_color.width, 0.01);
+            try std.testing.expect(first_color.y >= group.y + ColorForm.heading_height);
+            try std.testing.expect(last_color.y + last_color.height <= group.y + group.height);
+        }
         app.settings_editor.?.page = .appearance;
         app.settings_editor.?.search = true;
         try std.testing.expect(!app.simpleSettingsForm());
@@ -4659,6 +4778,61 @@ test "settings cards share symmetric painted and pointer geometry" {
     try std.testing.expect(app.settings_scroll_offset > 0);
     app.settingsScrollbarMove(bar.track.y + 5);
     try std.testing.expectEqual(@as(f32, 0), app.settings_scroll_offset);
+    app.settings_scroll_grab = null;
+
+    app.init.io = std.testing.io;
+    app.settings_editor.?.page = .colors;
+    try std.testing.expectEqual(ColorForm.count, app.settings_editor.?.indices(all[0..count], &indices));
+    try std.testing.expectEqualDeep(settings.Target.theme, all[indices[0]].target);
+    try std.testing.expectEqualDeep(settings.Target.reset_app_colors, all[indices[ColorForm.app_count - 1]].target);
+    try std.testing.expectEqualDeep(settings.Target.terminal_theme, all[indices[ColorForm.app_count]].target);
+    try std.testing.expectEqualDeep(settings.Target.reset_terminal_colors, all[indices[ColorForm.count - 2]].target);
+    const color_label = app.colorForm().row(1);
+    try app.settingsClick(color_label.x + 8, color_label.y + 12, 1);
+    try std.testing.expect(app.settings_editor.?.editing == null and app.settings_draft == null);
+    const color_edit = App.settingsEditButton(color_label);
+    try app.settingsClick(color_edit.x + 8, color_edit.y + 8, 1);
+    try std.testing.expectEqualDeep(settings.Target{ .app_color = 0 }, app.settings_editor.?.editing.?);
+    try std.testing.expectEqualDeep(App.settingsRowField(app.colorForm().row(1)), app.settingsField());
+    const red_bar = app.colorBar(0);
+    try app.settingsClick(red_bar.x + red_bar.width / 2, red_bar.y + 8, 1);
+    try std.testing.expectEqual(@as(?u8, 0), app.color_drag);
+    try std.testing.expectEqual(@as(usize, 7), app.settings_editor.?.len);
+    try std.testing.expectEqual(@as(u8, '#'), app.settings_editor.?.buffer[0]);
+    app.color_drag = null;
+    var event_value = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event_value.key = c.SDLK_ESCAPE;
+    try app.settingsKey(event_value);
+    try std.testing.expect(app.settings_editor.?.editing == null);
+    app.settings_scroll_offset = ColorForm.rowTop(ColorForm.app_count - 1) - 100;
+    const app_reset = app.colorForm().row(ColorForm.app_count - 1);
+    try std.testing.expect(app.settingsBody().contains(app_reset.x + 8, app_reset.y + 10));
+    try app.settingsClick(app_reset.x + 8, app_reset.y + 10, 1);
+    try std.testing.expect(app.settings_draft == null);
+    const reset_button = App.settingsResetButton(app_reset);
+    try app.settingsClick(reset_button.x + 8, reset_button.y + 8, 1);
+    try std.testing.expect(app.settings_draft != null);
+    app.settingsCancel();
+    try std.testing.expect(app.settings_draft == null);
+    app.settings_scroll_offset = ColorForm.rowTop(ColorForm.count - 2) - 100;
+    const terminal_reset = app.colorForm().row(ColorForm.count - 2);
+    try std.testing.expect(app.settingsBody().contains(terminal_reset.x + 8, terminal_reset.y + 10));
+    try app.settingsClick(terminal_reset.x + 8, terminal_reset.y + 10, 1);
+    try std.testing.expect(app.settings_draft == null);
+    const terminal_reset_button = App.settingsResetButton(terminal_reset);
+    try app.settingsClick(terminal_reset_button.x + 8, terminal_reset_button.y + 8, 1);
+    try std.testing.expect(app.settings_draft != null);
+    app.settingsCancel();
+    app.settings_scroll_offset = 0;
+    const color_body = app.settingsBody();
+    wheel.mouse_x = color_body.x + 60;
+    wheel.mouse_y = color_body.y + 60;
+    try app.pointerWheel(wheel);
+    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
+    app.settings_scroll_offset = 0;
+    const color_bar = app.colorForm().view.scrollbar().?;
+    try std.testing.expect(app.settingsScrollbarPress(color_bar.track.x - 5, color_bar.track.y + color_bar.track.height - 5));
+    try std.testing.expect(app.settings_scroll_offset > 0);
     app.settings_scroll_grab = null;
 }
 
