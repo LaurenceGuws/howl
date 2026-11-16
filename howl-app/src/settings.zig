@@ -58,6 +58,22 @@ pub const Target = union(enum) {
 /// Finite settings expose exact persisted values and separate human-facing labels.
 pub const Choice = struct { value: []const u8, label: []const u8 };
 
+fn interactionMapping(target: bindings.Target) bool {
+    return switch (target) {
+        .copy_selection, .paste_clipboard, .toggle_find, .history_oldest, .history_live, .history_page => true,
+        else => false,
+    };
+}
+
+/// The interaction card fits its actual shortcut subset without a second row inventory.
+pub const interaction_row_count = blk: {
+    var count: usize = 0;
+    for (bindings.definitions) |definition| if (interactionMapping(definition.target)) {
+        count += 1;
+    };
+    break :blk count;
+};
+
 /// Bounded catalogue size for a native settings select; text editors are not valid selectors.
 pub fn choiceCount(target: Target, current: *const config.Config) usize {
     return switch (target) {
@@ -197,9 +213,8 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
     try b.add(.{ .page = .startup, .label = "Discover shells and REPLs", .target = .discover_shells });
     try b.add(.{ .page = .startup, .label = "Discover SSH config hosts", .target = .discover_ssh_hosts });
-    for (bindings.definitions, 0..) |definition, index| switch (definition.target) {
-        .copy_selection, .paste_clipboard, .toggle_find, .history_oldest, .history_live, .history_page => try b.add(.{ .page = .interaction, .label = definition.label, .target = .{ .binding = @intCast(index) } }),
-        else => {},
+    for (bindings.definitions, 0..) |definition, index| if (interactionMapping(definition.target)) {
+        try b.add(.{ .page = .interaction, .label = definition.label, .target = .{ .binding = @intCast(index) } });
     };
     try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
     try b.add(.{ .page = .appearance, .label = "Tab chip width", .target = .tab_width });

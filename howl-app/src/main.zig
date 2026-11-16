@@ -99,6 +99,8 @@ const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, altern
 const SettingsHeaderAction = enum { search, close };
 const settings_header_height: f32 = chrome.height;
 const settings_nav_top: f32 = settings_header_height + chrome.Geometry.bottom;
+const settings_card_gutter: f32 = 12;
+const settings_card_padding: f32 = 16;
 const HeaderLabel = struct {
     bytes: [1024]u8 = @splat(0),
     len: usize = 0,
@@ -156,9 +158,9 @@ const HeaderCache = struct {
 const StartupForm = struct {
     view: widgets.FormViewport,
     compact: bool,
-    const outer_inset: f32 = 12;
-    const inner_inset: f32 = 16;
-    const top_inset: f32 = 12;
+    const outer_inset: f32 = settings_card_gutter;
+    const inner_inset: f32 = settings_card_padding;
+    const top_inset: f32 = settings_card_gutter;
 
     fn init(bounds: layout.Rect, selected: usize) StartupForm {
         const compact = bounds.width < 390;
@@ -1126,9 +1128,17 @@ const App = struct {
         return false;
     }
     fn drawField(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool) !void {
+        return self.drawFieldStyled(rect, edit, text, placeholder, active, false);
+    }
+    fn drawFieldStyled(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool, rounded: bool) !void {
         const colors = try self.uiPalette();
-        try fill(self.renderer, rect, colors.panel);
-        try outline(self.renderer, rect, if (active) colors.accent else colors.border);
+        if (rounded) {
+            try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, 4);
+            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 3);
+        } else {
+            try fill(self.renderer, rect, colors.panel);
+            try outline(self.renderer, rect, if (active) colors.accent else colors.border);
+        }
         const inner: layout.Rect = .{ .x = rect.x + 7, .y = rect.y + 3, .width = @max(1, rect.width - 14), .height = @max(1, rect.height - 6) };
         const caret = try self.textWidth(text[0..edit.cursor]);
         const scroll = edit.reveal(caret, try self.textWidth(text), inner.width - 2);
@@ -1171,6 +1181,13 @@ const App = struct {
             try fill(self.renderer, rect, if (hovered) appearance.hover(base) else base);
         }
         if (selected and focused) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + 4, .width = 2, .height = @max(1, rect.height - 8) }, colors.accent);
+    }
+    fn drawSettingsCardRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
+        if (!selected and !hovered) return;
+        const colors = try self.uiPalette();
+        const base = if (selected) colors.active else colors.idle;
+        try drawing.fillRounded(self.renderer, rect, if (hovered) appearance.hover(base) else base, 4);
+        if (selected and focused) try drawing.fillRounded(self.renderer, .{ .x = rect.x, .y = rect.y + 6, .width = 2, .height = @max(1, rect.height - 12) }, colors.accent, 1);
     }
     fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
         const e = &self.settings_editor.?;
@@ -2016,10 +2033,35 @@ const App = struct {
     fn startupForm(self: *const App) StartupForm {
         return StartupForm.init(self.settingsBody(), self.settings_editor.?.list.selected);
     }
+    fn simpleSettingsForm(self: *const App) bool {
+        const editor = self.settings_editor.?;
+        return !editor.search and switch (editor.page) {
+            .interaction, .appearance, .mappings => true,
+            else => false,
+        };
+    }
+    fn settingsListCard(self: *const App) layout.Rect {
+        const body = self.settingsBody();
+        const horizontal = @min(settings_card_gutter, @max(0, (body.width - 1) / 2));
+        const vertical = @min(settings_card_gutter, @max(0, (body.height - 1) / 2));
+        const available_height = @max(1, body.height - 2 * vertical);
+        // Interaction is a short subset of the mapping registry; fit its last row.
+        const height = if (self.settings_editor.?.page == .interaction) @min(available_height, @as(f32, @floatFromInt(settings.interaction_row_count)) * 48 + 2 * settings_card_gutter) else available_height;
+        return .{ .x = body.x + horizontal, .y = body.y + vertical, .width = @max(1, body.width - 2 * horizontal), .height = height };
+    }
     fn settingsRows(self: *const App) widgets.Rows {
+        if (self.simpleSettingsForm()) {
+            const card = self.settingsListCard();
+            const horizontal = @min(settings_card_padding, @max(0, (card.width - 1) / 2));
+            const vertical = @min(settings_card_gutter, @max(0, (card.height - 1) / 2));
+            return .{ .rect = .{ .x = card.x + horizontal, .y = card.y + vertical, .width = @max(1, card.width - 2 * horizontal), .height = @max(1, card.height - 2 * vertical) }, .stride = 48, .gap = 4 };
+        }
         var body = self.settingsBody();
         body.width = @max(1, body.width - 8);
         return .{ .rect = body, .stride = 48, .gap = 4 };
+    }
+    fn settingsRowField(rect: layout.Rect) layout.Rect {
+        return .{ .x = rect.x + rect.width * 0.46, .y = rect.y + 5, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height - 10 };
     }
     fn settingsField(self: *const App) layout.Rect {
         const box = self.settingsRect();
@@ -2028,7 +2070,7 @@ const App = struct {
             const e = self.settings_editor.?;
             if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
-            return .{ .x = rect.x + rect.width * 0.46, .y = rect.y + 5, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height - 10 };
+            return settingsRowField(rect);
         }
         return .{ .x = body.x, .y = box.y + settings_header_height, .width = body.width, .height = 32 };
     }
@@ -2346,14 +2388,23 @@ const App = struct {
         e.choice_list.reveal(count, menu.rows.visible());
         const start = e.choice_list.first;
         const colors = try self.uiPalette();
-        try fill(self.renderer, menu.rect, colors.panel);
-        try outline(self.renderer, menu.rect, colors.border);
+        if (self.simpleSettingsForm()) {
+            try self.drawSettingsCard(menu.rect);
+        } else {
+            try fill(self.renderer, menu.rect, colors.panel);
+            try outline(self.renderer, menu.rect, colors.border);
+        }
         for (start..@min(count, start + menu.rows.visible())) |index| {
             const rect = menu.rows.row(index - start);
-            try self.drawListRow(rect, e.choice_list.selected == index, self.isHovered(rect), true);
+            if (self.simpleSettingsForm()) try self.drawSettingsCardRow(rect, e.choice_list.selected == index, self.isHovered(rect), true) else try self.drawListRow(rect, e.choice_list.selected == index, self.isHovered(rect), true);
             try self.clippedText((try settings.choiceAt(target, self.configuration, index)).label, rect, rect.x + 9);
         }
         try self.drawListScroll(menu.rows, start, count);
+    }
+    fn drawSettingsCard(self: *App, rect: layout.Rect) !void {
+        const colors = try self.uiPalette();
+        try drawing.fillRounded(self.renderer, rect, colors.border, 5);
+        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 4);
     }
     fn drawStartupSwitch(self: *App, rect: layout.Rect, enabled: bool, focused: bool) !void {
         const colors = try self.uiPalette();
@@ -2363,6 +2414,18 @@ const App = struct {
         try drawing.fillRounded(self.renderer, inside, if (enabled) colors.accent else if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 12);
         try drawing.fillRounded(self.renderer, control.thumb, if (enabled) colors.title else colors.text, 10);
     }
+    fn drawSettingsControl(self: *App, rect: layout.Rect, focused: bool) !void {
+        const colors = try self.uiPalette();
+        try drawing.fillRounded(self.renderer, rect, if (focused) colors.accent else colors.border, 4);
+        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 3);
+    }
+    fn drawSettingsSelect(self: *App, rect: layout.Rect, label: []const u8, focused: bool, expanded: bool) !void {
+        const colors = try self.uiPalette();
+        const selector = widgets.Select.init(rect);
+        try self.drawSettingsControl(selector.surface, focused);
+        try self.clippedText(label, selector.label, selector.label.x);
+        try icons.draw(self.renderer, if (expanded) .chevron_up else .chevron_down, selector.arrow, colors.text);
+    }
     fn drawStartupForm(self: *App) !void {
         const editor = &self.settings_editor.?;
         const form = self.startupForm();
@@ -2371,8 +2434,7 @@ const App = struct {
         defer clearClip(self.renderer);
         for (0..2) |number| {
             const card = form.card(number);
-            try drawing.fillRounded(self.renderer, card, colors.border, 5);
-            try drawing.fillRounded(self.renderer, .{ .x = card.x + 1, .y = card.y + 1, .width = @max(1, card.width - 2), .height = @max(1, card.height - 2) }, colors.panel, 4);
+            try self.drawSettingsCard(card);
             try self.clippedText(if (number == 0) "New terminals" else "Launcher suggestions", .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 }, card.x + 16);
             try self.clippedTextColor(if (number == 0) "Used for new tabs and windows." else "Show these in the new-tab menu.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
         }
@@ -2380,16 +2442,12 @@ const App = struct {
         const label_width = if (form.compact) first.width else @max(1, form.select().x - first.x - 12);
         try self.clippedText("Default profile", .{ .x = first.x, .y = first.y + 3, .width = label_width, .height = 24 }, first.x);
         if (!form.compact) try self.clippedTextColor("For future tabs only", .{ .x = first.x, .y = first.y + 24, .width = label_width, .height = 24 }, first.x, colors.muted);
-        const selector = widgets.Select.init(form.select());
         const focused = editor.content_focus and editor.list.selected == 0 or (editor.editing != null and editor.editing.? == .default_profile);
-        try drawing.fillRounded(self.renderer, selector.surface, if (focused) colors.accent else colors.border, 4);
-        try drawing.fillRounded(self.renderer, .{ .x = selector.surface.x + 1, .y = selector.surface.y + 1, .width = @max(1, selector.surface.width - 2), .height = @max(1, selector.surface.height - 2) }, if (self.isHovered(selector.surface)) appearance.hover(colors.idle) else colors.idle, 3);
         const profile_name = if (editor.editing != null and editor.editing.? == .default_profile)
             (try settings.choiceAt(.default_profile, self.configuration, editor.choice_list.selected)).label
         else
             (try self.configuration.profile(try self.configuration.defaultProfile())).name;
-        try self.clippedText(profile_name, selector.label, selector.label.x);
-        try icons.draw(self.renderer, if (editor.editing != null and editor.editing.? == .default_profile) .chevron_up else .chevron_down, selector.arrow, colors.text);
+        try self.drawSettingsSelect(form.select(), profile_name, focused, editor.editing != null and editor.editing.? == .default_profile);
         const switches = [_]struct { label: []const u8, hint: []const u8, enabled: bool }{
             .{ .label = "Local shells & REPLs", .hint = "Detect local shells", .enabled = self.configuration.value.discover_shells },
             .{ .label = "SSH hosts", .hint = "From your SSH config", .enabled = self.configuration.value.discover_ssh_hosts },
@@ -2444,12 +2502,17 @@ const App = struct {
             try self.clippedText(title, row, row.x + 6);
         }
         const startup_form = !e.search and e.page == .startup;
+        const simple_form = self.simpleSettingsForm();
         if (!e.search and (e.page == .defaults or e.page == .profiles or (e.editing != null and !startup_form))) {
             const labels: [3][]const u8 = if (e.editing != null) .{ "Save", "Cancel", "" } else if (e.page == .defaults) .{ "New profile", "Duplicate", if (e.delete_pending != null) "Delete?" else "Delete" } else .{ "< Profiles", "Duplicate", "Set default" };
             for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
                 const button = self.settingsToolbarButton(number);
-                try fill(self.renderer, button, colors.idle);
-                try outline(self.renderer, button, if (e.editing != null and e.button == @as(u8, @intCast(number))) colors.accent else colors.border);
+                if (simple_form) {
+                    try self.drawSettingsControl(button, e.button == @as(u8, @intCast(number)));
+                } else {
+                    try fill(self.renderer, button, colors.idle);
+                    try outline(self.renderer, button, if (e.editing != null and e.button == @as(u8, @intCast(number))) colors.accent else colors.border);
+                }
                 try self.clippedText(label, button, button.x + 8);
             }
         } else if (e.search) try self.drawField(self.settingsField(), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
@@ -2458,17 +2521,23 @@ const App = struct {
             try self.drawSettingsDropdown();
             return;
         }
+        if (simple_form) {
+            try self.drawSettingsCard(self.settingsListCard());
+        }
         var all: [settings.row_limit]settings.Row = undefined;
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.configuration, &all);
         const visible = e.indices(all[0..count], &indices);
         e.list.selected = @min(e.list.selected, visible -| 1);
         const start = self.settingsStart(visible);
+        const rows = self.settingsRows();
         for (indices[start..@min(visible, start + self.settingsVisible())], start..) |index, number| {
             const row = all[index];
-            const rect = self.settingsRows().row(number - start);
-            try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
-            try outline(self.renderer, rect, colors.border);
+            const rect = rows.row(number - start);
+            if (simple_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else {
+                try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
+                try outline(self.renderer, rect, colors.border);
+            }
             var label: [512]u8 = undefined;
             const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
             var value: [4096]u8 = undefined;
@@ -2491,30 +2560,45 @@ const App = struct {
                 try self.clippedText(name, left, left.x);
                 if (row.choice()) {
                     const display = (try settings.choiceAt(row.target, self.configuration, e.choice_list.selected)).label;
-                    try fill(self.renderer, self.settingsField(), colors.panel);
-                    try outline(self.renderer, self.settingsField(), colors.accent);
                     const select_rect = self.settingsField();
-                    try self.clippedText(display, .{ .x = select_rect.x + 7, .y = select_rect.y, .width = @max(1, select_rect.width - 32), .height = select_rect.height }, select_rect.x + 7);
-                    try icons.draw(self.renderer, .chevron_up, .{ .x = select_rect.x + select_rect.width - 23, .y = select_rect.y, .width = 20, .height = select_rect.height }, colors.text);
-                } else try self.drawField(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null);
+                    if (simple_form) try self.drawSettingsSelect(select_rect, display, true, true) else {
+                        try fill(self.renderer, select_rect, colors.panel);
+                        try outline(self.renderer, select_rect, colors.accent);
+                        try self.clippedText(display, .{ .x = select_rect.x + 7, .y = select_rect.y, .width = @max(1, select_rect.width - 32), .height = select_rect.height }, select_rect.x + 7);
+                        try icons.draw(self.renderer, .chevron_up, .{ .x = select_rect.x + select_rect.width - 23, .y = select_rect.y, .width = 20, .height = select_rect.height }, colors.text);
+                    }
+                } else try self.drawFieldStyled(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null, simple_form);
             } else if (row.target == .set_default and !e.search) {
                 try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
                 try self.clippedText("Edit", .{ .x = rect.x + rect.width - 74, .y = rect.y, .width = 70, .height = rect.height }, rect.x + rect.width - 66);
             } else {
                 try self.clippedText(name, left, left.x);
+                if (simple_form and row.choice()) {
+                    try self.drawSettingsSelect(settingsRowField(rect), contents, number == e.list.selected and e.content_focus, false);
+                    continue;
+                }
                 const rgb = try self.settingRgb(row);
                 var value_rect = right;
                 if (row.target == .font_family and !e.search) {
-                    try fill(self.renderer, right, if (self.isHovered(right)) appearance.hover(colors.idle) else colors.idle);
-                    try outline(self.renderer, right, colors.border);
+                    if (simple_form) {
+                        try self.drawSettingsControl(right, number == e.list.selected and e.content_focus);
+                    } else {
+                        try fill(self.renderer, right, if (self.isHovered(right)) appearance.hover(colors.idle) else colors.idle);
+                        try outline(self.renderer, right, colors.border);
+                    }
                     value_rect.x += 8;
-                    value_rect.width = @max(1, value_rect.width - 8);
+                    value_rect.width = @max(1, value_rect.width - (if (simple_form) @as(f32, 30) else 8));
+                    if (simple_form) try icons.draw(self.renderer, .chevron_right, .{ .x = right.x + right.width - 23, .y = right.y + 8, .width = 18, .height = @max(1, right.height - 16) }, colors.text);
                 }
                 if (row.target == .font and row.target.font < 4 and !e.search) {
                     const action = widgets.InlineAction.init(right, 76);
                     value_rect = action.value;
-                    try fill(self.renderer, action.button, if (self.isHovered(action.button)) appearance.hover(colors.idle) else colors.idle);
-                    try outline(self.renderer, action.button, colors.border);
+                    if (simple_form) {
+                        try self.drawSettingsControl(action.button, number == e.list.selected and e.content_focus);
+                    } else {
+                        try fill(self.renderer, action.button, if (self.isHovered(action.button)) appearance.hover(colors.idle) else colors.idle);
+                        try outline(self.renderer, action.button, colors.border);
+                    }
                     try self.clippedText("Browse", action.button, action.button.x + 6);
                 }
                 if (rgb) |swatch_color| {
@@ -2526,7 +2610,7 @@ const App = struct {
                 try self.clippedTextColor(contents, value_rect, value_rect.x, if (row.target == .information) colors.muted else colors.text);
             }
         }
-        try self.drawListScroll(self.settingsRows(), start, visible);
+        try self.drawListScroll(rows, start, visible);
         try self.drawSettingsDropdown();
         if (e.editing != null and e.edit.kind == .color) {
             try self.drawColorEditor();
@@ -4156,6 +4240,79 @@ test "startup form keeps selector and switches inside their groups at compact wi
             }
         }
     }
+}
+
+test "simple settings cards share symmetric painted and pointer geometry" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    const window = c.SDL_CreateWindow("settings card geometry", 920, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = window,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .tab_count = 1,
+        .settings_editor = .{ .page = .interaction, .content_focus = true },
+    };
+    for ([_]struct { width: f32, height: f32 }{
+        .{ .width = 920, .height = 650 },
+        .{ .width = 560, .height = 450 },
+        .{ .width = 300, .height = 300 },
+    }) |size| {
+        app.width = size.width;
+        app.height = size.height;
+        for ([_]settings.Page{ .interaction, .appearance, .mappings }) |page| {
+            app.settings_editor.?.page = page;
+            const body = app.settingsBody();
+            const card = app.settingsListCard();
+            const rows = app.settingsRows();
+            try std.testing.expect(app.simpleSettingsForm());
+            try std.testing.expectApproxEqAbs(card.x - body.x, body.x + body.width - card.x - card.width, 0.01);
+            try std.testing.expect(card.y >= body.y and card.y + card.height <= body.y + body.height);
+            try std.testing.expectApproxEqAbs(rows.rect.x - card.x, card.x + card.width - rows.rect.x - rows.rect.width, 0.01);
+            try std.testing.expect(rows.rect.y >= card.y and rows.rect.y + rows.rect.height <= card.y + card.height);
+            const first = rows.row(0);
+            try std.testing.expectEqual(@as(?usize, 0), rows.hit(first.x + 1, first.y + 1));
+            try std.testing.expect(rows.hit(card.x + 1, first.y + 1) == null);
+        }
+        app.settings_editor.?.page = .colors;
+        try std.testing.expect(!app.simpleSettingsForm());
+        try std.testing.expectEqual(app.settingsBody().x, app.settingsRows().rect.x);
+        app.settings_editor.?.page = .appearance;
+        app.settings_editor.?.search = true;
+        try std.testing.expect(!app.simpleSettingsForm());
+        try std.testing.expectEqual(app.settingsBody().x, app.settingsRows().rect.x);
+        app.settings_editor.?.search = false;
+    }
+    app.width = 920;
+    app.height = 650;
+    app.settings_editor.?.page = .interaction;
+    try std.testing.expectEqual(settings.interaction_row_count, app.settingsRows().visible());
+    var all: [settings.row_limit]settings.Row = undefined;
+    var indices: [settings.row_limit]u16 = undefined;
+    const count = try settings.rows(&configuration, &all);
+    try std.testing.expectEqual(settings.interaction_row_count, app.settings_editor.?.indices(all[0..count], &indices));
+    app.settings_editor.?.page = .appearance;
+    const row = app.settingsRows().row(0);
+    try app.settingsClick(row.x + row.width * 0.75, row.y + 15, 1);
+    try std.testing.expectEqual(settings.Target.hide_single_tab, app.settings_editor.?.editing.?);
+    const edited_row = app.settingsRows().row(0);
+    const field = app.settingsField();
+    try std.testing.expectEqualDeep(App.settingsRowField(edited_row), field);
+    try std.testing.expect(field.x >= edited_row.x and field.x + field.width <= edited_row.x + edited_row.width);
+    try std.testing.expect(field.y >= edited_row.y and field.y + field.height <= edited_row.y + edited_row.height);
+    try app.settingsClick(field.x + 2, field.y + 2, 1);
+    try std.testing.expect(app.settings_editor.?.editing == null);
 }
 
 fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {
