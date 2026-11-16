@@ -80,9 +80,17 @@ pub fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, value: c.SDL_Color) er
     try paint(renderer, &.{bounds(rect, factor)}, factor, value);
 }
 
-/// Small rounded chrome surfaces, rasterized as disjoint whole-physical-pixel
-/// bands. The radius follows display scale; one paint transaction preserves
-/// the caller's viewport, clipping, target and blend semantics.
+fn vertex(x: f32, y: f32, factor: [2]f32, color: c.SDL_FColor) c.SDL_Vertex {
+    return .{
+        .position = .{ .x = x / factor[0], .y = y / factor[1] },
+        .color = color,
+        .tex_coord = .{ .x = 0, .y = 0 },
+    };
+}
+
+/// A single convex mesh keeps translucent interior and edge coverage disjoint.
+/// A bounded inward fringe antialiases only the curved corners, leaving straight
+/// edges exact and pixels outside the caller's rectangle untouched.
 pub fn fillRounded(renderer: *c.SDL_Renderer, rect: layout.Rect, value: c.SDL_Color, radius: f32) error{SDL}!void {
     if (rect.width <= 0 or rect.height <= 0) return;
     std.debug.assert(std.math.isFinite(radius) and radius >= 0);
@@ -94,23 +102,51 @@ pub fn fillRounded(renderer: *c.SDL_Renderer, rect: layout.Rect, value: c.SDL_Co
     const ry = @min(@floor(r.h / 2), @min(@round(radius * factor[1]), 32));
     if (rx < 1 or ry < 1) return paint(renderer, &.{r}, factor, value);
 
-    var bands: [65]c.SDL_FRect = undefined;
-    var count: usize = 0;
-    for (0..@as(usize, @intFromFloat(ry))) |row| {
-        const y = @as(f32, @floatFromInt(row));
-        const distance = (ry - (y + 0.5)) / ry;
-        const inset = @round(rx * (1 - @sqrt(@max(0, 1 - distance * distance))));
-        if (r.w <= inset * 2) continue;
-        bands[count] = .{ .x = r.x + inset, .y = r.y + y, .w = r.w - inset * 2, .h = 1 };
-        count += 1;
-        bands[count] = .{ .x = r.x + inset, .y = r.y + r.h - y - 1, .w = r.w - inset * 2, .h = 1 };
-        count += 1;
+    const steps = 8;
+    const perimeter = 4 * (steps + 1);
+    var vertices: [1 + 2 * perimeter]c.SDL_Vertex = undefined;
+    var indices: [9 * perimeter]c_int = undefined;
+    const color: c.SDL_FColor = .{
+        .r = @as(f32, @floatFromInt(value.r)) / 255,
+        .g = @as(f32, @floatFromInt(value.g)) / 255,
+        .b = @as(f32, @floatFromInt(value.b)) / 255,
+        .a = @as(f32, @floatFromInt(value.a)) / 255,
+    };
+    const transparent: c.SDL_FColor = .{ .r = color.r, .g = color.g, .b = color.b, .a = 0 };
+    vertices[0] = vertex(r.x + r.w / 2, r.y + r.h / 2, factor, color);
+    const centers = [_][2]f32{
+        .{ r.x + r.w - rx, r.y + ry },
+        .{ r.x + r.w - rx, r.y + r.h - ry },
+        .{ r.x + rx, r.y + r.h - ry },
+        .{ r.x + rx, r.y + ry },
+    };
+    for (centers, 0..) |center, corner| {
+        for (0..steps + 1) |step| {
+            const angle = (-0.5 + @as(f32, @floatFromInt(corner)) / 2 + @as(f32, @floatFromInt(step)) / (2 * steps)) * std.math.pi;
+            const dx = @cos(angle);
+            const dy = @sin(angle);
+            const nx = dx / rx;
+            const ny = dy / ry;
+            const feather = if (step == 0 or step == steps) @as(f32, 0) else 0.85 * @sin(@as(f32, @floatFromInt(step)) * std.math.pi / steps);
+            const normal = feather / @sqrt(nx * nx + ny * ny);
+            const x = center[0] + dx * rx;
+            const y = center[1] + dy * ry;
+            const ox = nx * normal;
+            const oy = ny * normal;
+            const i = corner * (steps + 1) + step;
+            vertices[1 + i] = vertex(x - ox, y - oy, factor, color);
+            vertices[1 + perimeter + i] = vertex(x, y, factor, transparent);
+        }
     }
-    if (r.h > ry * 2) {
-        bands[count] = .{ .x = r.x, .y = r.y + ry, .w = r.w, .h = r.h - ry * 2 };
-        count += 1;
+    for (0..perimeter) |i| {
+        const next = (i + 1) % perimeter;
+        indices[9 * i ..][0..9].* = .{
+            0,               @intCast(1 + i),                @intCast(1 + next),
+            @intCast(1 + i), @intCast(1 + perimeter + i),    @intCast(1 + perimeter + next),
+            @intCast(1 + i), @intCast(1 + perimeter + next), @intCast(1 + next),
+        };
     }
-    try paint(renderer, bands[0..count], factor, value);
+    if (!c.SDL_RenderGeometry(renderer, null, &vertices, vertices.len, &indices, indices.len)) return error.SDL;
 }
 
 /// One logical-pixel outline, rounded to at least one physical pixel. Disjoint
@@ -188,7 +224,10 @@ test "rounded chrome raster preserves corners, opacity and render scale" {
         }) |probe| {
             var red: u8 = 0;
             try std.testing.expect(c.SDL_ReadSurfacePixel(surface, probe.x, probe.y, &red, null, null, null));
-            try std.testing.expectEqual(probe.ink, red);
+            if (red != probe.ink) {
+                std.debug.print("rounded scale={d} point={d},{d} expected={d} observed={d}\n", .{ factor, probe.x, probe.y, probe.ink, red });
+                return error.RoundedPixelMismatch;
+            }
         }
         var observed_x: f32 = 0;
         var observed_y: f32 = 0;
@@ -197,6 +236,36 @@ test "rounded chrome raster preserves corners, opacity and render scale" {
         try std.testing.expectEqual(factor, observed_y);
         try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
     }
+}
+
+test "rounded switch chrome feathers the pill edge without overblending or escaping its bounds" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(96, 64, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+    try std.testing.expect(c.SDL_RenderClear(renderer));
+    try fillRounded(renderer, .{ .x = 10, .y = 10, .width = 44, .height = 26 }, .{ .r = 200, .g = 0, .b = 0, .a = 128 }, 13);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    var feather: usize = 0;
+    var interior: usize = 0;
+    for (0..64) |y| for (0..96) |x| {
+        var red: u8 = 0;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &red, null, null, null));
+        const inside = x >= 10 and x < 54 and y >= 10 and y < 36;
+        if (!inside and red != 0) {
+            std.debug.print("rounded pill escaped at {d},{d} red={d}\n", .{ x, y, red });
+            return error.RoundedPixelEscaped;
+        }
+        try std.testing.expect(red <= 100);
+        if (red > 0 and red < 100) feather += 1;
+        if (red == 100) interior += 1;
+    };
+    try std.testing.expect(feather >= 20);
+    try std.testing.expect(interior >= 300);
 }
 
 test "fractional UI strokes cover exact pixels without double blending or state changes" {
