@@ -7,6 +7,16 @@
         .howl_pty = .{ .path = "../howl-pty" },
         .howl_vt = .{ .path = "../howl-vt" },
         .howl_text = .{ .path = "../howl-text" },
+        .sdl3 = .{
+            .url = "git+https://github.com/libsdl-org/SDL.git#f00dc919ca35b9756316e86c4777392de442f9b2",
+            .hash = "N-V-__8AAAMH-QKXb9Ww2J0Gw8Cj2IR7xeUhBXp2kryRRL5n",
+            .lazy = true,
+        },
+        .sdl3_ttf = .{
+            .url = "git+https://github.com/libsdl-org/SDL_ttf.git#a1ce3670aec736ecbf0936c43f2f0cc53aa61e5b",
+            .hash = "N-V-__8AAF2JgAA_Y5Qzm3b226N8y7ivM-qFVpCo9NkbfO8Y",
+            .lazy = true,
+        },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "assets", "install.sh", "test_install.py", "README.md", ".zig-audit.json" },
+    .paths = .{ "build.zig", "build.zig.zon", "build-support", "src", "assets", "install.sh", "test_install.py", "README.md", ".zig-audit.json" },
 }

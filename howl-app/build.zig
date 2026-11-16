@@ -4,6 +4,9 @@ const vt_build = @import("howl_vt");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const static_gui = b.option(bool, "static-gui", "Build pinned SDL3/SDL3_ttf and FreeType/HarfBuzz statically (native Linux)") orelse false;
+    const bundled_sdl = if (static_gui) b.dependency("sdl3", .{}) else null;
+    const bundled_ttf = if (static_gui) b.dependency("sdl3_ttf", .{}) else null;
     const headers = b.addWriteFiles();
     const header = headers.add("desktop.h",
         \\#include <SDL3/SDL.h>
@@ -16,9 +19,12 @@ pub fn build(b: *std.Build) void {
         \\#include <fnmatch.h>
     );
     const translation = b.addTranslateC(.{ .root_source_file = header, .target = target, .optimize = optimize });
+    // Keep the C API and linked archive at the same pinned SDL revisions.
+    if (bundled_sdl) |sdl| translation.addIncludePath(sdl.path("include"));
+    if (bundled_ttf) |ttf| translation.addIncludePath(ttf.path("include"));
     const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
-    const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
+    const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = static_gui });
     const direct_output = vt_build.addOutputModules(b, vt.path("."), target, optimize, vt.module("howl_vt"), text.module("howl_text"), vt.module("howl_vt_output_commands"), vt.module("howl_vt_output_limits"));
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -35,8 +41,24 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vt_output_commands", vt.module("howl_vt_output_commands"));
     root.addImport("howl_vt_output_limits", vt.module("howl_vt_output_limits"));
     root.addImport("test_fonts", text.module("howl_text_test_fonts"));
-    root.linkSystemLibrary("SDL3", .{});
-    root.linkSystemLibrary("SDL3_ttf", .{});
+    if (static_gui) {
+        if (target.result.os.tag != .linux or target.result.cpu.arch != b.graph.host.result.cpu.arch or target.result.abi != b.graph.host.result.abi)
+            // zig-audit: acknowledge panic
+            // reason: Reject unsupported targets before linking host-native SDL objects against an incompatible architecture or ABI.
+            @panic("static-gui currently supports native-architecture and ABI Linux only");
+        const sdl = bundled_sdl.?;
+        const ttf = bundled_ttf.?;
+        const build_sdl = b.addSystemCommand(&.{"bash"});
+        build_sdl.addFileArg(b.path("build-support/static-sdl.sh"));
+        build_sdl.addDirectoryArg(sdl.path("."));
+        build_sdl.addDirectoryArg(ttf.path("."));
+        const output = build_sdl.addOutputDirectoryArg("sdl-static");
+        root.addObjectFile(output.path(b, "ttf/libSDL3_ttf.a"));
+        root.addObjectFile(output.path(b, "sdl/libSDL3.a"));
+    } else {
+        root.linkSystemLibrary("SDL3", .{});
+        root.linkSystemLibrary("SDL3_ttf", .{});
+    }
     root.linkSystemLibrary("fontconfig", .{});
     // Zig 0.17.0-dev.1980+e78ea8f2c: selfhost codegen inflated publication CPU.
     // Use LLVM for this desktop artifact and its proofs; keep the selfhost linker.
