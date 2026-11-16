@@ -6,7 +6,7 @@ const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
 
 /// Bounded icons used by the native host shell; source paths are 24x24.
-pub const Name = enum { search, x, plus, chevron_right, chevron_up, chevron_down, ellipsis, minus };
+pub const Name = enum { search, x, plus, chevron_right, chevron_up, chevron_down, ellipsis, minus, pencil };
 const Point = struct { x: f32, y: f32 };
 
 const Geometry = struct {
@@ -135,6 +135,14 @@ const Geometry = struct {
                 for ([_]f32{ 5, 12, 19 }) |x| self.disc(.{ .x = x, .y = 12 }, 2);
             },
             .minus => self.stroke(.{ .x = 5, .y = 12 }, .{ .x = 19, .y = 12 }),
+            .pencil => {
+                // Lucide Pencil: a diagonal nib and a closed four-point tip.
+                self.stroke(.{ .x = 17, .y = 3 }, .{ .x = 21, .y = 7 });
+                self.stroke(.{ .x = 17, .y = 3 }, .{ .x = 4, .y = 16 });
+                self.stroke(.{ .x = 21, .y = 7 }, .{ .x = 8, .y = 20 });
+                self.stroke(.{ .x = 4, .y = 16 }, .{ .x = 3, .y = 21 });
+                self.stroke(.{ .x = 3, .y = 21 }, .{ .x = 8, .y = 20 });
+            },
         }
     }
 };

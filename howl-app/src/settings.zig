@@ -6,9 +6,9 @@ const themes = @import("themes.zig");
 const bindings = @import("keybindings.zig");
 
 /// Qualified settings groups; every mutable field uses the same bounded editor.
-pub const Page = enum { startup, interaction, appearance, colors, mappings, defaults, profiles };
+pub const Page = enum { startup, appearance, colors, mappings, defaults, profiles };
 /// Human titles in stable sidebar order.
-pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profiles", "Edit profile" };
+pub const titles = [_][]const u8{ "Startup", "Appearance", "Color schemes", "Shortcuts", "Profiles", "Edit profile" };
 /// Maximum derived rows for six custom profiles, sixteen environment pairs each and the mapping registry.
 pub const row_limit = 480;
 /// Editable custom-profile fields; built-in profiles must first be duplicated.
@@ -57,22 +57,6 @@ pub const Target = union(enum) {
 };
 /// Finite settings expose exact persisted values and separate human-facing labels.
 pub const Choice = struct { value: []const u8, label: []const u8 };
-
-fn interactionMapping(target: bindings.Target) bool {
-    return switch (target) {
-        .copy_selection, .paste_clipboard, .toggle_find, .history_oldest, .history_live, .history_page => true,
-        else => false,
-    };
-}
-
-/// The interaction card fits its actual shortcut subset without a second row inventory.
-pub const interaction_row_count = blk: {
-    var count: usize = 0;
-    for (bindings.definitions) |definition| if (interactionMapping(definition.target)) {
-        count += 1;
-    };
-    break :blk count;
-};
 
 /// Bounded catalogue size for a native settings select; text editors are not valid selectors.
 pub fn choiceCount(target: Target, current: *const config.Config) usize {
@@ -207,15 +191,12 @@ const Builder = struct {
         self.count += 1;
     }
 };
-/// Derives bounded rows from one validated live config; it retains no configuration pointers.
+/// Derives bounded rows from one validated live or staged config; no pointers are retained.
 pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     var b: Builder = .{ .out = out };
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
     try b.add(.{ .page = .startup, .label = "Discover shells and REPLs", .target = .discover_shells });
     try b.add(.{ .page = .startup, .label = "Discover SSH config hosts", .target = .discover_ssh_hosts });
-    for (bindings.definitions, 0..) |definition, index| if (interactionMapping(definition.target)) {
-        try b.add(.{ .page = .interaction, .label = definition.label, .target = .{ .binding = @intCast(index) } });
-    };
     try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
     try b.add(.{ .page = .appearance, .label = "Tab chip width", .target = .tab_width });
     try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
@@ -427,7 +408,7 @@ fn environmentName(entries: []const config.Environment, buffer: []u8) ![]const u
     }
     return error.InvalidProfileEnvironment;
 }
-/// Small edit/search state. The live configuration owns row values; only committed candidates allocate.
+/// Small edit/search state. App owns live and staged configurations; this holds only edit bytes.
 pub const Editor = struct {
     page: Page = .startup,
     list: widgets.List = .{},
@@ -462,7 +443,6 @@ pub const Editor = struct {
                 };
                 if (profile_index == null or profile_index.? != self.profile) continue;
             }
-            if (self.search and row.page == .interaction) continue;
             const query = self.query[0..self.query_len];
             if (self.search and !contains(row.label, query) and !contains(row.scope, query)) continue;
             out[count] = @intCast(index);
