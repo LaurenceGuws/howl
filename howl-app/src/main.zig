@@ -1292,8 +1292,8 @@ const App = struct {
     fn drawFieldStyled(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool, rounded: bool) !void {
         const colors = try self.uiPalette();
         if (rounded) {
-            try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, 4);
-            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 3);
+            try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, 7);
+            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 6);
         } else {
             try fill(self.renderer, rect, colors.panel);
             try outline(self.renderer, rect, if (active) colors.accent else colors.border);
@@ -1345,8 +1345,8 @@ const App = struct {
         if (!selected and !hovered) return;
         const colors = try self.uiPalette();
         const base = if (selected) colors.active else colors.idle;
-        try drawing.fillRounded(self.renderer, rect, if (hovered) appearance.hover(base) else base, 4);
-        if (selected and focused) try drawing.fillRounded(self.renderer, .{ .x = rect.x, .y = rect.y + 6, .width = 2, .height = @max(1, rect.height - 12) }, colors.accent, 1);
+        try drawing.fillRounded(self.renderer, rect, if (hovered) appearance.hover(base) else base, 7);
+        if (selected and focused) try drawing.fillRounded(self.renderer, .{ .x = rect.x, .y = rect.y + 7, .width = 2, .height = @max(1, rect.height - 14) }, colors.accent, 1);
     }
     fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
         const e = &self.settings_editor.?;
@@ -2130,6 +2130,16 @@ const App = struct {
         const top = self.headerHeight() + 8;
         return .{ .x = self.width - width - 8, .y = top, .width = width, .height = @max(1, self.height - top - 8) };
     }
+    fn settingsNavRow(self: *const App, number: usize) layout.Rect {
+        const box = self.settingsRect();
+        const sidebar = @min(160, box.width / 3);
+        return .{
+            .x = box.x + 8,
+            .y = box.y + settings_nav_top + @as(f32, @floatFromInt(number)) * 34,
+            .width = @max(1, sidebar - 12),
+            .height = 32,
+        };
+    }
     fn settingsHeaderButton(self: *const App, action: SettingsHeaderAction) layout.Rect {
         const box = self.settingsRect();
         const width: f32 = switch (action) {
@@ -2161,9 +2171,43 @@ const App = struct {
         const box = self.settingsRect();
         const e = self.settings_editor.?;
         const sidebar = @min(160, box.width / 3);
-        const top: f32 = settings_header_height + (if (e.search or e.page == .defaults or e.page == .profiles) @as(f32, 42) else 0);
+        const top: f32 = settings_header_height + (if (e.search or e.page == .profiles) @as(f32, 42) else if (e.page == .defaults) self.settingsScanHeight() + 28 else 0);
         const bottom: f32 = if (!e.search and (e.page == .colors or (e.editing != null and e.edit.kind == .color))) 106 else if (!e.search and e.page == .defaults) 54 else 12;
         return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - bottom) };
+    }
+    fn settingsScanCompact(self: *const App) bool {
+        const box = self.settingsRect();
+        return box.width - @min(160, box.width / 3) - 24 < 320;
+    }
+    fn settingsScanHeight(self: *const App) f32 {
+        return if (self.settingsScanCompact()) 146 else 112;
+    }
+    fn settingsScanCard(self: *const App) layout.Rect {
+        const box = self.settingsRect();
+        const sidebar = @min(160, box.width / 3);
+        return .{
+            .x = box.x + sidebar + 12 + settings_card_gutter,
+            .y = box.y + settings_header_height + settings_card_gutter,
+            .width = @max(1, box.width - sidebar - 24 - 2 * settings_card_gutter),
+            .height = self.settingsScanHeight(),
+        };
+    }
+    fn settingsScanSourceRow(self: *const App, number: usize) layout.Rect {
+        std.debug.assert(number < 2);
+        const card = self.settingsScanCard();
+        if (self.settingsScanCompact()) return .{
+            .x = card.x + 16,
+            .y = card.y + 54 + @as(f32, @floatFromInt(number)) * 39,
+            .width = @max(1, card.width - 32),
+            .height = 34,
+        };
+        const width = @max(1, (card.width - 40) / 2);
+        return .{
+            .x = card.x + 16 + @as(f32, @floatFromInt(number)) * (width + 8),
+            .y = card.y + 64,
+            .width = width,
+            .height = 34,
+        };
     }
     fn startupForm(self: *const App) StartupForm {
         return StartupForm.init(self.settingsBody(), self.settings_scroll_offset);
@@ -2215,9 +2259,9 @@ const App = struct {
     }
     fn simpleSettingsForm(self: *const App) bool {
         const editor = self.settings_editor.?;
-        return !editor.search and switch (editor.page) {
-            .appearance, .colors, .mappings => true,
-            else => false,
+        return editor.search or switch (editor.page) {
+            .appearance, .colors, .mappings, .defaults, .profiles => true,
+            .startup => false,
         };
     }
     fn settingsListCard(self: *const App) layout.Rect {
@@ -2230,8 +2274,9 @@ const App = struct {
         if (self.simpleSettingsForm()) {
             const card = self.settingsListCard();
             const horizontal = @min(settings_card_padding, @max(0, (card.width - 1) / 2));
-            const vertical = @min(settings_card_gutter, @max(0, (card.height - 1) / 2));
-            return .{ .rect = .{ .x = card.x + horizontal, .y = card.y + vertical, .width = @max(1, card.width - 2 * horizontal), .height = @max(1, card.height - 2 * vertical) }, .stride = 48, .gap = 4 };
+            const heading = @min(64, @max(0, card.height - 1));
+            const bottom = @min(settings_card_gutter, @max(0, card.height - heading - 1));
+            return .{ .rect = .{ .x = card.x + horizontal, .y = card.y + heading, .width = @max(1, card.width - 2 * horizontal), .height = @max(1, card.height - heading - bottom) }, .stride = 48, .gap = 4 };
         }
         var body = self.settingsBody();
         body.width = @max(1, body.width - 8);
@@ -2274,6 +2319,17 @@ const App = struct {
     }
     fn settingsToolbarButton(self: *const App, number: usize) layout.Rect {
         const box = self.settingsRect();
+        if (self.settings_editor.?.page == .defaults) {
+            if (number == 2) {
+                const card = self.settingsScanCard();
+                const width = @min(96, @max(1, card.width - 20));
+                return .{ .x = card.x + card.width - width - 12, .y = card.y + 10, .width = width, .height = 32 };
+            }
+            const card = self.settingsListCard();
+            const width = if (card.width < 500) @min(78, @max(42, (card.width - 170) / 2)) else @as(f32, 102);
+            const start = card.x + card.width - 14 - 2 * width - 6;
+            return .{ .x = start + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 14, .width = width, .height = 32 };
+        }
         const body = self.settingsBody();
         const count: f32 = @floatFromInt(self.settingsToolbarCount());
         const width = @max(1, (body.width - (count - 1) * 6) / count);
@@ -2358,7 +2414,7 @@ const App = struct {
         return .{ .x = row.x + row.width - 92, .y = row.y + 5, .width = 88, .height = row.height - 10 };
     }
     fn scanSourceSwitch(row: layout.Rect) layout.Rect {
-        return .{ .x = row.x + row.width - 50, .y = row.y + 12, .width = 46, .height = 26 };
+        return .{ .x = row.x + row.width - 50, .y = row.y + @max(0, (row.height - 26) / 2), .width = 46, .height = 26 };
     }
     fn colorReset(self: *const App) layout.Rect {
         const body = self.settingsBody();
@@ -2407,12 +2463,11 @@ const App = struct {
             try fill(self.renderer, thumb, colors.text);
         }
         const reset = self.colorReset();
-        try fill(self.renderer, reset, colors.idle);
-        try outline(self.renderer, reset, colors.border);
+        try self.drawSettingsControl(reset, self.isHovered(reset));
         try self.clippedText("Preset", reset, reset.x + 8);
         const sample: layout.Rect = .{ .x = reset.x + 8, .y = reset.y + 30, .width = reset.width - 16, .height = 22 };
-        try fill(self.renderer, sample, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 });
-        try outline(self.renderer, sample, colors.border);
+        try drawing.fillRounded(self.renderer, sample, colors.border, 5);
+        try drawing.fillRounded(self.renderer, .{ .x = sample.x + 1, .y = sample.y + 1, .width = @max(1, sample.width - 2), .height = @max(1, sample.height - 2) }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 4);
     }
     fn settingsClick(self: *App, x: f32, y: f32, clicks: u8) !void {
         const e = &self.settings_editor.?;
@@ -2468,8 +2523,8 @@ const App = struct {
         const body = self.settingsBody();
         if (self.settingsScrollbarPress(x, y)) return;
         if (x < body.x - 12 and y >= box.y + settings_nav_top) {
-            const page: usize = @intFromFloat(@floor((y - box.y - settings_nav_top) / 34));
-            if (page < settings.titles.len) {
+            for (0..settings.titles.len) |page| {
+                if (!self.settingsNavRow(page).contains(x, y)) continue;
                 self.cancelComposition();
                 e.page = @fromBackingInt(@intCast(page));
                 e.content_focus = false;
@@ -2480,6 +2535,7 @@ const App = struct {
                 e.form_row = 0;
                 self.settings_scroll_offset = 0;
                 self.settings_scroll_grab = null;
+                break;
             }
             return;
         }
@@ -2496,6 +2552,14 @@ const App = struct {
         if (self.colorSettings()) {
             if (body.contains(x, y)) try self.settingsColorClick(x, y);
             return;
+        }
+        if (!e.search and e.page == .defaults) {
+            for ([_]settings.Target{ .discover_shells, .discover_ssh_hosts }, 0..) |target, number| {
+                const row = self.settingsScanSourceRow(number);
+                if (!row.contains(x, y)) continue;
+                if (scanSourceSwitch(row).contains(x, y)) try self.changeSetting(target, "");
+                return;
+            }
         }
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
             for (0..self.settingsToolbarCount()) |number| {
@@ -2529,9 +2593,6 @@ const App = struct {
         if (!e.search and e.page == .defaults) switch (selected_row.target) {
             .scanned => |index| {
                 if (scannedEnableButton(row_rect).contains(x, y)) return self.changeSetting(.{ .toggle_scanned = index }, "");
-            },
-            .discover_shells, .discover_ssh_hosts => {
-                if (scanSourceSwitch(row_rect).contains(x, y)) return self.changeSetting(selected_row.target, "");
             },
             .set_default => |index| {
                 e.profile = index;
@@ -2684,8 +2745,8 @@ const App = struct {
     }
     fn drawSettingsCard(self: *App, rect: layout.Rect) !void {
         const colors = try self.uiPalette();
-        try drawing.fillRounded(self.renderer, rect, colors.border, 5);
-        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 4);
+        try drawing.fillRounded(self.renderer, rect, colors.border, 11);
+        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 10);
     }
     fn drawStartupSwitch(self: *App, rect: layout.Rect, enabled: bool, focused: bool) !void {
         const colors = try self.uiPalette();
@@ -2697,8 +2758,8 @@ const App = struct {
     }
     fn drawSettingsControl(self: *App, rect: layout.Rect, focused: bool) !void {
         const colors = try self.uiPalette();
-        try drawing.fillRounded(self.renderer, rect, if (focused) colors.accent else colors.border, 4);
-        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 3);
+        try drawing.fillRounded(self.renderer, rect, if (focused) colors.accent else colors.border, 7);
+        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 6);
     }
     fn drawSettingsSelect(self: *App, rect: layout.Rect, label: []const u8, focused: bool, expanded: bool) !void {
         const colors = try self.uiPalette();
@@ -2756,6 +2817,47 @@ const App = struct {
             try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
         }
     }
+    fn drawProfileScanCard(self: *App) !void {
+        const colors = try self.uiPalette();
+        const card = self.settingsScanCard();
+        const button = self.settingsToolbarButton(2);
+        try self.drawSettingsCard(card);
+        const label_width = @max(1, button.x - card.x - 24);
+        try self.clippedText("Discovery", .{ .x = card.x + 16, .y = card.y + 10, .width = label_width, .height = 25 }, card.x + 16);
+        try self.clippedTextColor("Read-only recipes, cached when you scan.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
+        for (0..2) |number| {
+            const row = self.settingsScanSourceRow(number);
+            const toggle = scanSourceSwitch(row);
+            const enabled = if (number == 0) self.settingsConfiguration().value.discover_shells else self.settingsConfiguration().value.discover_ssh_hosts;
+            const narrow = card.width < 500;
+            const label: []const u8 = if (number == 0) (if (narrow) "Shells" else "Local shells and REPLs") else if (self.settingsScanCompact()) "SSH" else if (narrow) "SSH hosts" else "SSH config hosts";
+            try self.clippedText(label, .{ .x = row.x, .y = row.y, .width = @max(1, toggle.x - row.x - (if (narrow) @as(f32, 8) else 44)), .height = row.height }, row.x);
+            if (!narrow) try self.clippedTextColor(if (enabled) "On" else "Off", .{ .x = toggle.x - 37, .y = row.y, .width = 30, .height = row.height }, toggle.x - 37, colors.muted);
+            try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
+        }
+    }
+    fn drawSettingsListHeading(self: *App) !void {
+        const e = self.settings_editor.?;
+        const colors = try self.uiPalette();
+        const card = self.settingsListCard();
+        const title: []const u8 = if (e.search) "Search results" else switch (e.page) {
+            .defaults => "Launch profiles",
+            .profiles => "Profile details",
+            .mappings => "Keyboard shortcuts",
+            else => return,
+        };
+        var hint_buffer: [160]u8 = undefined;
+        const hint: []const u8 = if (e.search) "Select a result to open its settings section." else switch (e.page) {
+            .defaults => "Saved and scanned recipes.",
+            .profiles => try std.fmt.bufPrint(&hint_buffer, "{s} · Save applies your changes.", .{(try self.settingsConfiguration().profile(e.profile)).name}),
+            .mappings => "Click a pencil to record a shortcut.",
+            else => return,
+        };
+        const right = if (!e.search and e.page == .defaults) self.settingsToolbarButton(0).x - 8 else card.x + card.width - 16;
+        const width = @max(1, right - card.x - 16);
+        try self.clippedText(title, .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 }, card.x + 16);
+        try self.clippedTextColor(hint, .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 }, card.x + 16, colors.muted);
+    }
     fn drawSettingsHeaderButtons(self: *App) !void {
         const colors = try self.uiPalette();
         const pending = self.settings_draft != null or self.settings_editor.?.editing != null;
@@ -2782,30 +2884,39 @@ const App = struct {
         const box = self.settingsRect();
         const body = self.settingsBody();
         e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
-        try fill(self.renderer, box, colors.title);
-        try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = body.x - box.x - 12, .height = box.height }, colors.idle);
-        // Join the header to the sidebar for one continuous Settings chrome.
-        try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = box.width, .height = @min(settings_header_height, box.height) }, colors.idle);
-        try outline(self.renderer, box, colors.border);
+        try drawing.fillRounded(self.renderer, box, colors.border, 12);
+        try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @max(1, box.height - 2) }, colors.title, 11);
+        // The sidebar and header share one inset surface without squaring the
+        // outside corners of the Settings shell.
+        const side_width = @max(1, body.x - box.x - 13);
+        try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = side_width, .height = @max(1, box.height - 2) }, colors.idle, 11);
+        try fill(self.renderer, .{ .x = box.x + 12, .y = box.y + 1, .width = @max(1, side_width - 11), .height = @max(1, box.height - 2) }, colors.idle);
+        try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @min(settings_header_height, @max(1, box.height - 2)) }, colors.idle, 11);
+        try fill(self.renderer, .{ .x = box.x + 1, .y = box.y + 12, .width = @max(1, box.width - 2), .height = @max(1, @min(settings_header_height - 12, box.height - 14)) }, colors.idle);
         if (box.width > 360) try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
         const title_width = self.settingsHeaderButton(.save).x - body.x - 10;
         if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else if (e.page == .profiles) "Profile details" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
         try self.drawSettingsHeaderButtons();
         for (settings.titles, 0..) |title, index| {
-            const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + settings_nav_top + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
+            const row = self.settingsNavRow(index);
             if (!e.search and (if (e.page == .profiles) index == @backingInt(settings.Page.defaults) else @backingInt(e.page) == index)) {
-                try fill(self.renderer, row, colors.active);
-                try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
-            }
-            try self.clippedText(title, row, row.x + 6);
+                try drawing.fillRounded(self.renderer, row, colors.active, 7);
+                try drawing.fillRounded(self.renderer, .{ .x = row.x, .y = row.y + 6, .width = 2, .height = row.height - 12 }, colors.accent, 1);
+            } else if (self.isHovered(row)) try drawing.fillRounded(self.renderer, row, appearance.hover(colors.idle), 7);
+            try self.clippedText(title, row, row.x + 10);
         }
         const startup_form = !e.search and e.page == .startup;
         const simple_form = self.simpleSettingsForm();
         const appearance_form = self.appearanceSettings();
         const color_form = self.colorSettings();
         const card_form = appearance_form or color_form;
+        if (!e.search and e.page == .defaults) try self.drawProfileScanCard();
+        if (simple_form and !card_form) {
+            try self.drawSettingsCard(self.settingsListCard());
+            try self.drawSettingsListHeading();
+        }
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
-            const labels: [3][]const u8 = if (e.page == .defaults) .{ "New profile", "Duplicate", "Scan now" } else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
+            const labels: [3][]const u8 = if (e.page == .defaults) (if (self.settingsListCard().width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" }) else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
             for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
                 const button = self.settingsToolbarButton(number);
                 if (simple_form) {
@@ -2822,9 +2933,6 @@ const App = struct {
             try self.drawSettingsDropdown();
             return;
         }
-        if (simple_form and !card_form) {
-            try self.drawSettingsCard(self.settingsListCard());
-        }
         var all: [settings.row_limit]settings.Row = undefined;
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.settingsConfiguration(), &all);
@@ -2834,12 +2942,15 @@ const App = struct {
         const rows = self.settingsRows();
         const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
         const colors_form: ColorForm = if (color_form) self.colorForm() else undefined;
-        var clipped_cards = false;
-        defer if (clipped_cards) clearClip(self.renderer);
+        var clipped_rows = false;
+        defer if (clipped_rows) clearClip(self.renderer);
         if (card_form) {
             try setClip(self.renderer, body);
-            clipped_cards = true;
+            clipped_rows = true;
             if (appearance_form) try self.drawAppearanceCards(form) else try self.drawColorCards(colors_form);
+        } else if (simple_form) {
+            try setClip(self.renderer, rows.rect);
+            clipped_rows = true;
         }
         const paint_start = if (card_form) @as(usize, 0) else start;
         const paint_end = if (card_form) visible else @min(visible, start + self.settingsVisible());
@@ -2938,8 +3049,8 @@ const App = struct {
                     if (rgb) |swatch_color| {
                         const swatch: layout.Rect = .{ .x = right.x + right.width - 23, .y = rect.y + 12, .width = 16, .height = @min(20, rect.height - 16) };
                         value_rect.width = @max(1, swatch.x - value_rect.x - 6);
-                        try fill(self.renderer, swatch, .{ .r = swatch_color.r, .g = swatch_color.g, .b = swatch_color.b, .a = 255 });
-                        try outline(self.renderer, swatch, colors.border);
+                        try drawing.fillRounded(self.renderer, swatch, colors.border, 4);
+                        try drawing.fillRounded(self.renderer, .{ .x = swatch.x + 1, .y = swatch.y + 1, .width = @max(1, swatch.width - 2), .height = @max(1, swatch.height - 2) }, .{ .r = swatch_color.r, .g = swatch_color.g, .b = swatch_color.b, .a = 255 }, 3);
                     }
                     try self.clippedTextColor(contents, value_rect, value_rect.x, if (row.target == .information) colors.muted else colors.text);
                 }
@@ -2951,9 +3062,9 @@ const App = struct {
                 try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
             }
         }
-        if (clipped_cards) {
+        if (clipped_rows) {
             clearClip(self.renderer);
-            clipped_cards = false;
+            clipped_rows = false;
         }
         if (card_form) {
             const view = if (appearance_form) form.view else colors_form.view;
@@ -2969,15 +3080,14 @@ const App = struct {
             const current = self.settingsConfiguration();
             const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
             const preview: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 100, .width = body.width, .height = 32 };
-            try fill(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 });
+            try drawing.fillRounded(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 }, 7);
             try self.clippedTextColor("Terminal  AaBb 0123", preview, preview.x + 8, .{ .r = resolved.foreground.r, .g = resolved.foreground.g, .b = resolved.foreground.b, .a = 255 });
             const width = body.width / 16;
-            for (resolved.palette[0..16], 0..) |rgb, i| try fill(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 });
+            for (resolved.palette[0..16], 0..) |rgb, i| try drawing.fillRounded(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 3);
         }
         if (!e.search and e.page == .defaults and (try self.overviewCloneTarget() orelse .add_profile) == .clone_profile) {
             const button = self.settingsDefaultButton();
-            try fill(self.renderer, button, colors.idle);
-            try outline(self.renderer, button, colors.border);
+            try self.drawSettingsControl(button, self.isHovered(button));
             try self.clippedText(if (e.profile == try self.settingsConfiguration().defaultProfile()) "Default" else "Set default", button, button.x + 8);
         }
     }
@@ -4500,6 +4610,8 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
         .geometry = undefined,
         .wake_event = 0,
         .scale = 1,
+        .width = 1000,
+        .height = 650,
         .bindings = try keybindings.Bindings.init(),
         .settings_editor = .{ .content_focus = true },
     };
@@ -4542,7 +4654,7 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
     try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.selected);
 
     app.settings_editor.?.page = .defaults;
-    const ssh_toggle = App.scanSourceSwitch(app.settingsRows().row(3));
+    const ssh_toggle = App.scanSourceSwitch(app.settingsScanSourceRow(1));
     try app.settingsClick(ssh_toggle.x + 10, ssh_toggle.y + 10, 1);
     try std.testing.expect(app.settings_draft != null);
     try std.testing.expect(app.settingsConfiguration().value.discover_ssh_hosts != configuration.value.discover_ssh_hosts);
@@ -4573,6 +4685,11 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
     try std.testing.expectEqual(settings_box.y + chrome.Geometry.top, search_button.y);
     try std.testing.expectEqual(settings_box.y + settings_header_height, app.settingsBody().y);
     try app.settingsClick(settings_box.x + 12, settings_box.y + settings_nav_top + 34 + 16, 1);
+    try std.testing.expectEqual(settings.Page.appearance, app.settings_editor.?.page);
+    const nav_gap = app.settingsNavRow(0);
+    try app.settingsClick(nav_gap.x + nav_gap.width + 2, nav_gap.y + 12, 1);
+    try std.testing.expectEqual(settings.Page.appearance, app.settings_editor.?.page);
+    try app.settingsClick(nav_gap.x + 12, nav_gap.y + nav_gap.height + 1, 1);
     try std.testing.expectEqual(settings.Page.appearance, app.settings_editor.?.page);
     try app.settingsClick(settings_box.x + 12, settings_box.y + settings_nav_top + 16, 1);
     try std.testing.expectEqual(settings.Page.startup, app.settings_editor.?.page);
@@ -4616,16 +4733,18 @@ test "Profiles label clicks navigate while explicit scan controls stage only the
         .geometry = undefined,
         .wake_event = 0,
         .scale = 1,
+        .width = 1000,
+        .height = 650,
         .bindings = try keybindings.Bindings.init(),
         .settings_editor = .{ .page = .defaults, .content_focus = true },
     };
     app.init.io = threaded.io();
     defer app.discardSettings();
     try std.testing.expectEqual(@as(usize, 5), settings.titles.len);
-    const cached_row = app.settingsRows().row(4);
+    const cached_row = app.settingsRows().row(2);
     try app.settingsClick(cached_row.x + 12, cached_row.y + 12, 1);
     try std.testing.expect(app.settings_draft == null);
-    try std.testing.expectEqual(@as(usize, 4), app.settings_editor.?.list.selected);
+    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.list.selected);
     const toggle = App.scannedEnableButton(cached_row);
     try app.settingsClick(toggle.x + 12, toggle.y + 12, 1);
     try std.testing.expect(!app.settingsConfiguration().value.scanned_profiles[0].enabled);
@@ -4633,7 +4752,7 @@ test "Profiles label clicks navigate while explicit scan controls stage only the
     app.settingsCancel();
     try std.testing.expect(app.settingsConfiguration().value.scanned_profiles[0].enabled);
 
-    const source_row = app.settingsRows().row(2);
+    const source_row = app.settingsScanSourceRow(0);
     try app.settingsClick(source_row.x + 12, source_row.y + 12, 1);
     try std.testing.expect(app.settings_draft == null);
     const source_switch = App.scanSourceSwitch(source_row);
@@ -4749,6 +4868,26 @@ test "settings cards share symmetric painted and pointer geometry" {
     }) |size| {
         app.width = size.width;
         app.height = size.height;
+        app.settings_editor.?.page = .defaults;
+        const scan = app.settingsScanCard();
+        const list_card = app.settingsListCard();
+        const scan_button = app.settingsToolbarButton(2);
+        const new_button = app.settingsToolbarButton(0);
+        const duplicate_button = app.settingsToolbarButton(1);
+        try std.testing.expect(scan.y >= app.settingsRect().y + settings_header_height);
+        try std.testing.expect(scan.y + scan.height < list_card.y);
+        try std.testing.expectApproxEqAbs(scan.x, list_card.x, 0.01);
+        try std.testing.expect(scan_button.x >= scan.x and scan_button.x + scan_button.width <= scan.x + scan.width);
+        try std.testing.expect(new_button.x >= list_card.x and duplicate_button.x + duplicate_button.width <= list_card.x + list_card.width);
+        try std.testing.expect(new_button.x + new_button.width < duplicate_button.x);
+        for (0..2) |number| {
+            const source = app.settingsScanSourceRow(number);
+            const toggle = App.scanSourceSwitch(source);
+            try std.testing.expect(source.x >= scan.x and source.x + source.width <= scan.x + scan.width);
+            try std.testing.expect(source.y >= scan.y and source.y + source.height <= scan.y + scan.height);
+            try std.testing.expect(toggle.x >= source.x and toggle.x + toggle.width <= source.x + source.width);
+            try std.testing.expect(toggle.y >= source.y and toggle.y + toggle.height <= source.y + source.height);
+        }
         app.settings_editor.?.page = .mappings;
         const body = app.settingsBody();
         const card = app.settingsListCard();
@@ -4804,8 +4943,8 @@ test "settings cards share symmetric painted and pointer geometry" {
         }
         app.settings_editor.?.page = .appearance;
         app.settings_editor.?.search = true;
-        try std.testing.expect(!app.simpleSettingsForm());
-        try std.testing.expectEqual(app.settingsBody().x, app.settingsRows().rect.x);
+        try std.testing.expect(app.simpleSettingsForm());
+        try std.testing.expect(app.settingsRows().rect.x > app.settingsBody().x);
         app.settings_editor.?.search = false;
     }
     app.width = 920;

@@ -462,6 +462,10 @@ pub const Editor = struct {
         var count: usize = 0;
         for (supplied, 0..) |row, index| {
             if (!self.search and row.page != self.page) continue;
+            // Discovery source switches have their own controls above the
+            // Profiles catalogue. Global search still includes both.
+            if (!self.search and self.page == .defaults and
+                (row.target == .discover_shells or row.target == .discover_ssh_hosts)) continue;
             if (!self.search and self.page == .profiles) {
                 const profile_index: ?u8 = switch (row.target) {
                     .information => 0,
@@ -832,6 +836,27 @@ test "profile editor shows only selected recipe while global search still finds 
     editor.search = true;
     const global = editor.indices(all[0..count], &found);
     try std.testing.expect(global > shown);
+}
+
+test "Profiles list excludes standalone discovery switches but search retains them" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try accept(&current, .add_profile, "");
+    var all: [row_limit]Row = undefined;
+    const count = try rows(&current, &all);
+    var indices_buffer: [row_limit]u16 = undefined;
+    var editor: Editor = .{ .page = .defaults };
+    const shown = editor.indices(all[0..count], &indices_buffer);
+    try std.testing.expectEqual(current.profileCount(), shown);
+    for (indices_buffer[0..shown]) |index| try std.testing.expect(all[index].target == .set_default);
+
+    editor.search = true;
+    @memcpy(editor.query[0.."Include".len], "Include");
+    editor.query_len = "Include".len;
+    const matches = editor.indices(all[0..count], &indices_buffer);
+    try std.testing.expectEqual(@as(usize, 2), matches);
+    try std.testing.expectEqual(Target.discover_shells, all[indices_buffer[0]].target);
+    try std.testing.expectEqual(Target.discover_ssh_hosts, all[indices_buffer[1]].target);
 }
 
 test "single-tab bar preference defaults visible and toggles without editing text" {
