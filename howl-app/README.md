@@ -162,7 +162,7 @@ and Ctrl+C/X copies/cuts the exact selected range. Selected ink contrasts with t
 theme accent and is clipped inside the field border. The font chooser retains explicit Preview/Save/Cancel and samples Latin letters,
 ambiguous glyphs, operators, box drawing, blocks, Nerd Font icons, accented text,
 Greek/Cyrillic, Arabic/Hebrew and CJK. Missing family glyphs remain visible.
-Seven settings pages edit Local shell/command/cwd/environment recipes, mappings,
+Five settings sidebar sections edit Local shell/command/cwd/environment recipes, mappings,
 themes and exact font paths. A bounded installed-font chooser supplies preview
 and cancellation. Font updates are transactional: failed saves restore
 presentation against the unchanged canonical grid/history. Child environment
@@ -174,15 +174,25 @@ Local recipe and up to six custom recipes. Unknown fields and invalid saved data
 fail explicitly. No route migration or Odin compatibility parser is retained;
 odin.json stays independent.
 
-Startup has two independent, opt-in discovery switches: installed shells/REPLs
-and SSH config hosts. Opening the profile menu rebuilds a read-only snapshot;
-typing ranks exact/prefix matches before substrings and abbreviations. The wheel
-scrolls a retained viewport; arrows and PageUp/PageDown/Home/End keep selection
-visible. All/Saved/Shell/REPL/Remote chips filter profiles; Tab and Shift+Tab
-cycle them without clearing the query. Saved commands stay in Saved rather than
-having their runtime category guessed; the built-in Local profile is also a Shell. Discovery never starts candidates or makes connections.
-Saved profiles remain separate; selecting a discovered entry copies its complete
-launch recipe before the snapshot can retire. New tabs use the saved default.
+Profiles has two independent source switches for scanning installed shells/REPLs
+and SSH config hosts. **Scan now** reads only the selected sources and stages the
+result under the global Settings Save/Cancel transaction. The launcher reads the
+last saved cache without scanning on startup or on menu open. Each scanned
+entry is read-only, can be disabled individually, and can be duplicated into an
+independent editable saved profile. A rescan updates matched recipes, keeps each
+disable choice, and marks missing entries stale without deleting them. Disabled
+and stale entries do not appear in launch suggestions. Scan-source switches do
+not hide previously cached entries. A saved profile's details editor is now
+inside Profiles, not an extra sidebar page.
+
+Typing in the profile menu ranks exact/prefix matches before substrings and
+abbreviations. The wheel scrolls a retained viewport; arrows and
+PageUp/PageDown/Home/End keep selection visible. All/Saved/Shell/REPL/Remote
+chips filter profiles; Tab and Shift+Tab cycle them without clearing the query.
+Saved commands stay in Saved rather than having their runtime category guessed;
+the built-in Local profile is also a Shell. Discovery never starts candidates
+or makes connections. Selecting a cached recipe copies it into the new tab;
+new tabs use the saved default.
 
 Shell discovery checks PATH for a curated shell/REPL list and reads /etc/shells.
 SSH discovery enumerates concrete Host aliases in ~/.ssh/config and
@@ -194,11 +204,14 @@ HOME, environment-variable expansion and the %d/%% tokens; target-dependent
 expansions and other-user tilde paths fail explicitly. Discovery reads no keys,
 writes no SSH configuration, and installs nothing remotely.
 
-A snapshot holds at most 512 entries. Configuration input is bounded to 64 files,
+A scan and its saved cache each hold at most 512 entries. Discovery input is bounded to 64 files,
 eight include levels, 256 KiB per file and 2 MiB total; Include expansion inspects
-at most 8,192 directory entries and 32 path components. A failed census reports
-its error and leaves saved profiles usable. Discovered entries are not persisted
-and are not added to the saved-default selector.
+at most 8,192 directory entries and 32 path components. A failed scan reports
+its error and leaves the saved cache unchanged. Cached discoveries persist in
+app.json but are not added to the saved-default selector.
+The new cache field is not understood by older strict howl-app binaries; use
+an isolated XDG_CONFIG_HOME for pre-promotion canaries, and keep the prior
+app.json when rehearsing a binary rollback.
 
 Profiles may specify an explicit argument array (at most 16 arguments and 2 KiB
 of argument bytes), mutually exclusive with Command. Edit it as JSON in the

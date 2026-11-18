@@ -2,11 +2,10 @@
 const std = @import("std");
 const widgets = @import("widgets.zig");
 const config = @import("config.zig");
-const discovery = @import("discovery.zig");
 const keybindings = @import("keybindings.zig");
 
 /// Complete bounded view: seven saved profiles, discovered recipes and two app actions.
-pub const limit = @max(keybindings.definitions.len, discovery.limit + 9);
+pub const limit = @max(keybindings.definitions.len, config.scanned_limit + 9);
 /// Saved commands have no inferred runtime category; Local is also a Shell.
 pub const Filter = enum { all, saved, shell, repl, remote };
 /// Visible chip labels in keyboard cycle order.
@@ -23,17 +22,19 @@ pub const Picker = struct {
 
     /// Returns stable recipe/action indexes, ranked by exact, prefix, substring, then subsequence.
     /// Equal ranks retain source order. Filtering cannot reinterpret a saved command.
-    pub fn indices(self: *const Picker, configuration: *const config.Config, discovered: ?*const discovery.Catalogue, out: *[limit]usize) error{InvalidDefaultProfile}!usize {
+    pub fn indices(self: *const Picker, configuration: *const config.Config, out: *[limit]usize) error{InvalidDefaultProfile}!usize {
         var count: usize = 0;
         var ranks: [limit]u32 = undefined;
         const saved = configuration.profileCount();
-        const profiles = @as(usize, saved) + (if (discovered) |catalogue| @as(usize, catalogue.count) else 0);
+        const scanned = configuration.value.scanned_profiles;
+        const profiles = @as(usize, saved) + scanned.len;
         const candidates = if (self.profile) profiles + 2 else keybindings.definitions.len;
         for (0..candidates) |i| {
+            if (self.profile and i >= saved and i < profiles and (!scanned[i - saved].enabled or scanned[i - saved].stale)) continue;
             if (self.profile and self.filter != .all) {
                 const accepted = if (i < saved)
                     self.filter == .saved or (i == 0 and self.filter == .shell)
-                else if (i < profiles) switch (discovered.?.entries[i - saved].kind) {
+                else if (i < profiles) switch (scanned[i - saved].kind) {
                     .shell => self.filter == .shell,
                     .repl => self.filter == .repl,
                     .ssh => self.filter == .remote,
@@ -43,7 +44,7 @@ pub const Picker = struct {
             const label = if (!self.profile) keybindings.definitions[i].label else if (i < saved)
                 (try configuration.profile(@intCast(i))).name
             else if (i < profiles)
-                discovered.?.entries[i - saved].recipe.name
+                scanned[i - saved].recipe.name
             else if (i == profiles) "Command Palette" else "Settings";
             const rank = match(label, self.query[0..self.len]) orelse continue;
             var at = count;
@@ -131,7 +132,7 @@ test "ranked search prefers an exact destination before prefix, substring and ab
     var p: Picker = .{ .profile = true };
     try p.append("PROD");
     var indexes: [limit]usize = undefined;
-    const count = try p.indices(&configuration, null, &indexes);
+    const count = try p.indices(&configuration, &indexes);
     try std.testing.expectEqualSlices(usize, &.{ 3, 1, 2, 4 }, indexes[0..count]);
     p.reset();
     try std.testing.expectEqualStrings("PROD", p.query[0..p.len]);
@@ -141,26 +142,42 @@ test "ranked search prefers an exact destination before prefix, substring and ab
 test "categories preserve custom saved identity and never admit app actions" {
     var configuration = try config.Config.parse(std.testing.allocator, std.testing.io, "{\"schema\":1,\"terminal_font_pixels\":15,\"profiles\":[{\"id\":\"custom\",\"name\":\"Mystery\",\"command\":\"ssh remote\"}]}");
     defer configuration.deinit();
-    var catalogue: discovery.Catalogue = .{ .arena = std.heap.ArenaAllocator.init(std.testing.allocator) };
-    defer catalogue.arena.deinit();
-    catalogue.entries[0] = .{ .kind = .shell, .recipe = .{ .name = "Fish" } };
-    catalogue.entries[1] = .{ .kind = .repl, .recipe = .{ .name = "Python" } };
-    catalogue.entries[2] = .{ .kind = .ssh, .recipe = .{ .name = "Remote" } };
-    catalogue.count = 3;
+    const cached = [_]config.ScannedProfile{
+        .{ .kind = .shell, .recipe = .{ .id = "auto.shell.fish", .name = "Fish" } },
+        .{ .kind = .repl, .recipe = .{ .id = "auto.repl.python", .name = "Python" } },
+        .{ .kind = .ssh, .recipe = .{ .id = "auto.ssh.remote", .name = "Remote" } },
+    };
+    configuration.value.scanned_profiles = &cached;
     var p: Picker = .{ .profile = true };
     var indexes: [limit]usize = undefined;
     for ([_]Filter{ .saved, .shell, .repl, .remote }, [_][]const usize{ &.{ 0, 1 }, &.{ 0, 2 }, &.{3}, &.{4} }) |filter, expected| {
         p.filter = filter;
-        const count = try p.indices(&configuration, &catalogue, &indexes);
+        const count = try p.indices(&configuration, &indexes);
         try std.testing.expectEqualSlices(usize, expected, indexes[0..count]);
     }
     try p.append("Python");
     p.filter = .remote;
-    try std.testing.expectEqual(@as(usize, 0), try p.indices(&configuration, &catalogue, &indexes));
+    try std.testing.expectEqual(@as(usize, 0), try p.indices(&configuration, &indexes));
     p.cycle(true);
     try std.testing.expectEqual(Filter.repl, p.filter);
     try std.testing.expectEqualStrings("Python", p.query[0..p.len]);
-    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &catalogue, &indexes));
+    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indexes));
+}
+
+test "disabled and stale scans never appear among launch suggestions" {
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    const cached = [_]config.ScannedProfile{
+        .{ .kind = .shell, .recipe = .{ .id = "auto.shell.bash", .name = "Bash" } },
+        .{ .kind = .ssh, .recipe = .{ .id = "auto.ssh.disabled", .name = "Disabled" }, .enabled = false },
+        .{ .kind = .ssh, .recipe = .{ .id = "auto.ssh.missing", .name = "Missing" }, .stale = true },
+    };
+    configuration.value.scanned_profiles = &cached;
+    var picker: Picker = .{ .profile = true };
+    var indexes: [limit]usize = undefined;
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 4, 5 }, indexes[0..try picker.indices(&configuration, &indexes)]);
+    picker.filter = .remote;
+    try std.testing.expectEqual(@as(usize, 0), try picker.indices(&configuration, &indexes));
 }
 
 test "viewport stays still until needed; wheel, empty results and resize keep selection valid" {
@@ -200,15 +217,14 @@ test "viewport stays still until needed; wheel, empty results and resize keep se
 test "a full catalogue stays bounded and keeps exact launch indexes through filtering" {
     var configuration = config.Config.defaults(std.testing.allocator);
     defer configuration.deinit();
-    var catalogue: discovery.Catalogue = .{ .arena = std.heap.ArenaAllocator.init(std.testing.allocator) };
-    defer catalogue.arena.deinit();
-    for (&catalogue.entries) |*entry| entry.* = .{ .kind = .ssh, .recipe = .{ .name = "host" } };
-    catalogue.count = discovery.limit;
+    var cached: [config.scanned_limit]config.ScannedProfile = undefined;
+    for (&cached) |*entry| entry.* = .{ .kind = .ssh, .recipe = .{ .id = "auto.ssh.host", .name = "host" } };
+    configuration.value.scanned_profiles = &cached;
     var p: Picker = .{ .profile = true, .filter = .remote };
     var indexes: [limit]usize = undefined;
     try p.append("host");
-    try std.testing.expectEqual(@as(usize, discovery.limit), try p.indices(&configuration, &catalogue, &indexes));
-    for (indexes[0..discovery.limit], 1..) |index, expected| try std.testing.expectEqual(expected, index);
+    try std.testing.expectEqual(@as(usize, config.scanned_limit), try p.indices(&configuration, &indexes));
+    for (indexes[0..config.scanned_limit], 1..) |index, expected| try std.testing.expectEqual(expected, index);
     p.list.first = 500;
     p.scroll(1, 0, 8);
     try std.testing.expectEqual(@as(usize, 0), p.list.first);

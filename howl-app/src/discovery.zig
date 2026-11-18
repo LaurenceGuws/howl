@@ -4,7 +4,7 @@ const c = @import("desktop");
 const config = @import("config.zig");
 
 /// A menu holds at most 512 discovered recipes; saved profiles have a separate bound.
-pub const limit = 512;
+pub const limit = config.scanned_limit;
 const path_limit = 4096;
 const file_limit = 256 * 1024;
 const total_file_limit = 2 * 1024 * 1024;
@@ -12,7 +12,7 @@ const files_limit = 64;
 const depth_limit = 8;
 
 /// Presentation origin, independent of executable/argument launch semantics.
-pub const Kind = enum { shell, repl, ssh };
+pub const Kind = config.ScanKind;
 /// Borrowed discovery fact; the catalogue owns every recipe byte.
 pub const Entry = struct { kind: Kind, recipe: config.Profile };
 
@@ -195,6 +195,82 @@ pub const Catalogue = struct {
         }
     }
 };
+
+/// Reconciles an explicit scan into a candidate configuration. Unscanned
+/// sources are left alone; missing scanned entries become stale, while their
+/// individual enable state survives. The caller stages the result for Save.
+pub fn reconcile(current: *const config.Config, io: std.Io, found: *const Catalogue) !config.Config {
+    const value = current.value;
+    if (!value.discover_shells and !value.discover_ssh_hosts) return error.NoScanSources;
+    var entries: [limit]config.ScannedProfile = undefined;
+    var count = value.scanned_profiles.len;
+    @memcpy(entries[0..count], value.scanned_profiles);
+    for (entries[0..count]) |*entry| {
+        if ((entry.kind == .ssh and value.discover_ssh_hosts) or (entry.kind != .ssh and value.discover_shells)) entry.stale = true;
+    }
+    for (found.entries[0..found.count]) |entry| {
+        var matched = false;
+        for (entries[0..count]) |*cached| {
+            if (!std.mem.eql(u8, cached.recipe.id, entry.recipe.id)) continue;
+            cached.kind = entry.kind;
+            cached.recipe = entry.recipe;
+            cached.stale = false;
+            matched = true;
+            break;
+        }
+        if (matched) continue;
+        if (count == entries.len) return error.DiscoveryEntryLimit;
+        entries[count] = .{ .kind = entry.kind, .recipe = entry.recipe };
+        count += 1;
+    }
+    var candidate = value;
+    candidate.scanned_profiles = entries[0..count];
+    return config.Config.fromValue(current.allocator, io, candidate);
+}
+
+test "explicit rescans refresh facts, retain missing entries and preserve per-entry choices" {
+    var current = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"discover_shells":true,"discover_ssh_hosts":true,"scanned_profiles":[{"kind":"shell","recipe":{"id":"auto.shell.bash","name":"Bash","shell":"/bin/bash"},"enabled":false},{"kind":"ssh","recipe":{"id":"auto.ssh.old","name":"Old host","shell":"/usr/bin/ssh"}}]}
+    );
+    defer current.deinit();
+    var found = Catalogue.init(std.testing.allocator);
+    defer found.arena.deinit();
+    found.entries[0] = .{ .kind = .shell, .recipe = .{ .id = "auto.shell.bash", .name = "Updated Bash", .shell = "/usr/bin/bash" } };
+    found.entries[1] = .{ .kind = .ssh, .recipe = .{ .id = "auto.ssh.new", .name = "New host", .shell = "/usr/bin/ssh" } };
+    found.count = 2;
+    var staged = try reconcile(&current, std.testing.io, &found);
+    defer staged.deinit();
+    try std.testing.expectEqual(@as(usize, 3), staged.value.scanned_profiles.len);
+    try std.testing.expectEqualStrings("Updated Bash", staged.value.scanned_profiles[0].recipe.name);
+    try std.testing.expect(!staged.value.scanned_profiles[0].enabled and !staged.value.scanned_profiles[0].stale);
+    try std.testing.expect(staged.value.scanned_profiles[1].enabled and staged.value.scanned_profiles[1].stale);
+    try std.testing.expect(staged.value.scanned_profiles[2].enabled and !staged.value.scanned_profiles[2].stale);
+    try std.testing.expectEqualStrings("Old host", current.value.scanned_profiles[1].recipe.name);
+    try std.testing.expect(!current.value.scanned_profiles[1].stale);
+
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+    try staged.saveAt(std.testing.io, temporary.dir, "app.json");
+    var persisted = try config.Config.loadAt(std.testing.allocator, std.testing.io, temporary.dir, "app.json");
+    defer persisted.deinit();
+    try std.testing.expect(persisted.value.scanned_profiles[1].stale);
+    try std.testing.expect(!persisted.value.scanned_profiles[0].enabled);
+
+    var partial_schema = persisted.value;
+    partial_schema.discover_shells = false;
+    var partial = try config.Config.fromValue(std.testing.allocator, std.testing.io, partial_schema);
+    defer partial.deinit();
+    found.entries[0] = found.entries[1];
+    found.count = 1;
+    var ssh_only = try reconcile(&partial, std.testing.io, &found);
+    defer ssh_only.deinit();
+    try std.testing.expect(!ssh_only.value.scanned_profiles[0].stale);
+    try std.testing.expect(!ssh_only.value.scanned_profiles[0].enabled);
+    try std.testing.expect(ssh_only.value.scanned_profiles[1].stale);
+    var no_sources = config.Config.defaults(std.testing.allocator);
+    defer no_sources.deinit();
+    try std.testing.expectError(error.NoScanSources, reconcile(&no_sources, std.testing.io, &found));
+}
 
 // The recursive reader has one exact error set; recursion cannot infer it.
 const SshError = std.Io.Dir.RealPathFileAllocError ||

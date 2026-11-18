@@ -34,6 +34,18 @@ pub const Profile = struct {
     environment: []const Environment = &.{},
     font_pixels: i32 = 0,
 };
+/// One cached discovery fact. Scanning updates the recipe; the user's enable
+/// decision survives rescans, and absence is recorded rather than discarded.
+pub const ScanKind = enum { shell, repl, ssh };
+/// Shared limit for discovery, persisted cache and the launch picker.
+pub const scanned_limit = 512;
+/// Immutable discovered recipe plus mutable user visibility and scan freshness.
+pub const ScannedProfile = struct {
+    kind: ScanKind,
+    recipe: Profile,
+    enabled: bool = true,
+    stale: bool = false,
+};
 /// Saved tab sizing policy; fitted chips share the available caption space equally.
 pub const TabWidth = enum { fixed, fit };
 /// Strict Local-only saved configuration; no remote route vocabulary.
@@ -42,6 +54,7 @@ pub const Schema = struct {
     terminal_font_pixels: i32 = 0,
     default_profile: []const u8 = "",
     profiles: []const Profile = &.{},
+    scanned_profiles: []const ScannedProfile = &.{},
     keybindings: []const bindings.Override = &.{},
     app_theme: []const u8 = "howl_dark",
     app_colors: colors.Application = .{},
@@ -60,6 +73,7 @@ pub const Schema = struct {
     cursor_outline_pixels: u8 = 1,
     cursor_blink_interval_ms: u16 = 500,
     cursor_blink_idle_ms: u32 = 0,
+    // Persisted source selectors for explicit Profile scans; neither enables startup I/O.
     discover_shells: bool = false,
     discover_ssh_hosts: bool = false,
     font: Font = .{},
@@ -83,6 +97,8 @@ pub const ValidationError = bindings.LoadError || std.Io.Dir.AccessError || erro
     InvalidProfileArguments,
     DuplicateEnvironment,
     InvalidDefaultProfile,
+    InvalidScannedProfile,
+    DuplicateScannedProfile,
     InvalidFontPath,
 };
 
@@ -303,6 +319,13 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
         try validateProfile(p);
         if (std.mem.eql(u8, p.id, "local")) return error.DuplicateProfileID;
         for (value.profiles[0..index]) |other| if (std.mem.eql(u8, p.id, other.id)) return error.DuplicateProfileID;
+    }
+    if (value.scanned_profiles.len > scanned_limit) return error.ProfileLimit;
+    for (value.scanned_profiles, 0..) |entry, index| {
+        try validateProfile(entry.recipe);
+        if (!std.mem.startsWith(u8, entry.recipe.id, "auto.")) return error.InvalidScannedProfile;
+        for (value.profiles) |saved| if (std.mem.eql(u8, saved.id, entry.recipe.id)) return error.DuplicateScannedProfile;
+        for (value.scanned_profiles[0..index]) |previous| if (std.mem.eql(u8, previous.recipe.id, entry.recipe.id)) return error.DuplicateScannedProfile;
     }
     for (value.font.paths()) |file| {
         if (!text(file, 4096, false)) return error.InvalidFontPath;

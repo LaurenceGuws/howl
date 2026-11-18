@@ -8,9 +8,9 @@ const bindings = @import("keybindings.zig");
 /// Qualified settings groups; every mutable field uses the same bounded editor.
 pub const Page = enum { startup, appearance, colors, mappings, defaults, profiles };
 /// Human titles in stable sidebar order.
-pub const titles = [_][]const u8{ "Startup", "Appearance", "Color schemes", "Shortcuts", "Profiles", "Edit profile" };
-/// Maximum derived rows for six custom profiles, sixteen environment pairs each and the mapping registry.
-pub const row_limit = 480;
+pub const titles = [_][]const u8{ "Startup", "Appearance", "Color schemes", "Shortcuts", "Profiles" };
+/// All cached discoveries plus the bounded editable profiles and mappings.
+pub const row_limit = 1024;
 /// Editable custom-profile fields; built-in profiles must first be duplicated.
 pub const ProfileField = enum { name, shell, command, arguments, cwd, font_pixels };
 /// One catalogue index and exact custom-profile field.
@@ -42,6 +42,9 @@ pub const Target = union(enum) {
     cursor_blink_idle_ms,
     discover_shells,
     discover_ssh_hosts,
+    scanned: u16,
+    toggle_scanned: u16,
+    clone_scanned: u16,
     font: u8,
     binding: u8,
     profile: ProfileTarget,
@@ -138,6 +141,11 @@ pub const Row = struct {
             },
             .discover_shells => if (value.discover_shells) "On" else "Off",
             .discover_ssh_hosts => if (value.discover_ssh_hosts) "On" else "Off",
+            .scanned => |index| blk: {
+                if (index >= value.scanned_profiles.len) return error.InvalidSetting;
+                const entry = value.scanned_profiles[index];
+                break :blk if (entry.stale) "Not found" else if (entry.enabled) "Enabled" else "Disabled";
+            },
             .font => |index| if (index < 6) value.font.paths()[index] else error.InvalidSetting,
             .binding => |index| blk: {
                 if (index >= bindings.definitions.len) return error.InvalidSetting;
@@ -195,8 +203,6 @@ const Builder = struct {
 pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     var b: Builder = .{ .out = out };
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
-    try b.add(.{ .page = .startup, .label = "Discover shells and REPLs", .target = .discover_shells });
-    try b.add(.{ .page = .startup, .label = "Discover SSH config hosts", .target = .discover_ssh_hosts });
     try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
     try b.add(.{ .page = .appearance, .label = "Tab chip width", .target = .tab_width });
     try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
@@ -250,6 +256,18 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
         try b.add(.{ .page = .profiles, .label = "Add environment entry", .scope = recipe.name, .target = .{ .add_environment = index } });
         try b.add(.{ .page = .profiles, .label = "Delete profile", .scope = recipe.name, .target = .{ .delete_profile = index } });
     }
+    try b.add(.{ .page = .defaults, .label = "Include local shells and REPLs", .target = .discover_shells });
+    try b.add(.{ .page = .defaults, .label = "Include SSH config hosts", .target = .discover_ssh_hosts });
+    for (current.value.scanned_profiles, 0..) |entry, index| try b.add(.{
+        .page = .defaults,
+        .label = entry.recipe.name,
+        .scope = switch (entry.kind) {
+            .shell => "Shell",
+            .repl => "REPL",
+            .ssh => "SSH",
+        },
+        .target = .{ .scanned = @intCast(index) },
+    });
     try b.add(.{ .page = .profiles, .label = "New launch profile", .target = .add_profile });
     return b.count;
 }
@@ -260,11 +278,13 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
     defer if (parsed_arguments) |*parsed| parsed.deinit();
     var profiles: [6]config.Profile = @splat(.{});
     var environment: [16]config.Environment = @splat(.{});
+    var scanned: [config.scanned_limit]config.ScannedProfile = undefined;
     var overrides: [bindings.definitions.len]bindings.Override = @splat(.{});
     var updated_bindings = try bindings.Bindings.fromOverrides(value.keybindings);
     var generated: [128]u8 = undefined;
     if (value.profiles.len > profiles.len) return error.ProfileLimit;
     @memcpy(profiles[0..value.profiles.len], value.profiles);
+    @memcpy(scanned[0..value.scanned_profiles.len], value.scanned_profiles);
     switch (target) {
         .default_font => value.terminal_font_pixels = try std.fmt.parseInt(i32, text, 10),
         .default_profile => value.default_profile = text,
@@ -288,6 +308,11 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .cursor_blink => value.cursor_blink = if (std.mem.eql(u8, text, "Off")) .off else if (std.mem.eql(u8, text, "Application")) .application else if (std.mem.eql(u8, text, "Always")) .always else return error.InvalidSetting,
         .discover_shells => value.discover_shells = if (text.len == 0) !value.discover_shells else try boolean(text),
         .discover_ssh_hosts => value.discover_ssh_hosts = if (text.len == 0) !value.discover_ssh_hosts else try boolean(text),
+        .toggle_scanned => |index| {
+            if (index >= value.scanned_profiles.len) return error.InvalidSetting;
+            scanned[index].enabled = !scanned[index].enabled;
+            value.scanned_profiles = scanned[0..value.scanned_profiles.len];
+        },
         .font => |index| {
             if (index >= 6) return error.InvalidSetting;
             switch (index) {
@@ -361,9 +386,13 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
             recipe.environment = environment[0..recipe.environment.len];
             value.profiles = profiles[0..value.profiles.len];
         },
-        .add_profile, .clone_profile => {
+        .add_profile, .clone_profile, .clone_scanned => {
             if (value.profiles.len == profiles.len) return error.ProfileLimit;
-            const recipe = if (target == .clone_profile) try current.profile(target.clone_profile) else config.Profile{ .name = "New profile" };
+            const recipe = if (target == .clone_profile) try current.profile(target.clone_profile) else if (target == .clone_scanned) blk: {
+                const index = target.clone_scanned;
+                if (index >= value.scanned_profiles.len) return error.InvalidSetting;
+                break :blk value.scanned_profiles[index].recipe;
+            } else config.Profile{ .name = "New profile" };
             profiles[value.profiles.len] = recipe;
             profiles[value.profiles.len].id = try profileID(current, &generated);
             value.profiles = profiles[0 .. value.profiles.len + 1];
@@ -376,7 +405,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
             std.mem.copyForwards(config.Profile, profiles[retiring..count], profiles[retiring + 1 .. count + 1]);
             value.profiles = profiles[0..count];
         },
-        .font_family, .information => return error.ReadOnlySetting,
+        .font_family, .information, .scanned => return error.ReadOnlySetting,
     }
     return config.Config.fromValue(current.allocator, io, value);
 }
@@ -676,7 +705,7 @@ test "finite settings expose labeled dropdown options and stage one typed value"
     try std.testing.expect(editor.editing == null);
     try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
 }
-test "startup discovery switches toggle independently and produce validated owned settings" {
+test "manual scan source switches toggle independently and produce validated owned settings" {
     var current = config.Config.defaults(std.testing.allocator);
     defer current.deinit();
     const before_shells = current.value.discover_shells;
@@ -691,6 +720,36 @@ test "startup discovery switches toggle independently and produce validated owne
     try accept(&current, .discover_ssh_hosts, "");
     try std.testing.expectEqual(before_shells, current.value.discover_shells);
     try std.testing.expectEqual(before_ssh, current.value.discover_ssh_hosts);
+}
+test "cached discoveries are read-only, independently disableable and duplicate into saved profiles" {
+    var source = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3","arguments":["-q"]}}]}
+    );
+    defer source.deinit();
+    var rows_buffer: [row_limit]Row = undefined;
+    const count = try rows(&source, &rows_buffer);
+    var scan_seen = false;
+    var text_buffer: [32]u8 = undefined;
+    for (rows_buffer[0..count]) |row| if (row.target == .scanned) {
+        scan_seen = true;
+        try std.testing.expect(!row.editable());
+        try std.testing.expectEqualStrings("Enabled", try row.text(&source, &text_buffer));
+    };
+    try std.testing.expect(scan_seen);
+    try std.testing.expectError(error.ReadOnlySetting, change(&source, std.testing.io, .{ .scanned = 0 }, "renamed"));
+
+    var copied = try change(&source, std.testing.io, .{ .clone_scanned = 0 }, "");
+    defer copied.deinit();
+    try std.testing.expectEqual(@as(usize, 1), copied.value.profiles.len);
+    try std.testing.expectEqualStrings("profile_1", copied.value.profiles[0].id);
+    try std.testing.expectEqualStrings("Python", copied.value.profiles[0].name);
+    try std.testing.expectEqualStrings("/usr/bin/python3", copied.value.profiles[0].shell);
+    var toggled = try change(&copied, std.testing.io, .{ .toggle_scanned = 0 }, "");
+    defer toggled.deinit();
+    try std.testing.expect(!toggled.value.scanned_profiles[0].enabled);
+    try std.testing.expect(copied.value.scanned_profiles[0].enabled);
+    try std.testing.expectEqualStrings("Python", toggled.value.profiles[0].name);
+    try std.testing.expectEqualStrings("/usr/bin/python3", toggled.value.profiles[0].shell);
 }
 fn allocationProof(a: std.mem.Allocator) !void {
     var current = config.Config.defaults(a);
@@ -709,20 +768,31 @@ test "maximum saved catalogues fit the settings row budget with all editable env
     for (&environment, &env_names, 0..) |*entry, *buffer, index| entry.* = .{ .name = try std.fmt.bufPrint(buffer, "VAR_{d}", .{index}), .value = "value" };
     var profiles: [6]config.Profile = undefined;
     for (&profiles, [_][]const u8{ "a", "b", "c", "d", "e", "f" }) |*recipe, id| recipe.* = .{ .id = id, .name = id, .environment = &environment };
+    var cached_ids: [config.scanned_limit][48]u8 = undefined;
+    var cached: [config.scanned_limit]config.ScannedProfile = undefined;
+    for (&cached, &cached_ids, 0..) |*entry, *id_buffer, index| entry.* = .{
+        .kind = .ssh,
+        .recipe = .{ .id = try std.fmt.bufPrint(id_buffer, "auto.ssh.{d}", .{index}), .name = "Host" },
+    };
     var schema = config.Config.defaults(std.testing.allocator).value;
     schema.profiles = &profiles;
+    schema.scanned_profiles = &cached;
     var current = try config.Config.fromValue(std.testing.allocator, std.testing.io, schema);
     defer current.deinit();
     var all: [row_limit]Row = undefined;
     const count = try rows(&current, &all);
     try std.testing.expect(count < row_limit);
+    var scanned_count: usize = 0;
     var names: usize = 0;
     var values: usize = 0;
     for (all[0..count]) |row| if (row.target == .environment) {
         if (row.target.environment.name) names += 1 else values += 1;
+    } else if (row.target == .scanned) {
+        scanned_count += 1;
     };
     try std.testing.expectEqual(@as(usize, 96), names);
     try std.testing.expectEqual(names, values);
+    try std.testing.expectEqual(@as(usize, config.scanned_limit), scanned_count);
 }
 
 test "saved shortcut text outlives registry iteration and the previous config" {

@@ -185,3 +185,19 @@ sparse edits, but no repeatable process-CPU improvement. Keep source and
 daily-binary promotion separate: the installed Howl is unchanged, and no
 Hyprland promotion claim follows from the KWin iteration. Disposable race
 receipts remain under the `howl-current` U7 workstream, not product tooling.
+
+## Persist explicit discovery as read-only profile cache (18 November 2026)
+
+Captain accepted replacing the startup auto-discovery route with an explicit
+Profiles scan. The sidebar has one Profiles section; the saved-profile field
+editor becomes its internal details view, not a second sidebar destination.
+Scanned shell, REPL and SSH recipes are read-only, individually enableable, and
+can be duplicated into fully independent editable saved profiles.
+
+Two reconciliation policies are explicit: a scan retains entries that vanished
+from the scanned source and marks them stale; duplicating a scanned entry does
+not create a live link to that discovery. User disable choices survive future
+scans. Scans read selected sources and stage changes in the same global
+Save/Cancel transaction as other settings. Only saved cache is used on startup
+and in the launch picker. Disabled or stale entries are not suggested. The
+saved-default selector continues to contain only Local and manual profiles.

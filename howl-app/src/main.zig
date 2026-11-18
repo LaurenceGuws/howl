@@ -152,7 +152,7 @@ const HeaderCache = struct {
         self.* = .{};
     }
 };
-/// Startup's two field groups share one pixel-scrolled coordinate space.
+/// Startup owns only the default profile; scanning lives under Profiles.
 const StartupForm = struct {
     view: widgets.FormViewport,
     compact: bool,
@@ -162,14 +162,14 @@ const StartupForm = struct {
 
     fn init(bounds: layout.Rect, offset: f32) StartupForm {
         const compact = bounds.width < 390;
-        return .{ .view = widgets.FormViewport.atOffset(bounds, (if (compact) @as(f32, 372) else 350) + top_inset, offset), .compact = compact };
+        return .{ .view = widgets.FormViewport.atOffset(bounds, (if (compact) @as(f32, 178) else 146) + top_inset, offset), .compact = compact };
     }
-    fn card(self: StartupForm, number: usize) layout.Rect {
-        return self.view.place(outer_inset, (if (number == 0) @as(f32, 2) else if (self.compact) @as(f32, 179) else 148) + top_inset, @max(1, self.view.bounds.width - 2 * outer_inset), if (number == 0) (if (self.compact) 164 else 132) else if (self.compact) 190 else 200);
+    fn card(self: StartupForm, _: usize) layout.Rect {
+        return self.view.place(outer_inset, 2 + top_inset, @max(1, self.view.bounds.width - 2 * outer_inset), if (self.compact) 164 else 132);
     }
-    fn row(self: StartupForm, number: usize) layout.Rect {
-        const top: f32 = if (number == 0) (if (self.compact) 70 else 74) else if (number == 1) (if (self.compact) 249 else 221) else (if (self.compact) 307 else 280);
-        const height: f32 = if (number == 0) (if (self.compact) 88 else 52) else 50;
+    fn row(self: StartupForm, _: usize) layout.Rect {
+        const top: f32 = if (self.compact) 70 else 74;
+        const height: f32 = if (self.compact) 88 else 52;
         const inset = outer_inset + inner_inset;
         return self.view.place(inset, top + top_inset, @max(1, self.view.bounds.width - 2 * inset), height);
     }
@@ -177,10 +177,6 @@ const StartupForm = struct {
         const field = self.row(0);
         const width = if (self.compact) field.width else @min(field.width, @max(1, field.width * 0.53));
         return .{ .x = field.x + field.width - width, .y = field.y + (if (self.compact) @as(f32, 44) else 8), .width = width, .height = 36 };
-    }
-    fn toggle(self: StartupForm, number: usize) layout.Rect {
-        const field = self.row(number);
-        return .{ .x = field.x + field.width - 46, .y = field.y + 12, .width = 46, .height = 26 };
     }
 };
 /// Appearance groups independent controls in cards and uses pixel scrolling.
@@ -312,7 +308,6 @@ const App = struct {
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
     rename_editor: ?RenameEditor = null,
-    discovered: ?*discovery.Catalogue = null,
     settings_editor: ?settings.Editor = null,
     settings_draft: ?config.Config = null,
     settings_scroll_offset: f32 = 0,
@@ -342,7 +337,6 @@ const App = struct {
         self.header_cache.deinit();
         if (!c.SDL_SetCursor(c.SDL_GetDefaultCursor())) self.report(error.SDL);
         for (self.cursors) |cursor| if (cursor) |owned| c.SDL_DestroyCursor(owned);
-        if (self.discovered) |catalogue| catalogue.destroy(allocator);
         if (self.chooser) |chooser| chooser.destroy(allocator);
         if (self.chooser_preview_base) |*original| original.deinit();
         for (self.tabs[0..self.tab_count]) |value| self.destroyTab(value.?);
@@ -585,15 +579,6 @@ const App = struct {
             }
         }
         try self.loseKeyboard();
-        if (profile) {
-            if (self.discovered) |catalogue| catalogue.destroy(allocator);
-            self.discovered = null;
-            if (self.configuration.value.discover_shells or self.configuration.value.discover_ssh_hosts)
-                self.discovered = discovery.Catalogue.create(allocator, self.init.io, self.init.environ_map, self.configuration.value) catch |failure| blk: {
-                    self.report(failure);
-                    break :blk null;
-                };
-        }
         self.palette = .{ .profile = profile };
     }
     fn recover(self: *App) !void {
@@ -1001,7 +986,7 @@ const App = struct {
             self.cancelComposition();
             return;
         }
-        if (row.target == .information) return;
+        if (row.target == .information or row.target == .scanned) return;
         if (row.target == .set_default and !editor.search) {
             editor.profile = row.target.set_default;
             editor.page = .profiles;
@@ -1010,9 +995,6 @@ const App = struct {
             return;
         }
         if (row.target == .font_family) return self.openFontChooser(.family, self.settingsConfiguration().value.font.paths()[0]);
-        if (row.page == .startup and (row.target == .discover_shells or row.target == .discover_ssh_hosts)) {
-            return self.changeSetting(row.target, "");
-        }
         if (row.target == .delete_profile) {
             if (try self.profileInUse(row.target.delete_profile)) return error.ProfileInUse;
             if (self.settings_editor.?.delete_pending != row.target.delete_profile) {
@@ -1450,14 +1432,13 @@ const App = struct {
         self.consume_left_release = true;
     }
     fn menuProfileCount(self: *const App) usize {
-        return @as(usize, self.configuration.profileCount()) + (if (self.discovered) |catalogue| @as(usize, catalogue.count) else 0);
+        return @as(usize, self.configuration.profileCount()) + self.configuration.value.scanned_profiles.len;
     }
     fn menuProfile(self: *const App, index: usize) !config.Profile {
         if (index < self.configuration.profileCount()) return self.configuration.profile(@intCast(index));
-        const catalogue = self.discovered orelse return error.InvalidDefaultProfile;
         const offset = index - self.configuration.profileCount();
-        if (offset >= catalogue.count) return error.InvalidDefaultProfile;
-        return catalogue.entries[offset].recipe;
+        if (offset >= self.configuration.value.scanned_profiles.len) return error.InvalidDefaultProfile;
+        return self.configuration.value.scanned_profiles[offset].recipe;
     }
     fn choosePalette(self: *App, index: usize) !void {
         if (!self.palette.?.profile) return self.dispatch(keybindings.definitions[index].target);
@@ -1465,6 +1446,10 @@ const App = struct {
             self.palette = null;
             if (index == self.menuProfileCount()) return self.openPalette(false);
             return self.toggleSettings();
+        }
+        if (index >= self.configuration.profileCount()) {
+            const entry = self.configuration.value.scanned_profiles[index - self.configuration.profileCount()];
+            if (!entry.enabled or entry.stale) return error.InactiveScannedProfile;
         }
         const recipe = try self.menuProfile(index);
         // Keep the overlay and original input owner intact if construction cannot commit.
@@ -1474,7 +1459,7 @@ const App = struct {
     }
     fn paletteKey(self: *App, key: c.SDL_Keycode, mods: c.SDL_Keymod) !void {
         var matches: [palette_limit]usize = undefined;
-        const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
+        const count = try self.palette.?.indices(self.configuration, &matches);
         switch (key) {
             c.SDLK_ESCAPE => {
                 self.palette = null;
@@ -1509,7 +1494,7 @@ const App = struct {
         }
         if (self.palette) |*p| {
             p.list.hovered = null;
-            p.reveal(try p.indices(self.configuration, self.discovered, &matches), self.paletteRows());
+            p.reveal(try p.indices(self.configuration, &matches), self.paletteRows());
         }
     }
     fn findRequest(self: *App, p: *Pane, request: find.Request) !void {
@@ -1756,7 +1741,7 @@ const App = struct {
         if (self.palette != null) {
             if (button != .left) return;
             var matches: [palette_limit]usize = undefined;
-            const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
+            const count = try self.palette.?.indices(self.configuration, &matches);
             const box = self.paletteRect();
             if (!box.contains(x, y)) {
                 self.palette = null;
@@ -2007,7 +1992,7 @@ const App = struct {
         if (self.palette) |*palette| {
             if (!std.math.isFinite(wheel.y)) return;
             var matches: [palette_limit]usize = undefined;
-            const count = try palette.indices(self.configuration, self.discovered, &matches);
+            const count = try palette.indices(self.configuration, &matches);
             const delta: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
             palette.scroll(delta, count, self.paletteRows());
             return;
@@ -2074,7 +2059,7 @@ const App = struct {
     }
     fn paletteHover(self: *App, x: f32, y: f32) !void {
         var matches: [palette_limit]usize = undefined;
-        const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
+        const count = try self.palette.?.indices(self.configuration, &matches);
         const first = self.paletteStart(count);
         self.palette.?.list.hovered = null;
         for (0..@min(count - first, self.paletteRows())) |row| {
@@ -2086,7 +2071,7 @@ const App = struct {
     }
     fn drawPalette(self: *App) !void {
         var matches: [palette_limit]usize = undefined;
-        const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
+        const count = try self.palette.?.indices(self.configuration, &matches);
         const box = self.paletteRect();
         const colors = try self.uiPalette();
         const profiles = self.palette.?.profile;
@@ -2114,7 +2099,7 @@ const App = struct {
                     const default = index == try self.configuration.defaultProfile();
                     try self.clippedText(recipe.name, .{ .x = row.x + 10, .y = row.y, .width = @max(1, row.width - (if (default) @as(f32, 90) else 20)), .height = 23 }, row.x + 10);
                     var detail_buffer: [640]u8 = undefined;
-                    const kind = if (index < self.configuration.profileCount()) "Saved" else switch (self.discovered.?.entries[index - self.configuration.profileCount()].kind) {
+                    const kind = if (index < self.configuration.profileCount()) "Saved" else switch (self.configuration.value.scanned_profiles[index - self.configuration.profileCount()].kind) {
                         .shell => "Shell",
                         .repl => "REPL",
                         .ssh => "Remote",
@@ -2306,15 +2291,13 @@ const App = struct {
                     try e.begin(.{ .page = .profiles, .label = "Name", .target = .{ .profile = .{ .index = e.profile, .field = .name } } }, self.settingsConfiguration());
                 },
                 1 => {
-                    try self.changeSetting(.{ .clone_profile = e.profile }, "");
+                    const target = (try self.overviewCloneTarget()) orelse return error.SelectProfileToDuplicate;
+                    try self.changeSetting(target, "");
                     e.profile = self.settingsConfiguration().profileCount() - 1;
                     e.page = .profiles;
                     e.list = .{};
                 },
-                2 => {
-                    try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
-                    e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
-                },
+                2 => try self.scanSettingsProfiles(),
                 else => {},
             }
         } else if (e.page == .profiles) switch (number) {
@@ -2327,10 +2310,37 @@ const App = struct {
                 e.profile = self.settingsConfiguration().profileCount() - 1;
                 e.list = .{};
             },
-            2 => try self.changeSetting(.{ .set_default = e.profile }, ""),
+            2 => {
+                if (e.profile == 0) return;
+                try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
+                e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
+            },
             else => {},
         };
         e.content_focus = true;
+    }
+    fn scanSettingsProfiles(self: *App) !void {
+        const current = self.settingsConfiguration();
+        if (!current.value.discover_shells and !current.value.discover_ssh_hosts) return error.NoScanSources;
+        const found = try discovery.Catalogue.create(allocator, self.init.io, self.init.environ_map, current.value);
+        defer found.destroy(allocator);
+        const candidate = try discovery.reconcile(current, self.init.io, found);
+        if (self.settings_draft) |*draft| draft.deinit();
+        self.settings_draft = candidate;
+        self.setNotice("Scan cached — Save to keep, Cancel to discard");
+    }
+    fn overviewCloneTarget(self: *App) !?settings.Target {
+        const e = &self.settings_editor.?;
+        var all: [settings.row_limit]settings.Row = undefined;
+        var shown: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.settingsConfiguration(), &all);
+        const visible = e.indices(all[0..count], &shown);
+        if (e.list.selected >= visible) return null;
+        return switch (all[shown[e.list.selected]].target) {
+            .set_default => |index| .{ .clone_profile = index },
+            .scanned => |index| .{ .clone_scanned = index },
+            else => null,
+        };
     }
     fn colorBar(self: *const App, channel: usize) layout.Rect {
         const box = self.settingsRect();
@@ -2340,6 +2350,15 @@ const App = struct {
     fn settingsDefaultButton(self: *const App) layout.Rect {
         const box = self.settingsRect();
         return .{ .x = self.settingsBody().x, .y = box.y + box.height - 46, .width = 136, .height = 30 };
+    }
+    fn savedEditButton(row: layout.Rect) layout.Rect {
+        return .{ .x = row.x + row.width - 80, .y = row.y + 5, .width = 76, .height = row.height - 10 };
+    }
+    fn scannedEnableButton(row: layout.Rect) layout.Rect {
+        return .{ .x = row.x + row.width - 92, .y = row.y + 5, .width = 88, .height = row.height - 10 };
+    }
+    fn scanSourceSwitch(row: layout.Rect) layout.Rect {
+        return .{ .x = row.x + row.width - 50, .y = row.y + 12, .width = 46, .height = 26 };
     }
     fn colorReset(self: *const App) layout.Rect {
         const body = self.settingsBody();
@@ -2468,10 +2487,6 @@ const App = struct {
             if (!body.contains(x, y)) return;
             const form = self.startupForm();
             if (form.select().contains(x, y)) return self.activateSetting(.{ .page = .startup, .label = "", .target = .default_profile });
-            for (1..3) |index| if (form.toggle(index).contains(x, y)) {
-                const target: settings.Target = if (index == 1) .discover_shells else .discover_ssh_hosts;
-                return self.activateSetting(.{ .page = .startup, .label = "", .target = target });
-            };
             return;
         }
         if (self.appearanceSettings()) {
@@ -2488,7 +2503,9 @@ const App = struct {
             }
         }
         if (!e.search and e.page == .defaults and self.settingsDefaultButton().contains(x, y)) {
-            return self.changeSetting(.{ .set_default = e.profile }, "");
+            const target = (try self.overviewCloneTarget()) orelse return;
+            if (target == .clone_profile) return self.changeSetting(.{ .set_default = target.clone_profile }, "");
+            return;
         }
         const field = self.settingsField();
         if (e.search and field.contains(x, y)) {
@@ -2509,6 +2526,19 @@ const App = struct {
         e.list.selected = chosen;
         const selected_row = all[indices[chosen]];
         const row_rect = self.settingsRows().row(row);
+        if (!e.search and e.page == .defaults) switch (selected_row.target) {
+            .scanned => |index| {
+                if (scannedEnableButton(row_rect).contains(x, y)) return self.changeSetting(.{ .toggle_scanned = index }, "");
+            },
+            .discover_shells, .discover_ssh_hosts => {
+                if (scanSourceSwitch(row_rect).contains(x, y)) return self.changeSetting(selected_row.target, "");
+            },
+            .set_default => |index| {
+                e.profile = index;
+                if (savedEditButton(row_rect).contains(x, y)) return self.activateSetting(selected_row);
+            },
+            else => {},
+        };
         if (selected_row.editable() and settingsEditButton(row_rect).contains(x, y)) {
             e.content_focus = true;
             if (e.search) try self.activateSetting(selected_row);
@@ -2527,9 +2557,8 @@ const App = struct {
                 return self.openFontChooser(.{ .face = face }, self.settingsConfiguration().value.font.paths()[face]);
             }
         }
-        if (selected_row.target == .set_default) e.profile = selected_row.target.set_default;
         e.content_focus = true;
-        if (clicks >= 2 and !selected_row.editable()) try self.activateSetting(selected_row);
+        if (clicks >= 2 and selected_row.target == .set_default) try self.activateSetting(selected_row);
     }
     fn settingsAppearanceClick(self: *App, x: f32, y: f32) !void {
         const form = self.appearanceForm();
@@ -2684,12 +2713,10 @@ const App = struct {
         const colors = try self.uiPalette();
         try setClip(self.renderer, form.view.bounds);
         defer clearClip(self.renderer);
-        for (0..2) |number| {
-            const card = form.card(number);
-            try self.drawSettingsCard(card);
-            try self.clippedText(if (number == 0) "New terminals" else "Launcher suggestions", .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 }, card.x + 16);
-            try self.clippedTextColor(if (number == 0) "Used for new tabs and windows." else "Show these in the new-tab menu.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
-        }
+        const card = form.card(0);
+        try self.drawSettingsCard(card);
+        try self.clippedText("New terminals", .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 }, card.x + 16);
+        try self.clippedTextColor("Used for new tabs and windows.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
         const first = form.row(0);
         const label_width = if (form.compact) first.width else @max(1, form.select().x - first.x - 12);
         try self.clippedText("Default profile", .{ .x = first.x, .y = first.y + 3, .width = label_width, .height = 24 }, first.x);
@@ -2700,20 +2727,6 @@ const App = struct {
         else
             (try self.settingsConfiguration().profile(try self.settingsConfiguration().defaultProfile())).name;
         try self.drawSettingsSelect(form.select(), profile_name, focused, editor.editing != null and editor.editing.? == .default_profile);
-        const switches = [_]struct { label: []const u8, hint: []const u8, enabled: bool }{
-            .{ .label = "Local shells & REPLs", .hint = "Detect local shells", .enabled = self.settingsConfiguration().value.discover_shells },
-            .{ .label = "SSH hosts", .hint = "From your SSH config", .enabled = self.settingsConfiguration().value.discover_ssh_hosts },
-        };
-        for (switches, 0..) |field, index| {
-            const number = index + 1;
-            const row = form.row(number);
-            const toggle = form.toggle(number);
-            const text_width = @max(1, toggle.x - row.x - 48);
-            try self.clippedText(field.label, .{ .x = row.x, .y = row.y + 1, .width = text_width, .height = 25 }, row.x);
-            try self.clippedTextColor(field.hint, .{ .x = row.x, .y = row.y + 23, .width = text_width, .height = 23 }, row.x, colors.muted);
-            try self.clippedTextColor(if (field.enabled) "On" else "Off", .{ .x = toggle.x - 35, .y = row.y + 7, .width = 30, .height = 26 }, toggle.x - 35, colors.muted);
-            try self.drawStartupSwitch(toggle, field.enabled, self.isHovered(toggle));
-        }
         if (form.view.scrollbar()) |bar| {
             try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
             try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
@@ -2776,11 +2789,11 @@ const App = struct {
         try outline(self.renderer, box, colors.border);
         if (box.width > 360) try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
         const title_width = self.settingsHeaderButton(.save).x - body.x - 10;
-        if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
+        if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else if (e.page == .profiles) "Profile details" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
         try self.drawSettingsHeaderButtons();
         for (settings.titles, 0..) |title, index| {
             const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + settings_nav_top + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
-            if (!e.search and @backingInt(e.page) == index) {
+            if (!e.search and (if (e.page == .profiles) index == @backingInt(settings.Page.defaults) else @backingInt(e.page) == index)) {
                 try fill(self.renderer, row, colors.active);
                 try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
             }
@@ -2792,7 +2805,7 @@ const App = struct {
         const color_form = self.colorSettings();
         const card_form = appearance_form or color_form;
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
-            const labels: [3][]const u8 = if (e.page == .defaults) .{ "New profile", "Duplicate", if (e.delete_pending != null) "Delete?" else "Delete" } else .{ "< Profiles", "Duplicate", "Set default" };
+            const labels: [3][]const u8 = if (e.page == .defaults) .{ "New profile", "Duplicate", "Scan now" } else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
             for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
                 const button = self.settingsToolbarButton(number);
                 if (simple_form) {
@@ -2871,7 +2884,24 @@ const App = struct {
                 } else try self.drawFieldStyled(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null, simple_form);
             } else if (row.target == .set_default and !e.search) {
                 try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
-                try self.clippedText("Edit", .{ .x = rect.x + rect.width - 74, .y = rect.y, .width = 70, .height = rect.height }, rect.x + rect.width - 66);
+                const button = savedEditButton(rect);
+                try self.drawSettingsControl(button, self.isHovered(button));
+                try self.clippedText("Edit", button, button.x + 17);
+            } else if (row.target == .scanned and !e.search) {
+                const entry = self.settingsConfiguration().value.scanned_profiles[row.target.scanned];
+                const name_rect: layout.Rect = .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 180), .height = rect.height };
+                try self.clippedText(entry.recipe.name, name_rect, name_rect.x);
+                const status_rect: layout.Rect = .{ .x = rect.x + rect.width - 175, .y = rect.y, .width = 76, .height = rect.height };
+                try self.clippedTextColor(if (entry.stale) "Missing" else if (entry.enabled) "Scanned" else "Disabled", status_rect, status_rect.x, colors.muted);
+                const button = scannedEnableButton(rect);
+                try self.drawSettingsControl(button, self.isHovered(button));
+                try self.clippedText(if (entry.enabled) "Disable" else "Enable", button, button.x + 12);
+            } else if ((row.target == .discover_shells or row.target == .discover_ssh_hosts) and !e.search and e.page == .defaults) {
+                try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 106), .height = rect.height }, rect.x + 8);
+                const toggle = scanSourceSwitch(rect);
+                const enabled = if (row.target == .discover_shells) self.settingsConfiguration().value.discover_shells else self.settingsConfiguration().value.discover_ssh_hosts;
+                try self.clippedTextColor(if (enabled) "On" else "Off", .{ .x = toggle.x - 39, .y = rect.y, .width = 34, .height = rect.height }, toggle.x - 39, colors.muted);
+                try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
             } else {
                 try self.clippedText(name, left, left.x);
                 if (color_form and (row.target == .reset_app_colors or row.target == .reset_terminal_colors)) {
@@ -2914,7 +2944,7 @@ const App = struct {
                     try self.clippedTextColor(contents, value_rect, value_rect.x, if (row.target == .information) colors.muted else colors.text);
                 }
             }
-            if (row.editable()) {
+            if (row.editable() and !(!e.search and e.page == .defaults and (row.target == .discover_shells or row.target == .discover_ssh_hosts))) {
                 const edit_button = settingsEditButton(rect);
                 const active = editing_row;
                 if (simple_form or active or self.isHovered(edit_button)) try self.drawSettingsControl(edit_button, active);
@@ -2944,7 +2974,7 @@ const App = struct {
             const width = body.width / 16;
             for (resolved.palette[0..16], 0..) |rgb, i| try fill(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 });
         }
-        if (!e.search and e.page == .defaults) {
+        if (!e.search and e.page == .defaults and (try self.overviewCloneTarget() orelse .add_profile) == .clone_profile) {
             const button = self.settingsDefaultButton();
             try fill(self.renderer, button, colors.idle);
             try outline(self.renderer, button, colors.border);
@@ -3693,15 +3723,15 @@ test "command palette exposes every mapping including directional multiplexing c
     defer configuration.deinit();
     var p: Palette = .{};
     var indices: [palette_limit]usize = undefined;
-    const count = try p.indices(&configuration, null, &indices);
+    const count = try p.indices(&configuration, &indices);
     try std.testing.expectEqual(keybindings.definitions.len, count);
     const query = "FOCUS PANE";
     @memcpy(p.query[0..query.len], query);
     p.len = query.len;
-    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, null, &indices));
+    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
     for (indices[0..4]) |index| try std.testing.expect(keybindings.definitions[index].target == .pane_focus);
     p = .{ .profile = true };
-    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, null, &indices));
+    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, &indices));
 }
 
 test "profile palette uses saved recipes and resolves its configured default" {
@@ -3711,10 +3741,10 @@ test "profile palette uses saved recipes and resolves its configured default" {
     defer configuration.deinit();
     var p: Palette = .{ .profile = true };
     var indices: [palette_limit]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, null, &indices));
+    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
     @memcpy(p.query[0..5], "BUILD");
     p.len = 5;
-    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, null, &indices));
+    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
     try std.testing.expectEqual(try configuration.defaultProfile(), indices[0]);
     const recipe = try configuration.profile(@intCast(indices[0]));
     try std.testing.expectEqualStrings("exec sh", recipe.command);
@@ -4396,16 +4426,15 @@ test "single-tab header gives all space and former caption hits back to the term
 test "large discovered menus filter and page independently of saved settings" {
     var configuration = config.Config.defaults(std.testing.allocator);
     defer configuration.deinit();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    const catalogue = try discovery.Catalogue.create(std.testing.allocator, std.testing.io, &env, configuration.value);
-    defer catalogue.destroy(std.testing.allocator);
-    for (0..100) |i| catalogue.entries[i] = .{ .kind = .ssh, .recipe = .{
-        .name = try std.fmt.allocPrint(catalogue.arena.allocator(), "host-{d:0>3}", .{i}),
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var cached: [100]config.ScannedProfile = undefined;
+    for (&cached, 0..) |*entry, i| entry.* = .{ .kind = .ssh, .recipe = .{
+        .id = try std.fmt.allocPrint(arena.allocator(), "auto.ssh.{d:0>3}", .{i}),
+        .name = try std.fmt.allocPrint(arena.allocator(), "host-{d:0>3}", .{i}),
         .shell = "/usr/bin/ssh",
         .arguments = &.{ "-t", "--", "literal-alias" },
     } };
-    catalogue.count = 100;
     var app: App = .{
         .init = undefined,
         .configuration = &configuration,
@@ -4418,14 +4447,13 @@ test "large discovered menus filter and page independently of saved settings" {
         .scale = 1,
         .bindings = try keybindings.Bindings.init(),
         .tab_count = 1,
-        .discovered = catalogue,
         .palette = .{ .profile = true },
     };
     var indices: [palette_limit]usize = undefined;
-    catalogue.count = 0;
+    configuration.value.scanned_profiles = &.{};
     try std.testing.expectEqual(@as(usize, 3), app.paletteRows());
-    catalogue.count = 100;
-    const count = try app.palette.?.indices(&configuration, catalogue, &indices);
+    configuration.value.scanned_profiles = &cached;
+    const count = try app.palette.?.indices(&configuration, &indices);
     try std.testing.expectEqual(@as(usize, 103), count);
     try app.paletteKey(c.SDLK_END, c.SDL_KMOD_CTRL);
     try std.testing.expectEqual(count - 1, app.palette.?.list.selected);
@@ -4435,7 +4463,7 @@ test "large discovered menus filter and page independently of saved settings" {
     const query = "HOST-099";
     @memcpy(app.palette.?.query[0..query.len], query);
     app.palette.?.len = query.len;
-    try std.testing.expectEqual(@as(usize, 1), try app.palette.?.indices(&configuration, catalogue, &indices));
+    try std.testing.expectEqual(@as(usize, 1), try app.palette.?.indices(&configuration, &indices));
     try std.testing.expectEqualStrings("host-099", (try app.menuProfile(indices[0])).name);
     try std.testing.expectEqual(@as(u8, 1), configuration.profileCount());
     app.palette.?.erase(true);
@@ -4449,7 +4477,7 @@ test "large discovered menus filter and page independently of saved settings" {
     try std.testing.expectEqual(picker.Filter.remote, app.palette.?.filter);
     try app.paletteKey(c.SDLK_TAB, c.SDL_KMOD_SHIFT);
     try std.testing.expectEqual(picker.Filter.repl, app.palette.?.filter);
-    try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, catalogue, &indices));
+    try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, &indices));
 }
 
 test "startup controls own clicks; choice editing and global Cancel preserve the live configuration" {
@@ -4479,8 +4507,8 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
     event_value.key = c.SDLK_RETURN;
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor.?.editing == null);
-    const ssh_label = app.startupForm().row(2);
-    try app.settingsClick(ssh_label.x + 8, ssh_label.y + 10, 1);
+    const startup_label = app.startupForm().row(0);
+    try app.settingsClick(startup_label.x + 8, startup_label.y + 10, 1);
     try std.testing.expect(app.settings_draft == null);
     try std.testing.expect(app.settings_editor.?.editing == null);
 
@@ -4513,12 +4541,14 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
     try app.settingsKey(event_value);
     try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.selected);
 
-    const ssh_toggle = app.startupForm().toggle(2);
+    app.settings_editor.?.page = .defaults;
+    const ssh_toggle = App.scanSourceSwitch(app.settingsRows().row(3));
     try app.settingsClick(ssh_toggle.x + 10, ssh_toggle.y + 10, 1);
     try std.testing.expect(app.settings_draft != null);
     try std.testing.expect(app.settingsConfiguration().value.discover_ssh_hosts != configuration.value.discover_ssh_hosts);
     app.settingsCancel();
     try std.testing.expect(app.settings_draft == null);
+    app.settings_editor.?.page = .startup;
 
     app.width = 788;
     app.height = 528;
@@ -4562,6 +4592,64 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
     try std.testing.expect(!app.settings_editor.?.search and app.settings_editor.?.content_focus);
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor == null);
+}
+
+test "Profiles label clicks navigate while explicit scan controls stage only their own changes" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    const window = c.SDL_CreateWindow("profiles pointer proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var configuration = try config.Config.parse(std.testing.allocator, threaded.io(),
+        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"ssh","recipe":{"id":"auto.ssh.host","name":"Host","shell":"/usr/bin/ssh"}}]}
+    );
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = window,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .settings_editor = .{ .page = .defaults, .content_focus = true },
+    };
+    app.init.io = threaded.io();
+    defer app.discardSettings();
+    try std.testing.expectEqual(@as(usize, 5), settings.titles.len);
+    const cached_row = app.settingsRows().row(4);
+    try app.settingsClick(cached_row.x + 12, cached_row.y + 12, 1);
+    try std.testing.expect(app.settings_draft == null);
+    try std.testing.expectEqual(@as(usize, 4), app.settings_editor.?.list.selected);
+    const toggle = App.scannedEnableButton(cached_row);
+    try app.settingsClick(toggle.x + 12, toggle.y + 12, 1);
+    try std.testing.expect(!app.settingsConfiguration().value.scanned_profiles[0].enabled);
+    try std.testing.expect(configuration.value.scanned_profiles[0].enabled);
+    app.settingsCancel();
+    try std.testing.expect(app.settingsConfiguration().value.scanned_profiles[0].enabled);
+
+    const source_row = app.settingsRows().row(2);
+    try app.settingsClick(source_row.x + 12, source_row.y + 12, 1);
+    try std.testing.expect(app.settings_draft == null);
+    const source_switch = App.scanSourceSwitch(source_row);
+    try app.settingsClick(source_switch.x + 12, source_switch.y + 12, 1);
+    try std.testing.expect(app.settingsConfiguration().value.discover_shells);
+    app.settingsCancel();
+    try std.testing.expect(!configuration.value.discover_shells);
+
+    try app.settingsClick(cached_row.x + 12, cached_row.y + 12, 1);
+    const duplicate = app.settingsToolbarButton(1);
+    try app.settingsClick(duplicate.x + 12, duplicate.y + 12, 1);
+    try std.testing.expectEqual(settings.Page.profiles, app.settings_editor.?.page);
+    try std.testing.expectEqual(@as(usize, 1), app.settingsConfiguration().value.profiles.len - configuration.value.profiles.len);
+    try std.testing.expectEqualStrings("Host", app.settingsConfiguration().value.profiles[1].name);
+    app.settingsCancel();
+    try std.testing.expectEqual(@as(usize, 1), configuration.value.profiles.len);
 }
 
 test "Settings Save commits the complete draft once; Cancel and failed Save preserve the live configuration" {
@@ -4614,29 +4702,20 @@ test "Settings Save commits the complete draft once; Cancel and failed Save pres
     try std.testing.expectEqual(.always, reloaded.value.cursor_blink);
 }
 
-test "startup form keeps selector and switches inside their groups at compact widths" {
+test "startup form keeps the default selector inside its card at compact widths" {
     for ([_]f32{ 554, 320, 180 }) |width| {
         const bounds: layout.Rect = .{ .x = 400, .y = 150, .width = width, .height = 210 };
         for ([_]f32{ 0, 72, 400 }) |scroll_offset| {
             const form = StartupForm.init(bounds, scroll_offset);
             const first = form.card(0);
-            const last = form.card(1);
             const selector = form.select();
             try std.testing.expectEqual(first.x - bounds.x, bounds.x + bounds.width - first.x - first.width);
-            try std.testing.expectEqual(last.x - bounds.x, bounds.x + bounds.width - last.x - last.width);
             try std.testing.expect(first.y >= bounds.y + StartupForm.top_inset - form.view.offset);
-            try std.testing.expect(last.y >= first.y + first.height + 12);
             const first_row = form.row(0);
             try std.testing.expectEqual(first_row.x - first.x, first.x + first.width - first_row.x - first_row.width);
             try std.testing.expect(selector.x >= first.x);
             try std.testing.expect(selector.x + selector.width <= first.x + first.width);
             try std.testing.expect(selector.y >= first.y and selector.y + selector.height <= first.y + first.height);
-            for (1..3) |index| {
-                const button = form.toggle(index);
-                try std.testing.expect(button.x >= last.x);
-                try std.testing.expect(button.x + button.width <= last.x + last.width);
-                try std.testing.expect(button.y >= last.y and button.y + button.height <= last.y + last.height);
-            }
         }
     }
 }
