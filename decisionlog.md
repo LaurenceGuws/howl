@@ -200,4 +200,12 @@ not create a live link to that discovery. User disable choices survive future
 scans. Scans read selected sources and stage changes in the same global
 Save/Cancel transaction as other settings. Only saved cache is used on startup
 and in the launch picker. Disabled or stale entries are not suggested. The
-saved-default selector continues to contain only Local and manual profiles.
+saved-default selector initially contained only Local and manual profiles.
+
+Captain's follow-up clarified that cached, enabled, non-stale discoveries are
+also eligible as startup defaults, without first duplicating them. The default
+resolves by persistent recipe ID, never launch-picker position. Disabling a
+chosen scan or rescanning it as missing stages a reset to Local; the existing
+Save/Cancel transaction owns that change. Missing/disabled discoveries stay
+cached but are excluded from the startup selector. The Profiles footer always
+remains visible as the list scrolls; unavailable selections cannot set default.

@@ -185,6 +185,13 @@ and stale entries do not appear in launch suggestions. Scan-source switches do
 not hide previously cached entries. A saved profile's details editor is now
 inside Profiles, not an extra sidebar page.
 
+Enabled, non-stale scanned entries can also be chosen as the startup default,
+directly from the Profiles footer or Startup selector. Their IDs remain stable
+across rescans. Disabling the default or rescanning it as missing stages a
+return to Local, with the same Save/Cancel controls; unavailable scans cannot
+become defaults. The Profiles footer remains in place while scrolling, showing
+Unavailable for disabled or missing selections.
+
 Typing in the profile menu ranks exact/prefix matches before substrings and
 abbreviations. The wheel scrolls a retained viewport; arrows and
 PageUp/PageDown/Home/End keep selection visible. All/Saved/Shell/REPL/Remote

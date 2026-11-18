@@ -250,12 +250,17 @@ pub const Config = struct {
             else => if (index - 1 < self.value.profiles.len) self.value.profiles[index - 1] else error.InvalidDefaultProfile,
         };
     }
-    /// Resolves the exact selected recipe; an unknown id never falls back to Local.
-    pub fn defaultProfile(self: *const Config) error{InvalidDefaultProfile}!u8 {
-        if (self.value.default_profile.len == 0) return 0;
+    /// Resolves the selected saved or active cached recipe. An unavailable id
+    /// cannot silently launch Local; scan and disable transitions clear it first.
+    pub fn defaultProfile(self: *const Config) error{InvalidDefaultProfile}!Profile {
+        if (self.value.default_profile.len == 0) return self.profile(0);
         var index: u8 = 0;
         while (index < self.profileCount()) : (index += 1) {
-            if (std.mem.eql(u8, (try self.profile(index)).id, self.value.default_profile)) return index;
+            const recipe = try self.profile(index);
+            if (std.mem.eql(u8, recipe.id, self.value.default_profile)) return recipe;
+        }
+        for (self.value.scanned_profiles) |entry| {
+            if (entry.enabled and !entry.stale and std.mem.eql(u8, entry.recipe.id, self.value.default_profile)) return entry.recipe;
         }
         return error.InvalidDefaultProfile;
     }
@@ -337,8 +342,9 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
         };
     }
     const candidate: Config = .{ .allocator = std.heap.smp_allocator, .value = value };
-    const selected = try candidate.defaultProfile();
-    std.debug.assert(selected < candidate.profileCount());
+    // zig-audit: acknowledge discard
+    // reason: The default recipe's existence and availability are validated, but no part of its borrowed value is needed here.
+    _ = try candidate.defaultProfile();
     return value;
 }
 
@@ -349,12 +355,31 @@ test "config owns decoded bytes and resolves exact Local recipes" {
     defer value.deinit();
     @memset(bytes, '?');
     try std.testing.expectEqual(@as(i32, 23), value.value.terminal_font_pixels);
-    try std.testing.expectEqual(@as(u8, 0), try value.defaultProfile());
+    try std.testing.expectEqualStrings("local", (try value.defaultProfile()).id);
     try std.testing.expectEqualStrings("local", (try value.profile(0)).id);
     var current = try Config.parse(std.testing.allocator, std.testing.io, "{\"schema\":1,\"terminal_font_pixels\":15,\"app_theme\":\"high_contrast\",\"default_profile\":\"custom\",\"profiles\":[{\"id\":\"custom\",\"name\":\"Exact command\",\"command\":\"printf hi\",\"cwd\":\"/\"}]}");
     defer current.deinit();
-    try std.testing.expectEqual(@as(u8, 1), try current.defaultProfile());
+    try std.testing.expectEqualStrings("custom", (try current.defaultProfile()).id);
     try std.testing.expectEqualStrings("printf hi", (try current.profile(1)).command);
+}
+
+test "only active cached discoveries can be selected as startup defaults" {
+    var current = try Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"default_profile":"auto.repl.python","scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3","arguments":["-q"]}}]}
+    );
+    defer current.deinit();
+    const selected = try current.defaultProfile();
+    try std.testing.expectEqualStrings("auto.repl.python", selected.id);
+    try std.testing.expectEqualStrings("/usr/bin/python3", selected.shell);
+    try std.testing.expectEqualStrings("-q", selected.arguments.?[0]);
+    for ([_]ScannedProfile{
+        .{ .kind = .repl, .recipe = selected, .enabled = false },
+        .{ .kind = .repl, .recipe = selected, .stale = true },
+    }) |unavailable| {
+        var value = current.value;
+        value.scanned_profiles = &.{unavailable};
+        try std.testing.expectError(error.InvalidDefaultProfile, Config.fromValue(std.testing.allocator, std.testing.io, value));
+    }
 }
 
 test "config rejects invalid recipes, duplicate fields and explicit missing fonts" {
@@ -375,7 +400,7 @@ test "missing config differs from malformed data; rejected save and rename failu
     defer temporary.cleanup();
     var value = try Config.loadAt(std.testing.allocator, std.testing.io, temporary.dir, "app.json");
     defer value.deinit();
-    try std.testing.expectEqual(@as(u8, 0), try value.defaultProfile());
+    try std.testing.expectEqualStrings("local", (try value.defaultProfile()).id);
     value.value.terminal_font_pixels = 23;
     value.value.hide_single_tab = true;
     value.value.app_colors.accent = "#010203";
@@ -393,7 +418,7 @@ test "missing config differs from malformed data; rejected save and rename failu
     try std.testing.expectEqualStrings("howl_light", reopened.value.terminal_theme);
     try std.testing.expectEqualStrings("#654321", reopened.value.terminal_colors.foreground);
     try std.testing.expect(reopened.value.discover_shells and reopened.value.discover_ssh_hosts);
-    try std.testing.expectEqual(@as(u8, 0), try reopened.defaultProfile());
+    try std.testing.expectEqualStrings("local", (try reopened.defaultProfile()).id);
     const before = try temporary.dir.readFileAlloc(std.testing.io, "app.json", std.testing.allocator, .limited(file_limit));
     defer std.testing.allocator.free(before);
     value.value.terminal_font_pixels = 7;

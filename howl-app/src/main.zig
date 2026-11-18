@@ -389,7 +389,7 @@ const App = struct {
         return @intCast(if (recipe.font_pixels != 0) recipe.font_pixels else self.configuration.value.terminal_font_pixels);
     }
     fn startup(self: *const App) !config.Profile {
-        return self.configuration.profile(try self.configuration.defaultProfile());
+        return self.configuration.defaultProfile();
     }
     fn presentationConfig(self: *App, fonts: *font_owner.Fonts, pixels: u16, stroke: u8) !app_presentation.Config {
         var result = try fonts.config(self.init.io, pixels);
@@ -2088,6 +2088,7 @@ const App = struct {
             try self.clippedTextColor(label, .{ .x = chip.x + 7, .y = chip.y, .width = @max(1, chip.width - 14), .height = chip.height }, chip.x + 7, if (active) colors.text else colors.muted);
         };
         const start = self.paletteStart(count);
+        const default_id = if (profiles) (try self.configuration.defaultProfile()).id else "";
         if (count == 0) try self.clippedTextColor("No matching entries", self.paletteRow(0), box.x + 18, colors.muted);
         const shown = @min(count - start, self.paletteRows());
         for (matches[start .. start + shown], start..) |index, number| {
@@ -2096,7 +2097,7 @@ const App = struct {
             if (profiles) {
                 if (index < self.menuProfileCount()) {
                     const recipe = try self.menuProfile(index);
-                    const default = index == try self.configuration.defaultProfile();
+                    const default = std.mem.eql(u8, recipe.id, default_id);
                     try self.clippedText(recipe.name, .{ .x = row.x + 10, .y = row.y, .width = @max(1, row.width - (if (default) @as(f32, 90) else 20)), .height = 23 }, row.x + 10);
                     var detail_buffer: [640]u8 = undefined;
                     const kind = if (index < self.configuration.profileCount()) "Saved" else switch (self.configuration.value.scanned_profiles[index - self.configuration.profileCount()].kind) {
@@ -2381,9 +2382,10 @@ const App = struct {
         const found = try discovery.Catalogue.create(allocator, self.init.io, self.init.environ_map, current.value);
         defer found.destroy(allocator);
         const candidate = try discovery.reconcile(current, self.init.io, found);
+        const default_reset = !std.mem.eql(u8, (try current.defaultProfile()).id, (try candidate.defaultProfile()).id);
         if (self.settings_draft) |*draft| draft.deinit();
         self.settings_draft = candidate;
-        self.setNotice("Scan cached — Save to keep, Cancel to discard");
+        self.setNotice(if (default_reset) "Missing default reset to Local — Save or Cancel" else "Scan cached — Save to keep, Cancel to discard");
     }
     fn overviewCloneTarget(self: *App) !?settings.Target {
         const e = &self.settings_editor.?;
@@ -2395,6 +2397,21 @@ const App = struct {
         return switch (all[shown[e.list.selected]].target) {
             .set_default => |index| .{ .clone_profile = index },
             .scanned => |index| .{ .clone_scanned = index },
+            else => null,
+        };
+    }
+    /// The selected Profiles row can become a default only while its cached
+    /// recipe is active. Keep the footer stable for inactive scanned rows.
+    fn overviewDefaultID(self: *App) !?[]const u8 {
+        const target = (try self.overviewCloneTarget()) orelse return null;
+        return switch (target) {
+            .clone_profile => |index| (try self.settingsConfiguration().profile(index)).id,
+            .clone_scanned => |index| blk: {
+                const entries = self.settingsConfiguration().value.scanned_profiles;
+                if (index >= entries.len) break :blk null;
+                const entry = entries[index];
+                break :blk if (entry.enabled and !entry.stale) entry.recipe.id else null;
+            },
             else => null,
         };
     }
@@ -2567,9 +2584,8 @@ const App = struct {
             }
         }
         if (!e.search and e.page == .defaults and self.settingsDefaultButton().contains(x, y)) {
-            const target = (try self.overviewCloneTarget()) orelse return;
-            if (target == .clone_profile) return self.changeSetting(.{ .set_default = target.clone_profile }, "");
-            return;
+            const id = (try self.overviewDefaultID()) orelse return;
+            return self.changeSetting(.default_profile, id);
         }
         const field = self.settingsField();
         if (e.search and field.contains(x, y)) {
@@ -2786,7 +2802,7 @@ const App = struct {
         const profile_name = if (editor.editing != null and editor.editing.? == .default_profile)
             (try settings.choiceAt(.default_profile, self.settingsConfiguration(), editor.choice_list.selected)).label
         else
-            (try self.settingsConfiguration().profile(try self.settingsConfiguration().defaultProfile())).name;
+            (try self.settingsConfiguration().defaultProfile()).name;
         try self.drawSettingsSelect(form.select(), profile_name, focused, editor.editing != null and editor.editing.? == .default_profile);
         if (form.view.scrollbar()) |bar| {
             try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
@@ -3085,10 +3101,15 @@ const App = struct {
             const width = body.width / 16;
             for (resolved.palette[0..16], 0..) |rgb, i| try drawing.fillRounded(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 3);
         }
-        if (!e.search and e.page == .defaults and (try self.overviewCloneTarget() orelse .add_profile) == .clone_profile) {
+        if (!e.search and e.page == .defaults) {
             const button = self.settingsDefaultButton();
-            try self.drawSettingsControl(button, self.isHovered(button));
-            try self.clippedText(if (e.profile == try self.settingsConfiguration().defaultProfile()) "Default" else "Set default", button, button.x + 8);
+            const id = try self.overviewDefaultID();
+            try self.drawSettingsControl(button, id != null and self.isHovered(button));
+            const label = if (id) |selected|
+                if (std.mem.eql(u8, selected, (try self.settingsConfiguration().defaultProfile()).id)) "Default" else "Set default"
+            else
+                "Unavailable";
+            try self.clippedText(label, button, button.x + 8);
         }
     }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
@@ -3855,7 +3876,7 @@ test "profile palette uses saved recipes and resolves its configured default" {
     @memcpy(p.query[0..5], "BUILD");
     p.len = 5;
     try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
-    try std.testing.expectEqual(try configuration.defaultProfile(), indices[0]);
+    try std.testing.expectEqualStrings((try configuration.defaultProfile()).id, (try configuration.profile(@intCast(indices[0]))).id);
     const recipe = try configuration.profile(@intCast(indices[0]));
     try std.testing.expectEqualStrings("exec sh", recipe.command);
     try std.testing.expectEqual(@as(i32, 19), recipe.font_pixels);
@@ -4590,6 +4611,49 @@ test "large discovered menus filter and page independently of saved settings" {
     try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, &indices));
 }
 
+test "Profiles footer remains actionable across scroll selection and cached entry availability" {
+    var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}},{"kind":"ssh","recipe":{"id":"auto.ssh.off","name":"Disabled host","shell":"/usr/bin/ssh"},"enabled":false},{"kind":"ssh","recipe":{"id":"auto.ssh.stale","name":"Missing host","shell":"/usr/bin/ssh"},"stale":true}]}
+    );
+    defer configuration.deinit();
+    var app: App = .{
+        .init = .{
+            .minimal = undefined,
+            .arena = undefined,
+            .gpa = std.testing.allocator,
+            .io = std.testing.io,
+            .environ_map = undefined,
+            .preopens = undefined,
+        },
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = undefined,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .width = 1000,
+        .height = 650,
+        .bindings = try keybindings.Bindings.init(),
+        .settings_editor = .{ .page = .defaults },
+    };
+    defer if (app.settings_draft) |*draft| draft.deinit();
+    const footer = app.settingsDefaultButton();
+    try std.testing.expectEqualStrings("local", (try app.overviewDefaultID()).?);
+    app.settings_editor.?.list.scroll(1, 4, 1);
+    try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
+    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
+    try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
+    try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
+    app.settings_editor.?.list.scroll(1, 4, 1);
+    try std.testing.expect((try app.overviewDefaultID()) == null);
+    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
+    try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
+}
+
 test "startup controls own clicks; choice editing and global Cancel preserve the live configuration" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
@@ -4632,7 +4696,7 @@ test "startup controls own clicks; choice editing and global Cancel preserve the
     event_value.key = c.SDLK_DOWN;
     try app.settingsKey(event_value);
     try std.testing.expectEqualStrings("build", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
-    try std.testing.expectEqual(@as(u8, 0), try configuration.defaultProfile());
+    try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
     event_value.key = c.SDLK_ESCAPE;
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor.?.editing == null);

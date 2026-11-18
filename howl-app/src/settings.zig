@@ -64,7 +64,13 @@ pub const Choice = struct { value: []const u8, label: []const u8 };
 /// Bounded catalogue size for a native settings select; text editors are not valid selectors.
 pub fn choiceCount(target: Target, current: *const config.Config) usize {
     return switch (target) {
-        .default_profile => current.profileCount(),
+        .default_profile => blk: {
+            var count: usize = current.profileCount();
+            for (current.value.scanned_profiles) |entry| if (entry.enabled and !entry.stale) {
+                count += 1;
+            };
+            break :blk count;
+        },
         .theme => themes.app_ids.len,
         .terminal_theme => colors.terminal_themes.len,
         .cursor_blink, .cursor_shape, .cursor_effect => 3,
@@ -76,8 +82,17 @@ pub fn choiceCount(target: Target, current: *const config.Config) usize {
 pub fn choiceAt(target: Target, current: *const config.Config, index: usize) !Choice {
     if (index >= choiceCount(target, current)) return error.InvalidChoice;
     if (target == .default_profile) {
-        const profile = try current.profile(@intCast(index));
-        return .{ .value = profile.id, .label = profile.name };
+        if (index < current.profileCount()) {
+            const profile = try current.profile(@intCast(index));
+            return .{ .value = profile.id, .label = profile.name };
+        }
+        var offset = index - current.profileCount();
+        for (current.value.scanned_profiles) |entry| {
+            if (!entry.enabled or entry.stale) continue;
+            if (offset == 0) return .{ .value = entry.recipe.id, .label = entry.recipe.name };
+            offset -= 1;
+        }
+        return error.InvalidChoice;
     }
     const options: []const []const u8 = switch (target) {
         .theme => &themes.app_ids,
@@ -107,7 +122,7 @@ pub const Row = struct {
         return switch (self.target) {
             .default_font => try std.fmt.bufPrint(buffer, "{d}", .{value.terminal_font_pixels}),
             .font_family => "Browse installed…",
-            .default_profile => (try current.profile(try current.defaultProfile())).id,
+            .default_profile => (try current.defaultProfile()).id,
             .theme => themes.label(value.app_theme),
             .terminal_theme => themes.label(value.terminal_theme),
             .app_color => |index| try value.app_colors.get(index),
@@ -171,7 +186,7 @@ pub const Row = struct {
                 break :blk if (field.name) entry.name else entry.value;
             },
             .information => |message| message,
-            .set_default => |index| if (index == try current.defaultProfile()) "Default" else "Set default",
+            .set_default => |index| if (std.mem.eql(u8, (try current.profile(index)).id, (try current.defaultProfile()).id)) "Default" else "Set default",
             else => "",
         };
     }
@@ -311,6 +326,8 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .toggle_scanned => |index| {
             if (index >= value.scanned_profiles.len) return error.InvalidSetting;
             scanned[index].enabled = !scanned[index].enabled;
+            if (!scanned[index].enabled and std.mem.eql(u8, value.default_profile, scanned[index].recipe.id))
+                value.default_profile = "local";
             value.scanned_profiles = scanned[0..value.scanned_profiles.len];
         },
         .font => |index| {
@@ -399,7 +416,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         },
         .delete_profile => |index| {
             if (index == 0 or index - 1 >= value.profiles.len) return error.InvalidSetting;
-            if (index == try current.defaultProfile()) value.default_profile = "local";
+            if (std.mem.eql(u8, (try current.profile(index)).id, value.default_profile)) value.default_profile = "local";
             const count = value.profiles.len - 1;
             const retiring = index - 1;
             std.mem.copyForwards(config.Profile, profiles[retiring..count], profiles[retiring + 1 .. count + 1]);
@@ -521,12 +538,13 @@ pub const Editor = struct {
         var next: []const u8 = undefined;
         switch (target) {
             .default_profile => {
-                var index: i16 = 0;
-                for (0..current.profileCount()) |i| if (std.mem.eql(u8, (try current.profile(@intCast(i))).id, value)) {
+                const count = choiceCount(target, current);
+                var index: i32 = 0;
+                for (0..count) |i| if (std.mem.eql(u8, (try choiceAt(target, current, i)).value, value)) {
                     index = @intCast(i);
                     break;
                 };
-                next = (try current.profile(@intCast(@mod(index + delta, @as(i16, current.profileCount()))))).id;
+                next = (try choiceAt(target, current, @intCast(@mod(index + delta, @as(i32, @intCast(count)))))).value;
             },
             .theme, .terminal_theme => {
                 const ids: []const []const u8 = if (target == .theme) &themes.app_ids else &colors.terminal_themes;
@@ -658,7 +676,7 @@ test "settings candidates own generated recipes, validate hostile edits and pres
     try std.testing.expectEqualStrings("exec /bin/sh", current.value.profiles[1].command);
     try accept(&current, .{ .set_default = 1 }, "");
     try accept(&current, .{ .delete_profile = 1 }, "");
-    try std.testing.expectEqual(@as(u8, 0), try current.defaultProfile());
+    try std.testing.expectEqualStrings("local", (try current.defaultProfile()).id);
 }
 test "settings text and global search stay bounded and preserve complete Unicode input" {
     var current = config.Config.defaults(std.testing.allocator);
@@ -709,6 +727,34 @@ test "finite settings expose labeled dropdown options and stage one typed value"
     try std.testing.expect(editor.editing == null);
     try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
 }
+
+test "cached active defaults are selectable while disabled and stale entries stay out of startup" {
+    var current = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}},{"kind":"ssh","recipe":{"id":"auto.ssh.disabled","name":"Disabled","shell":"/usr/bin/ssh"},"enabled":false},{"kind":"shell","recipe":{"id":"auto.shell.missing","name":"Missing","shell":"/bin/sh"},"stale":true}]}
+    );
+    defer current.deinit();
+    try std.testing.expectEqual(@as(usize, 2), choiceCount(.default_profile, &current));
+    try std.testing.expectEqualStrings("auto.repl.python", (try choiceAt(.default_profile, &current, 1)).value);
+    try std.testing.expectError(error.InvalidChoice, choiceAt(.default_profile, &current, 2));
+
+    var editor: Editor = .{};
+    try editor.begin(.{ .page = .startup, .label = "Default profile", .target = .default_profile }, &current);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("auto.repl.python", editor.buffer[0..editor.len]);
+    try accept(&current, .default_profile, editor.buffer[0..editor.len]);
+    try std.testing.expectEqualStrings("auto.repl.python", (try current.defaultProfile()).id);
+    try std.testing.expectError(error.InvalidDefaultProfile, change(&current, std.testing.io, .default_profile, "auto.ssh.disabled"));
+    try std.testing.expectError(error.InvalidDefaultProfile, change(&current, std.testing.io, .default_profile, "auto.shell.missing"));
+
+    try accept(&current, .{ .toggle_scanned = 0 }, "");
+    try std.testing.expect(!current.value.scanned_profiles[0].enabled);
+    try std.testing.expectEqualStrings("local", (try current.defaultProfile()).id);
+    try std.testing.expectEqual(@as(usize, 1), choiceCount(.default_profile, &current));
+    try accept(&current, .{ .toggle_scanned = 0 }, "");
+    try std.testing.expect(current.value.scanned_profiles[0].enabled);
+    try std.testing.expectEqualStrings("local", (try current.defaultProfile()).id);
+}
+
 test "manual scan source switches toggle independently and produce validated owned settings" {
     var current = config.Config.defaults(std.testing.allocator);
     defer current.deinit();

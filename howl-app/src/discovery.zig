@@ -225,12 +225,19 @@ pub fn reconcile(current: *const config.Config, io: std.Io, found: *const Catalo
     }
     var candidate = value;
     candidate.scanned_profiles = entries[0..count];
+    // A previously chosen discovery can disappear on rescan. Keep its cached
+    // fact, but return new launches to Local until the user chooses a live one.
+    for (candidate.scanned_profiles) |entry| {
+        if (!entry.stale or !std.mem.eql(u8, candidate.default_profile, entry.recipe.id)) continue;
+        candidate.default_profile = "local";
+        break;
+    }
     return config.Config.fromValue(current.allocator, io, candidate);
 }
 
 test "explicit rescans refresh facts, retain missing entries and preserve per-entry choices" {
     var current = try config.Config.parse(std.testing.allocator, std.testing.io,
-        \\{"schema":1,"terminal_font_pixels":15,"discover_shells":true,"discover_ssh_hosts":true,"scanned_profiles":[{"kind":"shell","recipe":{"id":"auto.shell.bash","name":"Bash","shell":"/bin/bash"},"enabled":false},{"kind":"ssh","recipe":{"id":"auto.ssh.old","name":"Old host","shell":"/usr/bin/ssh"}}]}
+        \\{"schema":1,"terminal_font_pixels":15,"default_profile":"auto.ssh.old","discover_shells":true,"discover_ssh_hosts":true,"scanned_profiles":[{"kind":"shell","recipe":{"id":"auto.shell.bash","name":"Bash","shell":"/bin/bash"},"enabled":false},{"kind":"ssh","recipe":{"id":"auto.ssh.old","name":"Old host","shell":"/usr/bin/ssh"}}]}
     );
     defer current.deinit();
     var found = Catalogue.init(std.testing.allocator);
@@ -245,6 +252,8 @@ test "explicit rescans refresh facts, retain missing entries and preserve per-en
     try std.testing.expect(!staged.value.scanned_profiles[0].enabled and !staged.value.scanned_profiles[0].stale);
     try std.testing.expect(staged.value.scanned_profiles[1].enabled and staged.value.scanned_profiles[1].stale);
     try std.testing.expect(staged.value.scanned_profiles[2].enabled and !staged.value.scanned_profiles[2].stale);
+    try std.testing.expectEqualStrings("local", (try staged.defaultProfile()).id);
+    try std.testing.expectEqualStrings("auto.ssh.old", (try current.defaultProfile()).id);
     try std.testing.expectEqualStrings("Old host", current.value.scanned_profiles[1].recipe.name);
     try std.testing.expect(!current.value.scanned_profiles[1].stale);
 
