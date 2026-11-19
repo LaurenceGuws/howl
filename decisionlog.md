@@ -344,3 +344,20 @@ of the same coverage rule, while keeping the distinct nearest-edge stroke
 rounding policy unchanged. Fractional, negative, tiny and empty rectangles
 are checked alongside a software-renderer clip roundtrip and Canvas's
 existing 10,000-case intersection oracle and exact-pixel tests.
+
+## Canvas uploads follow exact snapshot ownership (19 November 2026)
+
+Only the native `Canvas.update` path admits immutable VT output, and only
+`Canvas.applySnapshotResources` owns presentation-generation resets and
+stale-resource retirement. The old public `applyResources` multi-upload/removal
+transaction had no production caller beyond the single-resource snapshot path;
+its extra array, pixel-offset and removal policy duplicated existing work.
+Canvas now uploads one exact borrowed `output_commands.Residency` and its
+tightly packed alpha or RGBA pixel slice through a private `uploadResource`.
+It still allocates and populates the replacement before retiring any existing
+texture, with `errdefer` candidate cleanup. Snapshot application also stays
+private to Canvas; other app modules consume it through `update` only.
+Direct Canvas raster tests retain their upload assertions, and a new injected
+allocation-failure test proves the previous accepted texture survives and
+replacement succeeds on retry. Other validated output-owner and host API
+boundaries stay unchanged.

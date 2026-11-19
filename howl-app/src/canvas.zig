@@ -153,63 +153,52 @@ pub const Canvas = struct {
         self.owner = owner;
     }
 
-    /// Applies a validated immutable resource transaction on the graphical thread.
-    /// Pixel storage is borrowed only for this call. On failure, applied resources
-    /// may be partial; do not acknowledge residency or draw until a complete retry.
-    pub fn applyResources(
+    /// Upload one exact borrowed resource; the snapshot owner decides generation
+    /// changes and stale-resource retirement before calling this helper.
+    /// On failure, the caller must retry the whole snapshot before drawing.
+    fn uploadResource(
         self: *Canvas,
         renderer: *c.SDL_Renderer,
-        presentation_generation: u64,
-        uploads: []const output_commands.FrameResourceUpload,
-        removals: []const output_commands.ResourceRef,
-        pixels: []const u8,
+        residency: output_commands.Residency,
+        source: []const u8,
     ) !void {
-        if (self.generation != presentation_generation) {
-            self.clearTextures();
-            self.generation = presentation_generation;
-        }
-        for (removals) |resource| self.remove(resource, true);
-        for (uploads) |upload| {
-            const source = pixels[upload.pixel_offset..][0..upload.pixel_count];
-            const width: usize = upload.size.width;
-            const height: usize = upload.size.height;
-            var upload_pixels: []const u8 = source;
-            var stride = upload.stride;
-            if (upload.format == .alpha8) {
-                // Each upload replaces the whole scratch image; geometric slack buys no reuse.
-                const bytes = width * height * 4;
-                try self.converted.ensureTotalCapacityPrecise(self.allocator, bytes);
-                self.converted.items.len = bytes;
-                for (0..height) |y| for (0..width) |x| {
-                    const at = (y * width + x) * 4;
-                    self.converted.items[at..][0..4].* = .{ 255, 255, 255, source[y * upload.stride + x] };
-                };
-                upload_pixels = self.converted.items;
-                stride = width * 4;
-            }
-            // SDL 3.4.18's software renderer RLE-compresses static textures;
-            // alternating clipped scales can corrupt subsequent colour draws.
-            const access: c.SDL_TextureAccess = if (upload.format == .rgba8) c.SDL_TEXTUREACCESS_STREAMING else c.SDL_TEXTUREACCESS_STATIC;
-            const texture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_RGBA32, access, upload.size.width, upload.size.height) orelse return error.SDLTexture;
-            var owned = true;
-            errdefer if (owned) c.SDL_DestroyTexture(texture);
-            if (!c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_NEAREST) or
-                !c.SDL_SetTextureBlendMode(texture, c.SDL_BLENDMODE_BLEND) or
-                !c.SDL_UpdateTexture(texture, null, upload_pixels.ptr, @intCast(stride))) return error.SDLTexture;
-            self.remove(upload.resource, false);
-            if (self.count == resource_limit) return error.ResourceLimit;
-            self.textures[self.count] = .{
-                .texture = texture,
-                .residency = .{ .resource = upload.resource, .format = upload.format, .size = upload.size },
+        const width: usize = residency.size.width;
+        const height: usize = residency.size.height;
+        // Every VT snapshot atlas and image plane is a tightly packed slice.
+        const source_stride = width * (if (residency.format == .alpha8) @as(usize, 1) else 4);
+        var upload_pixels: []const u8 = source;
+        var stride = source_stride;
+        if (residency.format == .alpha8) {
+            // Each upload replaces the whole scratch image; geometric slack buys no reuse.
+            const bytes = width * height * 4;
+            try self.converted.ensureTotalCapacityPrecise(self.allocator, bytes);
+            self.converted.items.len = bytes;
+            for (0..height) |y| for (0..width) |x| {
+                const at = (y * width + x) * 4;
+                self.converted.items[at..][0..4].* = .{ 255, 255, 255, source[y * source_stride + x] };
             };
-            self.count += 1;
-            owned = false;
+            upload_pixels = self.converted.items;
+            stride = width * 4;
         }
+        // SDL 3.4.18's software renderer RLE-compresses static textures;
+        // alternating clipped scales can corrupt subsequent colour draws.
+        const access: c.SDL_TextureAccess = if (residency.format == .rgba8) c.SDL_TEXTUREACCESS_STREAMING else c.SDL_TEXTUREACCESS_STATIC;
+        const texture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_RGBA32, access, residency.size.width, residency.size.height) orelse return error.SDLTexture;
+        var owned = true;
+        errdefer if (owned) c.SDL_DestroyTexture(texture);
+        if (!c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_NEAREST) or
+            !c.SDL_SetTextureBlendMode(texture, c.SDL_BLENDMODE_BLEND) or
+            !c.SDL_UpdateTexture(texture, null, upload_pixels.ptr, @intCast(stride))) return error.SDLTexture;
+        self.remove(residency.resource, false);
+        if (self.count == resource_limit) return error.ResourceLimit;
+        self.textures[self.count] = .{ .texture = texture, .residency = residency };
+        self.count += 1;
+        owned = false;
     }
 
     /// Brings the held VT snapshot's immutable atlas planes into the backend.
     /// Existing exact generations need no transfer; a failed upload can be retried.
-    pub fn applySnapshotResources(
+    fn applySnapshotResources(
         self: *Canvas,
         renderer: *c.SDL_Renderer,
         presentation_generation: u64,
@@ -239,26 +228,28 @@ pub const Canvas = struct {
             } else resident += 1;
         }
         if (self.find(snapshot.resource) == null) {
-            const upload: output_commands.FrameResourceUpload = .{ .resource = snapshot.resource, .format = .alpha8, .size = .{ .width = snapshot.atlas_width, .height = snapshot.atlas_height }, .pixel_offset = 0, .pixel_count = snapshot.atlas_pixels.len, .stride = snapshot.atlas_width };
-            try self.applyResources(renderer, presentation_generation, &.{upload}, &.{}, snapshot.atlas_pixels);
+            try self.uploadResource(renderer, .{
+                .resource = snapshot.resource,
+                .format = .alpha8,
+                .size = .{ .width = snapshot.atlas_width, .height = snapshot.atlas_height },
+            }, snapshot.atlas_pixels);
         }
         if (snapshot.color_resource) |resource| {
             if (self.find(resource) == null) {
-                const upload: output_commands.FrameResourceUpload = .{ .resource = resource, .format = .rgba8, .size = .{ .width = snapshot.color_atlas_width, .height = snapshot.color_atlas_height }, .pixel_offset = 0, .pixel_count = snapshot.color_atlas_pixels.len, .stride = @as(usize, snapshot.color_atlas_width) * 4 };
-                try self.applyResources(renderer, presentation_generation, &.{upload}, &.{}, snapshot.color_atlas_pixels);
+                try self.uploadResource(renderer, .{
+                    .resource = resource,
+                    .format = .rgba8,
+                    .size = .{ .width = snapshot.color_atlas_width, .height = snapshot.color_atlas_height },
+                }, snapshot.color_atlas_pixels);
             }
         }
         for (snapshot.graphics.images) |image| {
             if (self.find(image.resource) != null) continue;
-            const upload: output_commands.FrameResourceUpload = .{
+            try self.uploadResource(renderer, .{
                 .resource = image.resource,
                 .format = .rgba8,
                 .size = image.size,
-                .pixel_offset = 0,
-                .pixel_count = image.pixels.len,
-                .stride = @as(usize, image.size.width) * 4,
-            };
-            try self.applyResources(renderer, presentation_generation, &.{upload}, &.{}, image.pixels);
+            }, image.pixels);
         }
     }
 
@@ -1205,6 +1196,33 @@ fn testSnapshot(background: output_commands.Command, rows: []const CommandRow, c
     return snapshot;
 }
 
+test "single-resource upload leaves accepted pixels intact on allocation failure and replaces on retry" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(8, 8, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var backend = Canvas.init(failing.allocator());
+    defer backend.deinit();
+    const resource: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(1), .generation = @fromBackingInt(1) };
+    const size: output_commands.Size = .{ .width = 2, .height = 2 };
+    const initial: output_commands.Residency = .{ .resource = resource, .format = .rgba8, .size = size };
+    const replacement: output_commands.Residency = .{ .resource = resource, .format = .alpha8, .size = size };
+    try backend.uploadResource(renderer, initial, &.{ 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255 });
+    const accepted = backend.find(resource) orelse return error.MissingTexture;
+    try std.testing.expectError(error.OutOfMemory, backend.uploadResource(renderer, replacement, &.{ 255, 255, 255, 255 }));
+    try std.testing.expectEqual(accepted, backend.find(resource).?);
+    try std.testing.expectEqual(@as(usize, 1), backend.count);
+    try std.testing.expectEqual(output_commands.ResourceFormat.rgba8, backend.textures[0].residency.format);
+    failing.fail_index = std.math.maxInt(usize);
+    try backend.uploadResource(renderer, replacement, &.{ 255, 255, 255, 255 });
+    try std.testing.expectEqual(@as(usize, 1), backend.count);
+    try std.testing.expectEqual(replacement, backend.textures[0].residency);
+    try std.testing.expect(backend.find(resource) != null);
+}
+
 test "row command phases share flat SDL traversal and preserve full pane clipping" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
     defer c.SDL_Quit();
@@ -1218,7 +1236,8 @@ test "row command phases share flat SDL traversal and preserve full pane clippin
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
     const resource: output_commands.ResourceRef = .{ .resource = try output_commands.ResourceId.init(1), .generation = @fromBackingInt(1) };
-    try backend.applyResources(renderer, 1, &.{.{ .resource = resource, .format = .alpha8, .size = .{ .width = 2, .height = 2 }, .pixel_offset = 0, .pixel_count = 4, .stride = 2 }}, &.{}, &.{ 255, 255, 255, 255 });
+    backend.generation = 1;
+    try backend.uploadResource(renderer, .{ .resource = resource, .format = .alpha8, .size = .{ .width = 2, .height = 2 } }, &.{ 255, 255, 255, 255 });
     const background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .color = .{ .r = 0, .g = 0, .b = 0, .a = 255 } } };
     const row_background: output_commands.Command = .{ .solid = .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 4 }, .color = .{ .r = 0, .g = 0, .b = 255, .a = 255 } } };
     const glyph: output_commands.Command = .{ .alpha_mask = .{
@@ -1424,7 +1443,8 @@ test "VT block cursor final commands paint fill and ink through Canvas" {
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
-    try backend.applyResources(renderer, 1, &.{.{ .resource = snap.resource, .format = .alpha8, .size = .{ .width = snap.atlas_width, .height = snap.atlas_height }, .pixel_offset = 0, .pixel_count = snap.atlas_pixels.len, .stride = snap.atlas_width }}, &.{}, snap.atlas_pixels);
+    backend.generation = 1;
+    try backend.uploadResource(renderer, .{ .resource = snap.resource, .format = .alpha8, .size = .{ .width = snap.atlas_width, .height = snap.atlas_height } }, snap.atlas_pixels);
     const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snap.surface.width), .h = @floatFromInt(snap.surface.height) };
     try std.testing.expectError(error.InvalidRows, backend.drawSnapshot(renderer, geometry, pane, &snap, 0, 3, true, null));
     try backend.drawSnapshot(renderer, geometry, pane, &snap, 0, snap.rows, true, null);
@@ -1732,8 +1752,8 @@ test "colour atlas survives alternating clipped scales" {
         const at = (y * 256 + x) * 4;
         pixels[at..][0..4].* = .{ 255, 0, 0, 255 };
     };
-    const upload: output_commands.FrameResourceUpload = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .pixel_offset = 0, .pixel_count = pixels.len, .stride = 1024 };
-    try canvas.applyResources(renderer, 1, &.{upload}, &.{}, pixels);
+    canvas.generation = 1;
+    try canvas.uploadResource(renderer, .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 } }, pixels);
     const view: output_commands.ResourceView = .{ .resource = id, .format = .rgba8, .size = .{ .width = 256, .height = 256 }, .source = .{ .x = 0, .y = 0, .width = 20, .height = 16 } };
     const small: output_commands.Command = .{ .rgba = .{ .destination = .{ .x = 104, .y = 48, .width = 20, .height = 16 }, .clip = .{ .x = 104, .y = 48, .width = 20, .height = 8 }, .resource = view } };
     const large: output_commands.Command = .{ .rgba = .{ .destination = .{ .x = 0, .y = 41, .width = 38, .height = 30 }, .clip = .{ .x = 0, .y = 56, .width = 38, .height = 15 }, .resource = view } };
