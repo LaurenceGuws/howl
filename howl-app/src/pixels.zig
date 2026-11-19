@@ -3,6 +3,17 @@ const std = @import("std");
 const c = @import("desktop");
 const layout = @import("layout.zig");
 
+/// Shared SDL clip geometry used by host UI panels and their painters.
+pub fn setClip(renderer: *c.SDL_Renderer, rect: layout.Rect) error{SDL}!void {
+    const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.x + rect.width) - @floor(rect.x)), .h = @intFromFloat(@ceil(rect.y + rect.height) - @floor(rect.y)) };
+    if (!c.SDL_SetRenderClipRect(renderer, &clip)) return error.SDL;
+}
+/// Restore unclipped drawing after a bounded Settings or host paint pass.
+pub fn clearClip(renderer: *c.SDL_Renderer) void {
+    const success = c.SDL_SetRenderClipRect(renderer, null);
+    std.debug.assert(success);
+}
+
 /// Settings name stroke width at a 15-pixel font. Direct output accepts 1–16
 /// physical pixels; apply font/display scaling here, outside terminal semantics.
 pub fn cursorStroke(font_pixels: u16, reference: u8) u8 {

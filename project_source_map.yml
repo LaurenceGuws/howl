@@ -64,8 +64,14 @@ experimental:
     frames remain local. Idle text owners retire. Busy text defers projection,
     never canonical service. Application allocations use the SMP allocator.
     One built-in Local recipe plus six custom shell/command/cwd/environment
-    recipes use strict bounded app.json, independent of Odin config. Seven
-    settings pages and the installed-font chooser retain atomic save/rollback.
+    recipes use strict bounded app.json, independent of Odin config. Five
+    settings sidebar pages and the installed-font chooser retain atomic
+    save/rollback. The five page viewports and card geometry live in
+    settings_pages.zig; settings_input.zig and settings_paint.zig bind
+    explicit pointer/keyboard and paint behavior to the concrete SDL host.
+    settings.zig continues to own validated changes, while main.zig composes
+    the host, draft lifecycle and dispatch without a second UI controller.
+    Settings page and pixel acceptance tests live in settings_ui_test.zig.
     Local child-only environment overlays preserve parent state and canonical
     terminal identity. Frame stalls and projection failures cannot stop canonical
     service. SDL preedit/caret/commit is proved; external native IME remains.

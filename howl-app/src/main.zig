@@ -19,6 +19,9 @@ const config = @import("config.zig");
 const widgets = @import("widgets.zig");
 const tab_title = @import("tab_title.zig");
 const settings = @import("settings.zig");
+const pages = @import("settings_pages.zig");
+const settings_input = @import("settings_input.zig");
+const settings_paint = @import("settings_paint.zig");
 const discovery = @import("discovery.zig");
 const picker = @import("picker.zig");
 const palette_limit = picker.limit;
@@ -96,11 +99,11 @@ const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location
 const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u32 = null };
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
 const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, alternate: bool };
-const SettingsHeaderAction = enum { save, cancel, search, close };
-const settings_header_height: f32 = chrome.height;
-const settings_nav_top: f32 = settings_header_height + chrome.Geometry.bottom;
-const settings_card_gutter: f32 = 12;
-const settings_card_padding: f32 = 16;
+const SettingsHeaderAction = pages.SettingsHeaderAction;
+const settings_header_height = pages.settings_header_height;
+const settings_nav_top = pages.settings_nav_top;
+const settings_card_gutter = pages.settings_card_gutter;
+const settings_card_padding = pages.settings_card_padding;
 const HeaderLabel = struct {
     bytes: [1024]u8 = @splat(0),
     len: usize = 0,
@@ -152,303 +155,13 @@ const HeaderCache = struct {
         self.* = .{};
     }
 };
-/// Startup owns only the default profile; scanning lives under Profiles.
-const StartupForm = struct {
-    view: widgets.FormViewport,
-    compact: bool,
-    const outer_inset: f32 = settings_card_gutter;
-    const inner_inset: f32 = settings_card_padding;
-    const top_inset: f32 = settings_card_gutter;
-
-    fn init(bounds: layout.Rect, offset: f32) StartupForm {
-        const compact = bounds.width < 390;
-        return .{ .view = widgets.FormViewport.atOffset(bounds, (if (compact) @as(f32, 178) else 146) + top_inset, offset), .compact = compact };
-    }
-    fn card(self: StartupForm, _: usize) layout.Rect {
-        return self.view.place(outer_inset, 2 + top_inset, @max(1, self.view.bounds.width - 2 * outer_inset), if (self.compact) 164 else 132);
-    }
-    fn row(self: StartupForm, _: usize) layout.Rect {
-        const top: f32 = if (self.compact) 70 else 74;
-        const height: f32 = if (self.compact) 88 else 52;
-        const inset = outer_inset + inner_inset;
-        return self.view.place(inset, top + top_inset, @max(1, self.view.bounds.width - 2 * inset), height);
-    }
-    fn select(self: StartupForm) layout.Rect {
-        const field = self.row(0);
-        const width = if (self.compact) field.width else @min(field.width, @max(1, field.width * 0.53));
-        return .{ .x = field.x + field.width - width, .y = field.y + (if (self.compact) @as(f32, 44) else 8), .width = width, .height = 36 };
-    }
-};
-/// Appearance groups independent controls in cards and uses pixel scrolling.
-const AppearanceForm = struct {
-    view: widgets.FormViewport,
-
-    const Section = struct { title: []const u8, hint: []const u8, first: usize, count: usize };
-    const sections = [_]Section{
-        .{ .title = "Tab bar", .hint = "Visibility and tab sizing.", .first = 0, .count = 2 },
-        .{ .title = "Fonts", .hint = "Typefaces and fallback coverage.", .first = 2, .count = 8 },
-        .{ .title = "Cursor", .hint = "Shape, motion, and blink behavior.", .first = 10, .count = 10 },
-    };
-    const top_inset: f32 = settings_card_gutter;
-    const outer_inset: f32 = settings_card_gutter;
-    const inner_inset: f32 = settings_card_padding;
-    const card_gap: f32 = 14;
-    const heading_height: f32 = 66;
-    const row_stride: f32 = 48;
-    const row_height: f32 = 44;
-    const card_bottom: f32 = 12;
-    const count: usize = sections[sections.len - 1].first + sections[sections.len - 1].count;
-
-    fn cardHeight(number: usize) f32 {
-        return heading_height + @as(f32, @floatFromInt(sections[number].count)) * row_stride + card_bottom;
-    }
-    fn cardTop(number: usize) f32 {
-        var top = top_inset;
-        for (0..number) |index| top += cardHeight(index) + card_gap;
-        return top;
-    }
-    fn rowTop(number: usize) f32 {
-        std.debug.assert(number < count);
-        var index: usize = 0;
-        while (index + 1 < sections.len and number >= sections[index + 1].first) : (index += 1) {}
-        return cardTop(index) + heading_height + @as(f32, @floatFromInt(number - sections[index].first)) * row_stride;
-    }
-    fn contentHeight() f32 {
-        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + top_inset;
-    }
-    fn init(bounds: layout.Rect, offset: f32) AppearanceForm {
-        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
-    }
-    fn card(self: AppearanceForm, number: usize) layout.Rect {
-        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
-    }
-    fn row(self: AppearanceForm, number: usize) layout.Rect {
-        const inset = outer_inset + inner_inset;
-        return self.view.place(inset, rowTop(number), @max(1, self.view.bounds.width - 2 * inset), row_height);
-    }
-    fn hit(self: AppearanceForm, x: f32, y: f32) ?usize {
-        if (!self.view.bounds.contains(x, y)) return null;
-        for (0..count) |number| if (self.row(number).contains(x, y)) return number;
-        return null;
-    }
-};
-/// App chrome and terminal colors share a scrolled form, not list selection.
-/// The color editor and terminal sample remain in the fixed footer.
-const ColorForm = struct {
-    view: widgets.FormViewport,
-
-    const Section = struct { title: []const u8, hint: []const u8, first: usize, count: usize };
-    const app_count = 1 + color_config.app_labels.len + 1;
-    const sections = [_]Section{
-        .{ .title = "Application", .hint = "Window chrome, tabs, and controls.", .first = 0, .count = app_count },
-        .{ .title = "Terminal", .hint = "Text, cursor, and the ANSI palette.", .first = app_count, .count = 1 + color_config.terminal_labels.len + 2 },
-    };
-    const count = sections[sections.len - 1].first + sections[sections.len - 1].count;
-    const outer_inset: f32 = settings_card_gutter;
-    const inner_inset: f32 = settings_card_padding;
-    const heading_height: f32 = 66;
-    const row_stride: f32 = 48;
-    const row_height: f32 = 44;
-    const card_gap: f32 = 14;
-    const card_bottom: f32 = 12;
-
-    fn cardHeight(number: usize) f32 {
-        return heading_height + @as(f32, @floatFromInt(sections[number].count)) * row_stride + card_bottom;
-    }
-    fn cardTop(number: usize) f32 {
-        var top = outer_inset;
-        for (0..number) |index| top += cardHeight(index) + card_gap;
-        return top;
-    }
-    fn rowTop(number: usize) f32 {
-        std.debug.assert(number < count);
-        const section: usize = if (number < app_count) 0 else 1;
-        return cardTop(section) + heading_height + @as(f32, @floatFromInt(number - sections[section].first)) * row_stride;
-    }
-    fn contentHeight() f32 {
-        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + outer_inset;
-    }
-    fn init(bounds: layout.Rect, offset: f32) ColorForm {
-        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
-    }
-    fn card(self: ColorForm, number: usize) layout.Rect {
-        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
-    }
-    fn row(self: ColorForm, number: usize) layout.Rect {
-        const inset = outer_inset + inner_inset;
-        return self.view.place(inset, rowTop(number), @max(1, self.view.bounds.width - 2 * inset), row_height);
-    }
-    fn hit(self: ColorForm, x: f32, y: f32) ?usize {
-        if (!self.view.bounds.contains(x, y)) return null;
-        for (0..count) |number| if (self.row(number).contains(x, y)) return number;
-        return null;
-    }
-};
-/// Shortcuts use their registry categories as distinct cards on one viewport.
-/// The registry order and persisted action IDs never change for presentation.
-const ShortcutForm = struct {
-    view: widgets.FormViewport,
-
-    const Section = struct { category: keybindings.Category, title: []const u8, hint: []const u8 };
-    const sections = [_]Section{
-        .{ .category = .application, .title = "Application", .hint = "Launchers, menus, and settings." },
-        .{ .category = .window, .title = "Windows", .hint = "Window creation and display." },
-        .{ .category = .tab, .title = "Tabs", .hint = "Switch, arrange, and name tabs." },
-        .{ .category = .pane, .title = "Panes", .hint = "Split, manage, and restart panes." },
-        .{ .category = .pane_navigation, .title = "Pane navigation", .hint = "Focus, resize, and exchange panes." },
-        .{ .category = .terminal, .title = "Terminal", .hint = "Fonts, find, clipboard, and history." },
-    };
-    const outer_inset: f32 = settings_card_gutter;
-    const inner_inset: f32 = settings_card_padding;
-    const heading_height: f32 = 66;
-    const row_stride: f32 = 48;
-    const row_height: f32 = 44;
-    const card_gap: f32 = 14;
-    const card_bottom: f32 = 12;
-
-    fn sectionFor(category: keybindings.Category) usize {
-        const index: usize = @backingInt(category);
-        std.debug.assert(index < sections.len and sections[index].category == category);
-        return index;
-    }
-    fn rowCount(number: usize) usize {
-        var count: usize = 0;
-        for (keybindings.definitions) |definition| if (definition.category == sections[number].category) {
-            count += 1;
-        };
-        return count;
-    }
-    fn cardHeight(number: usize) f32 {
-        return heading_height + @as(f32, @floatFromInt(rowCount(number))) * row_stride + card_bottom;
-    }
-    fn cardTop(number: usize) f32 {
-        var top = outer_inset;
-        for (0..number) |index| top += cardHeight(index) + card_gap;
-        return top;
-    }
-    fn rowTop(index: usize) f32 {
-        std.debug.assert(index < keybindings.definitions.len);
-        const category = keybindings.definitions[index].category;
-        var preceding: usize = 0;
-        for (keybindings.definitions[0..index]) |definition| if (definition.category == category) {
-            preceding += 1;
-        };
-        return cardTop(sectionFor(category)) + heading_height + @as(f32, @floatFromInt(preceding)) * row_stride;
-    }
-    fn contentHeight() f32 {
-        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + outer_inset;
-    }
-    fn init(bounds: layout.Rect, offset: f32) ShortcutForm {
-        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
-    }
-    fn card(self: ShortcutForm, number: usize) layout.Rect {
-        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
-    }
-    fn row(self: ShortcutForm, index: usize) layout.Rect {
-        const inset = outer_inset + inner_inset;
-        return self.view.place(inset, rowTop(index), @max(1, self.view.bounds.width - 2 * inset), row_height);
-    }
-    fn hit(self: ShortcutForm, x: f32, y: f32) ?usize {
-        if (!self.view.bounds.contains(x, y)) return null;
-        for (keybindings.definitions, 0..) |_, index| if (self.row(index).contains(x, y)) return index;
-        return null;
-    }
-};
-/// Profiles owns one viewport for discovery, saved recipes, scanned recipes,
-/// and the saved-profile editor. Rows own only selection and hit geometry.
-const ProfilesForm = struct {
-    view: widgets.FormViewport,
-    overview: bool,
-    compact: bool,
-    saved_count: usize,
-    scanned_count: usize,
-    detail_count: usize,
-
-    const outer_inset: f32 = settings_card_gutter;
-    const inner_inset: f32 = settings_card_padding;
-    const card_gap: f32 = 14;
-    const heading_height: f32 = 66;
-    const detail_heading_height: f32 = 112;
-    const row_stride: f32 = 48;
-    const row_height: f32 = 44;
-    const card_bottom: f32 = 12;
-
-    fn init(bounds: layout.Rect, offset: f32, overview: bool, saved_count: usize, scanned_count: usize, detail_count: usize) ProfilesForm {
-        var form: ProfilesForm = .{
-            .view = undefined,
-            .overview = overview,
-            .compact = bounds.width < 320,
-            .saved_count = saved_count,
-            .scanned_count = scanned_count,
-            .detail_count = detail_count,
-        };
-        form.view = widgets.FormViewport.atOffset(bounds, form.contentHeight(), offset);
-        return form;
-    }
-    fn cardCount(self: ProfilesForm) usize {
-        return if (self.overview) 3 else 1;
-    }
-    fn cardHeight(self: ProfilesForm, number: usize) f32 {
-        if (!self.overview) {
-            std.debug.assert(number == 0);
-            return detail_heading_height + @as(f32, @floatFromInt(self.detail_count)) * row_stride + card_bottom;
-        }
-        std.debug.assert(number < 3);
-        if (number == 0) return if (self.compact) 146 else 112;
-        if (number == 1) return heading_height + @as(f32, @floatFromInt(self.saved_count)) * row_stride + card_bottom;
-        return heading_height + @as(f32, @floatFromInt(@max(1, self.scanned_count))) * row_stride + card_bottom;
-    }
-    fn cardTop(self: ProfilesForm, number: usize) f32 {
-        std.debug.assert(number < self.cardCount());
-        var top = outer_inset;
-        for (0..number) |index| top += self.cardHeight(index) + card_gap;
-        return top;
-    }
-    fn contentHeight(self: ProfilesForm) f32 {
-        const last = self.cardCount() - 1;
-        return self.cardTop(last) + self.cardHeight(last) + outer_inset;
-    }
-    fn card(self: ProfilesForm, number: usize) layout.Rect {
-        return self.view.place(outer_inset, self.cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), self.cardHeight(number));
-    }
-    fn rowTop(self: ProfilesForm, index: usize) f32 {
-        if (!self.overview) {
-            std.debug.assert(index < self.detail_count);
-            return self.cardTop(0) + detail_heading_height + @as(f32, @floatFromInt(index)) * row_stride;
-        }
-        std.debug.assert(index < self.saved_count + self.scanned_count);
-        const saved = index < self.saved_count;
-        return self.cardTop(if (saved) 1 else 2) + heading_height + @as(f32, @floatFromInt(if (saved) index else index - self.saved_count)) * row_stride;
-    }
-    fn row(self: ProfilesForm, index: usize) layout.Rect {
-        const inset = outer_inset + inner_inset;
-        return self.view.place(inset, self.rowTop(index), @max(1, self.view.bounds.width - 2 * inset), row_height);
-    }
-    fn hit(self: ProfilesForm, x: f32, y: f32) ?usize {
-        if (!self.view.bounds.contains(x, y)) return null;
-        const count = if (self.overview) self.saved_count + self.scanned_count else self.detail_count;
-        for (0..count) |index| if (self.row(index).contains(x, y)) return index;
-        return null;
-    }
-    fn scanSourceRow(self: ProfilesForm, number: usize) layout.Rect {
-        std.debug.assert(self.overview and number < 2);
-        const scan = self.card(0);
-        if (self.compact) return .{
-            .x = scan.x + 16,
-            .y = scan.y + 54 + @as(f32, @floatFromInt(number)) * 39,
-            .width = @max(1, scan.width - 32),
-            .height = 34,
-        };
-        const width = @max(1, (scan.width - 40) / 2);
-        return .{
-            .x = scan.x + 16 + @as(f32, @floatFromInt(number)) * (width + 8),
-            .y = scan.y + 64,
-            .width = width,
-            .height = 34,
-        };
-    }
-};
-const App = struct {
+const StartupForm = pages.StartupForm;
+const AppearanceForm = pages.AppearanceForm;
+const ColorForm = pages.ColorForm;
+const ShortcutForm = pages.ShortcutForm;
+const ProfilesForm = pages.ProfilesForm;
+/// Direct SDL host for terminal panes, Settings state and desktop lifecycle.
+pub const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
     fonts: *font_owner.Fonts,
@@ -496,6 +209,146 @@ const App = struct {
     notice_len: usize = 0,
     notice_until: u64 = 0,
 
+    const InputUI = settings_input.ForHost(@This());
+    const PaintUI = settings_paint.ForHost(@This());
+
+    /// Bind Settings painting for setting Rgb to the SDL host.
+    pub const settingRgb = PaintUI.settingRgb;
+    /// Bind Settings painting for draw Settings Dropdown to the SDL host.
+    pub const drawSettingsDropdown = PaintUI.drawSettingsDropdown;
+    /// Bind Settings painting for draw Settings Card to the SDL host.
+    pub const drawSettingsCard = PaintUI.drawSettingsCard;
+    /// Bind Settings painting for draw Startup Switch to the SDL host.
+    pub const drawStartupSwitch = PaintUI.drawStartupSwitch;
+    /// Bind Settings painting for draw Settings Control to the SDL host.
+    pub const drawSettingsControl = PaintUI.drawSettingsControl;
+    /// Bind Settings painting for draw Settings Select to the SDL host.
+    pub const drawSettingsSelect = PaintUI.drawSettingsSelect;
+    /// Bind Settings painting for draw Startup Form to the SDL host.
+    pub const drawStartupForm = PaintUI.drawStartupForm;
+    /// Bind Settings painting for draw Appearance Cards to the SDL host.
+    pub const drawAppearanceCards = PaintUI.drawAppearanceCards;
+    /// Bind Settings painting for draw Color Cards to the SDL host.
+    pub const drawColorCards = PaintUI.drawColorCards;
+    /// Bind Settings painting for draw Shortcut Cards to the SDL host.
+    pub const drawShortcutCards = PaintUI.drawShortcutCards;
+    /// Bind Settings painting for draw Profile Scan Card to the SDL host.
+    pub const drawProfileScanCard = PaintUI.drawProfileScanCard;
+    /// Bind Settings painting for draw Profiles Cards to the SDL host.
+    pub const drawProfilesCards = PaintUI.drawProfilesCards;
+    /// Bind Settings painting for draw Profiles Toolbar to the SDL host.
+    pub const drawProfilesToolbar = PaintUI.drawProfilesToolbar;
+    /// Bind Settings painting for draw Settings List Heading to the SDL host.
+    pub const drawSettingsListHeading = PaintUI.drawSettingsListHeading;
+    /// Bind Settings painting for draw Settings Header Buttons to the SDL host.
+    pub const drawSettingsHeaderButtons = PaintUI.drawSettingsHeaderButtons;
+    /// Bind Settings painting for draw Settings to the SDL host.
+    pub const drawSettings = PaintUI.drawSettings;
+    /// Bind Settings input and geometry for settings Rect to the SDL host.
+    pub const settingsRect = InputUI.settingsRect;
+    /// Bind Settings input and geometry for settings Nav Row to the SDL host.
+    pub const settingsNavRow = InputUI.settingsNavRow;
+    /// Bind Settings input and geometry for settings Header Button to the SDL host.
+    pub const settingsHeaderButton = InputUI.settingsHeaderButton;
+    /// Bind Settings input and geometry for settings Set Search to the SDL host.
+    pub const settingsSetSearch = InputUI.settingsSetSearch;
+    /// Bind Settings input and geometry for settings Body to the SDL host.
+    pub const settingsBody = InputUI.settingsBody;
+    /// Bind Settings input and geometry for settings Scan Compact to the SDL host.
+    pub const settingsScanCompact = InputUI.settingsScanCompact;
+    /// Bind Settings input and geometry for settings Scan Card to the SDL host.
+    pub const settingsScanCard = InputUI.settingsScanCard;
+    /// Bind Settings input and geometry for settings Scan Source Row to the SDL host.
+    pub const settingsScanSourceRow = InputUI.settingsScanSourceRow;
+    /// Bind Settings input and geometry for startup Form to the SDL host.
+    pub const startupForm = InputUI.startupForm;
+    /// Bind Settings input and geometry for appearance Form to the SDL host.
+    pub const appearanceForm = InputUI.appearanceForm;
+    /// Bind Settings input and geometry for color Form to the SDL host.
+    pub const colorForm = InputUI.colorForm;
+    /// Bind Settings input and geometry for shortcut Form to the SDL host.
+    pub const shortcutForm = InputUI.shortcutForm;
+    /// Bind Settings input and geometry for profiles Form to the SDL host.
+    pub const profilesForm = InputUI.profilesForm;
+    /// Bind Settings input and geometry for appearance Settings to the SDL host.
+    pub const appearanceSettings = InputUI.appearanceSettings;
+    /// Bind Settings input and geometry for color Settings to the SDL host.
+    pub const colorSettings = InputUI.colorSettings;
+    /// Bind Settings input and geometry for shortcut Settings to the SDL host.
+    pub const shortcutSettings = InputUI.shortcutSettings;
+    /// Bind Settings input and geometry for profiles Settings to the SDL host.
+    pub const profilesSettings = InputUI.profilesSettings;
+    /// Bind Settings input and geometry for settings Form View to the SDL host.
+    pub const settingsFormView = InputUI.settingsFormView;
+    /// Bind Settings input and geometry for settings Scroll By to the SDL host.
+    pub const settingsScrollBy = InputUI.settingsScrollBy;
+    /// Bind Settings input and geometry for settings Scrollbar Press to the SDL host.
+    pub const settingsScrollbarPress = InputUI.settingsScrollbarPress;
+    /// Bind Settings input and geometry for settings Scrollbar Move to the SDL host.
+    pub const settingsScrollbarMove = InputUI.settingsScrollbarMove;
+    /// Bind Settings input and geometry for simple Settings Form to the SDL host.
+    pub const simpleSettingsForm = InputUI.simpleSettingsForm;
+    /// Bind Settings input and geometry for settings List Card to the SDL host.
+    pub const settingsListCard = InputUI.settingsListCard;
+    /// Bind Settings input and geometry for settings Rows to the SDL host.
+    pub const settingsRows = InputUI.settingsRows;
+    /// Bind Settings input and geometry for settings Row Field to the SDL host.
+    pub const settingsRowField = InputUI.settingsRowField;
+    /// Bind Settings input and geometry for settings Edit Button to the SDL host.
+    pub const settingsEditButton = InputUI.settingsEditButton;
+    /// Bind Settings input and geometry for settings Reset Button to the SDL host.
+    pub const settingsResetButton = InputUI.settingsResetButton;
+    /// Bind Settings input and geometry for settings Field to the SDL host.
+    pub const settingsField = InputUI.settingsField;
+    /// Bind Settings input and geometry for settings Dropdown to the SDL host.
+    pub const settingsDropdown = InputUI.settingsDropdown;
+    /// Bind Settings input and geometry for settings Visible to the SDL host.
+    pub const settingsVisible = InputUI.settingsVisible;
+    /// Bind Settings input and geometry for settings Start to the SDL host.
+    pub const settingsStart = InputUI.settingsStart;
+    /// Bind Settings input and geometry for settings Toolbar Count to the SDL host.
+    pub const settingsToolbarCount = InputUI.settingsToolbarCount;
+    /// Bind Settings input and geometry for settings Toolbar Button to the SDL host.
+    pub const settingsToolbarButton = InputUI.settingsToolbarButton;
+    /// Bind Settings input and geometry for settings Toolbar Action to the SDL host.
+    pub const settingsToolbarAction = InputUI.settingsToolbarAction;
+    /// Bind Settings input and geometry for scan Settings Profiles to the SDL host.
+    pub const scanSettingsProfiles = InputUI.scanSettingsProfiles;
+    /// Bind Settings input and geometry for overview Clone Target to the SDL host.
+    pub const overviewCloneTarget = InputUI.overviewCloneTarget;
+    /// Bind Settings input and geometry for overview Default ID to the SDL host.
+    pub const overviewDefaultID = InputUI.overviewDefaultID;
+    /// Bind Settings input and geometry for color Bar to the SDL host.
+    pub const colorBar = InputUI.colorBar;
+    /// Bind Settings input and geometry for settings Default Button to the SDL host.
+    pub const settingsDefaultButton = InputUI.settingsDefaultButton;
+    /// Bind Settings input and geometry for saved Edit Button to the SDL host.
+    pub const savedEditButton = InputUI.savedEditButton;
+    /// Bind Settings input and geometry for scanned Enable Button to the SDL host.
+    pub const scannedEnableButton = InputUI.scannedEnableButton;
+    /// Bind Settings input and geometry for scan Source Switch to the SDL host.
+    pub const scanSourceSwitch = InputUI.scanSourceSwitch;
+    /// Bind Settings input and geometry for color Reset to the SDL host.
+    pub const colorReset = InputUI.colorReset;
+    /// Bind Settings input and geometry for edited Color to the SDL host.
+    pub const editedColor = InputUI.editedColor;
+    /// Bind Settings input and geometry for color Point to the SDL host.
+    pub const colorPoint = InputUI.colorPoint;
+    /// Bind Settings input and geometry for draw Color Editor to the SDL host.
+    pub const drawColorEditor = InputUI.drawColorEditor;
+    /// Bind Settings input and geometry for settings Click to the SDL host.
+    pub const settingsClick = InputUI.settingsClick;
+    /// Bind Settings input and geometry for settings Appearance Click to the SDL host.
+    pub const settingsAppearanceClick = InputUI.settingsAppearanceClick;
+    /// Bind Settings input and geometry for settings Color Click to the SDL host.
+    pub const settingsColorClick = InputUI.settingsColorClick;
+    /// Bind Settings input and geometry for settings Shortcut Click to the SDL host.
+    pub const settingsShortcutClick = InputUI.settingsShortcutClick;
+    /// Bind Settings input and geometry for settings Profiles Click to the SDL host.
+    pub const settingsProfilesClick = InputUI.settingsProfilesClick;
+    /// Bind Settings input and geometry for settings Key to the SDL host.
+    pub const settingsKey = InputUI.settingsKey;
+
     fn deinit(self: *App) void {
         self.discardSettings();
         self.header_cache.deinit();
@@ -511,7 +364,8 @@ const App = struct {
     fn pane(self: *App) *Pane {
         return self.tab().panes[self.tab().tree.active].?;
     }
-    fn isHovered(self: *const App, rect: layout.Rect) bool {
+    /// Check pointer hover against one exact painted control rectangle.
+    pub fn isHovered(self: *const App, rect: layout.Rect) bool {
         return if (self.hover_point) |point| rect.contains(point.x, point.y) else false;
     }
     fn headerHover(self: *const App) chrome.HeaderTarget {
@@ -522,14 +376,16 @@ const App = struct {
     fn headerTabs(self: *const App, width: f32) chrome.Tabs {
         return chrome.Tabs.init(self.tab_count, width, self.configuration.value.tab_width == .fit);
     }
-    fn headerHeight(self: *const App) f32 {
+    /// Height of the visible or hidden native tab header.
+    pub fn headerHeight(self: *const App) f32 {
         return if (self.configuration.value.hide_single_tab and self.tab_count <= 1) 0 else chrome.height;
     }
     fn terminalBody(self: *const App) layout.Rect {
         const top = self.headerHeight();
         return .{ .x = 0, .y = top, .width = @max(1, self.width), .height = @max(1, self.height - top) };
     }
-    fn setNotice(self: *App, message: []const u8) void {
+    /// Stage a bounded, transient notice for the host overlay.
+    pub fn setNotice(self: *App, message: []const u8) void {
         self.notice_len = @min(message.len, self.notice.len);
         @memcpy(self.notice[0..self.notice_len], message[0..self.notice_len]);
         self.notice_until = c.SDL_GetTicks() +| 5000;
@@ -611,7 +467,8 @@ const App = struct {
         value.recipe.deinit();
         allocator.destroy(value);
     }
-    fn cancelComposition(self: *App) void {
+    /// Discard text preedit before changing the active input owner.
+    pub fn cancelComposition(self: *App) void {
         self.preedit.cancel(self.input_timestamp);
         if (!c.SDL_ClearComposition(self.window)) self.report(error.SDLComposition);
     }
@@ -920,7 +777,8 @@ const App = struct {
             self.configureFont(value, value.font_size, true) catch |failure| self.report(failure);
         };
     }
-    fn uiPalette(self: *const App) error{ InvalidTheme, InvalidColor }!appearance.Palette {
+    /// Resolve the staged or live Settings palette for all host chrome.
+    pub fn uiPalette(self: *const App) error{ InvalidTheme, InvalidColor }!appearance.Palette {
         return appearance.resolve(self.configuration.value.app_theme, self.configuration.value.app_colors);
     }
     fn applyConfiguration(self: *App, candidate: *config.Config) !void {
@@ -1040,7 +898,8 @@ const App = struct {
             p.font_repair_pending = false;
         }
     }
-    fn toggleSettings(self: *App) !void {
+    /// Enter or leave Settings while preserving the staged edit contract.
+    pub fn toggleSettings(self: *App) !void {
         try self.finishRename(false);
         if (self.settings_editor != null) {
             self.closeSettings();
@@ -1053,10 +912,12 @@ const App = struct {
         self.settings_scroll_offset = 0;
         self.settings_scroll_grab = null;
     }
-    fn settingsConfiguration(self: *const App) *const config.Config {
+    /// Return the staged Settings configuration when one exists.
+    pub fn settingsConfiguration(self: *const App) *const config.Config {
         return if (self.settings_draft) |*draft| draft else self.configuration;
     }
-    fn discardSettings(self: *App) void {
+    /// Release a staged Settings draft and clear its editor state.
+    pub fn discardSettings(self: *App) void {
         if (self.settings_draft) |*draft| draft.deinit();
         self.settings_draft = null;
         if (self.settings_editor) |*editor| editor.cancel();
@@ -1068,18 +929,21 @@ const App = struct {
         self.settings_scroll_grab = null;
         if (pending) self.setNotice("Unsaved settings discarded");
     }
-    fn settingsCancel(self: *App) void {
+    /// Discard pending Settings edits without mutating live configuration.
+    pub fn settingsCancel(self: *App) void {
         const had_changes = self.settings_draft != null or self.settings_editor.?.editing != null;
         self.discardSettings();
         if (had_changes) self.setNotice("Unsaved settings discarded");
     }
-    fn settingsSave(self: *App) !void {
+    /// Commit staged Settings using the configured application path.
+    pub fn settingsSave(self: *App) !void {
         if (self.settings_draft == null and self.settings_editor.?.editing == null) return;
         const target = try config.Config.path(allocator, self.init.environ_map);
         defer allocator.free(target);
         try self.settingsSaveAt(.cwd(), target);
     }
-    fn settingsSaveAt(self: *App, dir: std.Io.Dir, target: []const u8) !void {
+    /// Commit a validated Settings draft at an explicit testable path.
+    pub fn settingsSaveAt(self: *App, dir: std.Io.Dir, target: []const u8) !void {
         const editor = &self.settings_editor.?;
         if (editor.recording) {
             self.setNotice("Capture a shortcut or press Esc first");
@@ -1104,7 +968,8 @@ const App = struct {
         }
         return false;
     }
-    fn changeSetting(self: *App, target: settings.Target, text: []const u8) !void {
+    /// Stage one validated Settings mutation without writing a file.
+    pub fn changeSetting(self: *App, target: settings.Target, text: []const u8) !void {
         if (target == .delete_profile and try self.profileInUse(target.delete_profile)) return error.ProfileInUse;
         const candidate = try settings.change(self.settingsConfiguration(), self.init.io, target, text);
         if (self.settings_draft) |*draft| draft.deinit();
@@ -1113,7 +978,8 @@ const App = struct {
         self.settings_editor.?.cancel();
         self.setNotice("Pending changes — Save to apply");
     }
-    fn activateSetting(self: *App, row: settings.Row) !void {
+    /// Navigate to or begin editing an indexed Settings target.
+    pub fn activateSetting(self: *App, row: settings.Row) !void {
         const editor = &self.settings_editor.?;
         if (editor.search) {
             editor.search = false;
@@ -1184,7 +1050,8 @@ const App = struct {
             }
         } else try self.changeSetting(row.target, "");
     }
-    fn openFontChooser(self: *App, mode: font_chooser.Mode, current_path: []const u8) !void {
+    /// Open the app-owned font picker for one Settings field.
+    pub fn openFontChooser(self: *App, mode: font_chooser.Mode, current_path: []const u8) !void {
         self.cancelComposition();
         var original_live: ?config.Config = if (self.settings_editor != null) try config.Config.fromValue(allocator, self.init.io, self.configuration.value) else null;
         errdefer if (original_live) |*value| value.deinit();
@@ -1425,7 +1292,8 @@ const App = struct {
         self.consume_left_release = true;
     }
 
-    fn textKey(self: *App, edit: *widgets.Text, buffer: []u8, len: *usize, event_value: c.SDL_KeyboardEvent) !bool {
+    /// Apply UTF-8 keyboard edits to a caller-owned bounded text buffer.
+    pub fn textKey(self: *App, edit: *widgets.Text, buffer: []u8, len: *usize, event_value: c.SDL_KeyboardEvent) !bool {
         const key = event_value.key;
         const mods = input.semanticModifiers(event_value.mod);
         if (mods.control and key == c.SDLK_A) {
@@ -1458,10 +1326,12 @@ const App = struct {
         }
         return false;
     }
-    fn drawField(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool) !void {
+    /// Paint an editable text field using the shared UI style.
+    pub fn drawField(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool) !void {
         return self.drawFieldStyled(rect, edit, text, placeholder, active, false);
     }
-    fn drawFieldStyled(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool, rounded: bool) !void {
+    /// Paint a text field with explicit rounded or square styling.
+    pub fn drawFieldStyled(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool, rounded: bool) !void {
         const colors = try self.uiPalette();
         if (rounded) {
             try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, 7);
@@ -1493,7 +1363,8 @@ const App = struct {
         if (active and self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = inner.x + caret - scroll, .y = rect.y + 6, .width = 1, .height = @min(18, inner.height) }, colors.accent);
     }
 
-    fn drawListScroll(self: *App, rows: widgets.Rows, first: usize, count: usize) !void {
+    /// Paint the search or chooser list scrollbar.
+    pub fn drawListScroll(self: *App, rows: widgets.Rows, first: usize, count: usize) !void {
         const shown = @min(count, rows.visible());
         if (count <= shown) return;
         const colors = try self.uiPalette();
@@ -1505,7 +1376,8 @@ const App = struct {
         try fill(self.renderer, track, if (self.isHovered(track)) appearance.hover(colors.border) else colors.border);
         try fill(self.renderer, chip, if (self.isHovered(chip)) appearance.hover(colors.muted) else colors.muted);
     }
-    fn drawListRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
+    /// Paint selection and hover for a list-style row.
+    pub fn drawListRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
         const colors = try self.uiPalette();
         if (selected or hovered) {
             const base = if (selected) colors.active else colors.idle;
@@ -1513,70 +1385,13 @@ const App = struct {
         }
         if (selected and focused) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + 4, .width = 2, .height = @max(1, rect.height - 8) }, colors.accent);
     }
-    fn drawSettingsCardRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
+    /// Paint selection and hover for a card-style Settings row.
+    pub fn drawSettingsCardRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
         if (!selected and !hovered) return;
         const colors = try self.uiPalette();
         const base = if (selected) colors.active else colors.idle;
         try drawing.fillRounded(self.renderer, rect, if (hovered) appearance.hover(base) else base, 7);
         if (selected and focused) try drawing.fillRounded(self.renderer, .{ .x = rect.x, .y = rect.y + 7, .width = 2, .height = @max(1, rect.height - 14) }, colors.accent, 1);
-    }
-    fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
-        const e = &self.settings_editor.?;
-        const key = event_value.key;
-        const mods = input.semanticModifiers(event_value.mod);
-        if (mods.control and key == c.SDLK_S and !e.recording) return self.settingsSave();
-        if (mods.control and key == c.SDLK_F and !e.recording) {
-            if (e.editing) |target| try self.changeSetting(target, e.buffer[0..e.len]);
-            self.settingsSetSearch(true);
-            return;
-        }
-        if (e.recording) {
-            if (key == c.SDLK_ESCAPE) {
-                self.cancelComposition();
-                e.cancel();
-                return;
-            }
-            if (key == c.SDLK_LCTRL or key == c.SDLK_RCTRL or key == c.SDLK_LSHIFT or key == c.SDLK_RSHIFT or
-                key == c.SDLK_LALT or key == c.SDLK_RALT or key == c.SDLK_LGUI or key == c.SDLK_RGUI) return;
-            self.keyboard.suppress_text = true;
-            var buffer: [64]u8 = undefined;
-            const shortcut = try keybindings.format(key, event_value.mod, &buffer);
-            @memcpy(e.buffer[0..shortcut.len], shortcut);
-            e.len = shortcut.len;
-            e.edit = .{ .cursor = shortcut.len };
-            e.recording = false;
-            self.setNotice("Shortcut captured — Enter stages; Save applies");
-            return;
-        }
-        if (e.editing) |target| {
-            if (key == c.SDLK_ESCAPE) {
-                self.cancelComposition();
-                e.cancel();
-            } else if (key == c.SDLK_TAB) {
-                try self.changeSetting(target, e.buffer[0..e.len]);
-            } else if (key == c.SDLK_RETURN) {
-                try self.changeSetting(target, e.buffer[0..e.len]);
-            } else if (e.button == null) {
-                const row: settings.Row = .{ .page = e.page, .label = "", .target = target };
-                if (row.choice()) {
-                    if (key == c.SDLK_LEFT or key == c.SDLK_UP or key == c.SDLK_RIGHT or key == c.SDLK_DOWN or key == c.SDLK_SPACE) try e.cycle(self.settingsConfiguration(), if (key == c.SDLK_LEFT or key == c.SDLK_UP) -1 else 1);
-                } else if (try self.textKey(&e.edit, e.buffer[0 .. e.buffer.len - 1], &e.len, event_value)) self.cancelComposition();
-            }
-            return;
-        }
-        if (key == c.SDLK_ESCAPE) {
-            self.cancelComposition();
-            if (e.search) {
-                self.settingsSetSearch(false);
-            } else try self.toggleSettings();
-            return;
-        }
-        if (e.search and (key == c.SDLK_LEFT or key == c.SDLK_RIGHT or key == c.SDLK_HOME or key == c.SDLK_END or key == c.SDLK_DELETE or key == c.SDLK_BACKSPACE or (mods.control and (key == c.SDLK_A or key == c.SDLK_C or key == c.SDLK_X or key == c.SDLK_V)))) {
-            if (try self.textKey(&e.query_edit, &e.query, &e.query_len, event_value)) e.list = .{};
-            return;
-        }
-        // The Settings sidebar and form controls are pointer navigated.
-        // Keyboard input is reserved for active editors and the search field.
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
@@ -2132,7 +1947,8 @@ const App = struct {
         for ([_]vt.Terminal.MouseButton{ .left, .middle, .right }) |button|
             try self.pointerRelease(button, -std.math.inf(f32), -std.math.inf(f32), .{});
     }
-    fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
+    /// Route wheel input to the current modal, page or terminal owner.
+    pub fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
         if (self.chooser) |chooser| {
             if (std.math.isFinite(wheel.y)) chooser.list.scroll(@intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256)), chooser.result_count, self.chooserVisible());
             return;
@@ -2298,622 +2114,12 @@ const App = struct {
             "Enter: run · Esc: close";
         try self.clippedTextColor(text, .{ .x = box.x + 18, .y = box.y + box.height - 32, .width = @max(1, box.width - 36), .height = 26 }, box.x + 18, colors.muted);
     }
-    fn settingsRect(self: *const App) layout.Rect {
-        const width = @min(860, @max(1, self.width - 16));
-        const top = self.headerHeight() + 8;
-        return .{ .x = self.width - width - 8, .y = top, .width = width, .height = @max(1, self.height - top - 8) };
-    }
-    fn settingsNavRow(self: *const App, number: usize) layout.Rect {
-        const box = self.settingsRect();
-        const sidebar = @min(160, box.width / 3);
-        return .{
-            .x = box.x + 8,
-            .y = box.y + settings_nav_top + @as(f32, @floatFromInt(number)) * 34,
-            .width = @max(1, sidebar - 12),
-            .height = 32,
-        };
-    }
-    fn settingsHeaderButton(self: *const App, action: SettingsHeaderAction) layout.Rect {
-        const box = self.settingsRect();
-        const width: f32 = switch (action) {
-            .save, .cancel => 66,
-            else => chrome.Geometry.chip_height,
-        };
-        const right: f32 = switch (action) {
-            .save => 222,
-            .cancel => 150,
-            .search => 74,
-            .close => 40,
-        };
-        return .{ .x = box.x + box.width - right, .y = box.y + chrome.Geometry.top, .width = width, .height = chrome.Geometry.chip_height };
-    }
-    fn settingsSetSearch(self: *App, enabled: bool) void {
-        const e = &self.settings_editor.?;
-        self.cancelComposition();
-        if (e.editing != null) e.cancel();
-        e.search = enabled;
-        e.content_focus = !enabled;
-        e.query_len = 0;
-        e.query_edit = .{};
-        e.list = .{};
-        e.delete_pending = null;
-        self.settings_scroll_offset = 0;
-        self.settings_scroll_grab = null;
-    }
-    fn settingsBody(self: *const App) layout.Rect {
-        const box = self.settingsRect();
-        const e = self.settings_editor.?;
-        const sidebar = @min(160, box.width / 3);
-        const top: f32 = settings_header_height + (if (e.search) @as(f32, 42) else 0);
-        const bottom: f32 = if (!e.search and (e.page == .colors or (e.editing != null and e.edit.kind == .color))) 106 else if (!e.search and e.page == .defaults) 54 else 12;
-        return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - bottom) };
-    }
-    fn settingsScanCompact(self: *const App) bool {
-        return self.profilesForm().compact;
-    }
-    fn settingsScanCard(self: *const App) layout.Rect {
-        return self.profilesForm().card(0);
-    }
-    fn settingsScanSourceRow(self: *const App, number: usize) layout.Rect {
-        return self.profilesForm().scanSourceRow(number);
-    }
-    fn startupForm(self: *const App) StartupForm {
-        return StartupForm.init(self.settingsBody(), self.settings_scroll_offset);
-    }
-    fn appearanceForm(self: *const App) AppearanceForm {
-        return AppearanceForm.init(self.settingsBody(), self.settings_scroll_offset);
-    }
-    fn colorForm(self: *const App) ColorForm {
-        return ColorForm.init(self.settingsBody(), self.settings_scroll_offset);
-    }
-    fn shortcutForm(self: *const App) ShortcutForm {
-        return ShortcutForm.init(self.settingsBody(), self.settings_scroll_offset);
-    }
-    fn profilesForm(self: *const App) ProfilesForm {
-        const e = self.settings_editor.?;
-        const current = self.settingsConfiguration();
-        const selected = @min(e.profile, current.profileCount() - 1);
-        const detail_count: usize = if (selected == 0) 5 else 7 + 3 * current.value.profiles[@as(usize, selected) - 1].environment.len;
-        return ProfilesForm.init(self.settingsBody(), self.settings_scroll_offset, e.page == .defaults, current.profileCount(), current.value.scanned_profiles.len, detail_count);
-    }
-    fn appearanceSettings(self: *const App) bool {
-        const editor = self.settings_editor.?;
-        return !editor.search and editor.page == .appearance;
-    }
-    fn colorSettings(self: *const App) bool {
-        const editor = self.settings_editor.?;
-        return !editor.search and editor.page == .colors;
-    }
-    fn shortcutSettings(self: *const App) bool {
-        const editor = self.settings_editor.?;
-        return !editor.search and editor.page == .mappings;
-    }
-    fn profilesSettings(self: *const App) bool {
-        const editor = self.settings_editor.?;
-        return !editor.search and (editor.page == .defaults or editor.page == .profiles);
-    }
-    fn settingsFormView(self: *const App) ?widgets.FormViewport {
-        const editor = self.settings_editor orelse return null;
-        if (editor.search) return null;
-        return switch (editor.page) {
-            .startup => self.startupForm().view,
-            .appearance => self.appearanceForm().view,
-            .colors => self.colorForm().view,
-            .mappings => self.shortcutForm().view,
-            .defaults, .profiles => self.profilesForm().view,
-        };
-    }
-    fn settingsScrollBy(self: *App, delta: f32) void {
-        const view = self.settingsFormView() orelse return;
-        self.settings_scroll_offset = std.math.clamp(view.offset + delta, 0, @max(0, view.content_height - view.bounds.height));
-    }
-    fn settingsScrollbarPress(self: *App, x: f32, y: f32) bool {
-        const view = self.settingsFormView() orelse return false;
-        const bar = view.scrollbar() orelse return false;
-        if (x < bar.track.x - 11 or x >= bar.track.x + bar.track.width + 1 or y < bar.track.y or y >= bar.track.y + bar.track.height) return false;
-        self.settings_scroll_grab = if (y >= bar.thumb.y and y < bar.thumb.y + bar.thumb.height) y - bar.thumb.y else bar.thumb.height / 2;
-        self.settingsScrollbarMove(y);
-        return true;
-    }
-    fn settingsScrollbarMove(self: *App, y: f32) void {
-        const grab = self.settings_scroll_grab orelse return;
-        const view = self.settingsFormView() orelse return;
-        const bar = view.scrollbar() orelse return;
-        const travel = bar.track.height - bar.thumb.height;
-        if (travel <= 0) return;
-        const thumb_y = std.math.clamp(y - grab - bar.track.y, 0, travel);
-        self.settings_scroll_offset = thumb_y / travel * (view.content_height - view.bounds.height);
-    }
-    fn simpleSettingsForm(self: *const App) bool {
-        const editor = self.settings_editor.?;
-        return editor.search or switch (editor.page) {
-            .appearance, .colors, .mappings, .defaults, .profiles => true,
-            .startup => false,
-        };
-    }
-    fn settingsListCard(self: *const App) layout.Rect {
-        const body = self.settingsBody();
-        const horizontal = @min(settings_card_gutter, @max(0, (body.width - 1) / 2));
-        const vertical = @min(settings_card_gutter, @max(0, (body.height - 1) / 2));
-        return .{ .x = body.x + horizontal, .y = body.y + vertical, .width = @max(1, body.width - 2 * horizontal), .height = @max(1, body.height - 2 * vertical) };
-    }
-    fn settingsRows(self: *const App) widgets.Rows {
-        if (self.simpleSettingsForm()) {
-            const card = self.settingsListCard();
-            const horizontal = @min(settings_card_padding, @max(0, (card.width - 1) / 2));
-            const heading = @min(64, @max(0, card.height - 1));
-            const bottom = @min(settings_card_gutter, @max(0, card.height - heading - 1));
-            return .{ .rect = .{ .x = card.x + horizontal, .y = card.y + heading, .width = @max(1, card.width - 2 * horizontal), .height = @max(1, card.height - heading - bottom) }, .stride = 48, .gap = 4 };
-        }
-        var body = self.settingsBody();
-        body.width = @max(1, body.width - 8);
-        return .{ .rect = body, .stride = 48, .gap = 4 };
-    }
-    fn settingsRowField(rect: layout.Rect) layout.Rect {
-        return .{ .x = rect.x + rect.width * 0.46, .y = rect.y + 5, .width = @max(1, rect.width * 0.54 - 42), .height = rect.height - 10 };
-    }
-    fn settingsEditButton(rect: layout.Rect) layout.Rect {
-        return .{ .x = rect.x + rect.width - 33, .y = rect.y + 6, .width = 29, .height = @max(1, rect.height - 12) };
-    }
-    fn settingsResetButton(rect: layout.Rect) layout.Rect {
-        return settingsRowField(rect);
-    }
-    fn settingsField(self: *const App) layout.Rect {
-        const box = self.settingsRect();
-        const body = self.settingsBody();
-        if (self.settings_editor.?.editing != null) {
-            const e = self.settings_editor.?;
-            if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
-            if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.form_row));
-            if (self.colorSettings()) return settingsRowField(self.colorForm().row(e.form_row));
-            if (self.shortcutSettings()) return settingsRowField(self.shortcutForm().row(e.form_row));
-            if (self.profilesSettings()) return settingsRowField(self.profilesForm().row(e.form_row));
-            const rect = self.settingsRows().row(e.list.selected -| e.list.first);
-            return settingsRowField(rect);
-        }
-        return .{ .x = body.x, .y = box.y + settings_header_height, .width = body.width, .height = 32 };
-    }
-    fn settingsDropdown(self: *const App) widgets.Dropdown {
-        return widgets.Dropdown.init(self.settingsField(), self.settingsBody(), settings.choiceCount(self.settings_editor.?.editing.?, self.settingsConfiguration()));
-    }
-    fn settingsVisible(self: *const App) usize {
-        return self.settingsRows().visible();
-    }
-    fn settingsStart(self: *App, count: usize) usize {
-        self.settings_editor.?.list.reveal(count, self.settingsVisible());
-        return self.settings_editor.?.list.first;
-    }
-    fn settingsToolbarCount(_: *const App) usize {
-        return 3;
-    }
-    fn settingsToolbarButton(self: *const App, number: usize) layout.Rect {
-        if (self.settings_editor.?.page == .defaults) {
-            if (number == 2) {
-                const card = self.settingsScanCard();
-                const width = @min(96, @max(1, card.width - 20));
-                return .{ .x = card.x + card.width - width - 12, .y = card.y + 10, .width = width, .height = 32 };
-            }
-            const card = self.profilesForm().card(1);
-            const width = if (card.width < 500) @min(78, @max(42, (card.width - 170) / 2)) else @as(f32, 102);
-            const start = card.x + card.width - 14 - 2 * width - 6;
-            return .{ .x = start + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 14, .width = width, .height = 32 };
-        }
-        if (self.settings_editor.?.page == .profiles) {
-            const card = self.profilesForm().card(0);
-            const width = @max(1, (card.width - 32 - 12) / 3);
-            return .{ .x = card.x + 16 + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 66, .width = width, .height = 32 };
-        }
-        const box = self.settingsRect();
-        const body = self.settingsBody();
-        const count: f32 = @floatFromInt(self.settingsToolbarCount());
-        const width = @max(1, (body.width - (count - 1) * 6) / count);
-        return .{ .x = body.x + @as(f32, @floatFromInt(number)) * (width + 6), .y = box.y + settings_header_height, .width = width, .height = 32 };
-    }
-    fn settingsToolbarAction(self: *App, number: usize) !void {
-        const e = &self.settings_editor.?;
-        if (e.page == .defaults) {
-            switch (number) {
-                0 => {
-                    try self.changeSetting(.add_profile, "");
-                    e.profile = self.settingsConfiguration().profileCount() - 1;
-                    e.page = .profiles;
-                    e.list = .{};
-                    e.form_row = 0;
-                    self.settings_scroll_offset = 0;
-                    try e.begin(.{ .page = .profiles, .label = "Name", .target = .{ .profile = .{ .index = e.profile, .field = .name } } }, self.settingsConfiguration());
-                },
-                1 => {
-                    const target = (try self.overviewCloneTarget()) orelse return error.SelectProfileToDuplicate;
-                    try self.changeSetting(target, "");
-                    e.profile = self.settingsConfiguration().profileCount() - 1;
-                    e.page = .profiles;
-                    e.list = .{};
-                    e.form_row = 0;
-                    self.settings_scroll_offset = 0;
-                },
-                2 => try self.scanSettingsProfiles(),
-                else => {},
-            }
-        } else if (e.page == .profiles) switch (number) {
-            0 => {
-                e.page = .defaults;
-                e.form_row = e.profile;
-                self.settings_scroll_offset = self.profilesForm().rowTop(e.form_row) - ProfilesForm.outer_inset;
-            },
-            1 => {
-                try self.changeSetting(.{ .clone_profile = e.profile }, "");
-                e.profile = self.settingsConfiguration().profileCount() - 1;
-                e.list = .{};
-                e.form_row = 0;
-                self.settings_scroll_offset = 0;
-            },
-            2 => {
-                if (e.profile == 0) return;
-                try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
-                e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
-                e.form_row = 0;
-                self.settings_scroll_offset = 0;
-            },
-            else => {},
-        };
-        e.content_focus = true;
-    }
-    fn scanSettingsProfiles(self: *App) !void {
-        const current = self.settingsConfiguration();
-        if (!current.value.discover_shells and !current.value.discover_ssh_hosts) return error.NoScanSources;
-        const found = try discovery.Catalogue.create(allocator, self.init.io, self.init.environ_map, current.value);
-        defer found.destroy(allocator);
-        const candidate = try discovery.reconcile(current, self.init.io, found);
-        const default_reset = !std.mem.eql(u8, (try current.defaultProfile()).id, (try candidate.defaultProfile()).id);
-        if (self.settings_draft) |*draft| draft.deinit();
-        self.settings_draft = candidate;
-        self.setNotice(if (default_reset) "Missing default reset to Local — Save or Cancel" else "Scan cached — Save to keep, Cancel to discard");
-    }
-    fn overviewCloneTarget(self: *App) !?settings.Target {
-        const e = &self.settings_editor.?;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var shown: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = e.indices(all[0..count], &shown);
-        if (e.form_row >= visible) return null;
-        return switch (all[shown[e.form_row]].target) {
-            .set_default => |index| .{ .clone_profile = index },
-            .scanned => |index| .{ .clone_scanned = index },
-            else => null,
-        };
-    }
-    /// The selected Profiles row can become a default only while its cached
-    /// recipe is active. Keep the footer stable for inactive scanned rows.
-    fn overviewDefaultID(self: *App) !?[]const u8 {
-        const target = (try self.overviewCloneTarget()) orelse return null;
-        return switch (target) {
-            .clone_profile => |index| (try self.settingsConfiguration().profile(index)).id,
-            .clone_scanned => |index| blk: {
-                const entries = self.settingsConfiguration().value.scanned_profiles;
-                if (index >= entries.len) break :blk null;
-                const entry = entries[index];
-                break :blk if (entry.enabled and !entry.stale) entry.recipe.id else null;
-            },
-            else => null,
-        };
-    }
-    fn colorBar(self: *const App, channel: usize) layout.Rect {
-        const box = self.settingsRect();
-        const body = self.settingsBody();
-        return .{ .x = body.x + 24, .y = box.y + box.height - 100 + @as(f32, @floatFromInt(channel)) * 22, .width = @max(1, body.width - 120), .height = 18 };
-    }
-    fn settingsDefaultButton(self: *const App) layout.Rect {
-        const box = self.settingsRect();
-        return .{ .x = self.settingsBody().x, .y = box.y + box.height - 46, .width = 136, .height = 30 };
-    }
-    fn savedEditButton(row: layout.Rect) layout.Rect {
-        return .{ .x = row.x + row.width - 80, .y = row.y + 5, .width = 76, .height = row.height - 10 };
-    }
-    fn scannedEnableButton(row: layout.Rect) layout.Rect {
-        return .{ .x = row.x + row.width - 92, .y = row.y + 5, .width = 88, .height = row.height - 10 };
-    }
-    fn scanSourceSwitch(row: layout.Rect) layout.Rect {
-        return .{ .x = row.x + row.width - 50, .y = row.y + @max(0, (row.height - 26) / 2), .width = 46, .height = 26 };
-    }
-    fn colorReset(self: *const App) layout.Rect {
-        const body = self.settingsBody();
-        const bar = self.colorBar(0);
-        return .{ .x = body.x + body.width - 82, .y = bar.y, .width = 78, .height = 62 };
-    }
-    fn editedColor(self: *App) !vt.Terminal.Rgb {
-        const e = self.settings_editor.?;
-        return color_config.parse(e.buffer[0..e.len]) catch (try self.settingRgb(.{ .page = e.page, .label = "", .target = e.editing.? })).?;
-    }
-    fn colorPoint(self: *App, channel: u8, x: f32) !void {
-        const e = &self.settings_editor.?;
-        const bar = self.colorBar(channel);
-        var rgb = try self.editedColor();
-        const value: u8 = @intFromFloat(@round(std.math.clamp((x - bar.x) / bar.width, 0, 1) * 255));
-        switch (channel) {
-            0 => rgb.r = value,
-            1 => rgb.g = value,
-            2 => rgb.b = value,
-            else => return error.InvalidColorRole,
-        }
-        const text = try std.fmt.bufPrint(&e.buffer, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb.r, rgb.g, rgb.b });
-        e.len = text.len;
-        e.edit = .{ .kind = .color, .cursor = text.len };
-        e.button = null;
-    }
-    fn drawColorEditor(self: *App) !void {
-        const rgb = try self.editedColor();
-        const colors = try self.uiPalette();
-        for ([_]u8{ rgb.r, rgb.g, rgb.b }, [_][]const u8{ "R", "G", "B" }, 0..) |value, label, channel| {
-            const bar = self.colorBar(channel);
-            try self.clippedText(label, .{ .x = bar.x - 24, .y = bar.y - 4, .width = 24, .height = 24 }, bar.x - 24);
-            for (0..64) |step| {
-                var shade = rgb;
-                const component: u8 = @intCast(step * 4);
-                switch (channel) {
-                    0 => shade.r = component,
-                    1 => shade.g = component,
-                    2 => shade.b = component,
-                    else => return error.InvalidColorRole,
-                }
-                try fill(self.renderer, .{ .x = bar.x + @as(f32, @floatFromInt(step)) * bar.width / 64, .y = bar.y, .width = bar.width / 64 + 1, .height = bar.height }, .{ .r = shade.r, .g = shade.g, .b = shade.b, .a = 255 });
-            }
-            try outline(self.renderer, bar, colors.border);
-            const thumb: layout.Rect = .{ .x = bar.x + @as(f32, @floatFromInt(value)) * bar.width / 255 - 2, .y = bar.y - 2, .width = 4, .height = bar.height + 4 };
-            try fill(self.renderer, thumb, colors.text);
-        }
-        const reset = self.colorReset();
-        try self.drawSettingsControl(reset, self.isHovered(reset));
-        try self.clippedText("Preset", reset, reset.x + 8);
-        const sample: layout.Rect = .{ .x = reset.x + 8, .y = reset.y + 30, .width = reset.width - 16, .height = 22 };
-        try drawing.fillRounded(self.renderer, sample, colors.border, 5);
-        try drawing.fillRounded(self.renderer, .{ .x = sample.x + 1, .y = sample.y + 1, .width = @max(1, sample.width - 2), .height = @max(1, sample.height - 2) }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 4);
-    }
-    fn settingsClick(self: *App, x: f32, y: f32, clicks: u8) !void {
-        const e = &self.settings_editor.?;
-        const box = self.settingsRect();
-        if (self.settingsHeaderButton(.close).contains(x, y)) return self.toggleSettings();
-        if (self.settingsHeaderButton(.save).contains(x, y)) return self.settingsSave();
-        if (self.settingsHeaderButton(.cancel).contains(x, y)) return self.settingsCancel();
-        if (e.recording) e.cancel(); // A pointer leaves uncompleted capture unchanged.
-        if (self.settingsHeaderButton(.search).contains(x, y)) {
-            if (e.editing) |target| try self.changeSetting(target, e.buffer[0..e.len]);
-            self.settingsSetSearch(!e.search);
-            return;
-        }
-        if (e.editing) |target| {
-            const choice = (settings.Row{ .page = e.page, .label = "", .target = target }).choice();
-            if (choice) {
-                const menu = self.settingsDropdown();
-                if (menu.rows.hit(x, y)) |number| {
-                    e.choice_list.reveal(settings.choiceCount(target, self.settingsConfiguration()), menu.rows.visible());
-                    const index = number + e.choice_list.first;
-                    if (index < settings.choiceCount(target, self.settingsConfiguration())) {
-                        try e.selectChoice(self.settingsConfiguration(), index);
-                        return self.changeSetting(target, e.buffer[0..e.len]);
-                    }
-                    return;
-                }
-                if (self.settingsField().contains(x, y)) {
-                    e.cancel();
-                    e.content_focus = false;
-                    return;
-                }
-            }
-            if (self.settingsField().contains(x, y)) {
-                if (choice) e.cancel() else e.button = null;
-                return;
-            }
-            if (e.edit.kind == .color) {
-                for (0..3) |channel| if (self.colorBar(channel).contains(x, y)) {
-                    self.color_drag = @intCast(channel);
-                    return self.colorPoint(@intCast(channel), x);
-                };
-                if (self.colorReset().contains(x, y)) {
-                    e.len = 0;
-                    e.edit = .{ .kind = .color };
-                    return;
-                }
-            }
-            // Leaving a field stages its validated value, even when navigating
-            // to another page. Only the header Save writes the configuration.
-            try self.changeSetting(target, e.buffer[0..e.len]);
-        }
-        if (!box.contains(x, y)) return;
-        const body = self.settingsBody();
-        if (self.settingsScrollbarPress(x, y)) return;
-        if (x < body.x - 12 and y >= box.y + settings_nav_top) {
-            for (0..settings.titles.len) |page| {
-                if (!self.settingsNavRow(page).contains(x, y)) continue;
-                self.cancelComposition();
-                e.page = @fromBackingInt(@intCast(page));
-                e.content_focus = false;
-                e.search = false;
-                e.query_len = 0;
-                e.list = .{};
-                e.delete_pending = null;
-                e.form_row = 0;
-                self.settings_scroll_offset = 0;
-                self.settings_scroll_grab = null;
-                break;
-            }
-            return;
-        }
-        if (!e.search and e.page == .startup) {
-            if (!body.contains(x, y)) return;
-            const form = self.startupForm();
-            if (form.select().contains(x, y)) return self.activateSetting(.{ .page = .startup, .label = "", .target = .default_profile });
-            return;
-        }
-        if (self.appearanceSettings()) {
-            if (body.contains(x, y)) try self.settingsAppearanceClick(x, y);
-            return;
-        }
-        if (self.colorSettings()) {
-            if (body.contains(x, y)) try self.settingsColorClick(x, y);
-            return;
-        }
-        if (self.shortcutSettings()) {
-            if (body.contains(x, y)) try self.settingsShortcutClick(x, y);
-            return;
-        }
-        if (!e.search and e.page == .defaults) {
-            for ([_]settings.Target{ .discover_shells, .discover_ssh_hosts }, 0..) |target, number| {
-                const row = self.settingsScanSourceRow(number);
-                if (!body.contains(x, y) or !row.contains(x, y)) continue;
-                if (scanSourceSwitch(row).contains(x, y)) try self.changeSetting(target, "");
-                return;
-            }
-        }
-        if (!e.search and (e.page == .defaults or e.page == .profiles)) {
-            for (0..self.settingsToolbarCount()) |number| {
-                if (body.contains(x, y) and self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
-            }
-        }
-        if (!e.search and e.page == .defaults and self.settingsDefaultButton().contains(x, y)) {
-            const id = (try self.overviewDefaultID()) orelse return;
-            return self.changeSetting(.default_profile, id);
-        }
-        if (self.profilesSettings()) {
-            if (body.contains(x, y)) try self.settingsProfilesClick(x, y, clicks);
-            return;
-        }
-        const field = self.settingsField();
-        if (e.search and field.contains(x, y)) {
-            e.query_edit = .{ .cursor = e.query_len };
-            self.cancelComposition();
-            return;
-        }
-        if (!body.contains(x, y)) return;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = e.indices(all[0..count], &indices);
-        const start = self.settingsStart(visible);
-        const row = self.settingsRows().hit(x, y) orelse return;
-        const chosen = row + start;
-        if (chosen >= visible) return;
-        if (e.list.selected != chosen) e.delete_pending = null;
-        e.list.selected = chosen;
-        const selected_row = all[indices[chosen]];
-        const row_rect = self.settingsRows().row(row);
-        if (selected_row.editable() and settingsEditButton(row_rect).contains(x, y)) {
-            e.content_focus = true;
-            if (e.search) try self.activateSetting(selected_row);
-            return self.activateSetting(selected_row);
-        }
-        if (selected_row.target == .font_family and !e.search and x >= row_rect.x + row_rect.width * 0.46) {
-            e.content_focus = true;
-            return self.activateSetting(selected_row);
-        }
-        if (selected_row.target == .font and !e.search and selected_row.target.font < 4) {
-            const row_field = settingsRowField(row_rect);
-            const right: layout.Rect = .{ .x = row_field.x, .y = row_rect.y, .width = row_field.width, .height = row_rect.height };
-            if (widgets.InlineAction.init(right, 76).button.contains(x, y)) {
-                e.content_focus = true;
-                const face: u2 = @intCast(selected_row.target.font);
-                return self.openFontChooser(.{ .face = face }, self.settingsConfiguration().value.font.paths()[face]);
-            }
-        }
-        e.content_focus = true;
-        if (clicks >= 2 and selected_row.target == .set_default) try self.activateSetting(selected_row);
-    }
-    fn settingsAppearanceClick(self: *App, x: f32, y: f32) !void {
-        const form = self.appearanceForm();
-        const number = form.hit(x, y) orelse return;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = self.settings_editor.?.indices(all[0..count], &indices);
-        if (number >= visible) return;
-        const row = all[indices[number]];
-        const rect = form.row(number);
-        const field = settingsRowField(rect);
-        const edit_button = settingsEditButton(rect);
-        if (row.editable() and edit_button.contains(x, y)) {
-            self.settings_editor.?.form_row = number;
-            return self.activateSetting(row);
-        }
-        if (row.target == .font_family and field.contains(x, y)) {
-            self.settings_editor.?.form_row = number;
-            return self.activateSetting(row);
-        }
-        if (row.target == .font and row.target.font < 4) {
-            const right: layout.Rect = .{ .x = field.x, .y = rect.y, .width = field.width, .height = rect.height };
-            if (widgets.InlineAction.init(right, 76).button.contains(x, y)) {
-                const face: u2 = @intCast(row.target.font);
-                return self.openFontChooser(.{ .face = face }, self.settingsConfiguration().value.font.paths()[face]);
-            }
-        }
-        if (row.editable() and row.choice() and field.contains(x, y)) {
-            self.settings_editor.?.form_row = number;
-            return self.activateSetting(row);
-        }
-    }
-    fn settingsColorClick(self: *App, x: f32, y: f32) !void {
-        const form = self.colorForm();
-        const number = form.hit(x, y) orelse return;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = self.settings_editor.?.indices(all[0..count], &indices);
-        if (number >= visible) return;
-        const row = all[indices[number]];
-        const rect = form.row(number);
-        const field = settingsRowField(rect);
-        if (row.editable() and (settingsEditButton(rect).contains(x, y) or (row.choice() and field.contains(x, y)))) {
-            self.settings_editor.?.form_row = number;
-            return self.activateSetting(row);
-        }
-        if ((row.target == .reset_app_colors or row.target == .reset_terminal_colors) and settingsResetButton(rect).contains(x, y)) {
-            return self.activateSetting(row);
-        }
-    }
-    fn settingsShortcutClick(self: *App, x: f32, y: f32) !void {
-        const form = self.shortcutForm();
-        const number = form.hit(x, y) orelse return;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = self.settings_editor.?.indices(all[0..count], &indices);
-        if (number >= visible) return;
-        const row = all[indices[number]];
-        if (row.editable() and settingsEditButton(form.row(number)).contains(x, y)) {
-            self.settings_editor.?.form_row = number;
-            return self.activateSetting(row);
-        }
-    }
-    fn settingsProfilesClick(self: *App, x: f32, y: f32, clicks: u8) !void {
-        const form = self.profilesForm();
-        const number = form.hit(x, y) orelse return;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = self.settings_editor.?.indices(all[0..count], &indices);
-        if (number >= visible) return;
-        const e = &self.settings_editor.?;
-        if (e.form_row != number) e.delete_pending = null;
-        e.form_row = number;
-        e.content_focus = true;
-        const row = all[indices[number]];
-        const rect = form.row(number);
-        if (e.page == .defaults) switch (row.target) {
-            .scanned => |index| {
-                if (scannedEnableButton(rect).contains(x, y)) return self.changeSetting(.{ .toggle_scanned = index }, "");
-            },
-            .set_default => |index| {
-                e.profile = index;
-                if (savedEditButton(rect).contains(x, y) or clicks >= 2) return self.activateSetting(row);
-            },
-            else => {},
-        };
-        if (row.editable() and settingsEditButton(rect).contains(x, y)) return self.activateSetting(row);
-        if (row.editable() and row.choice() and settingsRowField(rect).contains(x, y)) return self.activateSetting(row);
-    }
-
-    fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
+    /// Paint UI text clipped to the specified rectangle.
+    pub fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
         return self.clippedTextColor(text, rect, x, (try self.uiPalette()).text);
     }
-    fn clippedTextColor(self: *App, text: []const u8, rect: layout.Rect, x: f32, color: c.SDL_Color) !void {
+    /// Paint tinted UI text without escaping its clipping bounds.
+    pub fn clippedTextColor(self: *App, text: []const u8, rect: layout.Rect, x: f32, color: c.SDL_Color) !void {
         const nested = c.SDL_RenderClipEnabled(self.renderer);
         var previous: c.SDL_Rect = undefined;
         if (nested and !c.SDL_GetRenderClipRect(self.renderer, &previous)) return error.SDL;
@@ -2932,450 +2138,8 @@ const App = struct {
         } else clearClip(self.renderer);
         try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color);
     }
-    fn settingRgb(self: *const App, row: settings.Row) !?vt.Terminal.Rgb {
-        switch (row.target) {
-            .app_color => |index| {
-                const current = self.settingsConfiguration();
-                const resolved = try appearance.resolve(current.value.app_theme, current.value.app_colors);
-                inline for (@typeInfo(appearance.Palette).@"struct".field_names, 0..) |field, i| if (index == i) {
-                    const rgb = @field(resolved, field);
-                    return .{ .r = rgb.r, .g = rgb.g, .b = rgb.b };
-                };
-                return error.InvalidColorRole;
-            },
-            .terminal_color => |index| {
-                const current = self.settingsConfiguration();
-                const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
-                return switch (index) {
-                    0 => resolved.foreground,
-                    1 => resolved.background,
-                    2 => resolved.cursor orelse resolved.foreground,
-                    3...18 => resolved.palette[index - 3],
-                    19 => resolved.cursor_text orelse resolved.background,
-                    else => error.InvalidColorRole,
-                };
-            },
-            else => return null,
-        }
-    }
-    fn drawSettingsDropdown(self: *App) !void {
-        const e = &self.settings_editor.?;
-        const target = e.editing orelse return;
-        if (!(settings.Row{ .page = e.page, .label = "", .target = target }).choice()) return;
-        const menu = self.settingsDropdown();
-        const count = settings.choiceCount(target, self.settingsConfiguration());
-        e.choice_list.reveal(count, menu.rows.visible());
-        const start = e.choice_list.first;
-        const colors = try self.uiPalette();
-        if (self.simpleSettingsForm()) {
-            try self.drawSettingsCard(menu.rect);
-        } else {
-            try fill(self.renderer, menu.rect, colors.panel);
-            try outline(self.renderer, menu.rect, colors.border);
-        }
-        for (start..@min(count, start + menu.rows.visible())) |index| {
-            const rect = menu.rows.row(index - start);
-            if (self.simpleSettingsForm()) try self.drawSettingsCardRow(rect, e.choice_list.selected == index, self.isHovered(rect), true) else try self.drawListRow(rect, e.choice_list.selected == index, self.isHovered(rect), true);
-            try self.clippedText((try settings.choiceAt(target, self.settingsConfiguration(), index)).label, rect, rect.x + 9);
-        }
-        try self.drawListScroll(menu.rows, start, count);
-    }
-    fn drawSettingsCard(self: *App, rect: layout.Rect) !void {
-        const colors = try self.uiPalette();
-        try drawing.fillRounded(self.renderer, rect, colors.border, 11);
-        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 10);
-    }
-    fn drawStartupSwitch(self: *App, rect: layout.Rect, enabled: bool, focused: bool) !void {
-        const colors = try self.uiPalette();
-        const control = widgets.Switch.init(rect, enabled);
-        try drawing.fillRounded(self.renderer, control.track, if (focused) colors.accent else colors.border, 13);
-        const inside: layout.Rect = .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) };
-        try drawing.fillRounded(self.renderer, inside, if (enabled) colors.accent else if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 12);
-        try drawing.fillRounded(self.renderer, control.thumb, if (enabled) colors.title else colors.text, 10);
-    }
-    fn drawSettingsControl(self: *App, rect: layout.Rect, focused: bool) !void {
-        const colors = try self.uiPalette();
-        try drawing.fillRounded(self.renderer, rect, if (focused) colors.accent else colors.border, 7);
-        try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 6);
-    }
-    fn drawSettingsSelect(self: *App, rect: layout.Rect, label: []const u8, focused: bool, expanded: bool) !void {
-        const colors = try self.uiPalette();
-        const selector = widgets.Select.init(rect);
-        try self.drawSettingsControl(selector.surface, focused);
-        try self.clippedText(label, selector.label, selector.label.x);
-        try icons.draw(self.renderer, if (expanded) .chevron_up else .chevron_down, selector.arrow, colors.text);
-    }
-    fn drawStartupForm(self: *App) !void {
-        const editor = &self.settings_editor.?;
-        const form = self.startupForm();
-        const colors = try self.uiPalette();
-        try setClip(self.renderer, form.view.bounds);
-        defer clearClip(self.renderer);
-        const card = form.card(0);
-        try self.drawSettingsCard(card);
-        try self.clippedText("New terminals", .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 }, card.x + 16);
-        try self.clippedTextColor("Used for new tabs and windows.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
-        const first = form.row(0);
-        const label_width = if (form.compact) first.width else @max(1, form.select().x - first.x - 12);
-        try self.clippedText("Default profile", .{ .x = first.x, .y = first.y + 3, .width = label_width, .height = 24 }, first.x);
-        if (!form.compact) try self.clippedTextColor("For future tabs only", .{ .x = first.x, .y = first.y + 24, .width = label_width, .height = 24 }, first.x, colors.muted);
-        const focused = self.isHovered(form.select()) or (editor.editing != null and editor.editing.? == .default_profile);
-        const profile_name = if (editor.editing != null and editor.editing.? == .default_profile)
-            (try settings.choiceAt(.default_profile, self.settingsConfiguration(), editor.choice_list.selected)).label
-        else
-            (try self.settingsConfiguration().defaultProfile()).name;
-        try self.drawSettingsSelect(form.select(), profile_name, focused, editor.editing != null and editor.editing.? == .default_profile);
-        if (form.view.scrollbar()) |bar| {
-            try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
-            try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
-        }
-    }
-    fn drawAppearanceCards(self: *App, form: AppearanceForm) !void {
-        const colors = try self.uiPalette();
-        for (AppearanceForm.sections, 0..) |section, number| {
-            const card = form.card(number);
-            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
-            try self.drawSettingsCard(card);
-            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
-            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
-            try self.clippedText(section.title, heading, heading.x);
-            try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
-        }
-    }
-    fn drawColorCards(self: *App, form: ColorForm) !void {
-        const colors = try self.uiPalette();
-        for (ColorForm.sections, 0..) |section, number| {
-            const card = form.card(number);
-            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
-            try self.drawSettingsCard(card);
-            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
-            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
-            try self.clippedText(section.title, heading, heading.x);
-            try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
-        }
-    }
-    fn drawShortcutCards(self: *App, form: ShortcutForm) !void {
-        const colors = try self.uiPalette();
-        for (ShortcutForm.sections, 0..) |section, number| {
-            const card = form.card(number);
-            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
-            try self.drawSettingsCard(card);
-            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
-            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
-            try self.clippedText(section.title, heading, heading.x);
-            try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
-        }
-    }
-    fn drawProfileScanCard(self: *App) !void {
-        const colors = try self.uiPalette();
-        const card = self.settingsScanCard();
-        const button = self.settingsToolbarButton(2);
-        try self.drawSettingsCard(card);
-        const label_width = @max(1, button.x - card.x - 24);
-        try self.clippedText("Discovery", .{ .x = card.x + 16, .y = card.y + 10, .width = label_width, .height = 25 }, card.x + 16);
-        try self.clippedTextColor("Read-only recipes, cached when you scan.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
-        for (0..2) |number| {
-            const row = self.settingsScanSourceRow(number);
-            const toggle = scanSourceSwitch(row);
-            const enabled = if (number == 0) self.settingsConfiguration().value.discover_shells else self.settingsConfiguration().value.discover_ssh_hosts;
-            const narrow = card.width < 500;
-            const label: []const u8 = if (number == 0) (if (narrow) "Shells" else "Local shells and REPLs") else if (self.settingsScanCompact()) "SSH" else if (narrow) "SSH hosts" else "SSH config hosts";
-            try self.clippedText(label, .{ .x = row.x, .y = row.y, .width = @max(1, toggle.x - row.x - (if (narrow) @as(f32, 8) else 44)), .height = row.height }, row.x);
-            if (!narrow) try self.clippedTextColor(if (enabled) "On" else "Off", .{ .x = toggle.x - 37, .y = row.y, .width = 30, .height = row.height }, toggle.x - 37, colors.muted);
-            try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
-        }
-    }
-    fn drawProfilesCards(self: *App, form: ProfilesForm) !void {
-        const colors = try self.uiPalette();
-        if (form.overview) {
-            const scan = form.card(0);
-            if (scan.y < form.view.bounds.y + form.view.bounds.height and scan.y + scan.height > form.view.bounds.y) try self.drawProfileScanCard();
-            for (1..form.cardCount()) |number| {
-                const card = form.card(number);
-                if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
-                try self.drawSettingsCard(card);
-                const width = if (number == 1) @max(1, self.settingsToolbarButton(0).x - card.x - 24) else @max(1, card.width - 32);
-                const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 };
-                const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 };
-                try self.clippedText(if (number == 1) "Saved profiles" else "Scanned profiles", heading, heading.x);
-                try self.clippedTextColor(if (number == 1) "Local and editable recipes." else "Read-only cached discoveries.", hint, hint.x, colors.muted);
-                if (number == 2 and form.scanned_count == 0) {
-                    const empty: layout.Rect = .{ .x = card.x + ProfilesForm.inner_inset, .y = card.y + ProfilesForm.heading_height, .width = @max(1, card.width - 2 * ProfilesForm.inner_inset), .height = 44 };
-                    try self.clippedTextColor("Nothing scanned yet", empty, empty.x, colors.muted);
-                }
-            }
-            return;
-        }
-        const card = form.card(0);
-        try self.drawSettingsCard(card);
-        const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
-        const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
-        try self.clippedText("Profile details", heading, heading.x);
-        var buffer: [160]u8 = undefined;
-        const note = try std.fmt.bufPrint(&buffer, "{s} · Save applies your changes.", .{(try self.settingsConfiguration().profile(self.settings_editor.?.profile)).name});
-        try self.clippedTextColor(note, hint, hint.x, colors.muted);
-    }
-    fn drawProfilesToolbar(self: *App) !void {
-        const e = self.settings_editor.?;
-        const labels: [3][]const u8 = if (e.page == .defaults) (if (self.profilesForm().card(1).width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" }) else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
-        for (labels, 0..) |label, number| {
-            const button = self.settingsToolbarButton(number);
-            try self.drawSettingsControl(button, e.button == @as(u8, @intCast(number)));
-            try self.clippedText(label, button, button.x + 8);
-        }
-    }
-    fn drawSettingsListHeading(self: *App) !void {
-        std.debug.assert(self.settings_editor.?.search);
-        const colors = try self.uiPalette();
-        const card = self.settingsListCard();
-        const width = @max(1, card.width - 32);
-        try self.clippedText("Search results", .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 }, card.x + 16);
-        try self.clippedTextColor("Select a result to open its settings section.", .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 }, card.x + 16, colors.muted);
-    }
-    fn drawSettingsHeaderButtons(self: *App) !void {
-        const colors = try self.uiPalette();
-        const pending = self.settings_draft != null or self.settings_editor.?.editing != null;
-        for ([_]SettingsHeaderAction{ .save, .cancel, .search, .close }) |action| {
-            const rect = self.settingsHeaderButton(action);
-            const hovered = self.isHovered(rect);
-            if (action == .save or action == .cancel) {
-                const active = pending and action == .save;
-                try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, chrome.Geometry.chip_radius);
-                try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = rect.width - 2, .height = rect.height - 2 }, if (hovered) appearance.hover(colors.idle) else colors.idle, chrome.Geometry.chip_radius - 1);
-                try self.clippedTextColor(if (action == .save) "Save" else "Cancel", rect, rect.x + (if (action == .save) @as(f32, 16) else 10), if (pending) colors.text else colors.muted);
-                continue;
-            }
-            if (hovered or (action == .search and self.settings_editor.?.search)) {
-                try drawing.fillRounded(self.renderer, rect, if (hovered) (if (action == .close) appearance.closeHover(colors.idle) else appearance.hover(colors.idle)) else colors.active, chrome.Geometry.chip_radius);
-            }
-            const color = if (hovered) colors.text else colors.muted;
-            try icons.draw(self.renderer, if (action == .search) .search else .x, .{ .x = rect.x + 5, .y = rect.y + 5, .width = 20, .height = 20 }, color);
-        }
-    }
-    fn drawSettings(self: *App) !void {
-        const e = &self.settings_editor.?;
-        const colors = try self.uiPalette();
-        const box = self.settingsRect();
-        const body = self.settingsBody();
-        e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
-        try drawing.fillRounded(self.renderer, box, colors.border, 12);
-        try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @max(1, box.height - 2) }, colors.title, 11);
-        // The sidebar and header share one inset surface without squaring the
-        // outside corners of the Settings shell.
-        const side_width = @max(1, body.x - box.x - 13);
-        try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = side_width, .height = @max(1, box.height - 2) }, colors.idle, 11);
-        try fill(self.renderer, .{ .x = box.x + 12, .y = box.y + 1, .width = @max(1, side_width - 11), .height = @max(1, box.height - 2) }, colors.idle);
-        try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @min(settings_header_height, @max(1, box.height - 2)) }, colors.idle, 11);
-        try fill(self.renderer, .{ .x = box.x + 1, .y = box.y + 12, .width = @max(1, box.width - 2), .height = @max(1, @min(settings_header_height - 12, box.height - 14)) }, colors.idle);
-        if (box.width > 360) try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
-        const title_width = self.settingsHeaderButton(.save).x - body.x - 10;
-        if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else if (e.page == .profiles) "Profile details" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
-        try self.drawSettingsHeaderButtons();
-        for (settings.titles, 0..) |title, index| {
-            const row = self.settingsNavRow(index);
-            if (!e.search and (if (e.page == .profiles) index == @backingInt(settings.Page.defaults) else @backingInt(e.page) == index)) {
-                try drawing.fillRounded(self.renderer, row, colors.active, 7);
-                try drawing.fillRounded(self.renderer, .{ .x = row.x, .y = row.y + 6, .width = 2, .height = row.height - 12 }, colors.accent, 1);
-            } else if (self.isHovered(row)) try drawing.fillRounded(self.renderer, row, appearance.hover(colors.idle), 7);
-            try self.clippedText(title, row, row.x + 10);
-        }
-        const startup_form = !e.search and e.page == .startup;
-        const simple_form = self.simpleSettingsForm();
-        const appearance_form = self.appearanceSettings();
-        const color_form = self.colorSettings();
-        const shortcut_form = self.shortcutSettings();
-        const profiles_form = self.profilesSettings();
-        const card_form = appearance_form or color_form or shortcut_form or profiles_form;
-        if (simple_form and !card_form) {
-            try self.drawSettingsCard(self.settingsListCard());
-            try self.drawSettingsListHeading();
-        }
-        if (e.search) try self.drawField(self.settingsField(), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
-        if (startup_form) {
-            try self.drawStartupForm();
-            try self.drawSettingsDropdown();
-            return;
-        }
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = e.indices(all[0..count], &indices);
-        if (!card_form) e.list.selected = @min(e.list.selected, visible -| 1);
-        if (profiles_form) e.form_row = @min(e.form_row, visible -| 1);
-        const start = if (card_form) @as(usize, 0) else self.settingsStart(visible);
-        const rows = self.settingsRows();
-        const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
-        const colors_form: ColorForm = if (color_form) self.colorForm() else undefined;
-        const shortcuts_form: ShortcutForm = if (shortcut_form) self.shortcutForm() else undefined;
-        const profiles: ProfilesForm = if (profiles_form) self.profilesForm() else undefined;
-        var clipped_rows = false;
-        defer if (clipped_rows) clearClip(self.renderer);
-        if (card_form) {
-            try setClip(self.renderer, body);
-            clipped_rows = true;
-            if (appearance_form) {
-                try self.drawAppearanceCards(form);
-            } else if (color_form) {
-                try self.drawColorCards(colors_form);
-            } else if (shortcut_form) {
-                try self.drawShortcutCards(shortcuts_form);
-            } else {
-                try self.drawProfilesCards(profiles);
-                try self.drawProfilesToolbar();
-            }
-        } else if (simple_form) {
-            try setClip(self.renderer, rows.rect);
-            clipped_rows = true;
-        }
-        const paint_start = if (card_form) @as(usize, 0) else start;
-        const paint_end = if (card_form) visible else @min(visible, start + self.settingsVisible());
-        for (indices[paint_start..paint_end], paint_start..) |index, number| {
-            const row = all[index];
-            const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else if (shortcut_form) shortcuts_form.row(number) else if (profiles_form) profiles.row(number) else rows.row(number - start);
-            if (card_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
-            if (profiles_form) {
-                try self.drawSettingsCardRow(rect, number == e.form_row, self.isHovered(rect), e.content_focus);
-            } else if (simple_form and !card_form) {
-                try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
-            } else if (!card_form) {
-                try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
-                try outline(self.renderer, rect, colors.border);
-            }
-            const editing_row = e.editing != null and (if (card_form) number == e.form_row else number == e.list.selected);
-            var label: [512]u8 = undefined;
-            const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
-            var value: [4096]u8 = undefined;
-            const raw_contents = if (editing_row) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.settingsConfiguration(), &value);
-            const contents = if (raw_contents.len != 0 or editing_row) raw_contents else switch (row.target) {
-                .binding => "Unbound",
-                .app_color, .terminal_color => "Preset",
-                .font => "Inherited",
-                .profile => |field| switch (field.field) {
-                    .command => "Interactive shell",
-                    .shell, .cwd, .font_pixels => "Inherited",
-                    .arguments => "Shell mode",
-                    .name => "",
-                },
-                else => "",
-            };
-            const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.46 - 12), .height = rect.height };
-            const right: layout.Rect = .{ .x = rect.x + rect.width * 0.46, .y = rect.y, .width = @max(1, rect.width * 0.54 - (if (row.editable()) @as(f32, 42) else 6)), .height = rect.height };
-            if (editing_row and !e.recording) {
-                try self.clippedText(name, left, left.x);
-                if (row.choice()) {
-                    const display = (try settings.choiceAt(row.target, self.settingsConfiguration(), e.choice_list.selected)).label;
-                    const select_rect = self.settingsField();
-                    if (simple_form) try self.drawSettingsSelect(select_rect, display, true, true) else {
-                        try fill(self.renderer, select_rect, colors.panel);
-                        try outline(self.renderer, select_rect, colors.accent);
-                        try self.clippedText(display, .{ .x = select_rect.x + 7, .y = select_rect.y, .width = @max(1, select_rect.width - 32), .height = select_rect.height }, select_rect.x + 7);
-                        try icons.draw(self.renderer, .chevron_up, .{ .x = select_rect.x + select_rect.width - 23, .y = select_rect.y, .width = 20, .height = select_rect.height }, colors.text);
-                    }
-                } else try self.drawFieldStyled(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null, simple_form);
-            } else if (row.target == .set_default and !e.search) {
-                try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
-                const button = savedEditButton(rect);
-                try self.drawSettingsControl(button, self.isHovered(button));
-                try self.clippedText("Edit", button, button.x + 17);
-            } else if (row.target == .scanned and !e.search) {
-                const entry = self.settingsConfiguration().value.scanned_profiles[row.target.scanned];
-                const name_rect: layout.Rect = .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 180), .height = rect.height };
-                try self.clippedText(entry.recipe.name, name_rect, name_rect.x);
-                const status_rect: layout.Rect = .{ .x = rect.x + rect.width - 175, .y = rect.y, .width = 76, .height = rect.height };
-                try self.clippedTextColor(if (entry.stale) "Missing" else if (entry.enabled) "Scanned" else "Disabled", status_rect, status_rect.x, colors.muted);
-                const button = scannedEnableButton(rect);
-                try self.drawSettingsControl(button, self.isHovered(button));
-                try self.clippedText(if (entry.enabled) "Disable" else "Enable", button, button.x + 12);
-            } else if ((row.target == .discover_shells or row.target == .discover_ssh_hosts) and !e.search and e.page == .defaults) {
-                try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 106), .height = rect.height }, rect.x + 8);
-                const toggle = scanSourceSwitch(rect);
-                const enabled = if (row.target == .discover_shells) self.settingsConfiguration().value.discover_shells else self.settingsConfiguration().value.discover_ssh_hosts;
-                try self.clippedTextColor(if (enabled) "On" else "Off", .{ .x = toggle.x - 39, .y = rect.y, .width = 34, .height = rect.height }, toggle.x - 39, colors.muted);
-                try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
-            } else {
-                try self.clippedText(name, left, left.x);
-                if (color_form and (row.target == .reset_app_colors or row.target == .reset_terminal_colors)) {
-                    const reset_button = settingsResetButton(rect);
-                    try self.drawSettingsControl(reset_button, self.isHovered(reset_button));
-                    try self.clippedText("Reset", reset_button, reset_button.x + 8);
-                } else if (simple_form and row.choice()) {
-                    try self.drawSettingsSelect(settingsRowField(rect), contents, if (card_form) self.isHovered(settingsRowField(rect)) else number == e.list.selected and e.content_focus, false);
-                } else {
-                    const rgb = try self.settingRgb(row);
-                    var value_rect = right;
-                    if (row.target == .font_family and !e.search) {
-                        if (simple_form) {
-                            try self.drawSettingsControl(right, if (card_form) self.isHovered(right) else number == e.list.selected and e.content_focus);
-                        } else {
-                            try fill(self.renderer, right, if (self.isHovered(right)) appearance.hover(colors.idle) else colors.idle);
-                            try outline(self.renderer, right, colors.border);
-                        }
-                        value_rect.x += 8;
-                        value_rect.width = @max(1, value_rect.width - (if (simple_form) @as(f32, 30) else 8));
-                        if (simple_form) try icons.draw(self.renderer, .chevron_right, .{ .x = right.x + right.width - 23, .y = right.y + 8, .width = 18, .height = @max(1, right.height - 16) }, colors.text);
-                    }
-                    if (row.target == .font and row.target.font < 4 and !e.search) {
-                        const action = widgets.InlineAction.init(right, 76);
-                        value_rect = action.value;
-                        if (simple_form) {
-                            try self.drawSettingsControl(action.button, if (card_form) self.isHovered(action.button) else number == e.list.selected and e.content_focus);
-                        } else {
-                            try fill(self.renderer, action.button, if (self.isHovered(action.button)) appearance.hover(colors.idle) else colors.idle);
-                            try outline(self.renderer, action.button, colors.border);
-                        }
-                        try self.clippedText("Browse", action.button, action.button.x + 6);
-                    }
-                    if (rgb) |swatch_color| {
-                        const swatch: layout.Rect = .{ .x = right.x + right.width - 23, .y = rect.y + 12, .width = 16, .height = @min(20, rect.height - 16) };
-                        value_rect.width = @max(1, swatch.x - value_rect.x - 6);
-                        try drawing.fillRounded(self.renderer, swatch, colors.border, 4);
-                        try drawing.fillRounded(self.renderer, .{ .x = swatch.x + 1, .y = swatch.y + 1, .width = @max(1, swatch.width - 2), .height = @max(1, swatch.height - 2) }, .{ .r = swatch_color.r, .g = swatch_color.g, .b = swatch_color.b, .a = 255 }, 3);
-                    }
-                    try self.clippedTextColor(contents, value_rect, value_rect.x, if (row.target == .information) colors.muted else colors.text);
-                }
-            }
-            if (row.editable() and !(!e.search and e.page == .defaults and (row.target == .discover_shells or row.target == .discover_ssh_hosts))) {
-                const edit_button = settingsEditButton(rect);
-                const active = editing_row;
-                if (simple_form or active or self.isHovered(edit_button)) try self.drawSettingsControl(edit_button, active);
-                try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
-            }
-        }
-        if (clipped_rows) {
-            clearClip(self.renderer);
-            clipped_rows = false;
-        }
-        if (card_form) {
-            const view = if (appearance_form) form.view else if (color_form) colors_form.view else if (shortcut_form) shortcuts_form.view else profiles.view;
-            if (view.scrollbar()) |bar| {
-                try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
-                try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
-            }
-        } else try self.drawListScroll(rows, start, visible);
-        try self.drawSettingsDropdown();
-        if (e.editing != null and e.edit.kind == .color) {
-            try self.drawColorEditor();
-        } else if (!e.search and e.page == .colors) {
-            const current = self.settingsConfiguration();
-            const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
-            const preview: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 100, .width = body.width, .height = 32 };
-            try drawing.fillRounded(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 }, 7);
-            try self.clippedTextColor("Terminal  AaBb 0123", preview, preview.x + 8, .{ .r = resolved.foreground.r, .g = resolved.foreground.g, .b = resolved.foreground.b, .a = 255 });
-            const width = body.width / 16;
-            for (resolved.palette[0..16], 0..) |rgb, i| try drawing.fillRounded(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 3);
-        }
-        if (!e.search and e.page == .defaults) {
-            const button = self.settingsDefaultButton();
-            const id = try self.overviewDefaultID();
-            try self.drawSettingsControl(button, id != null and self.isHovered(button));
-            const label = if (id) |selected|
-                if (std.mem.eql(u8, selected, (try self.settingsConfiguration().defaultProfile()).id)) "Default" else "Set default"
-            else
-                "Unavailable";
-            try self.clippedText(label, button, button.x + 8);
-        }
-    }
-    fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
+    /// Paint a string using the app's active text font.
+    pub fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
         try self.drawTextFont(self.ui_fonts.faces[0], bytes, x, y);
     }
     fn drawTextFont(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32) !void {
@@ -3978,6 +2742,8 @@ fn windowHitTest(window: ?*c.SDL_Window, point: [*c]const c.SDL_Point, data: ?*a
 }
 const outline = drawing.outline;
 const fill = drawing.fill;
+const setClip = drawing.setClip;
+const clearClip = drawing.clearClip;
 fn mouseButton(button: u8) ?vt.Terminal.MouseButton {
     return switch (button) {
         c.SDL_BUTTON_LEFT => .left,
@@ -3985,14 +2751,6 @@ fn mouseButton(button: u8) ?vt.Terminal.MouseButton {
         c.SDL_BUTTON_RIGHT => .right,
         else => null,
     };
-}
-fn setClip(renderer: *c.SDL_Renderer, rect: layout.Rect) error{SDL}!void {
-    const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.x + rect.width) - @floor(rect.x)), .h = @intFromFloat(@ceil(rect.y + rect.height) - @floor(rect.y)) };
-    if (!c.SDL_SetRenderClipRect(renderer, &clip)) return error.SDL;
-}
-fn clearClip(renderer: *c.SDL_Renderer) void {
-    const success = c.SDL_SetRenderClipRect(renderer, null);
-    std.debug.assert(success);
 }
 fn paneContent(rect: layout.Rect) c.SDL_FRect {
     return .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
@@ -4064,6 +2822,7 @@ test {
     std.testing.refAllDecls(appearance);
     std.testing.refAllDecls(drawing);
     std.testing.refAllDecls(color_config);
+    std.testing.refAllDecls(@import("settings_ui_test.zig"));
 }
 
 test "retained chrome identity ignores terminal work and detects every painted header input" {
@@ -4173,7 +2932,8 @@ test "exited pane reserves a restart band without shifting live terminal geometr
     }
 }
 
-fn testFonts(a: std.mem.Allocator) !font_owner.Fonts {
+/// Construct disposable fonts for SDL host rendering tests.
+pub fn testFonts(a: std.mem.Allocator) !font_owner.Fonts {
     var fonts: font_owner.Fonts = .{ .allocator = a };
     errdefer fonts.deinit();
     for (&fonts.paths) |*path| path.* = try a.dupe(u8, @import("test_fonts").primary_font);
@@ -4874,826 +3634,11 @@ test "large discovered menus filter and page independently of saved settings" {
     try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, &indices));
 }
 
-test "Profiles footer remains actionable across scroll selection and cached entry availability" {
-    var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
-        \\{"schema":1,"terminal_font_pixels":15,"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}},{"kind":"ssh","recipe":{"id":"auto.ssh.off","name":"Disabled host","shell":"/usr/bin/ssh"},"enabled":false},{"kind":"ssh","recipe":{"id":"auto.ssh.stale","name":"Missing host","shell":"/usr/bin/ssh"},"stale":true}]}
-    );
-    defer configuration.deinit();
-    var app: App = .{
-        .init = .{
-            .minimal = undefined,
-            .arena = undefined,
-            .gpa = std.testing.allocator,
-            .io = std.testing.io,
-            .environ_map = undefined,
-            .preopens = undefined,
-        },
-        .configuration = &configuration,
-        .fonts = undefined,
-        .window = undefined,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 1000,
-        .height = 650,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .defaults },
-    };
-    defer if (app.settings_draft) |*draft| draft.deinit();
-    const footer = app.settingsDefaultButton();
-    try std.testing.expectEqualStrings("local", (try app.overviewDefaultID()).?);
-    app.settings_editor.?.form_row = 1;
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-    app.settingsScrollBy(100000);
-    try std.testing.expect(app.settings_scroll_offset > 0);
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
-    try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
-    app.settings_editor.?.form_row = 2;
-    try std.testing.expect((try app.overviewDefaultID()) == null);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
-}
-
-test "startup controls own clicks; choice editing and global Cancel preserve the live configuration" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    const window = c.SDL_CreateWindow("settings focus proof", 1000, 650, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
-        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}]}
-    );
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = undefined,
-        .window = window,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 1000,
-        .height = 650,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .content_focus = true },
-    };
-    var event_value = std.mem.zeroes(c.SDL_KeyboardEvent);
-    event_value.key = c.SDLK_RETURN;
-    try app.settingsKey(event_value);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-    const startup_label = app.startupForm().row(0);
-    try app.settingsClick(startup_label.x + 8, startup_label.y + 10, 1);
-    try std.testing.expect(app.settings_draft == null);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-
-    const control = app.startupForm().select();
-    try app.settingsClick(control.x + 10, control.y + 10, 1);
-    try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
-    try app.settings_editor.?.append("not a profile");
-    try std.testing.expectEqualStrings("local", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
-    event_value.key = c.SDLK_DOWN;
-    try app.settingsKey(event_value);
-    try std.testing.expectEqualStrings("build", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
-    try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
-    event_value.key = c.SDLK_ESCAPE;
-    try app.settingsKey(event_value);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-
-    try app.settingsClick(control.x + 10, control.y + 10, 1);
-    try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
-    try std.testing.expectEqual(control.y, app.startupForm().select().y);
-    try app.settingsClick(control.x + 10, control.y + 10, 1);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-    try std.testing.expect(!app.settings_editor.?.content_focus);
-    try app.settingsClick(control.x + 10, control.y + 10, 1);
-    try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
-    try std.testing.expect(!configuration.value.discover_shells);
-    event_value.key = c.SDLK_ESCAPE;
-    try app.settingsKey(event_value);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-    event_value.key = c.SDLK_DOWN;
-    try app.settingsKey(event_value);
-    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.selected);
-
-    app.settings_editor.?.page = .defaults;
-    const ssh_toggle = App.scanSourceSwitch(app.settingsScanSourceRow(1));
-    try app.settingsClick(ssh_toggle.x + 10, ssh_toggle.y + 10, 1);
-    try std.testing.expect(app.settings_draft != null);
-    try std.testing.expect(app.settingsConfiguration().value.discover_ssh_hosts != configuration.value.discover_ssh_hosts);
-    app.settingsCancel();
-    try std.testing.expect(app.settings_draft == null);
-    app.settings_editor.?.page = .startup;
-
-    app.width = 788;
-    app.height = 528;
-    try std.testing.expect(app.settingsBody().height >= 350);
-    try std.testing.expect(app.startupForm().view.scrollbar() == null);
-    app.width = 560;
-    app.height = 490;
-    try std.testing.expect(app.startupForm().view.scrollbar() == null);
-    const search_button = app.settingsHeaderButton(.search);
-    const save_button = app.settingsHeaderButton(.save);
-    const cancel_button = app.settingsHeaderButton(.cancel);
-    const close_button = app.settingsHeaderButton(.close);
-    try std.testing.expect(save_button.x + save_button.width < cancel_button.x);
-    try std.testing.expect(cancel_button.x + cancel_button.width < search_button.x);
-    try std.testing.expect(search_button.x + search_button.width < close_button.x);
-    app.settings_draft = try settings.change(&configuration, std.testing.io, .discover_shells, "On");
-    try app.settingsClick(cancel_button.x + 8, cancel_button.y + 8, 1);
-    try std.testing.expect(app.settings_draft == null);
-    try std.testing.expect(!configuration.value.discover_shells);
-    const settings_box = app.settingsRect();
-    try std.testing.expectEqual(chrome.height, settings_header_height);
-    try std.testing.expectEqual(settings_box.y + chrome.Geometry.top, search_button.y);
-    try std.testing.expectEqual(settings_box.y + settings_header_height, app.settingsBody().y);
-    try app.settingsClick(settings_box.x + 12, settings_box.y + settings_nav_top + 34 + 16, 1);
-    try std.testing.expectEqual(settings.Page.appearance, app.settings_editor.?.page);
-    const nav_gap = app.settingsNavRow(0);
-    try app.settingsClick(nav_gap.x + nav_gap.width + 2, nav_gap.y + 12, 1);
-    try std.testing.expectEqual(settings.Page.appearance, app.settings_editor.?.page);
-    try app.settingsClick(nav_gap.x + 12, nav_gap.y + nav_gap.height + 1, 1);
-    try std.testing.expectEqual(settings.Page.appearance, app.settings_editor.?.page);
-    try app.settingsClick(settings_box.x + 12, settings_box.y + settings_nav_top + 16, 1);
-    try std.testing.expectEqual(settings.Page.startup, app.settings_editor.?.page);
-    try app.settingsClick(search_button.x + 10, search_button.y + 10, 1);
-    try std.testing.expect(app.settings_editor.?.search);
-    try app.settingsClick(search_button.x + 10, search_button.y + 10, 1);
-    try std.testing.expect(!app.settings_editor.?.search);
-
-    event_value.key = c.SDLK_F;
-    event_value.mod = c.SDL_KMOD_CTRL;
-    try app.settingsKey(event_value);
-    try app.settings_editor.?.append("palette");
-    try std.testing.expect(app.settings_editor.?.search);
-    event_value.mod = 0;
-    event_value.key = c.SDLK_ESCAPE;
-    try app.settingsKey(event_value);
-    try std.testing.expect(!app.settings_editor.?.search and app.settings_editor.?.content_focus);
-    try app.settingsKey(event_value);
-    try std.testing.expect(app.settings_editor == null);
-}
-
-test "Profiles label clicks navigate while explicit scan controls stage only their own changes" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    const window = c.SDL_CreateWindow("profiles pointer proof", 1000, 650, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    var configuration = try config.Config.parse(std.testing.allocator, threaded.io(),
-        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"ssh","recipe":{"id":"auto.ssh.host","name":"Host","shell":"/usr/bin/ssh"}}]}
-    );
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = undefined,
-        .window = window,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 1000,
-        .height = 650,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .defaults, .content_focus = true },
-    };
-    app.init.io = threaded.io();
-    defer app.discardSettings();
-    try std.testing.expectEqual(@as(usize, 5), settings.titles.len);
-    const cached_row = app.profilesForm().row(2);
-    try app.settingsClick(cached_row.x + 12, cached_row.y + 12, 1);
-    try std.testing.expect(app.settings_draft == null);
-    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
-    const toggle = App.scannedEnableButton(cached_row);
-    try app.settingsClick(toggle.x + 12, toggle.y + 12, 1);
-    try std.testing.expect(!app.settingsConfiguration().value.scanned_profiles[0].enabled);
-    try std.testing.expect(configuration.value.scanned_profiles[0].enabled);
-    app.settingsCancel();
-    try std.testing.expect(app.settingsConfiguration().value.scanned_profiles[0].enabled);
-
-    const source_row = app.settingsScanSourceRow(0);
-    try app.settingsClick(source_row.x + 12, source_row.y + 12, 1);
-    try std.testing.expect(app.settings_draft == null);
-    const source_switch = App.scanSourceSwitch(source_row);
-    try app.settingsClick(source_switch.x + 12, source_switch.y + 12, 1);
-    try std.testing.expect(app.settingsConfiguration().value.discover_shells);
-    app.settingsCancel();
-    try std.testing.expect(!configuration.value.discover_shells);
-
-    try app.settingsClick(cached_row.x + 12, cached_row.y + 12, 1);
-    const duplicate = app.settingsToolbarButton(1);
-    try app.settingsClick(duplicate.x + 12, duplicate.y + 12, 1);
-    try std.testing.expectEqual(settings.Page.profiles, app.settings_editor.?.page);
-    try std.testing.expectEqual(@as(usize, 1), app.settingsConfiguration().value.profiles.len - configuration.value.profiles.len);
-    try std.testing.expectEqualStrings("Host", app.settingsConfiguration().value.profiles[1].name);
-    app.settingsCancel();
-    try std.testing.expectEqual(@as(usize, 1), configuration.value.profiles.len);
-}
-
-test "Profiles page owns both catalogue and detail scrolling, independent of selection" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    const window = c.SDL_CreateWindow("profiles page scroll proof", 920, 650, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    var configuration = try config.Config.parse(std.testing.allocator, threaded.io(),
-        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"ssh","recipe":{"id":"auto.ssh.a","name":"Host A","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.b","name":"Host B","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.c","name":"Host C","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.d","name":"Host D","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.e","name":"Host E","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.f","name":"Host F","shell":"/usr/bin/ssh"}}]}
-    );
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = undefined,
-        .window = window,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 920,
-        .height = 650,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .defaults, .content_focus = true },
-    };
-    app.init.io = threaded.io();
-    defer app.discardSettings();
-
-    const body = app.settingsBody();
-    const overview = app.profilesForm();
-    try std.testing.expectEqual(@as(usize, 3), overview.cardCount());
-    try std.testing.expectEqual(@as(usize, 2), overview.saved_count);
-    try std.testing.expectEqual(@as(usize, 6), overview.scanned_count);
-    const bar = overview.view.scrollbar().?;
-    try std.testing.expectApproxEqAbs(body.x + body.width - 4, bar.track.x, 0.01);
-    for (0..overview.cardCount()) |number| try std.testing.expect(bar.track.x > overview.card(number).x + overview.card(number).width);
-    var all: [settings.row_limit]settings.Row = undefined;
-    var indices: [settings.row_limit]u16 = undefined;
-    const count = try settings.rows(&configuration, &all);
-    try std.testing.expectEqual(overview.saved_count + overview.scanned_count, app.settings_editor.?.indices(all[0..count], &indices));
-    try std.testing.expectEqual(settings.Target{ .set_default = 0 }, all[indices[0]].target);
-    try std.testing.expectEqual(settings.Target{ .set_default = 1 }, all[indices[1]].target);
-    try std.testing.expectEqual(settings.Target{ .scanned = 0 }, all[indices[2]].target);
-    try std.testing.expectEqual(settings.Target{ .scanned = 5 }, all[indices[7]].target);
-
-    app.settings_editor.?.form_row = 1;
-    const selected_id = (try app.overviewDefaultID()).?;
-    const footer = app.settingsDefaultButton();
-    const original_scan_y = overview.card(0).y;
-    const original_saved_y = overview.card(1).y;
-    const original_row_y = overview.row(2).y;
-    var wheel = std.mem.zeroes(c.SDL_MouseWheelEvent);
-    wheel.y = -2;
-    wheel.mouse_x = body.x + 60;
-    wheel.mouse_y = body.y + 60;
-    try app.pointerWheel(wheel);
-    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
-    const scrolled = app.profilesForm();
-    try std.testing.expectApproxEqAbs(original_scan_y - 96, scrolled.card(0).y, 0.01);
-    try std.testing.expectApproxEqAbs(original_saved_y - 96, scrolled.card(1).y, 0.01);
-    try std.testing.expectApproxEqAbs(original_row_y - 96, scrolled.row(2).y, 0.01);
-    try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.form_row);
-    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
-    try std.testing.expectEqualStrings(selected_id, (try app.overviewDefaultID()).?);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-
-    const scanned_row = scrolled.row(2);
-    try std.testing.expect(body.contains(scanned_row.x + 12, scanned_row.y + 12));
-    try std.testing.expectEqual(@as(?usize, 2), scrolled.hit(scanned_row.x + 12, scanned_row.y + 12));
-    try app.settingsClick(scanned_row.x + 12, scanned_row.y + 12, 1);
-    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
-    try std.testing.expect(app.settings_draft == null);
-    const toggle = App.scannedEnableButton(scanned_row);
-    try app.settingsClick(toggle.x + 12, toggle.y + 12, 1);
-    try std.testing.expect(!app.settingsConfiguration().value.scanned_profiles[0].enabled);
-    try std.testing.expect(configuration.value.scanned_profiles[0].enabled);
-    app.settingsCancel();
-    try std.testing.expect(app.settingsConfiguration().value.scanned_profiles[0].enabled);
-
-    try std.testing.expect(app.settingsScrollbarPress(bar.track.x - 5, bar.track.y + bar.track.height - 5));
-    try std.testing.expect(app.settings_scroll_offset > 96);
-    const end = app.profilesForm();
-    const last_row = end.row(7);
-    try std.testing.expect(body.contains(last_row.x + 12, last_row.y + 12));
-    try std.testing.expectEqual(@as(?usize, 7), end.hit(last_row.x + 12, last_row.y + 12));
-    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
-    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-    try std.testing.expect(app.settingsScanSourceRow(0).y + 34 < body.y);
-    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
-    try std.testing.expectEqualStrings("auto.ssh.a", (try app.settingsConfiguration().defaultProfile()).id);
-    try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
-    app.settingsCancel();
-
-    app.settings_scroll_offset = 0;
-    const edit = App.savedEditButton(app.profilesForm().row(1));
-    try app.settingsClick(edit.x + 10, edit.y + 10, 1);
-    try std.testing.expectEqual(settings.Page.profiles, app.settings_editor.?.page);
-    try std.testing.expectEqual(@as(u8, 1), app.settings_editor.?.profile);
-    app.height = 470;
-    const details = app.profilesForm();
-    try std.testing.expectEqual(@as(usize, 1), details.cardCount());
-    try std.testing.expectEqual(@as(usize, 7), details.detail_count);
-    const detail_count = try settings.rows(&configuration, &all);
-    try std.testing.expectEqual(details.detail_count, app.settings_editor.?.indices(all[0..detail_count], &indices));
-    try std.testing.expect(details.view.scrollbar() != null);
-    const detail_bar = details.view.scrollbar().?;
-    try std.testing.expect(detail_bar.track.x > details.card(0).x + details.card(0).width);
-    try std.testing.expect(app.settingsScrollbarPress(detail_bar.track.x - 5, detail_bar.track.y + detail_bar.track.height - 5));
-    try std.testing.expect(app.settings_scroll_offset > 0);
-    const last_detail_row = app.profilesForm().row(6);
-    try std.testing.expect(app.settingsBody().contains(last_detail_row.x + 10, last_detail_row.y + 10));
-    try std.testing.expectEqual(@as(?usize, 6), app.profilesForm().hit(last_detail_row.x + 10, last_detail_row.y + 10));
-    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.form_row);
-    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
-    app.settings_scroll_grab = null;
-}
-
-test "Settings Save commits the complete draft once; Cancel and failed Save preserve the live configuration" {
-    const a = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(a, .{});
-    defer threaded.deinit();
-    var current = config.Config.defaults(a);
-    defer current.deinit();
-    var fonts = try testFonts(a);
-    defer fonts.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &current,
-        .fonts = &fonts,
-        .window = undefined,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{},
-    };
-    app.init.io = threaded.io();
-    defer app.discardSettings();
-    try app.changeSetting(.discover_shells, "On");
-    try app.changeSetting(.cursor_blink, "Always");
-    try std.testing.expect(!current.value.discover_shells);
-    try std.testing.expect(app.settingsConfiguration().value.discover_shells);
-    try std.testing.expectEqual(.always, app.settingsConfiguration().value.cursor_blink);
-    app.settingsCancel();
-    try std.testing.expect(app.settings_draft == null);
-    try std.testing.expect(!current.value.discover_shells);
-
-    try app.changeSetting(.discover_shells, "On");
-    try app.changeSetting(.cursor_blink, "Always");
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.createDir(threaded.io(), "occupied", .default_dir);
-    try std.testing.expectError(error.IsDir, app.settingsSaveAt(temporary.dir, "occupied"));
-    try std.testing.expect(!current.value.discover_shells);
-    try std.testing.expect(app.settings_draft != null);
-    try app.settingsSaveAt(temporary.dir, "settings.json");
-    try std.testing.expect(app.settings_draft == null);
-    try std.testing.expect(current.value.discover_shells);
-    try std.testing.expectEqual(.always, current.value.cursor_blink);
-    var reloaded = try config.Config.loadAt(a, threaded.io(), temporary.dir, "settings.json");
-    defer reloaded.deinit();
-    try std.testing.expect(reloaded.value.discover_shells);
-    try std.testing.expectEqual(.always, reloaded.value.cursor_blink);
-}
-
-test "startup form keeps the default selector inside its card at compact widths" {
-    for ([_]f32{ 554, 320, 180 }) |width| {
-        const bounds: layout.Rect = .{ .x = 400, .y = 150, .width = width, .height = 210 };
-        for ([_]f32{ 0, 72, 400 }) |scroll_offset| {
-            const form = StartupForm.init(bounds, scroll_offset);
-            const first = form.card(0);
-            const selector = form.select();
-            try std.testing.expectEqual(first.x - bounds.x, bounds.x + bounds.width - first.x - first.width);
-            try std.testing.expect(first.y >= bounds.y + StartupForm.top_inset - form.view.offset);
-            const first_row = form.row(0);
-            try std.testing.expectEqual(first_row.x - first.x, first.x + first.width - first_row.x - first_row.width);
-            try std.testing.expect(selector.x >= first.x);
-            try std.testing.expect(selector.x + selector.width <= first.x + first.width);
-            try std.testing.expect(selector.y >= first.y and selector.y + selector.height <= first.y + first.height);
-        }
-    }
-}
-
-test "settings cards share symmetric painted and pointer geometry" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    const window = c.SDL_CreateWindow("settings card geometry", 920, 650, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    var configuration = config.Config.defaults(std.testing.allocator);
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = undefined,
-        .window = window,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .bindings = try keybindings.Bindings.init(),
-        .tab_count = 1,
-        .settings_editor = .{ .page = .appearance, .content_focus = true },
-    };
-    for ([_]struct { width: f32, height: f32 }{
-        .{ .width = 920, .height = 650 },
-        .{ .width = 560, .height = 450 },
-        .{ .width = 300, .height = 300 },
-    }) |size| {
-        app.width = size.width;
-        app.height = size.height;
-        app.settings_editor.?.page = .defaults;
-        const overview = app.profilesForm();
-        const profile_body = app.settingsBody();
-        const scan = overview.card(0);
-        const saved = overview.card(1);
-        const cached = overview.card(2);
-        const scan_button = app.settingsToolbarButton(2);
-        const new_button = app.settingsToolbarButton(0);
-        const duplicate_button = app.settingsToolbarButton(1);
-        try std.testing.expect(scan.y >= app.settingsRect().y + settings_header_height);
-        try std.testing.expect(scan.y + scan.height < saved.y);
-        try std.testing.expect(saved.y + saved.height < cached.y);
-        try std.testing.expectApproxEqAbs(scan.x, saved.x, 0.01);
-        try std.testing.expectApproxEqAbs(saved.x, cached.x, 0.01);
-        for (0..overview.cardCount()) |number| {
-            const card = overview.card(number);
-            try std.testing.expectApproxEqAbs(card.x - profile_body.x, profile_body.x + profile_body.width - card.x - card.width, 0.01);
-        }
-        try std.testing.expect(scan_button.x >= scan.x and scan_button.x + scan_button.width <= scan.x + scan.width);
-        try std.testing.expect(new_button.x >= saved.x and duplicate_button.x + duplicate_button.width <= saved.x + saved.width);
-        try std.testing.expect(new_button.x + new_button.width < duplicate_button.x);
-        for (0..2) |number| {
-            const source = app.settingsScanSourceRow(number);
-            const toggle = App.scanSourceSwitch(source);
-            try std.testing.expect(source.x >= scan.x and source.x + source.width <= scan.x + scan.width);
-            try std.testing.expect(source.y >= scan.y and source.y + source.height <= scan.y + scan.height);
-            try std.testing.expect(toggle.x >= source.x and toggle.x + toggle.width <= source.x + source.width);
-            try std.testing.expect(toggle.y >= source.y and toggle.y + toggle.height <= source.y + source.height);
-        }
-        if (overview.view.scrollbar()) |bar| try std.testing.expect(bar.track.x > saved.x + saved.width);
-        app.settings_editor.?.page = .profiles;
-        const details = app.profilesForm();
-        const card = details.card(0);
-        try std.testing.expect(app.simpleSettingsForm());
-        try std.testing.expectApproxEqAbs(card.x - profile_body.x, profile_body.x + profile_body.width - card.x - card.width, 0.01);
-        try std.testing.expect(card.y >= profile_body.y);
-        const first = details.row(0);
-        try std.testing.expectApproxEqAbs(first.x - card.x, card.x + card.width - first.x - first.width, 0.01);
-        try std.testing.expect(first.y >= card.y + ProfilesForm.detail_heading_height);
-        if (details.view.bounds.contains(first.x + 1, first.y + 1))
-            try std.testing.expectEqual(@as(?usize, 0), details.hit(first.x + 1, first.y + 1));
-        try std.testing.expect(details.hit(card.x + 1, first.y + 1) == null);
-        if (details.view.scrollbar()) |bar| try std.testing.expect(bar.track.x > card.x + card.width);
-
-        app.settings_editor.?.page = .mappings;
-        const body = app.settingsBody();
-        const shortcuts = app.shortcutForm();
-        try std.testing.expect(shortcuts.view.scrollbar() != null);
-        try std.testing.expectApproxEqAbs(shortcuts.view.bounds.x + shortcuts.view.bounds.width - 4, shortcuts.view.scrollbar().?.track.x, 0.01);
-        var grouped: usize = 0;
-        for (ShortcutForm.sections, 0..) |section, number| {
-            const group = shortcuts.card(number);
-            try std.testing.expectApproxEqAbs(group.x - body.x, body.x + body.width - group.x - group.width, 0.01);
-            if (number > 0) try std.testing.expect(group.y >= shortcuts.card(number - 1).y + shortcuts.card(number - 1).height + ShortcutForm.card_gap);
-            var count_in_group: usize = 0;
-            for (keybindings.definitions, 0..) |definition, index| {
-                if (definition.category != section.category) continue;
-                const item = shortcuts.row(index);
-                try std.testing.expectApproxEqAbs(item.x - group.x, group.x + group.width - item.x - item.width, 0.01);
-                try std.testing.expect(item.y >= group.y + ShortcutForm.heading_height);
-                try std.testing.expect(item.y + item.height < group.y + group.height);
-                const near = ShortcutForm.init(body, ShortcutForm.rowTop(index) - ShortcutForm.outer_inset);
-                const visible_row = near.row(index);
-                if (near.view.bounds.contains(visible_row.x + 1, visible_row.y + 1))
-                    try std.testing.expectEqual(@as(?usize, index), near.hit(visible_row.x + 1, visible_row.y + 1));
-                count_in_group += 1;
-            }
-            try std.testing.expect(count_in_group > 0);
-            try std.testing.expectEqual(count_in_group, ShortcutForm.rowCount(number));
-            grouped += count_in_group;
-        }
-        try std.testing.expectEqual(keybindings.definitions.len, grouped);
-        const tail = ShortcutForm.init(body, 100000);
-        var last_index: usize = 0;
-        for (keybindings.definitions, 0..) |_, index| if (ShortcutForm.rowTop(index) > ShortcutForm.rowTop(last_index)) {
-            last_index = index;
-        };
-        const last_shortcut = tail.row(last_index);
-        try std.testing.expect(last_shortcut.y >= body.y);
-        try std.testing.expect(last_shortcut.y + last_shortcut.height <= body.y + body.height);
-
-        app.settings_editor.?.page = .appearance;
-        const form = app.appearanceForm();
-        try std.testing.expect(app.simpleSettingsForm());
-        try std.testing.expectApproxEqAbs(body.y + AppearanceForm.top_inset, form.card(0).y, 0.01);
-        for (AppearanceForm.sections, 0..) |section, number| {
-            const group = form.card(number);
-            const group_first = form.row(section.first);
-            const group_last = form.row(section.first + section.count - 1);
-            try std.testing.expectApproxEqAbs(group.x - body.x, body.x + body.width - group.x - group.width, 0.01);
-            try std.testing.expectApproxEqAbs(group_first.x - group.x, group.x + group.width - group_first.x - group_first.width, 0.01);
-            try std.testing.expect(group_first.y >= group.y + AppearanceForm.heading_height);
-            try std.testing.expect(group_last.y + group_last.height < group.y + group.height);
-            if (number > 0) try std.testing.expect(group.y >= form.card(number - 1).y + form.card(number - 1).height + AppearanceForm.card_gap);
-        }
-        const first_appearance = form.row(0);
-        try std.testing.expectEqual(@as(?usize, 0), form.hit(first_appearance.x + 1, first_appearance.y + 1));
-        try std.testing.expect(form.hit(form.card(0).x + 16, form.card(0).y + 16) == null);
-        const next_row = AppearanceForm.init(body, AppearanceForm.row_stride);
-        try std.testing.expectApproxEqAbs(AppearanceForm.row_stride, next_row.view.offset, 0.01);
-        const fonts = AppearanceForm.init(body, AppearanceForm.rowTop(2) - AppearanceForm.rowTop(0));
-        try std.testing.expectApproxEqAbs(AppearanceForm.rowTop(2) - AppearanceForm.rowTop(0), fonts.view.offset, 0.01);
-        app.settings_scroll_offset = 100000;
-        const scrolled = app.appearanceForm();
-        const last_appearance = scrolled.row(AppearanceForm.count - 1);
-        try std.testing.expect(last_appearance.y >= body.y);
-        try std.testing.expect(last_appearance.y + last_appearance.height <= body.y + body.height);
-        try std.testing.expectEqual(@as(?usize, AppearanceForm.count - 1), scrolled.hit(last_appearance.x + 1, last_appearance.y + 1));
-        app.settings_scroll_offset = 0;
-        app.settings_editor.?.page = .colors;
-        try std.testing.expect(app.simpleSettingsForm());
-        const color_form = app.colorForm();
-        for (ColorForm.sections, 0..) |section, number| {
-            const group = color_form.card(number);
-            const first_color = color_form.row(section.first);
-            const last_color = color_form.row(section.first + section.count - 1);
-            try std.testing.expectApproxEqAbs(group.x - body.x, body.x + body.width - group.x - group.width, 0.01);
-            try std.testing.expectApproxEqAbs(first_color.x - group.x, group.x + group.width - first_color.x - first_color.width, 0.01);
-            try std.testing.expect(first_color.y >= group.y + ColorForm.heading_height);
-            try std.testing.expect(last_color.y + last_color.height <= group.y + group.height);
-        }
-        app.settings_editor.?.page = .appearance;
-        app.settings_editor.?.search = true;
-        try std.testing.expect(app.simpleSettingsForm());
-        try std.testing.expect(app.settingsRows().rect.x > app.settingsBody().x);
-        app.settings_editor.?.search = false;
-    }
-    app.width = 920;
-    app.height = 650;
-    var all: [settings.row_limit]settings.Row = undefined;
-    var indices: [settings.row_limit]u16 = undefined;
-    const count = try settings.rows(&configuration, &all);
-    app.settings_editor.?.page = .mappings;
-    try std.testing.expectEqual(keybindings.definitions.len, app.settings_editor.?.indices(all[0..count], &indices));
-    for (indices[0..keybindings.definitions.len], 0..) |index, number| {
-        try std.testing.expectEqual(settings.Page.mappings, all[index].page);
-        try std.testing.expectEqual(@as(u8, @intCast(number)), all[index].target.binding);
-    }
-    const history_index = keybindings.indexForId("history_page_up").?;
-    app.settings_editor.?.search = true;
-    try app.activateSetting(all[indices[history_index]]);
-    try std.testing.expect(!app.settings_editor.?.search);
-    try std.testing.expectEqual(settings.Page.mappings, app.settings_editor.?.page);
-    try std.testing.expectEqual(history_index, app.settings_editor.?.form_row);
-    try std.testing.expect(app.settings_scroll_offset > 0);
-    const history_row = app.shortcutForm().row(history_index);
-    const history_edit = App.settingsEditButton(history_row);
-    try std.testing.expect(app.settingsBody().contains(history_edit.x + 5, history_edit.y + 5));
-    try app.settingsClick(history_edit.x + 5, history_edit.y + 5, 1);
-    try std.testing.expectEqual(settings.Target{ .binding = @intCast(history_index) }, app.settings_editor.?.editing.?);
-    try std.testing.expectEqualDeep(App.settingsRowField(app.shortcutForm().row(history_index)), app.settingsField());
-    app.settings_editor.?.cancel();
-    app.settings_scroll_offset = 0;
-    var shortcut_wheel = std.mem.zeroes(c.SDL_MouseWheelEvent);
-    shortcut_wheel.y = -2;
-    shortcut_wheel.mouse_x = app.settingsBody().x + 60;
-    shortcut_wheel.mouse_y = app.settingsBody().y + 60;
-    try app.pointerWheel(shortcut_wheel);
-    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
-    app.settings_scroll_offset = 0;
-    const shortcut_bar = app.shortcutForm().view.scrollbar().?;
-    try std.testing.expect(app.settingsScrollbarPress(shortcut_bar.track.x - 5, shortcut_bar.track.y + shortcut_bar.track.height - 5));
-    try std.testing.expect(app.settings_scroll_offset > 0);
-    app.settingsScrollbarMove(shortcut_bar.track.y + 5);
-    try std.testing.expectEqual(@as(f32, 0), app.settings_scroll_offset);
-    app.settings_scroll_grab = null;
-    app.settings_editor.?.page = .appearance;
-    app.settings_editor.?.form_row = 0;
-    try std.testing.expectEqual(AppearanceForm.count, app.settings_editor.?.indices(all[0..count], &indices));
-    const starts = [_]settings.Target{ .hide_single_tab, .font_family, .cursor_blink };
-    const ends = [_]settings.Target{ .tab_width, .{ .font = 5 }, .cursor_blink_idle_ms };
-    for (AppearanceForm.sections, 0..) |section, number| {
-        try std.testing.expectEqualDeep(starts[number], all[indices[section.first]].target);
-        try std.testing.expectEqualDeep(ends[number], all[indices[section.first + section.count - 1]].target);
-    }
-    const row = app.appearanceForm().row(0);
-    try app.settingsClick(row.x + 8, row.y + 15, 1);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.form_row);
-    const form_body = app.settingsBody();
-    var wheel = std.mem.zeroes(c.SDL_MouseWheelEvent);
-    wheel.y = -2;
-    wheel.mouse_x = form_body.x + 60;
-    wheel.mouse_y = form_body.y + 60;
-    try app.pointerWheel(wheel);
-    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
-    wheel.mouse_x = form_body.x - 10;
-    try app.pointerWheel(wheel);
-    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
-    app.settings_scroll_offset = 0;
-    const edit_button = App.settingsEditButton(row);
-    try app.settingsClick(edit_button.x + 8, edit_button.y + 8, 1);
-    try std.testing.expectEqual(settings.Target.hide_single_tab, app.settings_editor.?.editing.?);
-    const edited_row = app.appearanceForm().row(0);
-    const field = app.settingsField();
-    try std.testing.expectEqualDeep(App.settingsRowField(edited_row), field);
-    try std.testing.expect(field.x >= edited_row.x and field.x + field.width <= edited_row.x + edited_row.width);
-    try std.testing.expect(field.y >= edited_row.y and field.y + field.height <= edited_row.y + edited_row.height);
-    try app.settingsClick(field.x + 2, field.y + 2, 1);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-    const bar = app.appearanceForm().view.scrollbar().?;
-    try std.testing.expect(app.settingsScrollbarPress(bar.track.x - 5, bar.track.y + bar.track.height - 5));
-    try std.testing.expect(app.settings_scroll_offset > 0);
-    app.settingsScrollbarMove(bar.track.y + 5);
-    try std.testing.expectEqual(@as(f32, 0), app.settings_scroll_offset);
-    app.settings_scroll_grab = null;
-
-    app.init.io = std.testing.io;
-    app.settings_editor.?.page = .colors;
-    try std.testing.expectEqual(ColorForm.count, app.settings_editor.?.indices(all[0..count], &indices));
-    try std.testing.expectEqualDeep(settings.Target.theme, all[indices[0]].target);
-    try std.testing.expectEqualDeep(settings.Target.reset_app_colors, all[indices[ColorForm.app_count - 1]].target);
-    try std.testing.expectEqualDeep(settings.Target.terminal_theme, all[indices[ColorForm.app_count]].target);
-    try std.testing.expectEqualDeep(settings.Target.reset_terminal_colors, all[indices[ColorForm.count - 2]].target);
-    const color_label = app.colorForm().row(1);
-    try app.settingsClick(color_label.x + 8, color_label.y + 12, 1);
-    try std.testing.expect(app.settings_editor.?.editing == null and app.settings_draft == null);
-    const color_edit = App.settingsEditButton(color_label);
-    try app.settingsClick(color_edit.x + 8, color_edit.y + 8, 1);
-    try std.testing.expectEqualDeep(settings.Target{ .app_color = 0 }, app.settings_editor.?.editing.?);
-    try std.testing.expectEqualDeep(App.settingsRowField(app.colorForm().row(1)), app.settingsField());
-    const red_bar = app.colorBar(0);
-    try app.settingsClick(red_bar.x + red_bar.width / 2, red_bar.y + 8, 1);
-    try std.testing.expectEqual(@as(?u8, 0), app.color_drag);
-    try std.testing.expectEqual(@as(usize, 7), app.settings_editor.?.len);
-    try std.testing.expectEqual(@as(u8, '#'), app.settings_editor.?.buffer[0]);
-    app.color_drag = null;
-    var event_value = std.mem.zeroes(c.SDL_KeyboardEvent);
-    event_value.key = c.SDLK_ESCAPE;
-    try app.settingsKey(event_value);
-    try std.testing.expect(app.settings_editor.?.editing == null);
-    app.settings_scroll_offset = ColorForm.rowTop(ColorForm.app_count - 1) - 100;
-    const app_reset = app.colorForm().row(ColorForm.app_count - 1);
-    try std.testing.expect(app.settingsBody().contains(app_reset.x + 8, app_reset.y + 10));
-    try app.settingsClick(app_reset.x + 8, app_reset.y + 10, 1);
-    try std.testing.expect(app.settings_draft == null);
-    const reset_button = App.settingsResetButton(app_reset);
-    try app.settingsClick(reset_button.x + 8, reset_button.y + 8, 1);
-    try std.testing.expect(app.settings_draft != null);
-    app.settingsCancel();
-    try std.testing.expect(app.settings_draft == null);
-    app.settings_scroll_offset = ColorForm.rowTop(ColorForm.count - 2) - 100;
-    const terminal_reset = app.colorForm().row(ColorForm.count - 2);
-    try std.testing.expect(app.settingsBody().contains(terminal_reset.x + 8, terminal_reset.y + 10));
-    try app.settingsClick(terminal_reset.x + 8, terminal_reset.y + 10, 1);
-    try std.testing.expect(app.settings_draft == null);
-    const terminal_reset_button = App.settingsResetButton(terminal_reset);
-    try app.settingsClick(terminal_reset_button.x + 8, terminal_reset_button.y + 8, 1);
-    try std.testing.expect(app.settings_draft != null);
-    app.settingsCancel();
-    app.settings_scroll_offset = 0;
-    const color_body = app.settingsBody();
-    wheel.mouse_x = color_body.x + 60;
-    wheel.mouse_y = color_body.y + 60;
-    try app.pointerWheel(wheel);
-    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
-    app.settings_scroll_offset = 0;
-    const color_bar = app.colorForm().view.scrollbar().?;
-    try std.testing.expect(app.settingsScrollbarPress(color_bar.track.x - 5, color_bar.track.y + color_bar.track.height - 5));
-    try std.testing.expect(app.settings_scroll_offset > 0);
-    app.settings_scroll_grab = null;
-}
-
-fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {
+/// Read one exact software-rendered pixel for paint assertions.
+pub fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {
     var result: c.SDL_Color = undefined;
     if (!c.SDL_ReadSurfacePixel(surface, x, y, &result.r, &result.g, &result.b, &result.a)) return error.SDL;
     return result;
-}
-test "Profiles cards paint inside the shared page viewport with an outer scrollbar" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    if (!c.TTF_Init()) return error.TTF;
-    defer c.TTF_Quit();
-    const a = std.testing.allocator;
-    const window = c.SDL_CreateWindow("profiles card paint", 920, 470, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    const surface = c.SDL_CreateSurface(920, 470, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
-    defer c.SDL_DestroySurface(surface);
-    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
-    defer c.SDL_DestroyRenderer(renderer);
-    var fonts = try testFonts(a);
-    defer fonts.deinit();
-    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
-    defer ui_fonts.deinit();
-    var configuration = try config.Config.parse(a, std.testing.io,
-        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"ssh","recipe":{"id":"auto.ssh.a","name":"Host A","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.b","name":"Host B","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.c","name":"Host C","shell":"/usr/bin/ssh"}}]}
-    );
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = &fonts,
-        .window = window,
-        .renderer = renderer,
-        .ui_fonts = &ui_fonts,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 920,
-        .height = 470,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .defaults },
-    };
-    const colors = try app.uiPalette();
-    try app.drawSettings();
-    try std.testing.expect(c.SDL_RenderPresent(renderer));
-    const saved = app.profilesForm().card(1);
-    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(saved.x + 8), @intFromFloat(saved.y + 61)));
-    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(saved.x - 5), @intFromFloat(saved.y + 61)));
-    const bar = app.profilesForm().view.scrollbar().?;
-    try std.testing.expect(bar.track.x > saved.x + saved.width);
-    try std.testing.expectEqual(colors.muted, try testPixel(surface, @intFromFloat(bar.thumb.x + bar.thumb.width / 2), @intFromFloat(bar.thumb.y + bar.thumb.height / 2)));
-    app.settings_scroll_offset = 100000;
-    try app.drawSettings();
-    try std.testing.expect(c.SDL_RenderPresent(renderer));
-    const scanned = app.profilesForm().card(2);
-    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(scanned.x + 8), @intFromFloat(scanned.y + scanned.height - 20)));
-
-    app.settings_editor.?.page = .profiles;
-    app.settings_editor.?.profile = 1;
-    app.settings_scroll_offset = 100000;
-    try app.drawSettings();
-    try std.testing.expect(c.SDL_RenderPresent(renderer));
-    const detail = app.profilesForm().card(0);
-    try std.testing.expect(app.profilesForm().view.scrollbar() != null);
-    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(detail.x + 8), @intFromFloat(detail.y + detail.height - 20)));
-}
-test "shortcut cards paint separately from the page and retain the outer scrollbar" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    if (!c.TTF_Init()) return error.TTF;
-    defer c.TTF_Quit();
-    const a = std.testing.allocator;
-    const window = c.SDL_CreateWindow("shortcut card paint", 920, 650, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    const surface = c.SDL_CreateSurface(920, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
-    defer c.SDL_DestroySurface(surface);
-    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
-    defer c.SDL_DestroyRenderer(renderer);
-    var fonts = try testFonts(a);
-    defer fonts.deinit();
-    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
-    defer ui_fonts.deinit();
-    var configuration = config.Config.defaults(a);
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = &fonts,
-        .window = window,
-        .renderer = renderer,
-        .ui_fonts = &ui_fonts,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 920,
-        .height = 650,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .mappings },
-    };
-    const colors = try app.uiPalette();
-    try app.drawSettings();
-    try std.testing.expect(c.SDL_RenderPresent(renderer));
-    const first = app.shortcutForm().card(0);
-    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(first.x + 8), @intFromFloat(first.y + 74)));
-    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(first.x - 5), @intFromFloat(first.y + 74)));
-    const bar = app.shortcutForm().view.scrollbar().?;
-    try std.testing.expect(bar.track.x > first.x + first.width);
-    app.settings_scroll_offset = 100000;
-    try app.drawSettings();
-    try std.testing.expect(c.SDL_RenderPresent(renderer));
-    const last = app.shortcutForm().card(ShortcutForm.sections.len - 1);
-    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(last.x + 8), @intFromFloat(last.y + last.height - 20)));
 }
 test "Gruvbox selected text stays inside even a short scrolled text field" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));

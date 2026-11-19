@@ -162,6 +162,11 @@ Only the page owns scroll position and the scrollbar, while the selected
 profile and its Set default footer remain independent of scrolling.
 Search preserves normal row geometry. Settings, installed fonts and both palettes
 share text editing, list viewports, row hit geometry and selection/hover styling.
+Settings policy remains in settings.zig; settings_pages.zig owns the five
+page geometries, settings_input.zig owns routing and scroll interactions, and
+settings_paint.zig owns Settings drawing. The SDL host binds those modules to
+its existing editor/draft state without constructing a second controller.
+Settings-specific interaction and pixel proofs live in settings_ui_test.zig.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,
 Ctrl+V pastes, Home/End and Left/Right move the caret, and Delete/Backspace edit
 either side. Shift+arrows/Home/End extends a UTF-8 selection; typing replaces it,

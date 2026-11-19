@@ -221,3 +221,16 @@ the saved-profile details editor also uses a page-owned viewport. Rows retain
 only hit geometry and selected profile identity, never a second scroll offset
 or list viewport. The Set default footer stays outside the scrollable body,
 so scrolling cannot change the selection or the Save/Cancel transaction.
+
+## Extract Settings presentation from the SDL host (19 November 2026)
+
+Captain rejected adding another feature to a 6,084-line main.zig as an
+acceptable long-term shape. Settings policy remains in settings.zig, while
+settings_pages.zig now owns the five pure viewport/card geometries,
+settings_input.zig owns pointer/keyboard routing and scrolling, and
+settings_paint.zig owns SDL Settings drawing. The concrete host binds the
+UI methods at compile time and retains the existing draft, font, persistence
+and terminal lifetime authority; the extraction creates no second runtime
+controller or configuration copy. Settings-specific interaction, geometry
+and software-render proofs moved to settings_ui_test.zig. General host and
+terminal tests remain in main.zig.
