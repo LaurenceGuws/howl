@@ -153,6 +153,10 @@ theme and toggle choices use arrows and ignore typed text. Enter/Save commits;
 Escape cancels the edit, then search, then content focus before closing Settings.
 Tab moves between sidebar/content, or field/Save/Cancel during an edit.
 Interaction exposes the existing copy/paste/find/history shortcut settings.
+Shortcuts groups application, window, tab, pane, pane navigation and terminal
+actions into separate cards on one page-level scroller. The cards change only
+presentation: shortcut IDs, bindings and recording remain unchanged. Profiles
+keeps its separate saved/scanned catalogue with its persistent default footer.
 Search preserves normal row geometry. Settings, installed fonts and both palettes
 share text editing, list viewports, row hit geometry and selection/hover styling.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,

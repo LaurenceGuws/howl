@@ -284,6 +284,76 @@ const ColorForm = struct {
         return null;
     }
 };
+/// Shortcuts use their registry categories as distinct cards on one viewport.
+/// The registry order and persisted action IDs never change for presentation.
+const ShortcutForm = struct {
+    view: widgets.FormViewport,
+
+    const Section = struct { category: keybindings.Category, title: []const u8, hint: []const u8 };
+    const sections = [_]Section{
+        .{ .category = .application, .title = "Application", .hint = "Launchers, menus, and settings." },
+        .{ .category = .window, .title = "Windows", .hint = "Window creation and display." },
+        .{ .category = .tab, .title = "Tabs", .hint = "Switch, arrange, and name tabs." },
+        .{ .category = .pane, .title = "Panes", .hint = "Split, manage, and restart panes." },
+        .{ .category = .pane_navigation, .title = "Pane navigation", .hint = "Focus, resize, and exchange panes." },
+        .{ .category = .terminal, .title = "Terminal", .hint = "Fonts, find, clipboard, and history." },
+    };
+    const outer_inset: f32 = settings_card_gutter;
+    const inner_inset: f32 = settings_card_padding;
+    const heading_height: f32 = 66;
+    const row_stride: f32 = 48;
+    const row_height: f32 = 44;
+    const card_gap: f32 = 14;
+    const card_bottom: f32 = 12;
+
+    fn sectionFor(category: keybindings.Category) usize {
+        const index: usize = @backingInt(category);
+        std.debug.assert(index < sections.len and sections[index].category == category);
+        return index;
+    }
+    fn rowCount(number: usize) usize {
+        var count: usize = 0;
+        for (keybindings.definitions) |definition| if (definition.category == sections[number].category) {
+            count += 1;
+        };
+        return count;
+    }
+    fn cardHeight(number: usize) f32 {
+        return heading_height + @as(f32, @floatFromInt(rowCount(number))) * row_stride + card_bottom;
+    }
+    fn cardTop(number: usize) f32 {
+        var top = outer_inset;
+        for (0..number) |index| top += cardHeight(index) + card_gap;
+        return top;
+    }
+    fn rowTop(index: usize) f32 {
+        std.debug.assert(index < keybindings.definitions.len);
+        const category = keybindings.definitions[index].category;
+        var preceding: usize = 0;
+        for (keybindings.definitions[0..index]) |definition| if (definition.category == category) {
+            preceding += 1;
+        };
+        return cardTop(sectionFor(category)) + heading_height + @as(f32, @floatFromInt(preceding)) * row_stride;
+    }
+    fn contentHeight() f32 {
+        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + outer_inset;
+    }
+    fn init(bounds: layout.Rect, offset: f32) ShortcutForm {
+        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
+    }
+    fn card(self: ShortcutForm, number: usize) layout.Rect {
+        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
+    }
+    fn row(self: ShortcutForm, index: usize) layout.Rect {
+        const inset = outer_inset + inner_inset;
+        return self.view.place(inset, rowTop(index), @max(1, self.view.bounds.width - 2 * inset), row_height);
+    }
+    fn hit(self: ShortcutForm, x: f32, y: f32) ?usize {
+        if (!self.view.bounds.contains(x, y)) return null;
+        for (keybindings.definitions, 0..) |_, index| if (self.row(index).contains(x, y)) return index;
+        return null;
+    }
+};
 const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
@@ -979,6 +1049,9 @@ const App = struct {
                     } else if (editor.page == .colors) {
                         editor.form_row = number;
                         self.settings_scroll_offset = ColorForm.rowTop(number) - ColorForm.rowTop(0);
+                    } else if (editor.page == .mappings) {
+                        editor.form_row = number;
+                        self.settings_scroll_offset = ShortcutForm.rowTop(number) - settings_card_gutter;
                     }
                     break;
                 }
@@ -2219,6 +2292,9 @@ const App = struct {
     fn colorForm(self: *const App) ColorForm {
         return ColorForm.init(self.settingsBody(), self.settings_scroll_offset);
     }
+    fn shortcutForm(self: *const App) ShortcutForm {
+        return ShortcutForm.init(self.settingsBody(), self.settings_scroll_offset);
+    }
     fn appearanceSettings(self: *const App) bool {
         const editor = self.settings_editor.?;
         return !editor.search and editor.page == .appearance;
@@ -2227,6 +2303,10 @@ const App = struct {
         const editor = self.settings_editor.?;
         return !editor.search and editor.page == .colors;
     }
+    fn shortcutSettings(self: *const App) bool {
+        const editor = self.settings_editor.?;
+        return !editor.search and editor.page == .mappings;
+    }
     fn settingsFormView(self: *const App) ?widgets.FormViewport {
         const editor = self.settings_editor orelse return null;
         if (editor.search) return null;
@@ -2234,6 +2314,7 @@ const App = struct {
             .startup => self.startupForm().view,
             .appearance => self.appearanceForm().view,
             .colors => self.colorForm().view,
+            .mappings => self.shortcutForm().view,
             else => null,
         };
     }
@@ -2300,6 +2381,7 @@ const App = struct {
             if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
             if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.form_row));
             if (self.colorSettings()) return settingsRowField(self.colorForm().row(e.form_row));
+            if (self.shortcutSettings()) return settingsRowField(self.shortcutForm().row(e.form_row));
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
             return settingsRowField(rect);
         }
@@ -2570,6 +2652,10 @@ const App = struct {
             if (body.contains(x, y)) try self.settingsColorClick(x, y);
             return;
         }
+        if (self.shortcutSettings()) {
+            if (body.contains(x, y)) try self.settingsShortcutClick(x, y);
+            return;
+        }
         if (!e.search and e.page == .defaults) {
             for ([_]settings.Target{ .discover_shells, .discover_ssh_hosts }, 0..) |target, number| {
                 const row = self.settingsScanSourceRow(number);
@@ -2685,6 +2771,20 @@ const App = struct {
             return self.activateSetting(row);
         }
         if ((row.target == .reset_app_colors or row.target == .reset_terminal_colors) and settingsResetButton(rect).contains(x, y)) {
+            return self.activateSetting(row);
+        }
+    }
+    fn settingsShortcutClick(self: *App, x: f32, y: f32) !void {
+        const form = self.shortcutForm();
+        const number = form.hit(x, y) orelse return;
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.settingsConfiguration(), &all);
+        const visible = self.settings_editor.?.indices(all[0..count], &indices);
+        if (number >= visible) return;
+        const row = all[indices[number]];
+        if (row.editable() and settingsEditButton(form.row(number)).contains(x, y)) {
+            self.settings_editor.?.form_row = number;
             return self.activateSetting(row);
         }
     }
@@ -2833,6 +2933,18 @@ const App = struct {
             try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
         }
     }
+    fn drawShortcutCards(self: *App, form: ShortcutForm) !void {
+        const colors = try self.uiPalette();
+        for (ShortcutForm.sections, 0..) |section, number| {
+            const card = form.card(number);
+            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
+            try self.drawSettingsCard(card);
+            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
+            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
+            try self.clippedText(section.title, heading, heading.x);
+            try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
+        }
+    }
     fn drawProfileScanCard(self: *App) !void {
         const colors = try self.uiPalette();
         const card = self.settingsScanCard();
@@ -2859,14 +2971,12 @@ const App = struct {
         const title: []const u8 = if (e.search) "Search results" else switch (e.page) {
             .defaults => "Launch profiles",
             .profiles => "Profile details",
-            .mappings => "Keyboard shortcuts",
             else => return,
         };
         var hint_buffer: [160]u8 = undefined;
         const hint: []const u8 = if (e.search) "Select a result to open its settings section." else switch (e.page) {
             .defaults => "Saved and scanned recipes.",
             .profiles => try std.fmt.bufPrint(&hint_buffer, "{s} · Save applies your changes.", .{(try self.settingsConfiguration().profile(e.profile)).name}),
-            .mappings => "Click a pencil to record a shortcut.",
             else => return,
         };
         const right = if (!e.search and e.page == .defaults) self.settingsToolbarButton(0).x - 8 else card.x + card.width - 16;
@@ -2925,7 +3035,8 @@ const App = struct {
         const simple_form = self.simpleSettingsForm();
         const appearance_form = self.appearanceSettings();
         const color_form = self.colorSettings();
-        const card_form = appearance_form or color_form;
+        const shortcut_form = self.shortcutSettings();
+        const card_form = appearance_form or color_form or shortcut_form;
         if (!e.search and e.page == .defaults) try self.drawProfileScanCard();
         if (simple_form and !card_form) {
             try self.drawSettingsCard(self.settingsListCard());
@@ -2958,12 +3069,13 @@ const App = struct {
         const rows = self.settingsRows();
         const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
         const colors_form: ColorForm = if (color_form) self.colorForm() else undefined;
+        const shortcuts_form: ShortcutForm = if (shortcut_form) self.shortcutForm() else undefined;
         var clipped_rows = false;
         defer if (clipped_rows) clearClip(self.renderer);
         if (card_form) {
             try setClip(self.renderer, body);
             clipped_rows = true;
-            if (appearance_form) try self.drawAppearanceCards(form) else try self.drawColorCards(colors_form);
+            if (appearance_form) try self.drawAppearanceCards(form) else if (color_form) try self.drawColorCards(colors_form) else try self.drawShortcutCards(shortcuts_form);
         } else if (simple_form) {
             try setClip(self.renderer, rows.rect);
             clipped_rows = true;
@@ -2972,7 +3084,7 @@ const App = struct {
         const paint_end = if (card_form) visible else @min(visible, start + self.settingsVisible());
         for (indices[paint_start..paint_end], paint_start..) |index, number| {
             const row = all[index];
-            const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else rows.row(number - start);
+            const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else if (shortcut_form) shortcuts_form.row(number) else rows.row(number - start);
             if (card_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
             if (simple_form and !card_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else if (!card_form) {
                 try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
@@ -3083,7 +3195,7 @@ const App = struct {
             clipped_rows = false;
         }
         if (card_form) {
-            const view = if (appearance_form) form.view else colors_form.view;
+            const view = if (appearance_form) form.view else if (color_form) colors_form.view else shortcuts_form.view;
             if (view.scrollbar()) |bar| {
                 try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
                 try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
@@ -4952,18 +5064,55 @@ test "settings cards share symmetric painted and pointer geometry" {
             try std.testing.expect(toggle.x >= source.x and toggle.x + toggle.width <= source.x + source.width);
             try std.testing.expect(toggle.y >= source.y and toggle.y + toggle.height <= source.y + source.height);
         }
-        app.settings_editor.?.page = .mappings;
-        const body = app.settingsBody();
+        app.settings_editor.?.page = .profiles;
+        const profile_body = app.settingsBody();
         const card = app.settingsListCard();
         const rows = app.settingsRows();
         try std.testing.expect(app.simpleSettingsForm());
-        try std.testing.expectApproxEqAbs(card.x - body.x, body.x + body.width - card.x - card.width, 0.01);
-        try std.testing.expect(card.y >= body.y and card.y + card.height <= body.y + body.height);
+        try std.testing.expectApproxEqAbs(card.x - profile_body.x, profile_body.x + profile_body.width - card.x - card.width, 0.01);
+        try std.testing.expect(card.y >= profile_body.y and card.y + card.height <= profile_body.y + profile_body.height);
         try std.testing.expectApproxEqAbs(rows.rect.x - card.x, card.x + card.width - rows.rect.x - rows.rect.width, 0.01);
         try std.testing.expect(rows.rect.y >= card.y and rows.rect.y + rows.rect.height <= card.y + card.height);
         const first = rows.row(0);
         try std.testing.expectEqual(@as(?usize, 0), rows.hit(first.x + 1, first.y + 1));
         try std.testing.expect(rows.hit(card.x + 1, first.y + 1) == null);
+
+        app.settings_editor.?.page = .mappings;
+        const body = app.settingsBody();
+        const shortcuts = app.shortcutForm();
+        try std.testing.expect(shortcuts.view.scrollbar() != null);
+        try std.testing.expectApproxEqAbs(shortcuts.view.bounds.x + shortcuts.view.bounds.width - 4, shortcuts.view.scrollbar().?.track.x, 0.01);
+        var grouped: usize = 0;
+        for (ShortcutForm.sections, 0..) |section, number| {
+            const group = shortcuts.card(number);
+            try std.testing.expectApproxEqAbs(group.x - body.x, body.x + body.width - group.x - group.width, 0.01);
+            if (number > 0) try std.testing.expect(group.y >= shortcuts.card(number - 1).y + shortcuts.card(number - 1).height + ShortcutForm.card_gap);
+            var count_in_group: usize = 0;
+            for (keybindings.definitions, 0..) |definition, index| {
+                if (definition.category != section.category) continue;
+                const item = shortcuts.row(index);
+                try std.testing.expectApproxEqAbs(item.x - group.x, group.x + group.width - item.x - item.width, 0.01);
+                try std.testing.expect(item.y >= group.y + ShortcutForm.heading_height);
+                try std.testing.expect(item.y + item.height < group.y + group.height);
+                const near = ShortcutForm.init(body, ShortcutForm.rowTop(index) - ShortcutForm.outer_inset);
+                const visible_row = near.row(index);
+                if (near.view.bounds.contains(visible_row.x + 1, visible_row.y + 1))
+                    try std.testing.expectEqual(@as(?usize, index), near.hit(visible_row.x + 1, visible_row.y + 1));
+                count_in_group += 1;
+            }
+            try std.testing.expect(count_in_group > 0);
+            try std.testing.expectEqual(count_in_group, ShortcutForm.rowCount(number));
+            grouped += count_in_group;
+        }
+        try std.testing.expectEqual(keybindings.definitions.len, grouped);
+        const tail = ShortcutForm.init(body, 100000);
+        var last_index: usize = 0;
+        for (keybindings.definitions, 0..) |_, index| if (ShortcutForm.rowTop(index) > ShortcutForm.rowTop(last_index)) {
+            last_index = index;
+        };
+        const last_shortcut = tail.row(last_index);
+        try std.testing.expect(last_shortcut.y >= body.y);
+        try std.testing.expect(last_shortcut.y + last_shortcut.height <= body.y + body.height);
 
         app.settings_editor.?.page = .appearance;
         const form = app.appearanceForm();
@@ -5022,7 +5171,36 @@ test "settings cards share symmetric painted and pointer geometry" {
         try std.testing.expectEqual(settings.Page.mappings, all[index].page);
         try std.testing.expectEqual(@as(u8, @intCast(number)), all[index].target.binding);
     }
+    const history_index = keybindings.indexForId("history_page_up").?;
+    app.settings_editor.?.search = true;
+    try app.activateSetting(all[indices[history_index]]);
+    try std.testing.expect(!app.settings_editor.?.search);
+    try std.testing.expectEqual(settings.Page.mappings, app.settings_editor.?.page);
+    try std.testing.expectEqual(history_index, app.settings_editor.?.form_row);
+    try std.testing.expect(app.settings_scroll_offset > 0);
+    const history_row = app.shortcutForm().row(history_index);
+    const history_edit = App.settingsEditButton(history_row);
+    try std.testing.expect(app.settingsBody().contains(history_edit.x + 5, history_edit.y + 5));
+    try app.settingsClick(history_edit.x + 5, history_edit.y + 5, 1);
+    try std.testing.expectEqual(settings.Target{ .binding = @intCast(history_index) }, app.settings_editor.?.editing.?);
+    try std.testing.expectEqualDeep(App.settingsRowField(app.shortcutForm().row(history_index)), app.settingsField());
+    app.settings_editor.?.cancel();
+    app.settings_scroll_offset = 0;
+    var shortcut_wheel = std.mem.zeroes(c.SDL_MouseWheelEvent);
+    shortcut_wheel.y = -2;
+    shortcut_wheel.mouse_x = app.settingsBody().x + 60;
+    shortcut_wheel.mouse_y = app.settingsBody().y + 60;
+    try app.pointerWheel(shortcut_wheel);
+    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
+    app.settings_scroll_offset = 0;
+    const shortcut_bar = app.shortcutForm().view.scrollbar().?;
+    try std.testing.expect(app.settingsScrollbarPress(shortcut_bar.track.x - 5, shortcut_bar.track.y + shortcut_bar.track.height - 5));
+    try std.testing.expect(app.settings_scroll_offset > 0);
+    app.settingsScrollbarMove(shortcut_bar.track.y + 5);
+    try std.testing.expectEqual(@as(f32, 0), app.settings_scroll_offset);
+    app.settings_scroll_grab = null;
     app.settings_editor.?.page = .appearance;
+    app.settings_editor.?.form_row = 0;
     try std.testing.expectEqual(AppearanceForm.count, app.settings_editor.?.indices(all[0..count], &indices));
     const starts = [_]settings.Target{ .hide_single_tab, .font_family, .cursor_blink };
     const ends = [_]settings.Target{ .tab_width, .{ .font = 5 }, .cursor_blink_idle_ms };
@@ -5122,6 +5300,54 @@ fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {
     var result: c.SDL_Color = undefined;
     if (!c.SDL_ReadSurfacePixel(surface, x, y, &result.r, &result.g, &result.b, &result.a)) return error.SDL;
     return result;
+}
+test "shortcut cards paint separately from the page and retain the outer scrollbar" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("shortcut card paint", 920, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    const surface = c.SDL_CreateSurface(920, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .width = 920,
+        .height = 650,
+        .bindings = try keybindings.Bindings.init(),
+        .settings_editor = .{ .page = .mappings },
+    };
+    const colors = try app.uiPalette();
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const first = app.shortcutForm().card(0);
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(first.x + 8), @intFromFloat(first.y + 74)));
+    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(first.x - 5), @intFromFloat(first.y + 74)));
+    const bar = app.shortcutForm().view.scrollbar().?;
+    try std.testing.expect(bar.track.x > first.x + first.width);
+    app.settings_scroll_offset = 100000;
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const last = app.shortcutForm().card(ShortcutForm.sections.len - 1);
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(last.x + 8), @intFromFloat(last.y + last.height - 20)));
 }
 test "Gruvbox selected text stays inside even a short scrolled text field" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
