@@ -8,7 +8,6 @@ const vt_output = @import("howl_vt_output");
 const vt = @import("howl_vt");
 const pty = @import("howl_pty");
 const commands = @import("howl_vt_output_commands");
-const policy = @import("publication.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
 const desktop = @import("desktop.zig");
@@ -211,6 +210,75 @@ pub const Terminal = opaque {
     }
 };
 
+/// Worker-owned synchronization/output publication state, never canonical VT progress.
+const OutputGate = struct {
+    revision: u64 = 0,
+    hold_started: ?u64 = null,
+    timed_out: bool = false,
+    pending: bool = true,
+
+    /// Tracks pending canonical change and exact release/hold deadlines without changing VT.
+    fn note(self: *OutputGate, revision: u64, held: bool, ended: bool, now: u64) void {
+        if (ended or !held) {
+            self.hold_started = null;
+            self.timed_out = false;
+        }
+        self.pending = self.pending or revision != self.revision;
+        self.revision = revision;
+        if (held and !self.timed_out) {
+            const started = self.hold_started orelse now;
+            self.hold_started = started;
+            if (now -| started >= std.time.ns_per_s) {
+                self.timed_out = true;
+                self.hold_started = null;
+            }
+        }
+    }
+
+    /// Allows projection only outside a hold or after its bounded timeout.
+    fn released(self: OutputGate, held: bool) bool {
+        return !held or self.timed_out;
+    }
+
+    /// Supplies the next hold deadline, including a quiescent child.
+    fn waitMs(self: OutputGate, now: u64) ?i32 {
+        const start = self.hold_started orelse return null;
+        const ns = std.time.ns_per_s -| (now -| start);
+        return @intCast((ns + std.time.ns_per_ms - 1) / std.time.ns_per_ms);
+    }
+};
+
+/// Worker-owned scrollback viewport; the canonical VT remains the history authority.
+const HistoryViewport = struct {
+    offset: u32 = 0,
+    anchor: ?u64 = null,
+
+    /// Returns this viewport to live and retires its absolute anchor.
+    fn reset(self: *HistoryViewport) void {
+        self.* = .{};
+    }
+
+    /// Clamps an explicit history window and records its absolute retained-row anchor.
+    fn seek(self: *HistoryViewport, offset: u32, count: u32, base: u32, alternate: bool) void {
+        self.offset = if (alternate) 0 else @min(offset, count);
+        self.anchor = if (self.offset == 0) null else @as(u64, base) + count - self.offset;
+    }
+
+    /// Applies bounded signed row intent against exact retained extent.
+    fn scroll(self: *HistoryViewport, delta: i32, count: u32, base: u32, alternate: bool) void {
+        const next = std.math.clamp(@as(i64, self.offset) + delta, 0, @as(i64, count));
+        self.seek(@intCast(next), count, base, alternate);
+    }
+
+    /// Keeps the same absolute top row during output and clamps it after eviction.
+    fn follow(self: *HistoryViewport, count: u32, base: u32, alternate: bool) void {
+        const anchor = self.anchor orelse return;
+        if (alternate) return self.reset();
+        const end = @as(u64, base) + count;
+        self.seek(@intCast(@min(end -| anchor, count)), count, base, false);
+    }
+};
+
 /// Main owns lifetime; its terminal worker owns every canonical PTY/VT mutation.
 /// Main sees only immutable frame leases and bounded copied interaction facts.
 const State = struct {
@@ -242,11 +310,11 @@ const State = struct {
     visible: std.atomic.Value(bool) = .init(true),
     credit: std.atomic.Value(bool) = .init(true),
     new_frame: std.atomic.Value(bool) = .init(false),
-    gate: policy.Gate = .{},
+    output_gate: OutputGate = .{},
     // Block only the content/viewport which failed; canonical service remains independent.
     store_busy: bool = false,
     blocked_presentation: ?struct { content_sequence: u64, history_offset: u32 } = null,
-    history: policy.History = .{},
+    viewport: HistoryViewport = .{},
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
     selection_failure: ?SelectionError = null,
@@ -437,12 +505,12 @@ const State = struct {
             // Reconfiguration completes before the GUI can start its next transfer; only a later
             // publication can make pre-reset unread slots observable again, retiring them first.
             self.new_frame.store(false, .release);
-            if (geometry.columns != live.cols) self.history.reset();
+            if (geometry.columns != live.cols) self.viewport.reset();
             self.blocked_presentation = null;
             self.mutex.lockUncancelable(self.io);
             self.status.presentation_failure = null;
             self.mutex.unlock(self.io);
-            self.gate.pending = true;
+            self.output_gate.pending = true;
             self.credit.store(true, .release);
             self.completeConfiguration(request, app_presentation.Geometry{
                 .cell_size = .{ .width = @intCast(geometry.cell_size.width), .height = @intCast(geometry.cell_size.height) },
@@ -508,7 +576,7 @@ const State = struct {
     fn applySelection(self: *State, intent: Select) SelectionError!void {
         self.selection_serial = intent.serial;
         self.selection_failure = null;
-        self.gate.pending = true;
+        self.output_gate.pending = true;
         if (intent.kind == .clear) {
             self.selected = null;
             return;
@@ -538,8 +606,8 @@ const State = struct {
         self.selection_failure = null;
         const live = self.observe().semanticView(0);
         const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
-        self.history.seek(@intCast(@min(@as(i64, live.history_count), @max(0, top - range.anchor.row))), live.history_count, live.history_row_base, live.is_alternate_screen);
-        self.gate.pending = true;
+        self.viewport.seek(@intCast(@min(@as(i64, live.history_count), @max(0, top - range.anchor.row))), live.history_count, live.history_row_base, live.is_alternate_screen);
+        self.output_gate.pending = true;
     }
     fn applyFind(self: *State, request: find.Request) void {
         self.selection_serial = request.serial;
@@ -564,7 +632,7 @@ const State = struct {
                 } else if (self.search.navigate(request.serial, request.kind == .previous)) |range| self.selectMatch(range);
             },
         }
-        self.gate.pending = true;
+        self.output_gate.pending = true;
         self.notify();
     }
 
@@ -690,35 +758,35 @@ const State = struct {
                 try self.core.input(input);
                 // Committed input returns this pane to live; focus/mouse do not.
                 if (input == .bytes or input == .paste or input == .key) {
-                    if (self.history.offset != 0) self.gate.pending = true;
-                    self.history.reset();
+                    if (self.viewport.offset != 0) self.output_gate.pending = true;
+                    self.viewport.reset();
                     if (self.selected != null) {
                         self.selected = null;
-                        self.gate.pending = true;
+                        self.output_gate.pending = true;
                     }
                 }
             },
             .resize => |size| {
                 if (size.rows != live.rows or size.columns != live.cols) {
-                    if (size.columns != live.cols) self.history.reset();
+                    if (size.columns != live.cols) self.viewport.reset();
                     try self.core.resize(size.rows, size.columns);
-                    self.gate.pending = true;
+                    self.output_gate.pending = true;
                 }
             },
             .scroll => |delta| {
-                self.history.scroll(delta, live.history_count, live.history_row_base, live.is_alternate_screen);
-                self.gate.pending = true;
+                self.viewport.scroll(delta, live.history_count, live.history_row_base, live.is_alternate_screen);
+                self.output_gate.pending = true;
             },
             .seek => |offset| {
-                self.history.seek(offset, live.history_count, live.history_row_base, live.is_alternate_screen);
-                self.gate.pending = true;
+                self.viewport.seek(offset, live.history_count, live.history_row_base, live.is_alternate_screen);
+                self.output_gate.pending = true;
             },
             .retry_render => {
                 self.blocked_presentation = null;
                 self.mutex.lockUncancelable(self.io);
                 self.status.presentation_failure = null;
                 self.mutex.unlock(self.io);
-                self.gate.pending = true;
+                self.output_gate.pending = true;
                 self.credit.store(true, .release);
             },
         }
@@ -743,8 +811,8 @@ const State = struct {
         if (host_notify) self.notify();
         const observation = self.observe();
         const live = observation.semanticView(0);
-        self.history.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
-        self.gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
+        self.viewport.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
+        self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
         if (self.selected) |range| switch (range.validity(selection.Context.fromView(live))) {
             .valid => {},
             .context_changed => {
@@ -763,7 +831,7 @@ const State = struct {
         if (self.selection_serial == self.search.status.serial) {
             if (self.search.status.phase == .stale and self.selected != null) {
                 self.selected = null;
-                self.gate.pending = true;
+                self.output_gate.pending = true;
             } else if (self.search.status.current == null and self.search.status.count != 0) {
                 if (self.search.navigate(self.selection_serial, false)) |range| self.selectMatch(range);
             }
@@ -793,23 +861,23 @@ const State = struct {
         self.store_busy = false;
         var published = false;
         const blocked = if (self.blocked_presentation) |failed|
-            failed.content_sequence == observation.contentSequence() and failed.history_offset == self.history.offset
+            failed.content_sequence == observation.contentSequence() and failed.history_offset == self.viewport.offset
         else
             false;
-        if (!blocked and self.gate.pending and self.visible.load(.acquire) and
-            self.gate.released(observation.synchronizedOutput()) and self.credit.load(.acquire))
+        if (!blocked and self.output_gate.pending and self.visible.load(.acquire) and
+            self.output_gate.released(observation.synchronizedOutput()) and self.credit.load(.acquire))
         {
             // Projection may skip a stalled GUI transfer; canonical service never waits for it.
             if (!self.frame_mutex.tryLock()) return result;
             defer self.frame_mutex.unlock(self.io);
             std.debug.assert(self.credit.swap(false, .acq_rel));
-            self.projection.prepare(self.history.offset) catch |failure| {
+            self.projection.prepare(self.viewport.offset) catch |failure| {
                 if (failure == error.PresentationBusy) {
                     self.store_busy = true;
                     self.credit.store(true, .release);
                     return result;
                 }
-                self.blocked_presentation = .{ .content_sequence = observation.contentSequence(), .history_offset = self.history.offset };
+                self.blocked_presentation = .{ .content_sequence = observation.contentSequence(), .history_offset = self.viewport.offset };
                 self.mutex.lockUncancelable(self.io);
                 self.status.presentation_failure = failure;
                 self.mutex.unlock(self.io);
@@ -822,9 +890,9 @@ const State = struct {
                 self.status.presentation_failure = null;
                 self.mutex.unlock(self.io);
             }
-            const view = observation.semanticView(self.history.offset);
+            const view = observation.semanticView(self.viewport.offset);
             self.paint = if (self.selected) |range| range.paint(view, self.selection_serial) catch .{ .serial = self.selection_serial } else .{ .serial = self.selection_serial };
-            self.gate.pending = false;
+            self.output_gate.pending = false;
             self.new_frame.store(true, .release);
             published = true;
         }
@@ -870,14 +938,14 @@ const State = struct {
                 queue_turn = try self.applyQueued();
                 if (self.takeCursor()) |style| {
                     self.core.terminal.setDefaultCursorStyle(style);
-                    self.gate.pending = true;
+                    self.output_gate.pending = true;
                 }
                 if (self.takeColors()) |defaults| {
                     self.core.terminal.setColorDefaults(defaults);
                     const preference = desktop.colorPreference(defaults.background);
                     self.preference_pending = self.preference_pending or preference != self.color_preference;
                     self.color_preference = preference;
-                    self.gate.pending = true;
+                    self.output_gate.pending = true;
                 }
                 if (self.preference_pending) {
                     const sent: ?bool = self.core.terminal.reportColorSchemePreference(self.color_preference) catch |failure| switch (failure) {
@@ -897,7 +965,7 @@ const State = struct {
             const retry_after_scalar_recovery = scalar_was_blocked and !self.core.inputBlocked();
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
-                self.gate.waitMs(now),
+                self.output_gate.waitMs(now),
                 if (self.store_busy and self.visible.load(.acquire) and self.credit.load(.acquire)) @as(i32, 1) else null,
                 if (result.animation_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
                 if (result.input_retry_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
@@ -2336,4 +2404,33 @@ test "direct worker draws a multi-row continuation after history scroll" {
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
     try owner.releaseFrame(held);
     pinned = false;
+}
+
+test "held output releases on timeout without new child output, then resets on exact release" {
+    var gate: OutputGate = .{ .pending = false };
+    gate.note(7, true, false, 100);
+    try std.testing.expect(gate.pending);
+    try std.testing.expect(!gate.released(true));
+    try std.testing.expectEqual(@as(?i32, 1000), gate.waitMs(100));
+    gate.note(7, true, false, 100 + std.time.ns_per_s);
+    try std.testing.expect(gate.released(true));
+    try std.testing.expectEqual(@as(?i32, null), gate.waitMs(100 + std.time.ns_per_s));
+    gate.pending = false;
+    gate.note(8, true, true, 200 + std.time.ns_per_s);
+    try std.testing.expect(!gate.released(true));
+    gate.note(8, false, false, 201 + std.time.ns_per_s);
+    try std.testing.expect(gate.released(false));
+}
+
+test "history anchor follows output, clamps eviction and resets alternate screen" {
+    var history: HistoryViewport = .{};
+    history.seek(20, 100, 10, false);
+    history.follow(110, 10, false);
+    try std.testing.expectEqual(@as(u32, 30), history.offset);
+    try std.testing.expectEqual(@as(?u64, 90), history.anchor);
+    history.follow(15, 100, false);
+    try std.testing.expectEqual(@as(u32, 15), history.offset);
+    try std.testing.expectEqual(@as(?u64, 100), history.anchor);
+    history.follow(15, 100, true);
+    try std.testing.expectEqual(@as(u32, 0), history.offset);
 }

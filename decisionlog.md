@@ -290,3 +290,13 @@ owner `projection.zig`, and its terminal-originated reply policy
 `consequences.zig`. The independent output test is named for its current
 purpose rather than the original migration. The opaque terminal worker and
 SDL boundary remain unchanged.
+
+## Keep output and scrollback policy with the terminal worker (19 November 2026)
+
+The app's publication gate and retained-history viewport were previously
+grouped in `publication.zig`, although no other module owned or reused either.
+Both are now private `OutputGate` and `HistoryViewport` state machines beside
+the worker state in `terminal.zig`, with their existing tests preserved there.
+Only the worker sets the publication deadline and its visual scrollback anchor;
+the canonical VT still owns retained history and terminal semantics. This
+retires a redundant module and import, not a production behavior or boundary.

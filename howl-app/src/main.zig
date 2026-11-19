@@ -2742,7 +2742,6 @@ fn reapWindow(pid: std.posix.pid_t) void {
 }
 
 test {
-    std.testing.refAllDecls(@import("publication.zig"));
     std.testing.refAllDecls(canvas);
     std.testing.refAllDecls(terminal);
     std.testing.refAllDecls(font_owner);
