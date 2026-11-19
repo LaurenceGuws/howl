@@ -465,7 +465,7 @@ pub const App = struct {
         if (previous.owner != null and status.failure == null and !status.closed) {
             if (previous.font_failure != null or previous.graphics_failure != null)
                 try self.configureFont(previous, previous.font_size, false);
-            try previous.submit(.retry_render);
+            try previous.submit(.retry_projection);
             return;
         }
         const next = try self.createPane(try savedRecipe(self.configuration, previous.recipe.value), previous.font_size);
@@ -484,7 +484,7 @@ pub const App = struct {
         };
         return switch (action) {
             .new_tab, .duplicate_tab, .open_local => self.tab_count < tab_limit,
-            .split_vertical, .split_horizontal => panes < layout.pane_limit,
+            .split_right, .split_down => panes < layout.pane_limit,
             .toggle_pane_zoom, .next_pane, .previous_pane, .balance_panes => panes > 1,
             .next_tab, .previous_tab => self.tab_count > 1,
             .move_tab_left => self.active > 0,
@@ -526,8 +526,8 @@ pub const App = struct {
                 .rename_tab => try self.beginRename(),
                 .reset_tab_title => self.tab().title.clear(),
                 .new_window => try self.newWindow(),
-                .split_vertical => try self.split(.horizontal),
-                .split_horizontal => try self.split(.vertical),
+                .split_right => try self.split(.horizontal),
+                .split_down => try self.split(.vertical),
                 .toggle_pane_zoom => {
                     self.tab().tree.zoomed = !self.tab().tree.zoomed;
                     self.syncVisible();

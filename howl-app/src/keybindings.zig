@@ -9,8 +9,8 @@ pub const Action = enum {
     duplicate_tab,
     rename_tab,
     reset_tab_title,
-    split_vertical,
-    split_horizontal,
+    split_right,
+    split_down,
     toggle_pane_zoom,
     next_pane,
     previous_pane,
@@ -57,8 +57,8 @@ pub const definitions = [_]Definition{
     .{ .target = .{ .action = .rename_tab }, .id = "rename_tab", .label = "Rename tab", .default_shortcut = "", .category = .tab },
     .{ .target = .{ .action = .reset_tab_title }, .id = "reset_tab_title", .label = "Use automatic tab title", .default_shortcut = "", .category = .tab },
     .{ .target = .{ .action = .duplicate_tab }, .id = "duplicate_tab", .label = "Duplicate tab recipe", .default_shortcut = "Ctrl+Shift+D", .category = .tab },
-    .{ .target = .{ .action = .split_vertical }, .id = "split_right", .label = "Split pane right", .default_shortcut = "", .category = .pane },
-    .{ .target = .{ .action = .split_horizontal }, .id = "split_down", .label = "Split pane down", .default_shortcut = "", .category = .pane },
+    .{ .target = .{ .action = .split_right }, .id = "split_right", .label = "Split pane right", .default_shortcut = "", .category = .pane },
+    .{ .target = .{ .action = .split_down }, .id = "split_down", .label = "Split pane down", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .toggle_pane_zoom }, .id = "toggle_pane_zoom", .label = "Toggle pane zoom", .default_shortcut = "Ctrl+Shift+Z", .category = .pane },
     .{ .target = .{ .action = .next_pane }, .id = "next_pane", .label = "Next pane", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .previous_pane }, .id = "previous_pane", .label = "Previous pane", .default_shortcut = "", .category = .pane },
@@ -75,8 +75,8 @@ pub const definitions = [_]Definition{
     .{ .target = .{ .action = .close_tab }, .id = "close_tab", .label = "Close entire tab", .default_shortcut = "", .category = .tab },
     .{ .target = .{ .action = .move_tab_left }, .id = "move_tab_left", .label = "Move tab left", .default_shortcut = "Ctrl+Shift+PageUp", .category = .tab },
     .{ .target = .{ .action = .move_tab_right }, .id = "move_tab_right", .label = "Move tab right", .default_shortcut = "Ctrl+Shift+PageDown", .category = .tab },
-    .{ .target = .{ .action = .take_size_control }, .id = "take_size_control", .label = "Take Instance size control", .default_shortcut = "", .category = .pane },
-    .{ .target = .{ .action = .stop_resizing }, .id = "stop_resizing", .label = "Stop resizing Instance", .default_shortcut = "", .category = .pane },
+    .{ .target = .{ .action = .take_size_control }, .id = "take_size_control", .label = "Take pane size control", .default_shortcut = "", .category = .pane },
+    .{ .target = .{ .action = .stop_resizing }, .id = "stop_resizing", .label = "Stop resizing pane", .default_shortcut = "", .category = .pane },
     .{ .target = .toggle_find, .id = "toggle_find", .label = "Toggle terminal find", .default_shortcut = "Ctrl+Shift+F", .category = .terminal },
     .{ .target = .{ .select_tab = 0 }, .id = "select_tab_1", .label = "Select tab 1", .default_shortcut = "Ctrl+1", .category = .tab },
     .{ .target = .{ .select_tab = 1 }, .id = "select_tab_2", .label = "Select tab 2", .default_shortcut = "Ctrl+2", .category = .tab },
@@ -236,6 +236,31 @@ test "daily defaults preserve Local mappings, unbound Alt directions and shifted
     const plus = try parse("Ctrl+Plus");
     try std.testing.expect(plus.matches(c.SDLK_EQUALS, c.SDL_KMOD_CTRL | c.SDL_KMOD_SHIFT));
     try std.testing.expect(!plus.matches(c.SDLK_EQUALS, c.SDL_KMOD_SHIFT));
+}
+
+test "pane actions retain persisted mapping ids while exposing their current meaning" {
+    const cases = [_]struct { id: []const u8, action: Action, label: []const u8 }{
+        .{ .id = "split_right", .action = .split_right, .label = "Split pane right" },
+        .{ .id = "split_down", .action = .split_down, .label = "Split pane down" },
+        .{ .id = "take_size_control", .action = .take_size_control, .label = "Take pane size control" },
+        .{ .id = "stop_resizing", .action = .stop_resizing, .label = "Stop resizing pane" },
+        .{ .id = "recover_instance", .action = .recover_instance, .label = "Restart pane" },
+    };
+    for (cases) |entry| {
+        const index = indexForId(entry.id) orelse return error.MissingBinding;
+        const definition = definitions[index];
+        try std.testing.expectEqualStrings(entry.id, definition.id);
+        try std.testing.expectEqualStrings(entry.label, definition.label);
+        try std.testing.expectEqual(Target{ .action = entry.action }, definition.target);
+        try std.testing.expectEqual(Category.pane, definition.category);
+    }
+    const overrides = [_]Override{
+        .{ .action = "split_right", .shortcut = "F7" },
+        .{ .action = "split_down", .shortcut = "F8" },
+    };
+    const loaded = try Bindings.fromOverrides(&overrides);
+    try std.testing.expectEqual(indexForId("split_right"), loaded.find(c.SDLK_F7, 0));
+    try std.testing.expectEqual(indexForId("split_down"), loaded.find(c.SDLK_F8, 0));
 }
 
 test "invalid or conflicting saved bindings leave every registry row unchanged" {

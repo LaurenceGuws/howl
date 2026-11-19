@@ -319,3 +319,17 @@ not a second configuration owner. Tests exercise those module functions
 directly. Together with the prior painter cut, all 74 forwarded aliases are
 retired. Settings interaction, search, scrolling, layouts, Save/Cancel and
 software-render tests retain their accepted behavior.
+
+## App names follow their current owners (19 November 2026)
+
+The terminal worker's shared completion condition is `request_completed`:
+configuration and copied selection both wait on it, without introducing a
+generic request owner. A terminal task retries worker-side output projection,
+so its tag is `retry_projection`, not the retired `retry_render`. Internal
+split actions now name the resulting pane placement (`split_right` and
+`split_down`), leaving layout-axis semantics and routing unchanged. Two
+visible pane size-control actions no longer refer to the removed Instance
+product. All persisted shortcut IDs, including `recover_instance`, and their
+existing configurations remain unchanged. Focused tests prove the action
+registry identities and projection-retry state; terminal concurrency and
+Settings tests remain in the full repository graph.

@@ -23,7 +23,7 @@ pub const Task = union(enum) {
     resize: struct { rows: u16, columns: u16 },
     scroll: i32,
     seek: u32,
-    retry_render,
+    retry_projection,
     select: Select,
     find: find.Request,
 };
@@ -291,7 +291,7 @@ const State = struct {
     event_type: u32,
     thread: ?std.Thread = null,
     mutex: std.Io.Mutex = .init,
-    configured: std.Io.Condition = .init,
+    request_completed: std.Io.Condition = .init,
     frame_mutex: std.Io.Mutex = .init,
     tasks: [queue_limit]Work = undefined,
     head: usize = 0,
@@ -461,7 +461,7 @@ const State = struct {
         var request: Configuration = .{ .config = config, .surface = surface };
         try self.admit(.{ .configure = &request });
         self.mutex.lockUncancelable(self.io);
-        while (!request.complete) self.configured.waitUncancelable(self.io, &self.mutex);
+        while (!request.complete) self.request_completed.waitUncancelable(self.io, &self.mutex);
         self.mutex.unlock(self.io);
         if (request.failure) |failure| return failure;
         return request.result.?;
@@ -471,7 +471,7 @@ const State = struct {
         self.mutex.lockUncancelable(self.io);
         if (result) |geometry| request.result = geometry else |failure| request.failure = failure;
         request.complete = true;
-        self.configured.broadcast(self.io);
+        self.request_completed.broadcast(self.io);
         // No request access follows unlock: the waiting caller can now retire its stack storage.
         self.mutex.unlock(self.io);
     }
@@ -528,7 +528,7 @@ const State = struct {
         var request: Copy = .{ .allocator = allocator, .max_bytes = max_bytes, .link = link };
         try self.admit(.{ .copy = &request });
         self.mutex.lockUncancelable(self.io);
-        while (!request.complete) self.configured.waitUncancelable(self.io, &self.mutex);
+        while (!request.complete) self.request_completed.waitUncancelable(self.io, &self.mutex);
         self.mutex.unlock(self.io);
         if (request.failure) |failure| return failure;
         return request.result.?;
@@ -537,7 +537,7 @@ const State = struct {
         self.mutex.lockUncancelable(self.io);
         if (result) |bytes| request.result = bytes else |failure| request.failure = failure;
         request.complete = true;
-        self.configured.broadcast(self.io);
+        self.request_completed.broadcast(self.io);
         // The caller can retire request storage after this unlock.
         self.mutex.unlock(self.io);
     }
@@ -701,7 +701,7 @@ const State = struct {
             }
         }
         self.count = retained;
-        if (rejected) self.configured.broadcast(self.io);
+        if (rejected) self.request_completed.broadcast(self.io);
     }
 
     const QueueTurn = enum { empty, backpressured, more };
@@ -781,7 +781,7 @@ const State = struct {
                 self.viewport.seek(offset, live.history_count, live.history_row_base, live.is_alternate_screen);
                 self.output_gate.pending = true;
             },
-            .retry_render => {
+            .retry_projection => {
                 self.blocked_presentation = null;
                 self.mutex.lockUncancelable(self.io);
                 self.status.presentation_failure = null;
@@ -1136,6 +1136,40 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .paste = oversized } }));
     try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .text = oversized } } }));
     try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .legacy_text = "borrowed" } } }));
+}
+
+test "projection retry clears only worker output blockage and restores a credit" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const core = try std.testing.allocator.create(pty_vt.Core);
+    defer std.testing.allocator.destroy(core);
+    core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
+    defer core.terminal.deinit();
+    const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (fd < 0) return error.WakeFailed;
+    defer closeWake(fd);
+    const before = core.terminal.observation().semanticSequence();
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .io = threaded.io(),
+        .core = core,
+        .projection = undefined,
+        .history_capacity = 8,
+        .wake_fd = fd,
+        .event_type = 0,
+        .status = .{ .presentation_failure = error.SDLNotification },
+        .blocked_presentation = .{ .content_sequence = 9, .history_offset = 2 },
+        .output_gate = .{ .pending = false },
+        .credit = .init(false),
+    };
+    try state.apply(.retry_projection);
+    try std.testing.expect(state.blocked_presentation == null);
+    try std.testing.expect(state.status.presentation_failure == null);
+    try std.testing.expect(state.output_gate.pending);
+    try std.testing.expect(state.credit.load(.acquire));
+    try std.testing.expect(!state.new_frame.load(.acquire));
+    try std.testing.expectEqual(before, core.terminal.observation().semanticSequence());
 }
 
 test "oversized paste fails at admission and leaves the terminal worker alive" {
@@ -1716,7 +1750,7 @@ test "completed reconfiguration fences unread frames from the previous presentat
 fn waitCopy(owner: *Terminal, request: *Copy) void {
     const state = owner.state();
     state.mutex.lockUncancelable(state.io);
-    while (!request.complete) state.configured.waitUncancelable(state.io, &state.mutex);
+    while (!request.complete) state.request_completed.waitUncancelable(state.io, &state.mutex);
     state.mutex.unlock(state.io);
 }
 
