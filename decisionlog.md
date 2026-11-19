@@ -209,3 +209,15 @@ chosen scan or rescanning it as missing stages a reset to Local; the existing
 Save/Cancel transaction owns that change. Missing/disabled discoveries stay
 cached but are excluded from the startup selector. The Profiles footer always
 remains visible as the list scrolls; unavailable selections cannot set default.
+
+## Profiles scroll ownership matches other Settings pages (19 November 2026)
+
+Captain rejected relocating the Profiles scrollbar without changing its
+owner: a scrollbar visually beside cards must scroll the complete page, not
+an internal list. Profiles now uses the same page-owned FormViewport as
+Appearance, Colors and Shortcuts. Its Discovery controls, Saved profiles and
+Scanned profiles are separate cards inside that one clipped scrollable page;
+the saved-profile details editor also uses a page-owned viewport. Rows retain
+only hit geometry and selected profile identity, never a second scroll offset
+or list viewport. The Set default footer stays outside the scrollable body,
+so scrolling cannot change the selection or the Save/Cancel transaction.

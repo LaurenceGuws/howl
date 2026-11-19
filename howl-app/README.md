@@ -156,7 +156,10 @@ Interaction exposes the existing copy/paste/find/history shortcut settings.
 Shortcuts groups application, window, tab, pane, pane navigation and terminal
 actions into separate cards on one page-level scroller. The cards change only
 presentation: shortcut IDs, bindings and recording remain unchanged. Profiles
-keeps its separate saved/scanned catalogue with its persistent default footer.
+uses the same page-level scroller for its Discovery, Saved profiles and Scanned
+profiles cards; editing a saved profile opens its own scrollable details card.
+Only the page owns scroll position and the scrollbar, while the selected
+profile and its Set default footer remain independent of scrolling.
 Search preserves normal row geometry. Settings, installed fonts and both palettes
 share text editing, list viewports, row hit geometry and selection/hover styling.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,

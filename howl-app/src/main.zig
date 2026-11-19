@@ -354,6 +354,100 @@ const ShortcutForm = struct {
         return null;
     }
 };
+/// Profiles owns one viewport for discovery, saved recipes, scanned recipes,
+/// and the saved-profile editor. Rows own only selection and hit geometry.
+const ProfilesForm = struct {
+    view: widgets.FormViewport,
+    overview: bool,
+    compact: bool,
+    saved_count: usize,
+    scanned_count: usize,
+    detail_count: usize,
+
+    const outer_inset: f32 = settings_card_gutter;
+    const inner_inset: f32 = settings_card_padding;
+    const card_gap: f32 = 14;
+    const heading_height: f32 = 66;
+    const detail_heading_height: f32 = 112;
+    const row_stride: f32 = 48;
+    const row_height: f32 = 44;
+    const card_bottom: f32 = 12;
+
+    fn init(bounds: layout.Rect, offset: f32, overview: bool, saved_count: usize, scanned_count: usize, detail_count: usize) ProfilesForm {
+        var form: ProfilesForm = .{
+            .view = undefined,
+            .overview = overview,
+            .compact = bounds.width < 320,
+            .saved_count = saved_count,
+            .scanned_count = scanned_count,
+            .detail_count = detail_count,
+        };
+        form.view = widgets.FormViewport.atOffset(bounds, form.contentHeight(), offset);
+        return form;
+    }
+    fn cardCount(self: ProfilesForm) usize {
+        return if (self.overview) 3 else 1;
+    }
+    fn cardHeight(self: ProfilesForm, number: usize) f32 {
+        if (!self.overview) {
+            std.debug.assert(number == 0);
+            return detail_heading_height + @as(f32, @floatFromInt(self.detail_count)) * row_stride + card_bottom;
+        }
+        std.debug.assert(number < 3);
+        if (number == 0) return if (self.compact) 146 else 112;
+        if (number == 1) return heading_height + @as(f32, @floatFromInt(self.saved_count)) * row_stride + card_bottom;
+        return heading_height + @as(f32, @floatFromInt(@max(1, self.scanned_count))) * row_stride + card_bottom;
+    }
+    fn cardTop(self: ProfilesForm, number: usize) f32 {
+        std.debug.assert(number < self.cardCount());
+        var top = outer_inset;
+        for (0..number) |index| top += self.cardHeight(index) + card_gap;
+        return top;
+    }
+    fn contentHeight(self: ProfilesForm) f32 {
+        const last = self.cardCount() - 1;
+        return self.cardTop(last) + self.cardHeight(last) + outer_inset;
+    }
+    fn card(self: ProfilesForm, number: usize) layout.Rect {
+        return self.view.place(outer_inset, self.cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), self.cardHeight(number));
+    }
+    fn rowTop(self: ProfilesForm, index: usize) f32 {
+        if (!self.overview) {
+            std.debug.assert(index < self.detail_count);
+            return self.cardTop(0) + detail_heading_height + @as(f32, @floatFromInt(index)) * row_stride;
+        }
+        std.debug.assert(index < self.saved_count + self.scanned_count);
+        const saved = index < self.saved_count;
+        return self.cardTop(if (saved) 1 else 2) + heading_height + @as(f32, @floatFromInt(if (saved) index else index - self.saved_count)) * row_stride;
+    }
+    fn row(self: ProfilesForm, index: usize) layout.Rect {
+        const inset = outer_inset + inner_inset;
+        return self.view.place(inset, self.rowTop(index), @max(1, self.view.bounds.width - 2 * inset), row_height);
+    }
+    fn hit(self: ProfilesForm, x: f32, y: f32) ?usize {
+        if (!self.view.bounds.contains(x, y)) return null;
+        const count = if (self.overview) self.saved_count + self.scanned_count else self.detail_count;
+        for (0..count) |index| if (self.row(index).contains(x, y)) return index;
+        return null;
+    }
+    fn scanSourceRow(self: ProfilesForm, number: usize) layout.Rect {
+        std.debug.assert(self.overview and number < 2);
+        const scan = self.card(0);
+        if (self.compact) return .{
+            .x = scan.x + 16,
+            .y = scan.y + 54 + @as(f32, @floatFromInt(number)) * 39,
+            .width = @max(1, scan.width - 32),
+            .height = 34,
+        };
+        const width = @max(1, (scan.width - 40) / 2);
+        return .{
+            .x = scan.x + 16 + @as(f32, @floatFromInt(number)) * (width + 8),
+            .y = scan.y + 64,
+            .width = width,
+            .height = 34,
+        };
+    }
+};
 const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
@@ -1052,6 +1146,9 @@ const App = struct {
                     } else if (editor.page == .mappings) {
                         editor.form_row = number;
                         self.settings_scroll_offset = ShortcutForm.rowTop(number) - settings_card_gutter;
+                    } else if (editor.page == .defaults or editor.page == .profiles) {
+                        editor.form_row = number;
+                        self.settings_scroll_offset = self.profilesForm().rowTop(number) - ProfilesForm.outer_inset;
                     }
                     break;
                 }
@@ -1064,6 +1161,8 @@ const App = struct {
             editor.profile = row.target.set_default;
             editor.page = .profiles;
             editor.list = .{};
+            editor.form_row = 0;
+            self.settings_scroll_offset = 0;
             editor.content_focus = true;
             return;
         }
@@ -2245,43 +2344,18 @@ const App = struct {
         const box = self.settingsRect();
         const e = self.settings_editor.?;
         const sidebar = @min(160, box.width / 3);
-        const top: f32 = settings_header_height + (if (e.search or e.page == .profiles) @as(f32, 42) else if (e.page == .defaults) self.settingsScanHeight() + 28 else 0);
+        const top: f32 = settings_header_height + (if (e.search) @as(f32, 42) else 0);
         const bottom: f32 = if (!e.search and (e.page == .colors or (e.editing != null and e.edit.kind == .color))) 106 else if (!e.search and e.page == .defaults) 54 else 12;
         return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - bottom) };
     }
     fn settingsScanCompact(self: *const App) bool {
-        const box = self.settingsRect();
-        return box.width - @min(160, box.width / 3) - 24 < 320;
-    }
-    fn settingsScanHeight(self: *const App) f32 {
-        return if (self.settingsScanCompact()) 146 else 112;
+        return self.profilesForm().compact;
     }
     fn settingsScanCard(self: *const App) layout.Rect {
-        const box = self.settingsRect();
-        const sidebar = @min(160, box.width / 3);
-        return .{
-            .x = box.x + sidebar + 12 + settings_card_gutter,
-            .y = box.y + settings_header_height + settings_card_gutter,
-            .width = @max(1, box.width - sidebar - 24 - 2 * settings_card_gutter),
-            .height = self.settingsScanHeight(),
-        };
+        return self.profilesForm().card(0);
     }
     fn settingsScanSourceRow(self: *const App, number: usize) layout.Rect {
-        std.debug.assert(number < 2);
-        const card = self.settingsScanCard();
-        if (self.settingsScanCompact()) return .{
-            .x = card.x + 16,
-            .y = card.y + 54 + @as(f32, @floatFromInt(number)) * 39,
-            .width = @max(1, card.width - 32),
-            .height = 34,
-        };
-        const width = @max(1, (card.width - 40) / 2);
-        return .{
-            .x = card.x + 16 + @as(f32, @floatFromInt(number)) * (width + 8),
-            .y = card.y + 64,
-            .width = width,
-            .height = 34,
-        };
+        return self.profilesForm().scanSourceRow(number);
     }
     fn startupForm(self: *const App) StartupForm {
         return StartupForm.init(self.settingsBody(), self.settings_scroll_offset);
@@ -2295,6 +2369,13 @@ const App = struct {
     fn shortcutForm(self: *const App) ShortcutForm {
         return ShortcutForm.init(self.settingsBody(), self.settings_scroll_offset);
     }
+    fn profilesForm(self: *const App) ProfilesForm {
+        const e = self.settings_editor.?;
+        const current = self.settingsConfiguration();
+        const selected = @min(e.profile, current.profileCount() - 1);
+        const detail_count: usize = if (selected == 0) 5 else 7 + 3 * current.value.profiles[@as(usize, selected) - 1].environment.len;
+        return ProfilesForm.init(self.settingsBody(), self.settings_scroll_offset, e.page == .defaults, current.profileCount(), current.value.scanned_profiles.len, detail_count);
+    }
     fn appearanceSettings(self: *const App) bool {
         const editor = self.settings_editor.?;
         return !editor.search and editor.page == .appearance;
@@ -2307,6 +2388,10 @@ const App = struct {
         const editor = self.settings_editor.?;
         return !editor.search and editor.page == .mappings;
     }
+    fn profilesSettings(self: *const App) bool {
+        const editor = self.settings_editor.?;
+        return !editor.search and (editor.page == .defaults or editor.page == .profiles);
+    }
     fn settingsFormView(self: *const App) ?widgets.FormViewport {
         const editor = self.settings_editor orelse return null;
         if (editor.search) return null;
@@ -2315,7 +2400,7 @@ const App = struct {
             .appearance => self.appearanceForm().view,
             .colors => self.colorForm().view,
             .mappings => self.shortcutForm().view,
-            else => null,
+            .defaults, .profiles => self.profilesForm().view,
         };
     }
     fn settingsScrollBy(self: *App, delta: f32) void {
@@ -2382,6 +2467,7 @@ const App = struct {
             if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.form_row));
             if (self.colorSettings()) return settingsRowField(self.colorForm().row(e.form_row));
             if (self.shortcutSettings()) return settingsRowField(self.shortcutForm().row(e.form_row));
+            if (self.profilesSettings()) return settingsRowField(self.profilesForm().row(e.form_row));
             const rect = self.settingsRows().row(e.list.selected -| e.list.first);
             return settingsRowField(rect);
         }
@@ -2401,18 +2487,23 @@ const App = struct {
         return 3;
     }
     fn settingsToolbarButton(self: *const App, number: usize) layout.Rect {
-        const box = self.settingsRect();
         if (self.settings_editor.?.page == .defaults) {
             if (number == 2) {
                 const card = self.settingsScanCard();
                 const width = @min(96, @max(1, card.width - 20));
                 return .{ .x = card.x + card.width - width - 12, .y = card.y + 10, .width = width, .height = 32 };
             }
-            const card = self.settingsListCard();
+            const card = self.profilesForm().card(1);
             const width = if (card.width < 500) @min(78, @max(42, (card.width - 170) / 2)) else @as(f32, 102);
             const start = card.x + card.width - 14 - 2 * width - 6;
             return .{ .x = start + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 14, .width = width, .height = 32 };
         }
+        if (self.settings_editor.?.page == .profiles) {
+            const card = self.profilesForm().card(0);
+            const width = @max(1, (card.width - 32 - 12) / 3);
+            return .{ .x = card.x + 16 + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 66, .width = width, .height = 32 };
+        }
+        const box = self.settingsRect();
         const body = self.settingsBody();
         const count: f32 = @floatFromInt(self.settingsToolbarCount());
         const width = @max(1, (body.width - (count - 1) * 6) / count);
@@ -2427,6 +2518,8 @@ const App = struct {
                     e.profile = self.settingsConfiguration().profileCount() - 1;
                     e.page = .profiles;
                     e.list = .{};
+                    e.form_row = 0;
+                    self.settings_scroll_offset = 0;
                     try e.begin(.{ .page = .profiles, .label = "Name", .target = .{ .profile = .{ .index = e.profile, .field = .name } } }, self.settingsConfiguration());
                 },
                 1 => {
@@ -2435,6 +2528,8 @@ const App = struct {
                     e.profile = self.settingsConfiguration().profileCount() - 1;
                     e.page = .profiles;
                     e.list = .{};
+                    e.form_row = 0;
+                    self.settings_scroll_offset = 0;
                 },
                 2 => try self.scanSettingsProfiles(),
                 else => {},
@@ -2442,17 +2537,22 @@ const App = struct {
         } else if (e.page == .profiles) switch (number) {
             0 => {
                 e.page = .defaults;
-                e.list.selected = e.profile;
+                e.form_row = e.profile;
+                self.settings_scroll_offset = self.profilesForm().rowTop(e.form_row) - ProfilesForm.outer_inset;
             },
             1 => {
                 try self.changeSetting(.{ .clone_profile = e.profile }, "");
                 e.profile = self.settingsConfiguration().profileCount() - 1;
                 e.list = .{};
+                e.form_row = 0;
+                self.settings_scroll_offset = 0;
             },
             2 => {
                 if (e.profile == 0) return;
                 try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
                 e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
+                e.form_row = 0;
+                self.settings_scroll_offset = 0;
             },
             else => {},
         };
@@ -2475,8 +2575,8 @@ const App = struct {
         var shown: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.settingsConfiguration(), &all);
         const visible = e.indices(all[0..count], &shown);
-        if (e.list.selected >= visible) return null;
-        return switch (all[shown[e.list.selected]].target) {
+        if (e.form_row >= visible) return null;
+        return switch (all[shown[e.form_row]].target) {
             .set_default => |index| .{ .clone_profile = index },
             .scanned => |index| .{ .clone_scanned = index },
             else => null,
@@ -2659,19 +2759,23 @@ const App = struct {
         if (!e.search and e.page == .defaults) {
             for ([_]settings.Target{ .discover_shells, .discover_ssh_hosts }, 0..) |target, number| {
                 const row = self.settingsScanSourceRow(number);
-                if (!row.contains(x, y)) continue;
+                if (!body.contains(x, y) or !row.contains(x, y)) continue;
                 if (scanSourceSwitch(row).contains(x, y)) try self.changeSetting(target, "");
                 return;
             }
         }
         if (!e.search and (e.page == .defaults or e.page == .profiles)) {
             for (0..self.settingsToolbarCount()) |number| {
-                if (self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
+                if (body.contains(x, y) and self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
             }
         }
         if (!e.search and e.page == .defaults and self.settingsDefaultButton().contains(x, y)) {
             const id = (try self.overviewDefaultID()) orelse return;
             return self.changeSetting(.default_profile, id);
+        }
+        if (self.profilesSettings()) {
+            if (body.contains(x, y)) try self.settingsProfilesClick(x, y, clicks);
+            return;
         }
         const field = self.settingsField();
         if (e.search and field.contains(x, y)) {
@@ -2692,16 +2796,6 @@ const App = struct {
         e.list.selected = chosen;
         const selected_row = all[indices[chosen]];
         const row_rect = self.settingsRows().row(row);
-        if (!e.search and e.page == .defaults) switch (selected_row.target) {
-            .scanned => |index| {
-                if (scannedEnableButton(row_rect).contains(x, y)) return self.changeSetting(.{ .toggle_scanned = index }, "");
-            },
-            .set_default => |index| {
-                e.profile = index;
-                if (savedEditButton(row_rect).contains(x, y)) return self.activateSetting(selected_row);
-            },
-            else => {},
-        };
         if (selected_row.editable() and settingsEditButton(row_rect).contains(x, y)) {
             e.content_focus = true;
             if (e.search) try self.activateSetting(selected_row);
@@ -2787,6 +2881,33 @@ const App = struct {
             self.settings_editor.?.form_row = number;
             return self.activateSetting(row);
         }
+    }
+    fn settingsProfilesClick(self: *App, x: f32, y: f32, clicks: u8) !void {
+        const form = self.profilesForm();
+        const number = form.hit(x, y) orelse return;
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.settingsConfiguration(), &all);
+        const visible = self.settings_editor.?.indices(all[0..count], &indices);
+        if (number >= visible) return;
+        const e = &self.settings_editor.?;
+        if (e.form_row != number) e.delete_pending = null;
+        e.form_row = number;
+        e.content_focus = true;
+        const row = all[indices[number]];
+        const rect = form.row(number);
+        if (e.page == .defaults) switch (row.target) {
+            .scanned => |index| {
+                if (scannedEnableButton(rect).contains(x, y)) return self.changeSetting(.{ .toggle_scanned = index }, "");
+            },
+            .set_default => |index| {
+                e.profile = index;
+                if (savedEditButton(rect).contains(x, y) or clicks >= 2) return self.activateSetting(row);
+            },
+            else => {},
+        };
+        if (row.editable() and settingsEditButton(rect).contains(x, y)) return self.activateSetting(row);
+        if (row.editable() and row.choice() and settingsRowField(rect).contains(x, y)) return self.activateSetting(row);
     }
 
     fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
@@ -2964,25 +3085,52 @@ const App = struct {
             try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
         }
     }
-    fn drawSettingsListHeading(self: *App) !void {
+    fn drawProfilesCards(self: *App, form: ProfilesForm) !void {
+        const colors = try self.uiPalette();
+        if (form.overview) {
+            const scan = form.card(0);
+            if (scan.y < form.view.bounds.y + form.view.bounds.height and scan.y + scan.height > form.view.bounds.y) try self.drawProfileScanCard();
+            for (1..form.cardCount()) |number| {
+                const card = form.card(number);
+                if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
+                try self.drawSettingsCard(card);
+                const width = if (number == 1) @max(1, self.settingsToolbarButton(0).x - card.x - 24) else @max(1, card.width - 32);
+                const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 };
+                const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 };
+                try self.clippedText(if (number == 1) "Saved profiles" else "Scanned profiles", heading, heading.x);
+                try self.clippedTextColor(if (number == 1) "Local and editable recipes." else "Read-only cached discoveries.", hint, hint.x, colors.muted);
+                if (number == 2 and form.scanned_count == 0) {
+                    const empty: layout.Rect = .{ .x = card.x + ProfilesForm.inner_inset, .y = card.y + ProfilesForm.heading_height, .width = @max(1, card.width - 2 * ProfilesForm.inner_inset), .height = 44 };
+                    try self.clippedTextColor("Nothing scanned yet", empty, empty.x, colors.muted);
+                }
+            }
+            return;
+        }
+        const card = form.card(0);
+        try self.drawSettingsCard(card);
+        const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
+        const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
+        try self.clippedText("Profile details", heading, heading.x);
+        var buffer: [160]u8 = undefined;
+        const note = try std.fmt.bufPrint(&buffer, "{s} · Save applies your changes.", .{(try self.settingsConfiguration().profile(self.settings_editor.?.profile)).name});
+        try self.clippedTextColor(note, hint, hint.x, colors.muted);
+    }
+    fn drawProfilesToolbar(self: *App) !void {
         const e = self.settings_editor.?;
+        const labels: [3][]const u8 = if (e.page == .defaults) (if (self.profilesForm().card(1).width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" }) else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
+        for (labels, 0..) |label, number| {
+            const button = self.settingsToolbarButton(number);
+            try self.drawSettingsControl(button, e.button == @as(u8, @intCast(number)));
+            try self.clippedText(label, button, button.x + 8);
+        }
+    }
+    fn drawSettingsListHeading(self: *App) !void {
+        std.debug.assert(self.settings_editor.?.search);
         const colors = try self.uiPalette();
         const card = self.settingsListCard();
-        const title: []const u8 = if (e.search) "Search results" else switch (e.page) {
-            .defaults => "Launch profiles",
-            .profiles => "Profile details",
-            else => return,
-        };
-        var hint_buffer: [160]u8 = undefined;
-        const hint: []const u8 = if (e.search) "Select a result to open its settings section." else switch (e.page) {
-            .defaults => "Saved and scanned recipes.",
-            .profiles => try std.fmt.bufPrint(&hint_buffer, "{s} · Save applies your changes.", .{(try self.settingsConfiguration().profile(e.profile)).name}),
-            else => return,
-        };
-        const right = if (!e.search and e.page == .defaults) self.settingsToolbarButton(0).x - 8 else card.x + card.width - 16;
-        const width = @max(1, right - card.x - 16);
-        try self.clippedText(title, .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 }, card.x + 16);
-        try self.clippedTextColor(hint, .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 }, card.x + 16, colors.muted);
+        const width = @max(1, card.width - 32);
+        try self.clippedText("Search results", .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 }, card.x + 16);
+        try self.clippedTextColor("Select a result to open its settings section.", .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 }, card.x + 16, colors.muted);
     }
     fn drawSettingsHeaderButtons(self: *App) !void {
         const colors = try self.uiPalette();
@@ -3036,25 +3184,13 @@ const App = struct {
         const appearance_form = self.appearanceSettings();
         const color_form = self.colorSettings();
         const shortcut_form = self.shortcutSettings();
-        const card_form = appearance_form or color_form or shortcut_form;
-        if (!e.search and e.page == .defaults) try self.drawProfileScanCard();
+        const profiles_form = self.profilesSettings();
+        const card_form = appearance_form or color_form or shortcut_form or profiles_form;
         if (simple_form and !card_form) {
             try self.drawSettingsCard(self.settingsListCard());
             try self.drawSettingsListHeading();
         }
-        if (!e.search and (e.page == .defaults or e.page == .profiles)) {
-            const labels: [3][]const u8 = if (e.page == .defaults) (if (self.settingsListCard().width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" }) else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
-            for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
-                const button = self.settingsToolbarButton(number);
-                if (simple_form) {
-                    try self.drawSettingsControl(button, e.button == @as(u8, @intCast(number)));
-                } else {
-                    try fill(self.renderer, button, colors.idle);
-                    try outline(self.renderer, button, colors.border);
-                }
-                try self.clippedText(label, button, button.x + 8);
-            }
-        } else if (e.search) try self.drawField(self.settingsField(), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
+        if (e.search) try self.drawField(self.settingsField(), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
         if (startup_form) {
             try self.drawStartupForm();
             try self.drawSettingsDropdown();
@@ -3065,17 +3201,28 @@ const App = struct {
         const count = try settings.rows(self.settingsConfiguration(), &all);
         const visible = e.indices(all[0..count], &indices);
         if (!card_form) e.list.selected = @min(e.list.selected, visible -| 1);
+        if (profiles_form) e.form_row = @min(e.form_row, visible -| 1);
         const start = if (card_form) @as(usize, 0) else self.settingsStart(visible);
         const rows = self.settingsRows();
         const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
         const colors_form: ColorForm = if (color_form) self.colorForm() else undefined;
         const shortcuts_form: ShortcutForm = if (shortcut_form) self.shortcutForm() else undefined;
+        const profiles: ProfilesForm = if (profiles_form) self.profilesForm() else undefined;
         var clipped_rows = false;
         defer if (clipped_rows) clearClip(self.renderer);
         if (card_form) {
             try setClip(self.renderer, body);
             clipped_rows = true;
-            if (appearance_form) try self.drawAppearanceCards(form) else if (color_form) try self.drawColorCards(colors_form) else try self.drawShortcutCards(shortcuts_form);
+            if (appearance_form) {
+                try self.drawAppearanceCards(form);
+            } else if (color_form) {
+                try self.drawColorCards(colors_form);
+            } else if (shortcut_form) {
+                try self.drawShortcutCards(shortcuts_form);
+            } else {
+                try self.drawProfilesCards(profiles);
+                try self.drawProfilesToolbar();
+            }
         } else if (simple_form) {
             try setClip(self.renderer, rows.rect);
             clipped_rows = true;
@@ -3084,9 +3231,13 @@ const App = struct {
         const paint_end = if (card_form) visible else @min(visible, start + self.settingsVisible());
         for (indices[paint_start..paint_end], paint_start..) |index, number| {
             const row = all[index];
-            const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else if (shortcut_form) shortcuts_form.row(number) else rows.row(number - start);
+            const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else if (shortcut_form) shortcuts_form.row(number) else if (profiles_form) profiles.row(number) else rows.row(number - start);
             if (card_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
-            if (simple_form and !card_form) try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus) else if (!card_form) {
+            if (profiles_form) {
+                try self.drawSettingsCardRow(rect, number == e.form_row, self.isHovered(rect), e.content_focus);
+            } else if (simple_form and !card_form) {
+                try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
+            } else if (!card_form) {
                 try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
                 try outline(self.renderer, rect, colors.border);
             }
@@ -3195,7 +3346,7 @@ const App = struct {
             clipped_rows = false;
         }
         if (card_form) {
-            const view = if (appearance_form) form.view else if (color_form) colors_form.view else shortcuts_form.view;
+            const view = if (appearance_form) form.view else if (color_form) colors_form.view else if (shortcut_form) shortcuts_form.view else profiles.view;
             if (view.scrollbar()) |bar| {
                 try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
                 try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
@@ -4753,13 +4904,17 @@ test "Profiles footer remains actionable across scroll selection and cached entr
     defer if (app.settings_draft) |*draft| draft.deinit();
     const footer = app.settingsDefaultButton();
     try std.testing.expectEqualStrings("local", (try app.overviewDefaultID()).?);
-    app.settings_editor.?.list.scroll(1, 4, 1);
+    app.settings_editor.?.form_row = 1;
+    try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
+    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+    app.settingsScrollBy(100000);
+    try std.testing.expect(app.settings_scroll_offset > 0);
     try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
     try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
     try app.settingsClick(footer.x + 10, footer.y + 10, 1);
     try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
     try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
-    app.settings_editor.?.list.scroll(1, 4, 1);
+    app.settings_editor.?.form_row = 2;
     try std.testing.expect((try app.overviewDefaultID()) == null);
     try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
     try app.settingsClick(footer.x + 10, footer.y + 10, 1);
@@ -4917,10 +5072,10 @@ test "Profiles label clicks navigate while explicit scan controls stage only the
     app.init.io = threaded.io();
     defer app.discardSettings();
     try std.testing.expectEqual(@as(usize, 5), settings.titles.len);
-    const cached_row = app.settingsRows().row(2);
+    const cached_row = app.profilesForm().row(2);
     try app.settingsClick(cached_row.x + 12, cached_row.y + 12, 1);
     try std.testing.expect(app.settings_draft == null);
-    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.list.selected);
+    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
     const toggle = App.scannedEnableButton(cached_row);
     try app.settingsClick(toggle.x + 12, toggle.y + 12, 1);
     try std.testing.expect(!app.settingsConfiguration().value.scanned_profiles[0].enabled);
@@ -4945,6 +5100,126 @@ test "Profiles label clicks navigate while explicit scan controls stage only the
     try std.testing.expectEqualStrings("Host", app.settingsConfiguration().value.profiles[1].name);
     app.settingsCancel();
     try std.testing.expectEqual(@as(usize, 1), configuration.value.profiles.len);
+}
+
+test "Profiles page owns both catalogue and detail scrolling, independent of selection" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    const window = c.SDL_CreateWindow("profiles page scroll proof", 920, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var configuration = try config.Config.parse(std.testing.allocator, threaded.io(),
+        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"ssh","recipe":{"id":"auto.ssh.a","name":"Host A","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.b","name":"Host B","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.c","name":"Host C","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.d","name":"Host D","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.e","name":"Host E","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.f","name":"Host F","shell":"/usr/bin/ssh"}}]}
+    );
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = window,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .width = 920,
+        .height = 650,
+        .bindings = try keybindings.Bindings.init(),
+        .settings_editor = .{ .page = .defaults, .content_focus = true },
+    };
+    app.init.io = threaded.io();
+    defer app.discardSettings();
+
+    const body = app.settingsBody();
+    const overview = app.profilesForm();
+    try std.testing.expectEqual(@as(usize, 3), overview.cardCount());
+    try std.testing.expectEqual(@as(usize, 2), overview.saved_count);
+    try std.testing.expectEqual(@as(usize, 6), overview.scanned_count);
+    const bar = overview.view.scrollbar().?;
+    try std.testing.expectApproxEqAbs(body.x + body.width - 4, bar.track.x, 0.01);
+    for (0..overview.cardCount()) |number| try std.testing.expect(bar.track.x > overview.card(number).x + overview.card(number).width);
+    var all: [settings.row_limit]settings.Row = undefined;
+    var indices: [settings.row_limit]u16 = undefined;
+    const count = try settings.rows(&configuration, &all);
+    try std.testing.expectEqual(overview.saved_count + overview.scanned_count, app.settings_editor.?.indices(all[0..count], &indices));
+    try std.testing.expectEqual(settings.Target{ .set_default = 0 }, all[indices[0]].target);
+    try std.testing.expectEqual(settings.Target{ .set_default = 1 }, all[indices[1]].target);
+    try std.testing.expectEqual(settings.Target{ .scanned = 0 }, all[indices[2]].target);
+    try std.testing.expectEqual(settings.Target{ .scanned = 5 }, all[indices[7]].target);
+
+    app.settings_editor.?.form_row = 1;
+    const selected_id = (try app.overviewDefaultID()).?;
+    const footer = app.settingsDefaultButton();
+    const original_scan_y = overview.card(0).y;
+    const original_saved_y = overview.card(1).y;
+    const original_row_y = overview.row(2).y;
+    var wheel = std.mem.zeroes(c.SDL_MouseWheelEvent);
+    wheel.y = -2;
+    wheel.mouse_x = body.x + 60;
+    wheel.mouse_y = body.y + 60;
+    try app.pointerWheel(wheel);
+    try std.testing.expectEqual(@as(f32, 96), app.settings_scroll_offset);
+    const scrolled = app.profilesForm();
+    try std.testing.expectApproxEqAbs(original_scan_y - 96, scrolled.card(0).y, 0.01);
+    try std.testing.expectApproxEqAbs(original_saved_y - 96, scrolled.card(1).y, 0.01);
+    try std.testing.expectApproxEqAbs(original_row_y - 96, scrolled.row(2).y, 0.01);
+    try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.form_row);
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
+    try std.testing.expectEqualStrings(selected_id, (try app.overviewDefaultID()).?);
+    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+
+    const scanned_row = scrolled.row(2);
+    try std.testing.expect(body.contains(scanned_row.x + 12, scanned_row.y + 12));
+    try std.testing.expectEqual(@as(?usize, 2), scrolled.hit(scanned_row.x + 12, scanned_row.y + 12));
+    try app.settingsClick(scanned_row.x + 12, scanned_row.y + 12, 1);
+    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
+    try std.testing.expect(app.settings_draft == null);
+    const toggle = App.scannedEnableButton(scanned_row);
+    try app.settingsClick(toggle.x + 12, toggle.y + 12, 1);
+    try std.testing.expect(!app.settingsConfiguration().value.scanned_profiles[0].enabled);
+    try std.testing.expect(configuration.value.scanned_profiles[0].enabled);
+    app.settingsCancel();
+    try std.testing.expect(app.settingsConfiguration().value.scanned_profiles[0].enabled);
+
+    try std.testing.expect(app.settingsScrollbarPress(bar.track.x - 5, bar.track.y + bar.track.height - 5));
+    try std.testing.expect(app.settings_scroll_offset > 96);
+    const end = app.profilesForm();
+    const last_row = end.row(7);
+    try std.testing.expect(body.contains(last_row.x + 12, last_row.y + 12));
+    try std.testing.expectEqual(@as(?usize, 7), end.hit(last_row.x + 12, last_row.y + 12));
+    try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
+    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+    try std.testing.expect(app.settingsScanSourceRow(0).y + 34 < body.y);
+    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
+    try std.testing.expectEqualStrings("auto.ssh.a", (try app.settingsConfiguration().defaultProfile()).id);
+    try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
+    app.settingsCancel();
+
+    app.settings_scroll_offset = 0;
+    const edit = App.savedEditButton(app.profilesForm().row(1));
+    try app.settingsClick(edit.x + 10, edit.y + 10, 1);
+    try std.testing.expectEqual(settings.Page.profiles, app.settings_editor.?.page);
+    try std.testing.expectEqual(@as(u8, 1), app.settings_editor.?.profile);
+    app.height = 470;
+    const details = app.profilesForm();
+    try std.testing.expectEqual(@as(usize, 1), details.cardCount());
+    try std.testing.expectEqual(@as(usize, 7), details.detail_count);
+    const detail_count = try settings.rows(&configuration, &all);
+    try std.testing.expectEqual(details.detail_count, app.settings_editor.?.indices(all[0..detail_count], &indices));
+    try std.testing.expect(details.view.scrollbar() != null);
+    const detail_bar = details.view.scrollbar().?;
+    try std.testing.expect(detail_bar.track.x > details.card(0).x + details.card(0).width);
+    try std.testing.expect(app.settingsScrollbarPress(detail_bar.track.x - 5, detail_bar.track.y + detail_bar.track.height - 5));
+    try std.testing.expect(app.settings_scroll_offset > 0);
+    const last_detail_row = app.profilesForm().row(6);
+    try std.testing.expect(app.settingsBody().contains(last_detail_row.x + 10, last_detail_row.y + 10));
+    try std.testing.expectEqual(@as(?usize, 6), app.profilesForm().hit(last_detail_row.x + 10, last_detail_row.y + 10));
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.form_row);
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
+    app.settings_scroll_grab = null;
 }
 
 test "Settings Save commits the complete draft once; Cancel and failed Save preserve the live configuration" {
@@ -5045,16 +5320,25 @@ test "settings cards share symmetric painted and pointer geometry" {
         app.width = size.width;
         app.height = size.height;
         app.settings_editor.?.page = .defaults;
-        const scan = app.settingsScanCard();
-        const list_card = app.settingsListCard();
+        const overview = app.profilesForm();
+        const profile_body = app.settingsBody();
+        const scan = overview.card(0);
+        const saved = overview.card(1);
+        const cached = overview.card(2);
         const scan_button = app.settingsToolbarButton(2);
         const new_button = app.settingsToolbarButton(0);
         const duplicate_button = app.settingsToolbarButton(1);
         try std.testing.expect(scan.y >= app.settingsRect().y + settings_header_height);
-        try std.testing.expect(scan.y + scan.height < list_card.y);
-        try std.testing.expectApproxEqAbs(scan.x, list_card.x, 0.01);
+        try std.testing.expect(scan.y + scan.height < saved.y);
+        try std.testing.expect(saved.y + saved.height < cached.y);
+        try std.testing.expectApproxEqAbs(scan.x, saved.x, 0.01);
+        try std.testing.expectApproxEqAbs(saved.x, cached.x, 0.01);
+        for (0..overview.cardCount()) |number| {
+            const card = overview.card(number);
+            try std.testing.expectApproxEqAbs(card.x - profile_body.x, profile_body.x + profile_body.width - card.x - card.width, 0.01);
+        }
         try std.testing.expect(scan_button.x >= scan.x and scan_button.x + scan_button.width <= scan.x + scan.width);
-        try std.testing.expect(new_button.x >= list_card.x and duplicate_button.x + duplicate_button.width <= list_card.x + list_card.width);
+        try std.testing.expect(new_button.x >= saved.x and duplicate_button.x + duplicate_button.width <= saved.x + saved.width);
         try std.testing.expect(new_button.x + new_button.width < duplicate_button.x);
         for (0..2) |number| {
             const source = app.settingsScanSourceRow(number);
@@ -5064,18 +5348,20 @@ test "settings cards share symmetric painted and pointer geometry" {
             try std.testing.expect(toggle.x >= source.x and toggle.x + toggle.width <= source.x + source.width);
             try std.testing.expect(toggle.y >= source.y and toggle.y + toggle.height <= source.y + source.height);
         }
+        if (overview.view.scrollbar()) |bar| try std.testing.expect(bar.track.x > saved.x + saved.width);
         app.settings_editor.?.page = .profiles;
-        const profile_body = app.settingsBody();
-        const card = app.settingsListCard();
-        const rows = app.settingsRows();
+        const details = app.profilesForm();
+        const card = details.card(0);
         try std.testing.expect(app.simpleSettingsForm());
         try std.testing.expectApproxEqAbs(card.x - profile_body.x, profile_body.x + profile_body.width - card.x - card.width, 0.01);
-        try std.testing.expect(card.y >= profile_body.y and card.y + card.height <= profile_body.y + profile_body.height);
-        try std.testing.expectApproxEqAbs(rows.rect.x - card.x, card.x + card.width - rows.rect.x - rows.rect.width, 0.01);
-        try std.testing.expect(rows.rect.y >= card.y and rows.rect.y + rows.rect.height <= card.y + card.height);
-        const first = rows.row(0);
-        try std.testing.expectEqual(@as(?usize, 0), rows.hit(first.x + 1, first.y + 1));
-        try std.testing.expect(rows.hit(card.x + 1, first.y + 1) == null);
+        try std.testing.expect(card.y >= profile_body.y);
+        const first = details.row(0);
+        try std.testing.expectApproxEqAbs(first.x - card.x, card.x + card.width - first.x - first.width, 0.01);
+        try std.testing.expect(first.y >= card.y + ProfilesForm.detail_heading_height);
+        if (details.view.bounds.contains(first.x + 1, first.y + 1))
+            try std.testing.expectEqual(@as(?usize, 0), details.hit(first.x + 1, first.y + 1));
+        try std.testing.expect(details.hit(card.x + 1, first.y + 1) == null);
+        if (details.view.scrollbar()) |bar| try std.testing.expect(bar.track.x > card.x + card.width);
 
         app.settings_editor.?.page = .mappings;
         const body = app.settingsBody();
@@ -5300,6 +5586,66 @@ fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {
     var result: c.SDL_Color = undefined;
     if (!c.SDL_ReadSurfacePixel(surface, x, y, &result.r, &result.g, &result.b, &result.a)) return error.SDL;
     return result;
+}
+test "Profiles cards paint inside the shared page viewport with an outer scrollbar" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("profiles card paint", 920, 470, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    const surface = c.SDL_CreateSurface(920, 470, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var configuration = try config.Config.parse(a, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"ssh","recipe":{"id":"auto.ssh.a","name":"Host A","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.b","name":"Host B","shell":"/usr/bin/ssh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.c","name":"Host C","shell":"/usr/bin/ssh"}}]}
+    );
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .width = 920,
+        .height = 470,
+        .bindings = try keybindings.Bindings.init(),
+        .settings_editor = .{ .page = .defaults },
+    };
+    const colors = try app.uiPalette();
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const saved = app.profilesForm().card(1);
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(saved.x + 8), @intFromFloat(saved.y + 61)));
+    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(saved.x - 5), @intFromFloat(saved.y + 61)));
+    const bar = app.profilesForm().view.scrollbar().?;
+    try std.testing.expect(bar.track.x > saved.x + saved.width);
+    try std.testing.expectEqual(colors.muted, try testPixel(surface, @intFromFloat(bar.thumb.x + bar.thumb.width / 2), @intFromFloat(bar.thumb.y + bar.thumb.height / 2)));
+    app.settings_scroll_offset = 100000;
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const scanned = app.profilesForm().card(2);
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(scanned.x + 8), @intFromFloat(scanned.y + scanned.height - 20)));
+
+    app.settings_editor.?.page = .profiles;
+    app.settings_editor.?.profile = 1;
+    app.settings_scroll_offset = 100000;
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const detail = app.profilesForm().card(0);
+    try std.testing.expect(app.profilesForm().view.scrollbar() != null);
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(detail.x + 8), @intFromFloat(detail.y + detail.height - 20)));
 }
 test "shortcut cards paint separately from the page and retain the outer scrollbar" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
