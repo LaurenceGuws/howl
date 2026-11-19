@@ -577,66 +577,27 @@ pub const Editor = struct {
             }
         };
     }
-    /// Cycles a staged finite setting. Saving remains an explicit separate action.
+    /// Cycles through the same persisted values and ordering as the visible menu.
     pub fn cycle(self: *Editor, current: *const config.Config, delta: i8) !void {
         const target = self.editing orelse return;
+        const count = choiceCount(target, current);
+        if (count == 0) return;
+        const size: i32 = @intCast(count);
         const value = self.buffer[0..self.len];
-        var next: []const u8 = undefined;
-        switch (target) {
-            .default_profile => {
-                const count = choiceCount(target, current);
-                var index: i32 = 0;
-                for (0..count) |i| if (std.mem.eql(u8, (try choiceAt(target, current, i)).value, value)) {
-                    index = @intCast(i);
-                    break;
-                };
-                next = (try choiceAt(target, current, @intCast(@mod(index + delta, @as(i32, @intCast(count)))))).value;
-            },
-            .theme, .terminal_theme => {
-                const ids: []const []const u8 = if (target == .theme) &themes.app_ids else &colors.terminal_themes;
-                var index: i16 = 0;
-                for (ids, 0..) |id, i| if (std.mem.eql(u8, value, id)) {
-                    index = @intCast(i);
-                    break;
-                };
-                next = ids[@intCast(@mod(index + delta, @as(i16, @intCast(ids.len))))];
-            },
-            .cursor_blink, .cursor_shape => {
-                const choices: []const []const u8 = if (target == .cursor_shape)
-                    &.{ "Block", "Bar", "Underline" }
-                else
-                    &.{ "Off", "Application", "Always" };
-                var index: i16 = 0;
-                for (choices, 0..) |item, i| if (std.mem.eql(u8, item, value)) {
-                    index = @intCast(i);
-                    break;
-                };
-                next = choices[@intCast(@mod(index + delta, @as(i16, @intCast(choices.len))))];
-            },
-            .cursor_easing => next = if (std.mem.eql(u8, value, "Linear")) "Ease out" else "Linear",
-            .cursor_effect => {
-                const choices = [_][]const u8{ "None", "Stretch", "Trail" };
-                var index: i16 = 0;
-                for (choices, 0..) |choice, i| if (std.mem.eql(u8, choice, value)) {
-                    index = @intCast(i);
-                    break;
-                };
-                next = choices[@intCast(@mod(index + delta, @as(i16, choices.len)))];
-            },
-            .tab_width => next = if (std.mem.eql(u8, value, "Fixed")) "Fit available space" else "Fixed",
-            .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
-            else => return,
-        }
-        @memcpy(self.buffer[0..next.len], next);
-        self.len = next.len;
-        self.edit = .{ .cursor = next.len };
-        for (0..choiceCount(target, current)) |index| {
+        for (0..count) |index| {
             const option = try choiceAt(target, current, index);
-            if (std.mem.eql(u8, option.value, next)) {
-                self.choice_list.selected = index;
-                break;
-            }
+            if (!std.mem.eql(u8, option.value, value)) continue;
+            const next: usize = @intCast(@mod(@as(i32, @intCast(index)) + @as(i32, delta), size));
+            return self.selectChoice(current, next);
         }
+        // Preserve old fallback behavior for an edited value that disappears
+        // from the catalogue (for example after a scanned profile is disabled).
+        const fallback: usize = switch (target) {
+            .cursor_easing, .tab_width => 0,
+            .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts => 1,
+            else => @intCast(@mod(@as(i32, delta), size)),
+        };
+        try self.selectChoice(current, fallback);
     }
     /// Stages one indexed option through the same bounded editor transaction.
     pub fn selectChoice(self: *Editor, current: *const config.Config, index: usize) !void {
@@ -774,6 +735,72 @@ test "finite settings expose labeled dropdown options and stage one typed value"
     try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
 }
 
+test "all finite Settings choices cycle by persisted value in catalogue order" {
+    var current = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}},{"kind":"ssh","recipe":{"id":"auto.ssh.disabled","name":"Disabled","shell":"/usr/bin/ssh"},"enabled":false},{"kind":"shell","recipe":{"id":"auto.shell.missing","name":"Missing","shell":"/bin/sh"},"stale":true}]}
+    );
+    defer current.deinit();
+    try std.testing.expectEqual(@as(usize, 3), choiceCount(.default_profile, &current));
+    try std.testing.expectEqualStrings("auto.repl.python", (try choiceAt(.default_profile, &current, 2)).value);
+    try std.testing.expect(!std.mem.eql(u8, (try choiceAt(.theme, &current, 0)).value, (try choiceAt(.theme, &current, 0)).label));
+
+    const finite = [_]Target{
+        .default_profile, .theme,         .terminal_theme,  .cursor_blink,
+        .cursor_shape,    .cursor_effect, .cursor_easing,   .tab_width,
+        .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts,
+    };
+    for (finite) |target| {
+        const count = choiceCount(target, &current);
+        try std.testing.expect(count > 0);
+        var editor: Editor = .{};
+        try editor.begin(.{ .page = .startup, .label = "Choice", .target = target }, &current);
+        var selected = editor.choice_list.selected;
+        try std.testing.expectEqualStrings((try choiceAt(target, &current, selected)).value, editor.buffer[0..editor.len]);
+        for ([_]i8{ 1, -1, -1, 1 }) |step| {
+            selected = @intCast(@mod(@as(i32, @intCast(selected)) + @as(i32, step), @as(i32, @intCast(count))));
+            try editor.cycle(&current, step);
+            try std.testing.expectEqual(selected, editor.choice_list.selected);
+            try std.testing.expectEqualStrings((try choiceAt(target, &current, selected)).value, editor.buffer[0..editor.len]);
+        }
+        try editor.append("not selectable");
+        try std.testing.expectEqualStrings((try choiceAt(target, &current, selected)).value, editor.buffer[0..editor.len]);
+        editor.cancel();
+    }
+    try std.testing.expectEqualStrings("local", (try current.defaultProfile()).id);
+    try std.testing.expectEqualStrings("howl_dark", current.value.app_theme);
+}
+
+test "choice cycling preserves the current fallback for stale or unrecognized staging" {
+    var current = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}}]}
+    );
+    defer current.deinit();
+    const cases = [_]struct { target: Target, direction: i8, index: usize }{
+        .{ .target = .default_profile, .direction = -1, .index = 2 },
+        .{ .target = .theme, .direction = 1, .index = 1 },
+        .{ .target = .cursor_blink, .direction = -1, .index = 2 },
+        .{ .target = .cursor_easing, .direction = 1, .index = 0 },
+        .{ .target = .cursor_easing, .direction = -1, .index = 0 },
+        .{ .target = .tab_width, .direction = -1, .index = 0 },
+        .{ .target = .hide_single_tab, .direction = 1, .index = 1 },
+        .{ .target = .discover_ssh_hosts, .direction = -1, .index = 1 },
+    };
+    for (cases) |case| {
+        var editor: Editor = .{};
+        try editor.begin(.{ .page = .startup, .label = "Choice", .target = case.target }, &current);
+        const unknown = "unknown setting value";
+        @memcpy(editor.buffer[0..unknown.len], unknown);
+        editor.len = unknown.len;
+        try editor.cycle(&current, case.direction);
+        try std.testing.expectEqual(case.index, editor.choice_list.selected);
+        try std.testing.expectEqualStrings((try choiceAt(case.target, &current, case.index)).value, editor.buffer[0..editor.len]);
+    }
+    var text: Editor = .{};
+    try text.begin(.{ .page = .appearance, .label = "Font size", .target = .default_font }, &current);
+    try text.cycle(&current, 1);
+    try std.testing.expectEqualStrings("15", text.buffer[0..text.len]);
+}
+
 test "cached active defaults are selectable while disabled and stale entries stay out of startup" {
     var current = try config.Config.parse(std.testing.allocator, std.testing.io,
         \\{"schema":1,"terminal_font_pixels":15,"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}},{"kind":"ssh","recipe":{"id":"auto.ssh.disabled","name":"Disabled","shell":"/usr/bin/ssh"},"enabled":false},{"kind":"shell","recipe":{"id":"auto.shell.missing","name":"Missing","shell":"/bin/sh"},"stale":true}]}
@@ -799,6 +826,14 @@ test "cached active defaults are selectable while disabled and stale entries sta
     try accept(&current, .{ .toggle_scanned = 0 }, "");
     try std.testing.expect(current.value.scanned_profiles[0].enabled);
     try std.testing.expectEqualStrings("local", (try current.defaultProfile()).id);
+    try editor.begin(.{ .page = .startup, .label = "Default profile", .target = .default_profile }, &current);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("auto.repl.python", editor.buffer[0..editor.len]);
+    try accept(&current, .{ .toggle_scanned = 0 }, "");
+    try std.testing.expectEqual(@as(usize, 1), choiceCount(.default_profile, &current));
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("local", editor.buffer[0..editor.len]);
+    try std.testing.expectEqual(@as(usize, 0), editor.choice_list.selected);
 }
 
 test "manual scan source switches toggle independently and produce validated owned settings" {
