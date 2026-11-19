@@ -27,6 +27,8 @@ const settings_header_height = pages.settings_header_height;
 const settings_nav_top = pages.settings_nav_top;
 const settings_card_gutter = pages.settings_card_gutter;
 const settings_card_padding = pages.settings_card_padding;
+const corner_radius = chrome.Geometry.chip_radius;
+const inset_radius = corner_radius - 1;
 
 /// Bind Settings painting to the same concrete host as its input geometry.
 pub fn ForHost(comptime Host: type) type {
@@ -75,16 +77,10 @@ pub fn ForHost(comptime Host: type) type {
             const count = settings.choiceCount(target, self.settingsConfiguration());
             e.choice_list.reveal(count, menu.rows.visible());
             const start = e.choice_list.first;
-            const colors = try self.uiPalette();
-            if (self.simpleSettingsForm()) {
-                try self.drawSettingsCard(menu.rect);
-            } else {
-                try fill(self.renderer, menu.rect, colors.panel);
-                try outline(self.renderer, menu.rect, colors.border);
-            }
+            try self.drawSettingsCard(menu.rect);
             for (start..@min(count, start + menu.rows.visible())) |index| {
                 const rect = menu.rows.row(index - start);
-                if (self.simpleSettingsForm()) try self.drawSettingsCardRow(rect, e.choice_list.selected == index, self.isHovered(rect), true) else try self.drawListRow(rect, e.choice_list.selected == index, self.isHovered(rect), true);
+                try self.drawSettingsCardRow(rect, e.choice_list.selected == index, self.isHovered(rect), true);
                 try self.clippedText((try settings.choiceAt(target, self.settingsConfiguration(), index)).label, rect, rect.x + 9);
             }
             try self.drawListScroll(menu.rows, start, count);
@@ -92,8 +88,16 @@ pub fn ForHost(comptime Host: type) type {
         /// Paint the rounded card surface shared by all Settings pages.
         pub fn drawSettingsCard(self: *Host, rect: layout.Rect) !void {
             const colors = try self.uiPalette();
-            try drawing.fillRounded(self.renderer, rect, colors.border, 11);
-            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 10);
+            try drawing.fillRounded(self.renderer, rect, colors.border, corner_radius);
+            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, inset_radius);
+        }
+        /// Paint Settings row focus with the same corner radius as tab chips.
+        pub fn drawSettingsCardRow(self: *Host, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
+            if (!selected and !hovered) return;
+            const colors = try self.uiPalette();
+            const base = if (selected) colors.active else colors.idle;
+            try drawing.fillRounded(self.renderer, rect, if (hovered) appearance.hover(base) else base, corner_radius);
+            if (selected and focused) try drawing.fillRounded(self.renderer, .{ .x = rect.x, .y = rect.y + 7, .width = 2, .height = @max(1, rect.height - 14) }, colors.accent, 1);
         }
         /// Paint a source or startup switch with its current state.
         pub fn drawStartupSwitch(self: *Host, rect: layout.Rect, enabled: bool, focused: bool) !void {
@@ -107,8 +111,8 @@ pub fn ForHost(comptime Host: type) type {
         /// Paint a bounded clickable Settings control surface.
         pub fn drawSettingsControl(self: *Host, rect: layout.Rect, focused: bool) !void {
             const colors = try self.uiPalette();
-            try drawing.fillRounded(self.renderer, rect, if (focused) colors.accent else colors.border, 7);
-            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, 6);
+            try drawing.fillRounded(self.renderer, rect, if (focused) colors.accent else colors.border, corner_radius);
+            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, if (self.isHovered(rect)) appearance.hover(colors.idle) else colors.idle, inset_radius);
         }
         /// Paint a choice field with label and expansion affordance.
         pub fn drawSettingsSelect(self: *Host, rect: layout.Rect, label: []const u8, focused: bool, expanded: bool) !void {
@@ -282,15 +286,26 @@ pub fn ForHost(comptime Host: type) type {
             const box = self.settingsRect();
             const body = self.settingsBody();
             e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
-            try drawing.fillRounded(self.renderer, box, colors.border, 12);
-            try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @max(1, box.height - 2) }, colors.title, 11);
+            try drawing.fillRounded(self.renderer, box, colors.border, corner_radius);
+            try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @max(1, box.height - 2) }, colors.title, inset_radius);
             // The sidebar and header share one inset surface without squaring the
             // outside corners of the Settings shell.
             const side_width = @max(1, body.x - box.x - 13);
-            try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = side_width, .height = @max(1, box.height - 2) }, colors.idle, 11);
-            try fill(self.renderer, .{ .x = box.x + 12, .y = box.y + 1, .width = @max(1, side_width - 11), .height = @max(1, box.height - 2) }, colors.idle);
-            try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @min(settings_header_height, @max(1, box.height - 2)) }, colors.idle, 11);
-            try fill(self.renderer, .{ .x = box.x + 1, .y = box.y + 12, .width = @max(1, box.width - 2), .height = @max(1, @min(settings_header_height - 12, box.height - 14)) }, colors.idle);
+            try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = side_width, .height = @max(1, box.height - 2) }, colors.idle, inset_radius);
+            try fill(self.renderer, .{ .x = box.x + corner_radius, .y = box.y + 1, .width = @max(1, side_width - inset_radius), .height = @max(1, box.height - 2) }, colors.idle);
+            try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @min(settings_header_height, @max(1, box.height - 2)) }, colors.idle, inset_radius);
+            try fill(self.renderer, .{ .x = box.x + 1, .y = box.y + corner_radius, .width = @max(1, box.width - 2), .height = @max(1, @min(settings_header_height - corner_radius, box.height - corner_radius - 2)) }, colors.idle);
+            // The content's top-left corner sits inside the header/sidebar elbow.
+            // Restore its rounded cutout without changing the square page viewport.
+            const corner: layout.Rect = .{ .x = box.x + 1 + side_width, .y = box.y + settings_header_height, .width = corner_radius, .height = corner_radius };
+            if (corner.x + corner.width < box.x + box.width - 1 and corner.y + corner.height < box.y + box.height - 1) {
+                try fill(self.renderer, corner, colors.idle);
+                {
+                    try setClip(self.renderer, corner);
+                    defer clearClip(self.renderer);
+                    try drawing.fillRounded(self.renderer, .{ .x = corner.x, .y = corner.y, .width = corner_radius * 2, .height = corner_radius * 2 }, colors.title, corner_radius);
+                }
+            }
             if (box.width > 360) try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
             const title_width = self.settingsHeaderButton(.save).x - body.x - 10;
             if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else if (e.page == .profiles) "Profile details" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
@@ -298,9 +313,9 @@ pub fn ForHost(comptime Host: type) type {
             for (settings.titles, 0..) |title, index| {
                 const row = self.settingsNavRow(index);
                 if (!e.search and (if (e.page == .profiles) index == @backingInt(settings.Page.defaults) else @backingInt(e.page) == index)) {
-                    try drawing.fillRounded(self.renderer, row, colors.active, 7);
+                    try drawing.fillRounded(self.renderer, row, colors.active, corner_radius);
                     try drawing.fillRounded(self.renderer, .{ .x = row.x, .y = row.y + 6, .width = 2, .height = row.height - 12 }, colors.accent, 1);
-                } else if (self.isHovered(row)) try drawing.fillRounded(self.renderer, row, appearance.hover(colors.idle), 7);
+                } else if (self.isHovered(row)) try drawing.fillRounded(self.renderer, row, appearance.hover(colors.idle), corner_radius);
                 try self.clippedText(title, row, row.x + 10);
             }
             const startup_form = !e.search and e.page == .startup;
@@ -483,7 +498,7 @@ pub fn ForHost(comptime Host: type) type {
                 const current = self.settingsConfiguration();
                 const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
                 const preview: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 100, .width = body.width, .height = 32 };
-                try drawing.fillRounded(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 }, 7);
+                try drawing.fillRounded(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 }, corner_radius);
                 try self.clippedTextColor("Terminal  AaBb 0123", preview, preview.x + 8, .{ .r = resolved.foreground.r, .g = resolved.foreground.g, .b = resolved.foreground.b, .a = 255 });
                 const width = body.width / 16;
                 for (resolved.palette[0..16], 0..) |rgb, i| try drawing.fillRounded(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 3);

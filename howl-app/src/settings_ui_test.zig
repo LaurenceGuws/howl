@@ -471,6 +471,15 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     try app.drawSettings();
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const first = app.shortcutForm().card(0);
+    // The Settings card and its header/sidebar elbow share the tab chip's
+    // four-pixel corner; no square cutout or oversized card radius remains.
+    const box = app.settingsRect();
+    const elbow_x = app.settingsBody().x - 12;
+    const elbow_y = box.y + settings_header_height;
+    try std.testing.expectEqual(colors.idle, try testPixel(surface, @intFromFloat(elbow_x), @intFromFloat(elbow_y)));
+    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(elbow_x + chrome.Geometry.chip_radius - 1), @intFromFloat(elbow_y + chrome.Geometry.chip_radius - 1)));
+    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(first.x), @intFromFloat(first.y)));
+    try std.testing.expectEqual(colors.border, try testPixel(surface, @intFromFloat(first.x + chrome.Geometry.chip_radius), @intFromFloat(first.y)));
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(first.x + 8), @intFromFloat(first.y + 74)));
     try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(first.x - 5), @intFromFloat(first.y + 74)));
     const bar = app.shortcutForm().view.scrollbar().?;
@@ -480,6 +489,18 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const last = app.shortcutForm().card(ShortcutForm.sections.len - 1);
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(last.x + 8), @intFromFloat(last.y + last.height - 20)));
+
+    app.settings_editor.?.page = .startup;
+    app.settings_editor.?.editing = .default_profile;
+    app.settings_scroll_offset = 0;
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const select = app.startupForm().select();
+    const menu = app.settingsDropdown();
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(select.x), @intFromFloat(select.y)));
+    try std.testing.expectEqual(colors.accent, try testPixel(surface, @intFromFloat(select.x + chrome.Geometry.chip_radius), @intFromFloat(select.y)));
+    try std.testing.expect(!std.meta.eql(colors.border, try testPixel(surface, @intFromFloat(menu.rect.x), @intFromFloat(menu.rect.y))));
+    try std.testing.expectEqual(colors.border, try testPixel(surface, @intFromFloat(menu.rect.x + chrome.Geometry.chip_radius), @intFromFloat(menu.rect.y)));
 }
 
 test "Settings Save commits the complete draft once; Cancel and failed Save preserve the live configuration" {

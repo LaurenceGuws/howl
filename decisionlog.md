@@ -234,3 +234,11 @@ and terminal lifetime authority; the extraction creates no second runtime
 controller or configuration copy. Settings-specific interaction, geometry
 and software-render proofs moved to settings_ui_test.zig. General host and
 terminal tests remain in main.zig.
+
+## Settings corners follow tab chrome (19 November 2026)
+
+Captain selected the tab chip's four-logical-pixel radius as the common
+Settings shell, card, control, field, dropdown and row-highlight radius.
+One-pixel-inset surfaces use a three-pixel radius, and the header/sidebar
+elbow exposes the same rounded inner corner. Switch tracks retain their
+functional pill shape; narrow scrollbar tracks and thumbs remain distinct.

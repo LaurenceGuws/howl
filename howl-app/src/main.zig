@@ -218,6 +218,8 @@ pub const App = struct {
     pub const drawSettingsDropdown = PaintUI.drawSettingsDropdown;
     /// Bind Settings painting for draw Settings Card to the SDL host.
     pub const drawSettingsCard = PaintUI.drawSettingsCard;
+    /// Bind Settings painting for selected and hovered card rows to the SDL host.
+    pub const drawSettingsCardRow = PaintUI.drawSettingsCardRow;
     /// Bind Settings painting for draw Startup Switch to the SDL host.
     pub const drawStartupSwitch = PaintUI.drawStartupSwitch;
     /// Bind Settings painting for draw Settings Control to the SDL host.
@@ -1334,8 +1336,8 @@ pub const App = struct {
     pub fn drawFieldStyled(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool, rounded: bool) !void {
         const colors = try self.uiPalette();
         if (rounded) {
-            try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, 7);
-            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, 6);
+            try drawing.fillRounded(self.renderer, rect, if (active) colors.accent else colors.border, chrome.Geometry.chip_radius);
+            try drawing.fillRounded(self.renderer, .{ .x = rect.x + 1, .y = rect.y + 1, .width = @max(1, rect.width - 2), .height = @max(1, rect.height - 2) }, colors.panel, chrome.Geometry.chip_radius - 1);
         } else {
             try fill(self.renderer, rect, colors.panel);
             try outline(self.renderer, rect, if (active) colors.accent else colors.border);
@@ -1384,14 +1386,6 @@ pub const App = struct {
             try fill(self.renderer, rect, if (hovered) appearance.hover(base) else base);
         }
         if (selected and focused) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + 4, .width = 2, .height = @max(1, rect.height - 8) }, colors.accent);
-    }
-    /// Paint selection and hover for a card-style Settings row.
-    pub fn drawSettingsCardRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
-        if (!selected and !hovered) return;
-        const colors = try self.uiPalette();
-        const base = if (selected) colors.active else colors.idle;
-        try drawing.fillRounded(self.renderer, rect, if (hovered) appearance.hover(base) else base, 7);
-        if (selected and focused) try drawing.fillRounded(self.renderer, .{ .x = rect.x, .y = rect.y + 7, .width = 2, .height = @max(1, rect.height - 14) }, colors.accent, 1);
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
