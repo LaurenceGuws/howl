@@ -1,4 +1,4 @@
-//! Settings page geometry: each page owns a clipped, pixel-scrolled viewport.
+//! Settings document geometry: one scroll owner, five section card forms.
 const std = @import("std");
 const chrome = @import("chrome.zig");
 const layout = @import("layout.zig");
@@ -321,15 +321,15 @@ pub const ShortcutForm = struct {
         return null;
     }
 };
-/// Profiles owns one viewport for discovery, saved recipes, scanned recipes,
-/// and the saved-profile editor. Rows own only selection and hit geometry.
+/// Profiles owns one viewport for discovery, saved recipes, expanded details,
+/// and scanned recipes. An expanded editor is part of the Saved card.
 pub const ProfilesForm = struct {
     view: widgets.FormViewport,
-    overview: bool,
     compact: bool,
     saved_count: usize,
     scanned_count: usize,
     detail_count: usize,
+    expanded: ?usize,
 
     /// Symmetric gap separating each card from the viewport edges.
     pub const outer_inset: f32 = settings_card_gutter;
@@ -339,7 +339,7 @@ pub const ProfilesForm = struct {
     pub const card_gap: f32 = 14;
     /// Vertical space reserved for the card heading and hint.
     pub const heading_height: f32 = 66;
-    /// Vertical space for profile details and its action bar.
+    /// Vertical space for the inline details heading and its action bar.
     pub const detail_heading_height: f32 = 112;
     /// Vertical pitch for one field row including its gap.
     pub const row_stride: f32 = 48;
@@ -349,31 +349,32 @@ pub const ProfilesForm = struct {
     pub const card_bottom: f32 = 12;
 
     /// Construct the page geometry with one clamped pixel scroll offset.
-    pub fn init(bounds: layout.Rect, offset: f32, overview: bool, saved_count: usize, scanned_count: usize, detail_count: usize) ProfilesForm {
+    pub fn init(bounds: layout.Rect, offset: f32, saved_count: usize, scanned_count: usize, expanded: ?usize, detail_count: usize) ProfilesForm {
+        std.debug.assert(expanded == null or expanded.? < saved_count);
         var form: ProfilesForm = .{
             .view = undefined,
-            .overview = overview,
             .compact = bounds.width < 320,
             .saved_count = saved_count,
             .scanned_count = scanned_count,
-            .detail_count = detail_count,
+            .detail_count = if (expanded != null) detail_count else 0,
+            .expanded = expanded,
         };
         form.view = widgets.FormViewport.atOffset(bounds, form.contentHeight(), offset);
         return form;
     }
-    /// Number of catalogue or details cards visible in this mode.
-    pub fn cardCount(self: ProfilesForm) usize {
-        return if (self.overview) 3 else 1;
+    /// Discovery, Saved and Scanned remain separate cards in all states.
+    pub fn cardCount(_: ProfilesForm) usize {
+        return 3;
+    }
+    /// Height inserted after the expanded saved row.
+    pub fn detailExtra(self: ProfilesForm) f32 {
+        return if (self.expanded != null) detail_heading_height + @as(f32, @floatFromInt(self.detail_count)) * row_stride + card_bottom else 0;
     }
     /// Height of one card, including its heading and rows.
     pub fn cardHeight(self: ProfilesForm, number: usize) f32 {
-        if (!self.overview) {
-            std.debug.assert(number == 0);
-            return detail_heading_height + @as(f32, @floatFromInt(self.detail_count)) * row_stride + card_bottom;
-        }
         std.debug.assert(number < 3);
         if (number == 0) return if (self.compact) 146 else 112;
-        if (number == 1) return heading_height + @as(f32, @floatFromInt(self.saved_count)) * row_stride + card_bottom;
+        if (number == 1) return heading_height + @as(f32, @floatFromInt(self.saved_count)) * row_stride + self.detailExtra() + card_bottom;
         return heading_height + @as(f32, @floatFromInt(@max(1, self.scanned_count))) * row_stride + card_bottom;
     }
     /// Unscrolled vertical origin of a card in the shared viewport.
@@ -392,31 +393,49 @@ pub const ProfilesForm = struct {
     pub fn card(self: ProfilesForm, number: usize) layout.Rect {
         return self.view.place(outer_inset, self.cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), self.cardHeight(number));
     }
-    /// Unscrolled vertical origin of an indexed row.
+    /// Offset of the expanded rows in the interleaved displayed row sequence.
+    pub fn detailStart(self: ProfilesForm) usize {
+        return if (self.expanded) |index| index + 1 else self.saved_count;
+    }
+    /// Whether a displayed row is an inline editable detail.
+    pub fn detailIndex(self: ProfilesForm, index: usize) ?usize {
+        if (self.expanded == null or index < self.detailStart() or index >= self.detailStart() + self.detail_count) return null;
+        return index - self.detailStart();
+    }
+    /// Unscrolled origin of the inline details region beneath its saved row.
+    pub fn detailTop(self: ProfilesForm) f32 {
+        return self.cardTop(1) + heading_height + @as(f32, @floatFromInt(self.expanded.? + 1)) * row_stride;
+    }
+    /// Inset details card, with no additional viewport or scrollbar.
+    pub fn detailCard(self: ProfilesForm) layout.Rect {
+        std.debug.assert(self.expanded != null);
+        return self.view.place(outer_inset + 8, self.detailTop() + 4, @max(1, self.view.bounds.width - 2 * (outer_inset + 8)), self.detailExtra() - 8);
+    }
+    /// Unscrolled vertical origin of an interleaved catalogue/detail row.
     pub fn rowTop(self: ProfilesForm, index: usize) f32 {
-        if (!self.overview) {
-            std.debug.assert(index < self.detail_count);
-            return self.cardTop(0) + detail_heading_height + @as(f32, @floatFromInt(index)) * row_stride;
+        std.debug.assert(index < self.saved_count + self.scanned_count + self.detail_count);
+        if (self.detailIndex(index)) |number| return self.detailTop() + detail_heading_height + @as(f32, @floatFromInt(number)) * row_stride;
+        const catalogue = index - (if (index >= self.detailStart() + self.detail_count) self.detail_count else @as(usize, 0));
+        if (catalogue < self.saved_count) {
+            return self.cardTop(1) + heading_height + @as(f32, @floatFromInt(catalogue)) * row_stride +
+                (if (self.expanded != null and catalogue > self.expanded.?) self.detailExtra() else @as(f32, 0));
         }
-        std.debug.assert(index < self.saved_count + self.scanned_count);
-        const saved = index < self.saved_count;
-        return self.cardTop(if (saved) 1 else 2) + heading_height + @as(f32, @floatFromInt(if (saved) index else index - self.saved_count)) * row_stride;
+        return self.cardTop(2) + heading_height + @as(f32, @floatFromInt(catalogue - self.saved_count)) * row_stride;
     }
     /// Place one interactive row within its owning card.
     pub fn row(self: ProfilesForm, index: usize) layout.Rect {
-        const inset = outer_inset + inner_inset;
+        const inset = outer_inset + inner_inset + (if (self.detailIndex(index) != null) @as(f32, 8) else 0);
         return self.view.place(inset, self.rowTop(index), @max(1, self.view.bounds.width - 2 * inset), row_height);
     }
     /// Resolve a row only when the pointer is inside the page viewport.
     pub fn hit(self: ProfilesForm, x: f32, y: f32) ?usize {
         if (!self.view.bounds.contains(x, y)) return null;
-        const count = if (self.overview) self.saved_count + self.scanned_count else self.detail_count;
-        for (0..count) |index| if (self.row(index).contains(x, y)) return index;
+        for (0..self.saved_count + self.scanned_count + self.detail_count) |index| if (self.row(index).contains(x, y)) return index;
         return null;
     }
     /// Place a Discovery source control within its card.
     pub fn scanSourceRow(self: ProfilesForm, number: usize) layout.Rect {
-        std.debug.assert(self.overview and number < 2);
+        std.debug.assert(number < 2);
         const scan = self.card(0);
         if (self.compact) return .{
             .x = scan.x + 16,
@@ -431,5 +450,89 @@ pub const ProfilesForm = struct {
             .width = width,
             .height = 34,
         };
+    }
+};
+
+/// Five settings sections laid out in one document-owned scroll viewport.
+/// Individual form geometries borrow positioned slices of that document;
+/// none owns another scroll offset, thumb, or clipping policy.
+pub const SettingsDocument = struct {
+    view: widgets.FormViewport,
+    heights: [5]f32,
+
+    /// Exactly the five sidebar sections, in stable order.
+    pub const count: usize = 5;
+    /// Document margin before the first heading and after the final card.
+    pub const outer_inset: f32 = settings_card_gutter;
+    /// Section label separate from each form's card headings.
+    pub const heading_height: f32 = 38;
+    /// Breathing room between adjacent sections.
+    pub const section_gap: f32 = 16;
+
+    /// Measure each form once from its actual width and expanded editor state.
+    pub fn init(bounds: layout.Rect, offset: f32, color_editor: ?usize, saved_count: usize, scanned_count: usize, expanded_profile: ?usize, detail_count: usize) SettingsDocument {
+        const measure: layout.Rect = .{ .x = 0, .y = 0, .width = bounds.width, .height = 1 };
+        var document: SettingsDocument = .{
+            .view = undefined,
+            .heights = .{
+                StartupForm.init(measure, 0).view.content_height,
+                AppearanceForm.contentHeight(),
+                ColorForm.init(measure, 0, color_editor).view.content_height,
+                ShortcutForm.contentHeight(),
+                ProfilesForm.init(measure, 0, saved_count, scanned_count, expanded_profile, detail_count).view.content_height,
+            },
+        };
+        document.view = widgets.FormViewport.atOffset(bounds, document.contentHeight(), offset);
+        return document;
+    }
+    /// Unscrolled section heading origin, measured from the document top.
+    pub fn sectionTop(self: SettingsDocument, index: usize) f32 {
+        std.debug.assert(index < count);
+        var top = outer_inset;
+        for (0..index) |previous| top += heading_height + self.heights[previous] + section_gap;
+        return top;
+    }
+    /// Unscrolled body origin within one document section.
+    pub fn formTop(self: SettingsDocument, index: usize) f32 {
+        return self.sectionTop(index) + heading_height;
+    }
+    /// Total document height, including the last form's trailing padding.
+    pub fn contentHeight(self: SettingsDocument) f32 {
+        return self.formTop(count - 1) + self.heights[count - 1] + outer_inset;
+    }
+    /// Place one form inside global document scroll coordinates.
+    pub fn formBounds(self: SettingsDocument, index: usize) layout.Rect {
+        std.debug.assert(index < count);
+        return self.view.place(0, self.formTop(index), self.view.bounds.width, self.heights[index]);
+    }
+    /// Place its visible section heading above the associated cards.
+    pub fn heading(self: SettingsDocument, index: usize) layout.Rect {
+        std.debug.assert(index < count);
+        return self.view.place(outer_inset + 4, self.sectionTop(index), @max(1, self.view.bounds.width - 2 * (outer_inset + 4)), heading_height);
+    }
+    /// Sidebar index target, clamped even when the final section is short.
+    pub fn anchor(self: SettingsDocument, index: usize) f32 {
+        return std.math.clamp(self.sectionTop(index) - outer_inset, 0, @max(0, self.view.content_height - self.view.bounds.height));
+    }
+    /// Active section follows scrolling, not a separate navigable-page state.
+    pub fn active(self: SettingsDocument) usize {
+        const leading = self.view.offset + @min(96, self.view.bounds.height * 0.25);
+        var selected: usize = 0;
+        for (1..count) |index| {
+            if (self.sectionTop(index) > leading) break;
+            selected = index;
+        }
+        return selected;
+    }
+    /// Resolve a pointer to its section of the continuous document.
+    pub fn sectionAt(self: SettingsDocument, y: f32) ?usize {
+        if (y < self.view.bounds.y or y >= self.view.bounds.y + self.view.bounds.height) return null;
+        const at = y - self.view.bounds.y + self.view.offset;
+        var selected: usize = 0;
+        for (1..count) |index| {
+            if (self.sectionTop(index) > at) break;
+            selected = index;
+        }
+        return selected;
     }
 };

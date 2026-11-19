@@ -146,30 +146,29 @@ the UI scale. The centred origin splits sub-cell slack above/below and left/righ
 while aligning to the physical grid; generated blocks
 and box rules retain their raster coverage at fractional desktop scales.
 
-The right-side Settings panel retains sidebar/content focus, pointer selectors,
-profile New/Duplicate/Delete and View/Edit, a Startup default selector, and
-global Save/Cancel in the header.
-Rows select on one click; Enter or double-click begins an edit. Finite profile,
-theme and toggle choices use arrows and ignore typed text. Enter/Save commits;
-Escape cancels the edit, then search, then content focus before closing Settings.
-Tab moves between sidebar/content, or field/Save/Cancel during an edit.
+Settings is one continuous scrollable document. Its five sidebar entries jump
+to Startup, Appearance, Color schemes, Shortcuts and Profiles; the active entry
+follows document scrolling. Exactly one scrollbar belongs to the complete
+document, outside every card. The fixed header retains Search and global
+Save/Cancel/Close. Form controls are pointer navigated, while active fields
+support text editing, keyboard choices and Enter to stage; Ctrl+S saves and
+Escape cancels the edit or exits Search before closing Settings.
+Finite profile, theme and toggle choices ignore typed text.
 Interaction exposes the existing copy/paste/find/history shortcut settings.
 Shortcuts groups application, window, tab, pane, pane navigation and terminal
-actions into separate cards on one page-level scroller. The cards change only
-presentation: shortcut IDs, bindings and recording remain unchanged. Profiles
-uses the same page-level scroller for its Discovery, Saved profiles and Scanned
-profiles cards; editing a saved profile opens its own scrollable details card.
-Only the page owns scroll position and the scrollbar, while the selected
-profile remains independent of scrolling. The Colors page includes its terminal
-palette preview as a scrolling card; its RGB sliders expand below the edited
-field rather than occupying a fixed footer.
-Search preserves normal row geometry. Settings, installed fonts and both palettes
-share text editing, list viewports, row hit geometry and selection/hover styling.
-Settings policy remains in settings.zig; settings_pages.zig owns the five
-page geometries, settings_input.zig owns routing and scroll interactions, and
+actions into separate cards without changing shortcut IDs, bindings or capture.
+Profiles groups Discovery, Saved and Scanned cards in the same document.
+Editing a saved profile expands its detail fields directly beneath that profile
+in the Saved card, with inline Close/Duplicate/Delete actions. The selected
+profile remains independent of scrolling. Color schemes includes a terminal
+preview card and RGB sliders that expand below an edited color row; neither
+requires a fixed footer. Global Search retains a separate temporary results
+list and reveals matching fields in the continuous document.
+Settings policy remains in settings.zig; settings_pages.zig owns the document
+anchors and card geometry, settings_input.zig owns routing and scroll interactions, and
 settings_paint.zig owns Settings drawing. The SDL host binds those modules to
 its existing editor/draft state without constructing a second controller.
-Settings-specific interaction and pixel proofs live in settings_ui_test.zig.
+Settings-specific document, interaction and pixel proofs live in settings_ui_test.zig.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,
 Ctrl+V pastes, Home/End and Left/Right move the caret, and Delete/Backspace edit
 either side. Shift+arrows/Home/End extends a UTF-8 selection; typing replaces it,
@@ -197,8 +196,8 @@ entry is read-only, can be disabled individually, and can be duplicated into an
 independent editable saved profile. A rescan updates matched recipes, keeps each
 disable choice, and marks missing entries stale without deleting them. Disabled
 and stale entries do not appear in launch suggestions. Scan-source switches do
-not hide previously cached entries. A saved profile's details editor is now
-inside Profiles, not an extra sidebar page.
+not hide previously cached entries. A saved profile's detail fields expand
+in place within Saved profiles; they never navigate to another page.
 
 Enabled, non-stale scanned entries can also be chosen as the startup default,
 from the Startup selector. Their IDs remain stable

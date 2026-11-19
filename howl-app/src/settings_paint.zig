@@ -127,9 +127,11 @@ pub fn ForHost(comptime Host: type) type {
             const editor = &self.settings_editor.?;
             const form = self.startupForm();
             const colors = try self.uiPalette();
-            try setClip(self.renderer, form.view.bounds);
-            defer clearClip(self.renderer);
+            const body = self.settingsBody();
             const card = form.card(0);
+            if (card.y >= body.y + body.height or card.y + card.height <= body.y) return;
+            try setClip(self.renderer, body);
+            defer clearClip(self.renderer);
             try self.drawSettingsCard(card);
             try self.clippedText("New terminals", .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 }, card.x + 16);
             try self.clippedTextColor("Used for new tabs and windows.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
@@ -143,10 +145,6 @@ pub fn ForHost(comptime Host: type) type {
             else
                 (try self.settingsConfiguration().defaultProfile()).name;
             try self.drawSettingsSelect(form.select(), profile_name, focused, editor.editing != null and editor.editing.? == .default_profile);
-            if (form.view.scrollbar()) |bar| {
-                try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
-                try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
-            }
         }
         /// Paint Appearance section headings and card surfaces.
         pub fn drawAppearanceCards(self: *Host, form: AppearanceForm) !void {
@@ -248,32 +246,31 @@ pub fn ForHost(comptime Host: type) type {
                 try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
             }
         }
-        /// Paint separate saved, scanned and detail card surfaces.
+        /// Paint Discovery, Saved and Scanned cards with optional inline details.
         pub fn drawProfilesCards(self: *Host, form: ProfilesForm) !void {
             const colors = try self.uiPalette();
-            if (form.overview) {
-                const scan = form.card(0);
-                if (scan.y < form.view.bounds.y + form.view.bounds.height and scan.y + scan.height > form.view.bounds.y) try self.drawProfileScanCard();
-                for (1..form.cardCount()) |number| {
-                    const card = form.card(number);
-                    if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
-                    try self.drawSettingsCard(card);
-                    const width = if (number == 1) @max(1, self.settingsToolbarButton(0).x - card.x - 24) else @max(1, card.width - 32);
-                    const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 };
-                    const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 };
-                    try self.clippedText(if (number == 1) "Saved profiles" else "Scanned profiles", heading, heading.x);
-                    try self.clippedTextColor(if (number == 1) "Local and editable recipes." else "Read-only cached discoveries.", hint, hint.x, colors.muted);
-                    if (number == 2 and form.scanned_count == 0) {
-                        const empty: layout.Rect = .{ .x = card.x + ProfilesForm.inner_inset, .y = card.y + ProfilesForm.heading_height, .width = @max(1, card.width - 2 * ProfilesForm.inner_inset), .height = 44 };
-                        try self.clippedTextColor("Nothing scanned yet", empty, empty.x, colors.muted);
-                    }
+            const scan = form.card(0);
+            if (scan.y < form.view.bounds.y + form.view.bounds.height and scan.y + scan.height > form.view.bounds.y) try self.drawProfileScanCard();
+            for (1..form.cardCount()) |number| {
+                const card = form.card(number);
+                if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
+                try self.drawSettingsCard(card);
+                const width = if (number == 1) @max(1, self.settingsToolbarButton(0).x - card.x - 24) else @max(1, card.width - 32);
+                const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 };
+                const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 };
+                try self.clippedText(if (number == 1) "Saved profiles" else "Scanned profiles", heading, heading.x);
+                try self.clippedTextColor(if (number == 1) "Local and editable recipes." else "Read-only cached discoveries.", hint, hint.x, colors.muted);
+                if (number == 2 and form.scanned_count == 0) {
+                    const empty: layout.Rect = .{ .x = card.x + ProfilesForm.inner_inset, .y = card.y + ProfilesForm.heading_height, .width = @max(1, card.width - 2 * ProfilesForm.inner_inset), .height = 44 };
+                    try self.clippedTextColor("Nothing scanned yet", empty, empty.x, colors.muted);
                 }
-                return;
             }
-            const card = form.card(0);
-            try self.drawSettingsCard(card);
-            const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 };
-            const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 };
+            if (form.expanded == null) return;
+            const detail = form.detailCard();
+            if (detail.y >= form.view.bounds.y + form.view.bounds.height or detail.y + detail.height <= form.view.bounds.y) return;
+            try self.drawSettingsCard(detail);
+            const heading: layout.Rect = .{ .x = detail.x + 16, .y = detail.y + 10, .width = @max(1, detail.width - 32), .height = 25 };
+            const hint: layout.Rect = .{ .x = detail.x + 16, .y = detail.y + 34, .width = @max(1, detail.width - 32), .height = 24 };
             try self.clippedText("Profile details", heading, heading.x);
             var buffer: [160]u8 = undefined;
             const note = try std.fmt.bufPrint(&buffer, "{s} · Save applies your changes.", .{(try self.settingsConfiguration().profile(self.settings_editor.?.profile)).name});
@@ -282,10 +279,17 @@ pub fn ForHost(comptime Host: type) type {
         /// Paint contextual profile actions inside the owning card.
         pub fn drawProfilesToolbar(self: *Host) !void {
             const e = self.settings_editor.?;
-            const labels: [3][]const u8 = if (e.page == .defaults) (if (self.profilesForm().card(1).width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" }) else .{ "< Profiles", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
+            const labels: [3][]const u8 = if (self.profilesForm().card(1).width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" };
             for (labels, 0..) |label, number| {
                 const button = self.settingsToolbarButton(number);
                 try self.drawSettingsControl(button, e.button == @as(u8, @intCast(number)));
+                try self.clippedText(label, button, button.x + 8);
+            }
+            if (!e.details_open) return;
+            const detail_labels = [_][]const u8{ "Close", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
+            for (detail_labels, 0..) |label, number| {
+                const button = self.settingsDetailButton(number);
+                try self.drawSettingsControl(button, self.isHovered(button));
                 try self.clippedText(label, button, button.x + 8);
             }
         }
@@ -320,7 +324,7 @@ pub fn ForHost(comptime Host: type) type {
             }
         }
 
-        /// Compose the complete Settings view with one page scrollbar.
+        /// Compose the Settings document and its single outer scrollbar.
         pub fn drawSettings(self: *Host) !void {
             const e = &self.settings_editor.?;
             const colors = try self.uiPalette();
@@ -349,22 +353,49 @@ pub fn ForHost(comptime Host: type) type {
             }
             if (box.width > 360) try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
             const title_width = self.settingsHeaderButton(.save).x - body.x - 10;
-            if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else if (e.page == .profiles) "Profile details" else settings.titles[@backingInt(e.page)], .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
+            if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else "All settings", .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
             try self.drawSettingsHeaderButtons();
+            const active = if (e.search) @as(usize, 0) else self.settingsDocument().active();
             for (settings.titles, 0..) |title, index| {
                 const row = self.settingsNavRow(index);
-                if (!e.search and (if (e.page == .profiles) index == @backingInt(settings.Page.defaults) else @backingInt(e.page) == index)) {
+                if (!e.search and active == index) {
                     try drawing.fillRounded(self.renderer, row, colors.active, corner_radius);
                     try drawing.fillRounded(self.renderer, .{ .x = row.x, .y = row.y + 6, .width = 2, .height = row.height - 12 }, colors.accent, 1);
                 } else if (self.isHovered(row)) try drawing.fillRounded(self.renderer, row, appearance.hover(colors.idle), corner_radius);
                 try self.clippedText(title, row, row.x + 10);
             }
-            const startup_form = !e.search and e.page == .startup;
-            const simple_form = self.simpleSettingsForm();
-            const appearance_form = self.appearanceSettings();
-            const color_form = self.colorSettings();
-            const shortcut_form = self.shortcutSettings();
-            const profiles_form = self.profilesSettings();
+            if (e.search) {
+                try self.drawSettingsSection(null);
+            } else {
+                const document = self.settingsDocument();
+                for (0..settings.titles.len) |index| {
+                    const form_bounds = document.formBounds(index);
+                    const heading = document.heading(index);
+                    if (heading.y >= body.y + body.height or form_bounds.y + form_bounds.height <= body.y) continue;
+                    try setClip(self.renderer, body);
+                    try self.clippedTextColor(settings.titles[index], heading, heading.x, colors.text);
+                    clearClip(self.renderer);
+                    try self.drawSettingsSection(@fromBackingInt(@intCast(index)));
+                }
+                if (document.view.scrollbar()) |bar| {
+                    try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
+                    try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
+                }
+            }
+            try self.drawSettingsDropdown();
+        }
+        /// Paint a borrowed section without creating a second scroll owner.
+        /// A null section is the separate, bounded global Search result list.
+        pub fn drawSettingsSection(self: *Host, page: ?settings.Page) !void {
+            const e = &self.settings_editor.?;
+            const colors = try self.uiPalette();
+            const body = self.settingsBody();
+            const startup_form = page != null and page.? == .startup;
+            const simple_form = page == null;
+            const appearance_form = page != null and page.? == .appearance;
+            const color_form = page != null and page.? == .colors;
+            const shortcut_form = page != null and page.? == .mappings;
+            const profiles_form = page != null and page.? == .defaults;
             const card_form = appearance_form or color_form or shortcut_form or profiles_form;
             if (simple_form and !card_form) {
                 try self.drawSettingsCard(self.settingsListCard());
@@ -373,15 +404,19 @@ pub fn ForHost(comptime Host: type) type {
             if (e.search) try self.drawField(self.settingsField(), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
             if (startup_form) {
                 try self.drawStartupForm();
-                try self.drawSettingsDropdown();
                 return;
             }
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
             const count = try settings.rows(self.settingsConfiguration(), &all);
-            const visible = e.indices(all[0..count], &indices);
-            if (!card_form) e.list.selected = @min(e.list.selected, visible -| 1);
-            if (profiles_form) e.form_row = @min(e.form_row, visible -| 1);
+            var current_section = e.*;
+            if (page) |section| {
+                current_section.page = section;
+                current_section.search = false;
+            }
+            const visible = current_section.indices(all[0..count], &indices);
+            if (simple_form) e.list.selected = @min(e.list.selected, visible -| 1);
+            if (profiles_form and e.page == .defaults) e.form_row = @min(e.form_row, visible -| 1);
             const start = if (card_form) @as(usize, 0) else self.settingsStart(visible);
             const rows = self.settingsRows();
             const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
@@ -414,16 +449,16 @@ pub fn ForHost(comptime Host: type) type {
                 const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else if (shortcut_form) shortcuts_form.row(number) else if (profiles_form) profiles.row(number) else rows.row(number - start);
                 if (card_form and (rect.y >= body.y + body.height or rect.y + rect.height <= body.y)) continue;
                 if (profiles_form) {
-                    try self.drawSettingsCardRow(rect, number == e.form_row, self.isHovered(rect), e.content_focus);
+                    try self.drawSettingsCardRow(rect, e.page == .defaults and number == e.form_row, self.isHovered(rect), e.content_focus and e.page == .defaults);
                 } else if (simple_form and !card_form) {
                     try self.drawSettingsCardRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
                 } else if (!card_form) {
                     try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
                     try outline(self.renderer, rect, colors.border);
                 }
-                const editing_row = e.editing != null and (if (card_form) number == e.form_row else number == e.list.selected);
+                const editing_row = e.editing != null and (if (card_form) e.page == page.? and number == e.form_row else number == e.list.selected);
                 var label: [512]u8 = undefined;
-                const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
+                const name = if (row.scope.len == 0 or (page != null and page.? != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
                 var value: [4096]u8 = undefined;
                 const raw_contents = if (editing_row) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.settingsConfiguration(), &value);
                 const contents = if (raw_contents.len != 0 or editing_row) raw_contents else switch (row.target) {
@@ -456,7 +491,7 @@ pub fn ForHost(comptime Host: type) type {
                     try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
                     const button = savedEditButton(rect);
                     try self.drawSettingsControl(button, self.isHovered(button));
-                    try self.clippedText("Edit", button, button.x + 17);
+                    try self.clippedText(if (e.details_open and e.profile == row.target.set_default) "Close" else "Edit", button, button.x + 17);
                 } else if (row.target == .scanned and !e.search) {
                     const entry = self.settingsConfiguration().value.scanned_profiles[row.target.scanned];
                     const name_rect: layout.Rect = .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 180), .height = rect.height };
@@ -474,7 +509,11 @@ pub fn ForHost(comptime Host: type) type {
                     try self.drawStartupSwitch(toggle, enabled, self.isHovered(toggle));
                 } else {
                     try self.clippedText(name, left, left.x);
-                    if (color_form and (row.target == .reset_app_colors or row.target == .reset_terminal_colors)) {
+                    if (profiles_form and (row.target == .add_environment or row.target == .delete_environment)) {
+                        const action = settingsRowField(rect);
+                        try self.drawSettingsControl(action, self.isHovered(action));
+                        try self.clippedText(if (row.target == .add_environment) "Add" else "Remove", action, action.x + 8);
+                    } else if (color_form and (row.target == .reset_app_colors or row.target == .reset_terminal_colors)) {
                         const reset_button = settingsResetButton(rect);
                         try self.drawSettingsControl(reset_button, self.isHovered(reset_button));
                         try self.clippedText("Reset", reset_button, reset_button.x + 8);
@@ -521,19 +560,12 @@ pub fn ForHost(comptime Host: type) type {
                     try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
                 }
             }
-            if (color_form and e.editing != null and e.edit.kind == .color) try self.drawColorEditor();
+            if (color_form and e.page == .colors and e.editing != null and e.edit.kind == .color) try self.drawColorEditor();
             if (clipped_rows) {
                 clearClip(self.renderer);
                 clipped_rows = false;
             }
-            if (card_form) {
-                const view = if (appearance_form) form.view else if (color_form) colors_form.view else if (shortcut_form) shortcuts_form.view else profiles.view;
-                if (view.scrollbar()) |bar| {
-                    try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
-                    try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
-                }
-            } else try self.drawListScroll(rows, start, visible);
-            try self.drawSettingsDropdown();
+            if (simple_form) try self.drawListScroll(rows, start, visible);
         }
     };
 }

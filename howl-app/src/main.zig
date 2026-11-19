@@ -102,7 +102,6 @@ const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, altern
 const SettingsHeaderAction = pages.SettingsHeaderAction;
 const settings_header_height = pages.settings_header_height;
 const settings_nav_top = pages.settings_nav_top;
-const settings_card_gutter = pages.settings_card_gutter;
 const settings_card_padding = pages.settings_card_padding;
 const HeaderLabel = struct {
     bytes: [1024]u8 = @splat(0),
@@ -155,11 +154,6 @@ const HeaderCache = struct {
         self.* = .{};
     }
 };
-const StartupForm = pages.StartupForm;
-const AppearanceForm = pages.AppearanceForm;
-const ColorForm = pages.ColorForm;
-const ShortcutForm = pages.ShortcutForm;
-const ProfilesForm = pages.ProfilesForm;
 /// Direct SDL host for terminal panes, Settings state and desktop lifecycle.
 pub const App = struct {
     init: std.process.Init,
@@ -288,8 +282,6 @@ pub const App = struct {
     pub const settingsScrollbarPress = InputUI.settingsScrollbarPress;
     /// Bind Settings input and geometry for settings Scrollbar Move to the SDL host.
     pub const settingsScrollbarMove = InputUI.settingsScrollbarMove;
-    /// Bind Settings input and geometry for simple Settings Form to the SDL host.
-    pub const simpleSettingsForm = InputUI.simpleSettingsForm;
     /// Bind Settings input and geometry for settings List Card to the SDL host.
     pub const settingsListCard = InputUI.settingsListCard;
     /// Bind Settings input and geometry for settings Rows to the SDL host.
@@ -314,6 +306,20 @@ pub const App = struct {
     pub const settingsToolbarButton = InputUI.settingsToolbarButton;
     /// Bind Settings input and geometry for settings Toolbar Action to the SDL host.
     pub const settingsToolbarAction = InputUI.settingsToolbarAction;
+    /// Bind inline saved-profile controls to the SDL host.
+    pub const settingsDetailButton = InputUI.settingsDetailButton;
+    /// Bind inline saved-profile actions to the SDL host.
+    pub const settingsDetailAction = InputUI.settingsDetailAction;
+    /// Bind inline saved-profile scroll reveal to the SDL host.
+    pub const settingsRevealProfile = InputUI.settingsRevealProfile;
+    /// Bind search navigation and field activation to the Settings input owner.
+    pub const activateSetting = InputUI.activateSetting;
+    /// Bind document row reveal to the Settings input owner.
+    pub const settingsRevealRow = InputUI.settingsRevealRow;
+    /// Bind document active-section tracking to the Settings input owner.
+    pub const settingsTrackSection = InputUI.settingsTrackSection;
+    /// Bind document geometry to the Settings input owner.
+    pub const settingsDocument = InputUI.settingsDocument;
     /// Bind Settings input and geometry for scan Settings Profiles to the SDL host.
     pub const scanSettingsProfiles = InputUI.scanSettingsProfiles;
     /// Bind Settings input and geometry for overview Clone Target to the SDL host.
@@ -334,6 +340,8 @@ pub const App = struct {
     pub const colorPoint = InputUI.colorPoint;
     /// Bind Settings painting for the inline Color Editor to the SDL host.
     pub const drawColorEditor = PaintUI.drawColorEditor;
+    /// Bind document section painting to the SDL host.
+    pub const drawSettingsSection = PaintUI.drawSettingsSection;
     /// Bind Settings input and geometry for settings Click to the SDL host.
     pub const settingsClick = InputUI.settingsClick;
     /// Bind Settings input and geometry for settings Appearance Click to the SDL host.
@@ -918,7 +926,16 @@ pub const App = struct {
     pub fn discardSettings(self: *App) void {
         if (self.settings_draft) |*draft| draft.deinit();
         self.settings_draft = null;
-        if (self.settings_editor) |*editor| editor.cancel();
+        if (self.settings_editor) |*editor| {
+            editor.cancel();
+            // An unsaved new profile can vanish on Cancel. Never keep its
+            // now-invalid index as an expanded disclosure.
+            if (editor.profile >= self.configuration.profileCount()) {
+                editor.profile = 0;
+                editor.details_open = false;
+                editor.form_row = 0;
+            }
+        }
     }
     fn closeSettings(self: *App) void {
         const pending = self.settings_draft != null or (if (self.settings_editor) |editor| editor.editing != null else false);
@@ -955,7 +972,8 @@ pub const App = struct {
             self.setNotice("Settings saved");
         }
     }
-    fn profileInUse(self: *App, index: u8) !bool {
+    /// Guard profile retirement while any live terminal still borrows its recipe.
+    pub fn profileInUse(self: *App, index: u8) !bool {
         const id = (try self.settingsConfiguration().profile(index)).id;
         for (self.tabs[0..self.tab_count]) |value| {
             const t = value.?;
@@ -975,78 +993,6 @@ pub const App = struct {
         self.cancelComposition();
         self.settings_editor.?.cancel();
         self.setNotice("Pending changes — Save to apply");
-    }
-    /// Navigate to or begin editing an indexed Settings target.
-    pub fn activateSetting(self: *App, row: settings.Row) !void {
-        const editor = &self.settings_editor.?;
-        if (editor.search) {
-            editor.search = false;
-            editor.query_len = 0;
-            editor.page = row.page;
-            editor.profile = switch (row.target) {
-                .profile => |field| field.index,
-                .environment => |field| field.profile,
-                .clone_profile, .set_default, .delete_profile, .add_environment => |index| index,
-                .delete_environment => |field| field.profile,
-                else => editor.profile,
-            };
-            editor.list = .{};
-            self.settings_scroll_offset = 0;
-            self.settings_scroll_grab = null;
-            editor.content_focus = true;
-            var all: [settings.row_limit]settings.Row = undefined;
-            var shown: [settings.row_limit]u16 = undefined;
-            const count = try settings.rows(self.settingsConfiguration(), &all);
-            const visible = editor.indices(all[0..count], &shown);
-            for (shown[0..visible], 0..) |index, number| {
-                if (std.meta.eql(all[index].target, row.target)) {
-                    editor.list.selected = number;
-                    if (editor.page == .appearance) {
-                        editor.form_row = number;
-                        self.settings_scroll_offset = AppearanceForm.rowTop(number) - AppearanceForm.rowTop(0);
-                    } else if (editor.page == .colors) {
-                        editor.form_row = number;
-                        self.settings_scroll_offset = ColorForm.rowTop(number) - ColorForm.rowTop(0);
-                    } else if (editor.page == .mappings) {
-                        editor.form_row = number;
-                        self.settings_scroll_offset = ShortcutForm.rowTop(number) - settings_card_gutter;
-                    } else if (editor.page == .defaults or editor.page == .profiles) {
-                        editor.form_row = number;
-                        self.settings_scroll_offset = self.profilesForm().rowTop(number) - ProfilesForm.outer_inset;
-                    }
-                    break;
-                }
-            }
-            self.cancelComposition();
-            return;
-        }
-        if (row.target == .information or row.target == .scanned) return;
-        if (row.target == .set_default and !editor.search) {
-            editor.profile = row.target.set_default;
-            editor.page = .profiles;
-            editor.list = .{};
-            editor.form_row = 0;
-            self.settings_scroll_offset = 0;
-            editor.content_focus = true;
-            return;
-        }
-        if (row.target == .font_family) return self.openFontChooser(.family, self.settingsConfiguration().value.font.paths()[0]);
-        if (row.target == .delete_profile) {
-            if (try self.profileInUse(row.target.delete_profile)) return error.ProfileInUse;
-            if (self.settings_editor.?.delete_pending != row.target.delete_profile) {
-                self.settings_editor.?.delete_pending = row.target.delete_profile;
-                self.setNotice("Press Enter again to delete this profile");
-                return;
-            }
-        }
-        self.cancelComposition();
-        if (row.editable()) {
-            try self.settings_editor.?.begin(row, self.settingsConfiguration());
-            if (row.target == .binding) {
-                self.settings_editor.?.recording = true;
-                self.setNotice("Press a shortcut — Esc cancels");
-            }
-        } else try self.changeSetting(row.target, "");
     }
     /// Open the app-owned font picker for one Settings field.
     pub fn openFontChooser(self: *App, mode: font_chooser.Mode, current_path: []const u8) !void {

@@ -460,8 +460,11 @@ pub const Editor = struct {
     list: widgets.List = .{},
     form_row: usize = 0,
     profile: u8 = 0,
+    /// Expanded saved recipe within Profiles; not a second navigable page.
+    details_open: bool = false,
     content_focus: bool = false,
     search: bool = false,
+    search_origin_offset: f32 = 0,
     query: [128]u8 = @splat(0),
     query_len: usize = 0,
     query_edit: widgets.Text = .{},
@@ -474,25 +477,25 @@ pub const Editor = struct {
     len: usize = 0,
     delete_pending: ?u8 = null,
 
-    /// Filters global search or the current page without retaining borrowed rows.
+    /// Filters global search or the current section, interleaving selected
+    /// profile details immediately after their saved catalogue entry.
     pub fn indices(self: *const Editor, supplied: []const Row, out: *[row_limit]u16) usize {
         var count: usize = 0;
         for (supplied, 0..) |row, index| {
-            if (!self.search and row.page != self.page) continue;
-            // Discovery source switches have their own controls above the
-            // Profiles catalogue. Global search still includes both.
-            if (!self.search and self.page == .defaults and
-                (row.target == .discover_shells or row.target == .discover_ssh_hosts)) continue;
-            if (!self.search and self.page == .profiles) {
-                const profile_index: ?u8 = switch (row.target) {
-                    .information => 0,
-                    .profile => |field| field.index,
-                    .environment => |field| field.profile,
-                    .add_environment => |index_value| index_value,
-                    .delete_environment => |field| field.profile,
-                    else => null,
-                };
-                if (profile_index == null or profile_index.? != self.profile) continue;
+            if (!self.search) {
+                if (row.page == .profiles and self.page == .defaults and self.details_open) {
+                    const profile_index: ?u8 = switch (row.target) {
+                        .information => 0,
+                        .profile => |field| field.index,
+                        .environment => |field| field.profile,
+                        .add_environment => |number| number,
+                        .delete_environment => |field| field.profile,
+                        else => null,
+                    };
+                    if (profile_index == null or profile_index.? != self.profile) continue;
+                } else if (row.page != self.page) continue;
+                // Source switches own independent controls in the Discovery card.
+                if (self.page == .defaults and (row.target == .discover_shells or row.target == .discover_ssh_hosts)) continue;
             }
             const query = self.query[0..self.query_len];
             if (self.search and !contains(row.label, query) and !contains(row.scope, query)) continue;
@@ -863,7 +866,7 @@ test "saved shortcut text outlives registry iteration and the previous config" {
     try std.testing.expectEqual(@as(?usize, 0), changed.find(c.SDLK_T, c.SDL_KMOD_LCTRL | c.SDL_KMOD_LALT));
 }
 
-test "profile editor shows only selected recipe while global search still finds all recipes" {
+test "Profiles interleaves selected recipe details while global search sees all recipes" {
     var current = config.Config.defaults(std.testing.allocator);
     defer current.deinit();
     try accept(&current, .add_profile, "");
@@ -871,10 +874,13 @@ test "profile editor shows only selected recipe while global search still finds 
     var all: [row_limit]Row = undefined;
     const count = try rows(&current, &all);
     var found: [row_limit]u16 = undefined;
-    var editor: Editor = .{ .page = .profiles, .profile = 1 };
+    var editor: Editor = .{ .page = .defaults, .profile = 1, .details_open = true };
     const shown = editor.indices(all[0..count], &found);
-    try std.testing.expect(shown > 0);
-    for (found[0..shown]) |index_value| switch (all[index_value].target) {
+    try std.testing.expectEqual(@as(usize, 10), shown);
+    try std.testing.expectEqual(Target{ .set_default = 0 }, all[found[0]].target);
+    try std.testing.expectEqual(Target{ .set_default = 1 }, all[found[1]].target);
+    try std.testing.expectEqual(Target{ .set_default = 2 }, all[found[shown - 1]].target);
+    for (found[2 .. shown - 1]) |index_value| switch (all[index_value].target) {
         .profile => |field| try std.testing.expectEqual(@as(u8, 1), field.index),
         .add_environment => |value| try std.testing.expectEqual(@as(u8, 1), value),
         else => return error.UnexpectedProfileRow,

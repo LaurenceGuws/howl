@@ -259,3 +259,22 @@ This clears page-specific footer ownership but does not yet combine the five
 page viewports. A single document will require shared section anchors,
 one scroll offset and active-section tracking; Profile details must also
 become an inline disclosure rather than a separate internal page.
+
+## One scrolling Settings document (19 November 2026)
+
+Captain accepted retiring the five independently navigable Settings pages.
+The sidebar is an index over one continuous Startup, Appearance, Color schemes,
+Shortcuts and Profiles document, with section anchors and active-section
+highlight derived from the document's scroll position. One clipped viewport
+owns the scroll offset and outer scrollbar; existing forms borrow positioned
+subregions and do not own scrollbars. Their category cards and rounded chrome
+remain intact.
+
+Saved-profile details expand directly beneath the chosen saved row inside its
+card, with Close/Duplicate/Delete in the expanded region and all mutations
+staged under the unchanged global Save/Cancel transaction. Color editors and
+profile details grow the measured document, moving subsequent sections with
+the same pointer/paint geometry. Global Search temporarily displays results
+and reveals the matched field back in the document. Field activation and
+section routing now live in settings_input.zig rather than main.zig; main.zig
+retains live config, draft persistence, and terminal ownership.
