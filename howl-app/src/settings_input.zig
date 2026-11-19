@@ -11,14 +11,8 @@ const layout = @import("layout.zig");
 const discovery = @import("discovery.zig");
 const keybindings = @import("keybindings.zig");
 const input = @import("input.zig");
-const drawing = @import("pixels.zig");
-const icons = @import("icons.zig");
 const pages = @import("settings_pages.zig");
 const allocator = std.heap.smp_allocator;
-const fill = drawing.fill;
-const outline = drawing.outline;
-const setClip = drawing.setClip;
-const clearClip = drawing.clearClip;
 const SettingsHeaderAction = pages.SettingsHeaderAction;
 const StartupForm = pages.StartupForm;
 const AppearanceForm = pages.AppearanceForm;
@@ -79,14 +73,13 @@ pub fn ForHost(comptime Host: type) type {
             self.settings_scroll_offset = 0;
             self.settings_scroll_grab = null;
         }
-        /// Page viewport bounds, reserving fixed footer space where required.
+        /// Page viewport bounds with one uniform bottom inset.
         pub fn settingsBody(self: *const Host) layout.Rect {
             const box = self.settingsRect();
             const e = self.settings_editor.?;
             const sidebar = @min(160, box.width / 3);
             const top: f32 = settings_header_height + (if (e.search) @as(f32, 42) else 0);
-            const bottom: f32 = if (!e.search and (e.page == .colors or (e.editing != null and e.edit.kind == .color))) 106 else if (!e.search and e.page == .defaults) 54 else 12;
-            return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - bottom) };
+            return .{ .x = box.x + sidebar + 12, .y = box.y + top, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - top - 12) };
         }
         /// Whether the Discovery source controls stack vertically.
         pub fn settingsScanCompact(self: *const Host) bool {
@@ -110,7 +103,9 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Color section geometry at the current page offset.
         pub fn colorForm(self: *const Host) ColorForm {
-            return ColorForm.init(self.settingsBody(), self.settings_scroll_offset);
+            const editor = self.settings_editor.?;
+            const expanded = if (!editor.search and editor.page == .colors and editor.editing != null and editor.edit.kind == .color) editor.form_row else null;
+            return ColorForm.init(self.settingsBody(), self.settings_scroll_offset, expanded);
         }
         /// Shortcut category cards at the current page offset.
         pub fn shortcutForm(self: *const Host) ShortcutForm {
@@ -353,31 +348,9 @@ pub fn ForHost(comptime Host: type) type {
                 else => null,
             };
         }
-        /// The selected Profiles row can become a default only while its cached
-        /// recipe is active. Keep the footer stable for inactive scanned rows.
-        pub fn overviewDefaultID(self: *Host) !?[]const u8 {
-            const target = (try self.overviewCloneTarget()) orelse return null;
-            return switch (target) {
-                .clone_profile => |index| (try self.settingsConfiguration().profile(index)).id,
-                .clone_scanned => |index| blk: {
-                    const entries = self.settingsConfiguration().value.scanned_profiles;
-                    if (index >= entries.len) break :blk null;
-                    const entry = entries[index];
-                    break :blk if (entry.enabled and !entry.stale) entry.recipe.id else null;
-                },
-                else => null,
-            };
-        }
         /// Bounds of one inline RGB channel slider.
         pub fn colorBar(self: *const Host, channel: usize) layout.Rect {
-            const box = self.settingsRect();
-            const body = self.settingsBody();
-            return .{ .x = body.x + 24, .y = box.y + box.height - 100 + @as(f32, @floatFromInt(channel)) * 22, .width = @max(1, body.width - 120), .height = 18 };
-        }
-        /// Fixed Set default action outside the Profiles scroll viewport.
-        pub fn settingsDefaultButton(self: *const Host) layout.Rect {
-            const box = self.settingsRect();
-            return .{ .x = self.settingsBody().x, .y = box.y + box.height - 46, .width = 136, .height = 30 };
+            return self.colorForm().editorBar(channel);
         }
         /// Edit action aligned with a saved profile row.
         pub fn savedEditButton(row: layout.Rect) layout.Rect {
@@ -393,9 +366,7 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Preset reset action beside the inline color sliders.
         pub fn colorReset(self: *const Host) layout.Rect {
-            const body = self.settingsBody();
-            const bar = self.colorBar(0);
-            return .{ .x = body.x + body.width - 82, .y = bar.y, .width = 78, .height = 62 };
+            return self.colorForm().editorReset();
         }
         /// Resolve the in-progress color edit against its current value.
         pub fn editedColor(self: *Host) !vt.Terminal.Rgb {
@@ -418,35 +389,6 @@ pub fn ForHost(comptime Host: type) type {
             e.len = text.len;
             e.edit = .{ .kind = .color, .cursor = text.len };
             e.button = null;
-        }
-        /// Paint inline RGB sliders and the current color sample.
-        pub fn drawColorEditor(self: *Host) !void {
-            const rgb = try self.editedColor();
-            const colors = try self.uiPalette();
-            for ([_]u8{ rgb.r, rgb.g, rgb.b }, [_][]const u8{ "R", "G", "B" }, 0..) |value, label, channel| {
-                const bar = self.colorBar(channel);
-                try self.clippedText(label, .{ .x = bar.x - 24, .y = bar.y - 4, .width = 24, .height = 24 }, bar.x - 24);
-                for (0..64) |step| {
-                    var shade = rgb;
-                    const component: u8 = @intCast(step * 4);
-                    switch (channel) {
-                        0 => shade.r = component,
-                        1 => shade.g = component,
-                        2 => shade.b = component,
-                        else => return error.InvalidColorRole,
-                    }
-                    try fill(self.renderer, .{ .x = bar.x + @as(f32, @floatFromInt(step)) * bar.width / 64, .y = bar.y, .width = bar.width / 64 + 1, .height = bar.height }, .{ .r = shade.r, .g = shade.g, .b = shade.b, .a = 255 });
-                }
-                try outline(self.renderer, bar, colors.border);
-                const thumb: layout.Rect = .{ .x = bar.x + @as(f32, @floatFromInt(value)) * bar.width / 255 - 2, .y = bar.y - 2, .width = 4, .height = bar.height + 4 };
-                try fill(self.renderer, thumb, colors.text);
-            }
-            const reset = self.colorReset();
-            try self.drawSettingsControl(reset, self.isHovered(reset));
-            try self.clippedText("Preset", reset, reset.x + 8);
-            const sample: layout.Rect = .{ .x = reset.x + 8, .y = reset.y + 30, .width = reset.width - 16, .height = 22 };
-            try drawing.fillRounded(self.renderer, sample, colors.border, 5);
-            try drawing.fillRounded(self.renderer, .{ .x = sample.x + 1, .y = sample.y + 1, .width = @max(1, sample.width - 2), .height = @max(1, sample.height - 2) }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 4);
         }
 
         /// Route Settings pointer input through the owning page geometry.
@@ -498,7 +440,14 @@ pub fn ForHost(comptime Host: type) type {
                 }
                 // Leaving a field stages its validated value, even when navigating
                 // to another page. Only the header Save writes the configuration.
+                const collapsing_color_editor = e.edit.kind == .color;
                 try self.changeSetting(target, e.buffer[0..e.len]);
+                // Closing an inline editor shifts every following color row.
+                // Never reinterpret this same pointer position after that shift.
+                if (collapsing_color_editor) {
+                    self.settings_scroll_offset = self.colorForm().view.offset;
+                    return;
+                }
             }
             if (!box.contains(x, y)) return;
             const body = self.settingsBody();
@@ -550,10 +499,6 @@ pub fn ForHost(comptime Host: type) type {
                 for (0..self.settingsToolbarCount()) |number| {
                     if (body.contains(x, y) and self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
                 }
-            }
-            if (!e.search and e.page == .defaults and self.settingsDefaultButton().contains(x, y)) {
-                const id = (try self.overviewDefaultID()) orelse return;
-                return self.changeSetting(.default_profile, id);
             }
             if (self.profilesSettings()) {
                 if (body.contains(x, y)) try self.settingsProfilesClick(x, y, clicks);
@@ -646,7 +591,13 @@ pub fn ForHost(comptime Host: type) type {
             const field = settingsRowField(rect);
             if (row.editable() and (settingsEditButton(rect).contains(x, y) or (row.choice() and field.contains(x, y)))) {
                 self.settings_editor.?.form_row = number;
-                return self.activateSetting(row);
+                try self.activateSetting(row);
+                if (self.settings_editor.?.editing != null and self.settings_editor.?.edit.kind == .color) {
+                    const area = self.colorForm().editor();
+                    const body = self.settingsBody();
+                    if (area.y + area.height > body.y + body.height) self.settingsScrollBy(area.y + area.height - body.y - body.height);
+                }
+                return;
             }
             if ((row.target == .reset_app_colors or row.target == .reset_terminal_colors) and settingsResetButton(rect).contains(x, y)) {
                 return self.activateSetting(row);

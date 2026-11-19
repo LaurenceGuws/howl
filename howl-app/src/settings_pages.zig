@@ -123,10 +123,10 @@ pub const AppearanceForm = struct {
         return null;
     }
 };
-/// App chrome and terminal colors share a scrolled form, not list selection.
-/// The color editor and terminal sample remain in the fixed footer.
+/// App chrome, terminal colors, inline editing and sample share one scroll owner.
 pub const ColorForm = struct {
     view: widgets.FormViewport,
+    editor_row: ?usize,
 
     /// Named section with its starting row and row count.
     pub const Section = struct { title: []const u8, hint: []const u8, first: usize, count: usize };
@@ -153,6 +153,10 @@ pub const ColorForm = struct {
     pub const card_gap: f32 = 14;
     /// Blank space retained after the last row in a card.
     pub const card_bottom: f32 = 12;
+    /// Space inserted after the active color row for its RGB editor.
+    pub const editor_extra: f32 = 104;
+    /// Height of the separate terminal preview card.
+    pub const preview_height: f32 = 144;
 
     /// Height of one card, including its heading and rows.
     pub fn cardHeight(number: usize) f32 {
@@ -170,22 +174,56 @@ pub const ColorForm = struct {
         const section: usize = if (number < app_count) 0 else 1;
         return cardTop(section) + heading_height + @as(f32, @floatFromInt(number - sections[section].first)) * row_stride;
     }
-    /// Total page scroll extent including trailing padding.
-    pub fn contentHeight() f32 {
-        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + outer_inset;
+    /// Position the sample after both color sections and any open editor.
+    pub fn previewTop(self: ColorForm) f32 {
+        return cardTop(sections.len - 1) + cardHeight(sections.len - 1) + card_gap +
+            (if (self.editor_row != null) editor_extra else @as(f32, 0));
+    }
+    /// Total page scroll extent including the preview card and trailing padding.
+    pub fn contentHeight(self: ColorForm) f32 {
+        return self.previewTop() + preview_height + outer_inset;
     }
     /// Construct the page geometry with one clamped pixel scroll offset.
-    pub fn init(bounds: layout.Rect, offset: f32) ColorForm {
-        return .{ .view = widgets.FormViewport.atOffset(bounds, contentHeight(), offset) };
+    pub fn init(bounds: layout.Rect, offset: f32, editor_row: ?usize) ColorForm {
+        std.debug.assert(editor_row == null or editor_row.? < count);
+        var form: ColorForm = .{ .view = undefined, .editor_row = editor_row };
+        form.view = widgets.FormViewport.atOffset(bounds, form.contentHeight(), offset);
+        return form;
     }
     /// Place one painted card within the page-owned scroll coordinates.
     pub fn card(self: ColorForm, number: usize) layout.Rect {
-        return self.view.place(outer_inset, cardTop(number), @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number));
+        std.debug.assert(number < sections.len);
+        const section = sections[number];
+        const before: f32 = if (self.editor_row) |index| (if (index < section.first) editor_extra else 0) else 0;
+        const within: f32 = if (self.editor_row) |index| (if (index >= section.first and index < section.first + section.count) editor_extra else 0) else 0;
+        return self.view.place(outer_inset, cardTop(number) + before, @max(1, self.view.bounds.width - 2 * outer_inset), cardHeight(number) + within);
     }
     /// Place one interactive row within its owning card.
     pub fn row(self: ColorForm, number: usize) layout.Rect {
+        std.debug.assert(number < count);
         const inset = outer_inset + inner_inset;
-        return self.view.place(inset, rowTop(number), @max(1, self.view.bounds.width - 2 * inset), row_height);
+        const shift: f32 = if (self.editor_row) |index| (if (number > index) editor_extra else 0) else 0;
+        return self.view.place(inset, rowTop(number) + shift, @max(1, self.view.bounds.width - 2 * inset), row_height);
+    }
+    /// Inline editor bounds immediately after its selected color row.
+    pub fn editor(self: ColorForm) layout.Rect {
+        const selected = self.row(self.editor_row.?);
+        return .{ .x = selected.x, .y = selected.y + row_stride + 4, .width = selected.width, .height = editor_extra - 8 };
+    }
+    /// RGB slider geometry that moves with the selected row.
+    pub fn editorBar(self: ColorForm, channel: usize) layout.Rect {
+        std.debug.assert(channel < 3);
+        const area = self.editor();
+        return .{ .x = area.x + 24, .y = area.y + 8 + @as(f32, @floatFromInt(channel)) * 22, .width = @max(1, area.width - 116), .height = 18 };
+    }
+    /// Preset reset and its color sample beside the inline sliders.
+    pub fn editorReset(self: ColorForm) layout.Rect {
+        const area = self.editor();
+        return .{ .x = area.x + area.width - 82, .y = area.y + 8, .width = 78, .height = 62 };
+    }
+    /// Terminal sample is another card in the same scrollable form.
+    pub fn previewCard(self: ColorForm) layout.Rect {
+        return self.view.place(outer_inset, self.previewTop(), @max(1, self.view.bounds.width - 2 * outer_inset), preview_height);
     }
     /// Resolve a row only when the pointer is inside the page viewport.
     pub fn hit(self: ColorForm, x: f32, y: f32) ?usize {

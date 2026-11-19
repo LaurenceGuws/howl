@@ -147,7 +147,8 @@ while aligning to the physical grid; generated blocks
 and box rules retain their raster coverage at fractional desktop scales.
 
 The right-side Settings panel retains sidebar/content focus, pointer selectors,
-profile New/Duplicate/Delete, View/Edit, Set default and inline Save/Cancel.
+profile New/Duplicate/Delete and View/Edit, a Startup default selector, and
+global Save/Cancel in the header.
 Rows select on one click; Enter or double-click begins an edit. Finite profile,
 theme and toggle choices use arrows and ignore typed text. Enter/Save commits;
 Escape cancels the edit, then search, then content focus before closing Settings.
@@ -159,7 +160,9 @@ presentation: shortcut IDs, bindings and recording remain unchanged. Profiles
 uses the same page-level scroller for its Discovery, Saved profiles and Scanned
 profiles cards; editing a saved profile opens its own scrollable details card.
 Only the page owns scroll position and the scrollbar, while the selected
-profile and its Set default footer remain independent of scrolling.
+profile remains independent of scrolling. The Colors page includes its terminal
+palette preview as a scrolling card; its RGB sliders expand below the edited
+field rather than occupying a fixed footer.
 Search preserves normal row geometry. Settings, installed fonts and both palettes
 share text editing, list viewports, row hit geometry and selection/hover styling.
 Settings policy remains in settings.zig; settings_pages.zig owns the five
@@ -198,11 +201,10 @@ not hide previously cached entries. A saved profile's details editor is now
 inside Profiles, not an extra sidebar page.
 
 Enabled, non-stale scanned entries can also be chosen as the startup default,
-directly from the Profiles footer or Startup selector. Their IDs remain stable
+from the Startup selector. Their IDs remain stable
 across rescans. Disabling the default or rescanning it as missing stages a
 return to Local, with the same Save/Cancel controls; unavailable scans cannot
-become defaults. The Profiles footer remains in place while scrolling, showing
-Unavailable for disabled or missing selections.
+become defaults.
 
 Typing in the profile menu ranks exact/prefix matches before substrings and
 abbreviations. The wheel scrolls a retained viewport; arrows and

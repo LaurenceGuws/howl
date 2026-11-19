@@ -25,7 +25,35 @@ const ColorForm = pages.ColorForm;
 const ShortcutForm = pages.ShortcutForm;
 const ProfilesForm = pages.ProfilesForm;
 
-test "Profiles footer remains actionable across scroll selection and cached entry availability" {
+test "Colors preview and expanded RGB editors use the same scrolling form" {
+    const bounds: layout.Rect = .{ .x = 80, .y = 90, .width = 500, .height = 320 };
+    const compact = ColorForm.init(bounds, 0, null);
+    const application_edit = ColorForm.init(bounds, 0, 1);
+    const terminal_edit = ColorForm.init(bounds, 0, ColorForm.app_count + 1);
+    try std.testing.expectEqual(compact.contentHeight() + ColorForm.editor_extra, application_edit.contentHeight());
+    try std.testing.expectEqual(compact.row(1).y, application_edit.row(1).y);
+    try std.testing.expectEqual(compact.row(2).y + ColorForm.editor_extra, application_edit.row(2).y);
+    try std.testing.expectEqual(compact.card(0).height + ColorForm.editor_extra, application_edit.card(0).height);
+    try std.testing.expectEqual(compact.card(1).y + ColorForm.editor_extra, application_edit.card(1).y);
+    try std.testing.expectEqual(compact.previewCard().y + ColorForm.editor_extra, application_edit.previewCard().y);
+    try std.testing.expectEqualDeep(compact.card(0), terminal_edit.card(0));
+    try std.testing.expectEqual(compact.card(1).height + ColorForm.editor_extra, terminal_edit.card(1).height);
+    try std.testing.expectEqual(compact.previewCard().y + ColorForm.editor_extra, terminal_edit.previewCard().y);
+    const editor = application_edit.editor();
+    const first_bar = application_edit.editorBar(0);
+    const reset = application_edit.editorReset();
+    try std.testing.expect(editor.y >= application_edit.row(1).y + application_edit.row(1).height);
+    try std.testing.expect(editor.y + editor.height < application_edit.row(2).y);
+    try std.testing.expect(editor.contains(first_bar.x + first_bar.width / 2, first_bar.y + 8));
+    try std.testing.expect(editor.contains(reset.x + 10, reset.y + 10));
+    const scrolled = ColorForm.init(bounds, 104, 1);
+    try std.testing.expectEqual(editor.y - 104, scrolled.editor().y);
+    try std.testing.expectEqual(application_edit.previewCard().y - 104, scrolled.previewCard().y);
+    const end = ColorForm.init(bounds, 100000, null);
+    try std.testing.expectApproxEqAbs(bounds.y + bounds.height - ColorForm.outer_inset, end.previewCard().y + end.previewCard().height, 0.01);
+}
+
+test "Profiles selection scrolls without a footer; Startup remains the sole default-profile control" {
     var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
         \\{"schema":1,"terminal_font_pixels":15,"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.python","name":"Python","shell":"/usr/bin/python3"}},{"kind":"ssh","recipe":{"id":"auto.ssh.off","name":"Disabled host","shell":"/usr/bin/ssh"},"enabled":false},{"kind":"ssh","recipe":{"id":"auto.ssh.stale","name":"Missing host","shell":"/usr/bin/ssh"},"stale":true}]}
     );
@@ -53,23 +81,27 @@ test "Profiles footer remains actionable across scroll selection and cached entr
         .settings_editor = .{ .page = .defaults },
     };
     defer if (app.settings_draft) |*draft| draft.deinit();
-    const footer = app.settingsDefaultButton();
-    try std.testing.expectEqualStrings("local", (try app.overviewDefaultID()).?);
-    app.settings_editor.?.form_row = 1;
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+    const first_scan = app.profilesForm().row(1);
+    try app.settingsClick(first_scan.x + 10, first_scan.y + 10, 1);
+    try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.form_row);
+    try std.testing.expect(app.settings_draft == null);
+    app.height = 490;
     app.settingsScrollBy(100000);
     try std.testing.expect(app.settings_scroll_offset > 0);
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.overviewDefaultID()).?);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
+    try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.form_row);
+    try std.testing.expectEqualStrings("local", (try app.settingsConfiguration().defaultProfile()).id);
+    app.settings_editor.?.page = .startup;
+    app.settings_scroll_offset = 0;
+    const select = app.startupForm().select();
+    try app.settingsClick(select.x + 10, select.y + 10, 1);
+    try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
+    try std.testing.expectEqual(@as(usize, 2), settings.choiceCount(.default_profile, app.settingsConfiguration()));
+    const choice = app.settingsDropdown().rows.row(1);
+    try app.settingsClick(choice.x + 10, choice.y + 10, 1);
     try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
     try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
-    app.settings_editor.?.form_row = 2;
-    try std.testing.expect((try app.overviewDefaultID()) == null);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
-    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
-    try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
+    app.settingsCancel();
+    try std.testing.expectEqualStrings("local", (try app.settingsConfiguration().defaultProfile()).id);
 }
 
 test "startup controls own clicks; choice editing and global Cancel preserve the live configuration" {
@@ -301,8 +333,7 @@ test "Profiles page owns both catalogue and detail scrolling, independent of sel
     try std.testing.expectEqual(settings.Target{ .scanned = 5 }, all[indices[7]].target);
 
     app.settings_editor.?.form_row = 1;
-    const selected_id = (try app.overviewDefaultID()).?;
-    const footer = app.settingsDefaultButton();
+    const selected_clone = (try app.overviewCloneTarget()).?;
     const original_scan_y = overview.card(0).y;
     const original_saved_y = overview.card(1).y;
     const original_row_y = overview.row(2).y;
@@ -318,8 +349,7 @@ test "Profiles page owns both catalogue and detail scrolling, independent of sel
     try std.testing.expectApproxEqAbs(original_row_y - 96, scrolled.row(2).y, 0.01);
     try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.form_row);
     try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
-    try std.testing.expectEqualStrings(selected_id, (try app.overviewDefaultID()).?);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
+    try std.testing.expectEqualDeep(selected_clone, (try app.overviewCloneTarget()).?);
 
     const scanned_row = scrolled.row(2);
     try std.testing.expect(body.contains(scanned_row.x + 12, scanned_row.y + 12));
@@ -342,10 +372,8 @@ test "Profiles page owns both catalogue and detail scrolling, independent of sel
     try std.testing.expectEqual(@as(?usize, 7), end.hit(last_row.x + 12, last_row.y + 12));
     try std.testing.expectEqual(@as(usize, 2), app.settings_editor.?.form_row);
     try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
-    try std.testing.expectEqualDeep(footer, app.settingsDefaultButton());
     try std.testing.expect(app.settingsScanSourceRow(0).y + 34 < body.y);
-    try app.settingsClick(footer.x + 10, footer.y + 10, 1);
-    try std.testing.expectEqualStrings("auto.ssh.a", (try app.settingsConfiguration().defaultProfile()).id);
+    try std.testing.expectEqualStrings("local", (try app.settingsConfiguration().defaultProfile()).id);
     try std.testing.expectEqualStrings("local", (try configuration.defaultProfile()).id);
     app.settingsCancel();
 
@@ -501,6 +529,20 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     try std.testing.expectEqual(colors.accent, try testPixel(surface, @intFromFloat(select.x + chrome.Geometry.chip_radius), @intFromFloat(select.y)));
     try std.testing.expect(!std.meta.eql(colors.border, try testPixel(surface, @intFromFloat(menu.rect.x), @intFromFloat(menu.rect.y))));
     try std.testing.expectEqual(colors.border, try testPixel(surface, @intFromFloat(menu.rect.x + chrome.Geometry.chip_radius), @intFromFloat(menu.rect.y)));
+
+    app.settings_editor.?.editing = null;
+    app.settings_editor.?.page = .colors;
+    app.settings_scroll_offset = 100000;
+    try app.drawSettings();
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const color_form = app.colorForm();
+    const preview = color_form.previewCard();
+    try std.testing.expect(app.settingsBody().contains(preview.x + 8, preview.y + 86));
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(preview.x + 8), @intFromFloat(preview.y + 60)));
+    const resolved = try configuration.value.terminal_colors.resolve(configuration.value.terminal_theme);
+    const background: c.SDL_Color = .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 };
+    try std.testing.expectEqual(background, try testPixel(surface, @intFromFloat(preview.x + preview.width - 25), @intFromFloat(preview.y + 86)));
+    try std.testing.expect(color_form.view.scrollbar().?.track.x > preview.x + preview.width);
 }
 
 test "Settings Save commits the complete draft once; Cancel and failed Save preserve the live configuration" {
@@ -822,6 +864,9 @@ test "settings cards share symmetric painted and pointer geometry" {
     try std.testing.expectEqualDeep(settings.Target{ .app_color = 0 }, app.settings_editor.?.editing.?);
     try std.testing.expectEqualDeep(App.settingsRowField(app.colorForm().row(1)), app.settingsField());
     const red_bar = app.colorBar(0);
+    app.settingsScrollBy(48);
+    try std.testing.expectEqual(red_bar.y - 48, app.colorBar(0).y);
+    app.settingsScrollBy(-48);
     try app.settingsClick(red_bar.x + red_bar.width / 2, red_bar.y + 8, 1);
     try std.testing.expectEqual(@as(?u8, 0), app.color_drag);
     try std.testing.expectEqual(@as(usize, 7), app.settings_editor.?.len);
@@ -831,6 +876,16 @@ test "settings cards share symmetric painted and pointer geometry" {
     event_value.key = c.SDLK_ESCAPE;
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor.?.editing == null);
+    const reopened = App.settingsEditButton(app.colorForm().row(1));
+    try app.settingsClick(reopened.x + 8, reopened.y + 8, 1);
+    try std.testing.expectEqual(settings.Target{ .app_color = 0 }, app.settings_editor.?.editing.?);
+    const shifted_next = App.settingsEditButton(app.colorForm().row(2));
+    try std.testing.expect(app.settingsBody().contains(shifted_next.x + 8, shifted_next.y + 8));
+    try app.settingsClick(shifted_next.x + 8, shifted_next.y + 8, 1);
+    try std.testing.expect(app.settings_editor.?.editing == null);
+    try std.testing.expectEqual(@as(usize, 1), app.settings_editor.?.form_row);
+    try std.testing.expect(app.settings_draft != null);
+    app.settingsCancel();
     app.settings_scroll_offset = ColorForm.rowTop(ColorForm.app_count - 1) - 100;
     const app_reset = app.colorForm().row(ColorForm.app_count - 1);
     try std.testing.expect(app.settingsBody().contains(app_reset.x + 8, app_reset.y + 10));

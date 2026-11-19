@@ -173,6 +173,47 @@ pub fn ForHost(comptime Host: type) type {
                 try self.clippedText(section.title, heading, heading.x);
                 try self.clippedTextColor(section.hint, hint, hint.x, colors.muted);
             }
+            const card = form.previewCard();
+            if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) return;
+            try self.drawSettingsCard(card);
+            try self.clippedText("Terminal preview", .{ .x = card.x + 16, .y = card.y + 10, .width = @max(1, card.width - 32), .height = 25 }, card.x + 16);
+            try self.clippedTextColor("Live sample of the staged terminal palette.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
+            const current = self.settingsConfiguration();
+            const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
+            const preview: layout.Rect = .{ .x = card.x + 16, .y = card.y + 66, .width = @max(1, card.width - 32), .height = 32 };
+            try drawing.fillRounded(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 }, corner_radius);
+            try self.clippedTextColor("Terminal  AaBb 0123", preview, preview.x + 8, .{ .r = resolved.foreground.r, .g = resolved.foreground.g, .b = resolved.foreground.b, .a = 255 });
+            const swatch_width = preview.width / 16;
+            for (resolved.palette[0..16], 0..) |rgb, index| try drawing.fillRounded(self.renderer, .{ .x = preview.x + @as(f32, @floatFromInt(index)) * swatch_width, .y = preview.y + 42, .width = @max(1, swatch_width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, inset_radius);
+        }
+        /// Paint the active RGB editor in the expanded section immediately after its row.
+        pub fn drawColorEditor(self: *Host) !void {
+            const rgb = try self.editedColor();
+            const colors = try self.uiPalette();
+            for ([_]u8{ rgb.r, rgb.g, rgb.b }, [_][]const u8{ "R", "G", "B" }, 0..) |value, label, channel| {
+                const bar = self.colorBar(channel);
+                try self.clippedText(label, .{ .x = bar.x - 24, .y = bar.y - 4, .width = 24, .height = 24 }, bar.x - 24);
+                for (0..64) |step| {
+                    var shade = rgb;
+                    const component: u8 = @intCast(step * 4);
+                    switch (channel) {
+                        0 => shade.r = component,
+                        1 => shade.g = component,
+                        2 => shade.b = component,
+                        else => return error.InvalidColorRole,
+                    }
+                    try fill(self.renderer, .{ .x = bar.x + @as(f32, @floatFromInt(step)) * bar.width / 64, .y = bar.y, .width = bar.width / 64 + 1, .height = bar.height }, .{ .r = shade.r, .g = shade.g, .b = shade.b, .a = 255 });
+                }
+                try outline(self.renderer, bar, colors.border);
+                const thumb: layout.Rect = .{ .x = bar.x + @as(f32, @floatFromInt(value)) * bar.width / 255 - 2, .y = bar.y - 2, .width = 4, .height = bar.height + 4 };
+                try fill(self.renderer, thumb, colors.text);
+            }
+            const reset = self.colorReset();
+            try self.drawSettingsControl(reset, self.isHovered(reset));
+            try self.clippedText("Preset", reset, reset.x + 8);
+            const sample: layout.Rect = .{ .x = reset.x + 8, .y = reset.y + 30, .width = reset.width - 16, .height = 22 };
+            try drawing.fillRounded(self.renderer, sample, colors.border, corner_radius);
+            try drawing.fillRounded(self.renderer, .{ .x = sample.x + 1, .y = sample.y + 1, .width = @max(1, sample.width - 2), .height = @max(1, sample.height - 2) }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, inset_radius);
         }
         /// Paint grouped shortcut category headings and cards.
         pub fn drawShortcutCards(self: *Host, form: ShortcutForm) !void {
@@ -480,6 +521,7 @@ pub fn ForHost(comptime Host: type) type {
                     try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);
                 }
             }
+            if (color_form and e.editing != null and e.edit.kind == .color) try self.drawColorEditor();
             if (clipped_rows) {
                 clearClip(self.renderer);
                 clipped_rows = false;
@@ -492,27 +534,6 @@ pub fn ForHost(comptime Host: type) type {
                 }
             } else try self.drawListScroll(rows, start, visible);
             try self.drawSettingsDropdown();
-            if (e.editing != null and e.edit.kind == .color) {
-                try self.drawColorEditor();
-            } else if (!e.search and e.page == .colors) {
-                const current = self.settingsConfiguration();
-                const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
-                const preview: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 100, .width = body.width, .height = 32 };
-                try drawing.fillRounded(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 }, corner_radius);
-                try self.clippedTextColor("Terminal  AaBb 0123", preview, preview.x + 8, .{ .r = resolved.foreground.r, .g = resolved.foreground.g, .b = resolved.foreground.b, .a = 255 });
-                const width = body.width / 16;
-                for (resolved.palette[0..16], 0..) |rgb, i| try drawing.fillRounded(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 }, 3);
-            }
-            if (!e.search and e.page == .defaults) {
-                const button = self.settingsDefaultButton();
-                const id = try self.overviewDefaultID();
-                try self.drawSettingsControl(button, id != null and self.isHovered(button));
-                const label = if (id) |selected|
-                    if (std.mem.eql(u8, selected, (try self.settingsConfiguration().defaultProfile()).id)) "Default" else "Set default"
-                else
-                    "Unavailable";
-                try self.clippedText(label, button, button.x + 8);
-            }
         }
     };
 }

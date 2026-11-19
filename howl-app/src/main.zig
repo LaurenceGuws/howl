@@ -318,12 +318,8 @@ pub const App = struct {
     pub const scanSettingsProfiles = InputUI.scanSettingsProfiles;
     /// Bind Settings input and geometry for overview Clone Target to the SDL host.
     pub const overviewCloneTarget = InputUI.overviewCloneTarget;
-    /// Bind Settings input and geometry for overview Default ID to the SDL host.
-    pub const overviewDefaultID = InputUI.overviewDefaultID;
     /// Bind Settings input and geometry for color Bar to the SDL host.
     pub const colorBar = InputUI.colorBar;
-    /// Bind Settings input and geometry for settings Default Button to the SDL host.
-    pub const settingsDefaultButton = InputUI.settingsDefaultButton;
     /// Bind Settings input and geometry for saved Edit Button to the SDL host.
     pub const savedEditButton = InputUI.savedEditButton;
     /// Bind Settings input and geometry for scanned Enable Button to the SDL host.
@@ -336,8 +332,8 @@ pub const App = struct {
     pub const editedColor = InputUI.editedColor;
     /// Bind Settings input and geometry for color Point to the SDL host.
     pub const colorPoint = InputUI.colorPoint;
-    /// Bind Settings input and geometry for draw Color Editor to the SDL host.
-    pub const drawColorEditor = InputUI.drawColorEditor;
+    /// Bind Settings painting for the inline Color Editor to the SDL host.
+    pub const drawColorEditor = PaintUI.drawColorEditor;
     /// Bind Settings input and geometry for settings Click to the SDL host.
     pub const settingsClick = InputUI.settingsClick;
     /// Bind Settings input and geometry for settings Appearance Click to the SDL host.

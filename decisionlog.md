@@ -242,3 +242,20 @@ Settings shell, card, control, field, dropdown and row-highlight radius.
 One-pixel-inset surfaces use a three-pixel radius, and the header/sidebar
 elbow exposes the same rounded inner corner. Switch tracks retain their
 functional pill shape; narrow scrollbar tracks and thumbs remain distinct.
+
+## Retire page-specific Settings footers (19 November 2026)
+
+The Profiles Set default footer was redundant with Startup's default-profile
+selector, which already accepts enabled, non-stale scans and stages changes
+under global Save/Cancel. Profiles now uses the whole scroll viewport without
+an independently fixed action. Colors likewise uses that full viewport:
+the terminal sample is a scrolling preview card, and selecting a color
+expands its RGB sliders and Preset control directly under the edited row.
+Closing the inline editor shifts later rows, so a click outside first stages
+the value without retargeting the same pointer event to a moved control.
+Only the global Settings header actions remain fixed.
+
+This clears page-specific footer ownership but does not yet combine the five
+page viewports. A single document will require shared section anchors,
+one scroll offset and active-section tracking; Profile details must also
+become an inline disclosure rather than a separate internal page.
