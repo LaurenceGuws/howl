@@ -28,6 +28,7 @@ const settings_card_padding = pages.settings_card_padding;
 /// Bind Settings pointer and keyboard behavior to its concrete SDL host type.
 pub fn ForHost(comptime Host: type) type {
     return struct {
+        const Input = @This();
         /// Rectangle of the right-side Settings shell after window sizing.
         pub fn settingsRect(self: *const Host) layout.Rect {
             const width = @min(860, @max(1, self.width - 16));
@@ -36,7 +37,7 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Sidebar navigation hit and paint area for one section.
         pub fn settingsNavRow(self: *const Host, number: usize) layout.Rect {
-            const box = self.settingsRect();
+            const box = Input.settingsRect(self);
             const sidebar = @min(160, box.width / 3);
             return .{
                 .x = box.x + 8,
@@ -47,7 +48,7 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Fixed header action target independent of page scrolling.
         pub fn settingsHeaderButton(self: *const Host, action: SettingsHeaderAction) layout.Rect {
-            const box = self.settingsRect();
+            const box = Input.settingsRect(self);
             const width: f32 = switch (action) {
                 .save, .cancel => 66,
                 else => chrome.Geometry.chip_height,
@@ -77,7 +78,7 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Page viewport bounds with one uniform bottom inset.
         pub fn settingsBody(self: *const Host) layout.Rect {
-            const box = self.settingsRect();
+            const box = Input.settingsRect(self);
             const e = self.settings_editor.?;
             const sidebar = @min(160, box.width / 3);
             const top: f32 = settings_header_height + (if (e.search) @as(f32, 42) else 0);
@@ -85,15 +86,15 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Whether the Discovery source controls stack vertically.
         pub fn settingsScanCompact(self: *const Host) bool {
-            return self.profilesForm().compact;
+            return Input.profilesForm(self).compact;
         }
         /// Discovery card placed in the Profiles page viewport.
         pub fn settingsScanCard(self: *const Host) layout.Rect {
-            return self.profilesForm().card(0);
+            return Input.profilesForm(self).card(0);
         }
         /// One source-switch row derived from the scrolled Discovery card.
         pub fn settingsScanSourceRow(self: *const Host, number: usize) layout.Rect {
-            return self.profilesForm().scanSourceRow(number);
+            return Input.profilesForm(self).scanSourceRow(number);
         }
         /// The single Settings scroll owner and its five indexed sections.
         pub fn settingsDocument(self: *const Host) SettingsDocument {
@@ -103,25 +104,25 @@ pub fn ForHost(comptime Host: type) type {
             const details: usize = if (selected == 0) 5 else 7 + 3 * current.value.profiles[@as(usize, selected) - 1].environment.len;
             const color_editor: ?usize = if (!e.search and e.page == .colors and e.editing != null and e.edit.kind == .color) e.form_row else null;
             const expanded: ?usize = if (!e.search and e.details_open) selected else null;
-            return SettingsDocument.init(self.settingsBody(), self.settings_scroll_offset, color_editor, current.profileCount(), current.value.scanned_profiles.len, expanded, details);
+            return SettingsDocument.init(Input.settingsBody(self), self.settings_scroll_offset, color_editor, current.profileCount(), current.value.scanned_profiles.len, expanded, details);
         }
         /// Startup controls borrow their position from the document scroll.
         pub fn startupForm(self: *const Host) StartupForm {
-            return StartupForm.init(self.settingsDocument().formBounds(0), 0);
+            return StartupForm.init(Input.settingsDocument(self).formBounds(0), 0);
         }
         /// Appearance cards borrow their position from the document scroll.
         pub fn appearanceForm(self: *const Host) AppearanceForm {
-            return AppearanceForm.init(self.settingsDocument().formBounds(1), 0);
+            return AppearanceForm.init(Input.settingsDocument(self).formBounds(1), 0);
         }
         /// Color cards borrow their position from the document scroll.
         pub fn colorForm(self: *const Host) ColorForm {
             const editor = self.settings_editor.?;
             const expanded = if (!editor.search and editor.page == .colors and editor.editing != null and editor.edit.kind == .color) editor.form_row else null;
-            return ColorForm.init(self.settingsDocument().formBounds(2), 0, expanded);
+            return ColorForm.init(Input.settingsDocument(self).formBounds(2), 0, expanded);
         }
         /// Shortcut category cards borrow their position from the document scroll.
         pub fn shortcutForm(self: *const Host) ShortcutForm {
-            return ShortcutForm.init(self.settingsDocument().formBounds(3), 0);
+            return ShortcutForm.init(Input.settingsDocument(self).formBounds(3), 0);
         }
         /// Profiles catalogue and inline details borrow one document position.
         pub fn profilesForm(self: *const Host) ProfilesForm {
@@ -130,7 +131,7 @@ pub fn ForHost(comptime Host: type) type {
             const selected = @min(e.profile, current.profileCount() - 1);
             const detail_count: usize = if (selected == 0) 5 else 7 + 3 * current.value.profiles[@as(usize, selected) - 1].environment.len;
             const expanded: ?usize = if (!e.search and e.details_open) selected else null;
-            return ProfilesForm.init(self.settingsDocument().formBounds(4), 0, current.profileCount(), current.value.scanned_profiles.len, expanded, detail_count);
+            return ProfilesForm.init(Input.settingsDocument(self).formBounds(4), 0, current.profileCount(), current.value.scanned_profiles.len, expanded, detail_count);
         }
         /// Whether Appearance owns the active non-search Settings page.
         pub fn appearanceSettings(self: *const Host) bool {
@@ -156,13 +157,13 @@ pub fn ForHost(comptime Host: type) type {
         pub fn settingsFormView(self: *const Host) ?widgets.FormViewport {
             const editor = self.settings_editor orelse return null;
             if (editor.search) return null;
-            return self.settingsDocument().view;
+            return Input.settingsDocument(self).view;
         }
         /// Reconcile the active sidebar label after manual document scrolling.
         pub fn settingsTrackSection(self: *Host) void {
             const e = &self.settings_editor.?;
             if (e.search or e.editing != null) return;
-            const section: settings.Page = @fromBackingInt(@intCast(self.settingsDocument().active()));
+            const section: settings.Page = @fromBackingInt(@intCast(Input.settingsDocument(self).active()));
             if (section != e.page) {
                 e.page = section;
                 e.form_row = 0;
@@ -171,40 +172,40 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Clamp mouse-wheel movement in the single document-owned viewport.
         pub fn settingsScrollBy(self: *Host, delta: f32) void {
-            const view = self.settingsFormView() orelse return;
+            const view = Input.settingsFormView(self) orelse return;
             self.settings_scroll_offset = std.math.clamp(view.offset + delta, 0, @max(0, view.content_height - view.bounds.height));
-            self.settingsTrackSection();
+            Input.settingsTrackSection(self);
         }
         /// Begin or reposition the page scrollbar thumb drag.
         pub fn settingsScrollbarPress(self: *Host, x: f32, y: f32) bool {
-            const view = self.settingsFormView() orelse return false;
+            const view = Input.settingsFormView(self) orelse return false;
             const bar = view.scrollbar() orelse return false;
             if (x < bar.track.x - 11 or x >= bar.track.x + bar.track.width + 1 or y < bar.track.y or y >= bar.track.y + bar.track.height) return false;
             self.settings_scroll_grab = if (y >= bar.thumb.y and y < bar.thumb.y + bar.thumb.height) y - bar.thumb.y else bar.thumb.height / 2;
-            self.settingsScrollbarMove(y);
+            Input.settingsScrollbarMove(self, y);
             return true;
         }
         /// Update the page offset from a captured scrollbar thumb.
         pub fn settingsScrollbarMove(self: *Host, y: f32) void {
             const grab = self.settings_scroll_grab orelse return;
-            const view = self.settingsFormView() orelse return;
+            const view = Input.settingsFormView(self) orelse return;
             const bar = view.scrollbar() orelse return;
             const travel = bar.track.height - bar.thumb.height;
             if (travel <= 0) return;
             const thumb_y = std.math.clamp(y - grab - bar.track.y, 0, travel);
             self.settings_scroll_offset = thumb_y / travel * (view.content_height - view.bounds.height);
-            self.settingsTrackSection();
+            Input.settingsTrackSection(self);
         }
         /// Card rectangle for the global search-results list.
         pub fn settingsListCard(self: *const Host) layout.Rect {
-            const body = self.settingsBody();
+            const body = Input.settingsBody(self);
             const horizontal = @min(settings_card_gutter, @max(0, (body.width - 1) / 2));
             const vertical = @min(settings_card_gutter, @max(0, (body.height - 1) / 2));
             return .{ .x = body.x + horizontal, .y = body.y + vertical, .width = @max(1, body.width - 2 * horizontal), .height = @max(1, body.height - 2 * vertical) };
         }
         /// Search-result row geometry, separate from the document scrollbar.
         pub fn settingsRows(self: *const Host) widgets.Rows {
-            const card = self.settingsListCard();
+            const card = Input.settingsListCard(self);
             const horizontal = @min(settings_card_padding, @max(0, (card.width - 1) / 2));
             const heading = @min(64, @max(0, card.height - 1));
             const bottom = @min(settings_card_gutter, @max(0, card.height - heading - 1));
@@ -224,31 +225,31 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Active text or choice field, including its page-scrolled row.
         pub fn settingsField(self: *const Host) layout.Rect {
-            const box = self.settingsRect();
-            const body = self.settingsBody();
+            const box = Input.settingsRect(self);
+            const body = Input.settingsBody(self);
             if (self.settings_editor.?.editing != null) {
                 const e = self.settings_editor.?;
-                if (!e.search and e.page == .startup and e.editing.? == .default_profile) return self.startupForm().select();
-                if (self.appearanceSettings()) return settingsRowField(self.appearanceForm().row(e.form_row));
-                if (self.colorSettings()) return settingsRowField(self.colorForm().row(e.form_row));
-                if (self.shortcutSettings()) return settingsRowField(self.shortcutForm().row(e.form_row));
-                if (self.profilesSettings()) return settingsRowField(self.profilesForm().row(e.form_row));
-                const rect = self.settingsRows().row(e.list.selected -| e.list.first);
+                if (!e.search and e.page == .startup and e.editing.? == .default_profile) return Input.startupForm(self).select();
+                if (Input.appearanceSettings(self)) return settingsRowField(Input.appearanceForm(self).row(e.form_row));
+                if (Input.colorSettings(self)) return settingsRowField(Input.colorForm(self).row(e.form_row));
+                if (Input.shortcutSettings(self)) return settingsRowField(Input.shortcutForm(self).row(e.form_row));
+                if (Input.profilesSettings(self)) return settingsRowField(Input.profilesForm(self).row(e.form_row));
+                const rect = Input.settingsRows(self).row(e.list.selected -| e.list.first);
                 return settingsRowField(rect);
             }
             return .{ .x = body.x, .y = box.y + settings_header_height, .width = body.width, .height = 32 };
         }
         /// Choice menu anchored to the active Settings field.
         pub fn settingsDropdown(self: *const Host) widgets.Dropdown {
-            return widgets.Dropdown.init(self.settingsField(), self.settingsBody(), settings.choiceCount(self.settings_editor.?.editing.?, self.settingsConfiguration()));
+            return widgets.Dropdown.init(Input.settingsField(self), Input.settingsBody(self), settings.choiceCount(self.settings_editor.?.editing.?, self.settingsConfiguration()));
         }
         /// Number of whole rows visible in the search-results list.
         pub fn settingsVisible(self: *const Host) usize {
-            return self.settingsRows().visible();
+            return Input.settingsRows(self).visible();
         }
         /// Reveal the selected search result in its list viewport.
         pub fn settingsStart(self: *Host, count: usize) usize {
-            self.settings_editor.?.list.reveal(count, self.settingsVisible());
+            self.settings_editor.?.list.reveal(count, Input.settingsVisible(self));
             return self.settings_editor.?.list.first;
         }
         /// Number of contextual profile toolbar actions.
@@ -259,11 +260,11 @@ pub fn ForHost(comptime Host: type) type {
         pub fn settingsToolbarButton(self: *const Host, number: usize) layout.Rect {
             std.debug.assert(number < 3);
             if (number == 2) {
-                const card = self.settingsScanCard();
+                const card = Input.settingsScanCard(self);
                 const width = @min(96, @max(1, card.width - 20));
                 return .{ .x = card.x + card.width - width - 12, .y = card.y + 10, .width = width, .height = 32 };
             }
-            const card = self.profilesForm().card(1);
+            const card = Input.profilesForm(self).card(1);
             const width = if (card.width < 500) @min(78, @max(42, (card.width - 170) / 2)) else @as(f32, 102);
             const start = card.x + card.width - 14 - 2 * width - 6;
             return .{ .x = start + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 14, .width = width, .height = 32 };
@@ -271,14 +272,14 @@ pub fn ForHost(comptime Host: type) type {
         /// Close, Duplicate and Delete controls inside the expanded recipe.
         pub fn settingsDetailButton(self: *const Host, number: usize) layout.Rect {
             std.debug.assert(number < 3);
-            const card = self.profilesForm().detailCard();
+            const card = Input.profilesForm(self).detailCard();
             const width = @max(1, (card.width - 32 - 12) / 3);
             return .{ .x = card.x + 16 + @as(f32, @floatFromInt(number)) * (width + 6), .y = card.y + 66, .width = width, .height = 32 };
         }
         /// Reveal the expanded row and its first details without a nested scroll.
         pub fn settingsRevealProfile(self: *Host) void {
-            const form = self.profilesForm();
-            const document = self.settingsDocument().view;
+            const form = Input.profilesForm(self);
+            const document = Input.settingsDocument(self).view;
             self.settings_scroll_offset = std.math.clamp(
                 document.offset + form.row(self.settings_editor.?.profile).y - document.bounds.y - 40,
                 0,
@@ -287,16 +288,16 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Bring a search result into the document without opening a second page.
         pub fn settingsRevealRow(self: *Host, section: settings.Page, number: usize) void {
-            const bounds = self.settingsBody();
+            const bounds = Input.settingsBody(self);
             const rect = switch (section) {
-                .startup => self.startupForm().row(0),
-                .appearance => self.appearanceForm().row(number),
-                .colors => self.colorForm().row(number),
-                .mappings => self.shortcutForm().row(number),
-                .defaults => self.profilesForm().row(number),
-                .profiles => self.profilesForm().row(number),
+                .startup => Input.startupForm(self).row(0),
+                .appearance => Input.appearanceForm(self).row(number),
+                .colors => Input.colorForm(self).row(number),
+                .mappings => Input.shortcutForm(self).row(number),
+                .defaults => Input.profilesForm(self).row(number),
+                .profiles => Input.profilesForm(self).row(number),
             };
-            const document = self.settingsDocument().view;
+            const document = Input.settingsDocument(self).view;
             self.settings_scroll_offset = std.math.clamp(document.offset + rect.y - bounds.y - 36, 0, @max(0, document.content_height - document.bounds.height));
         }
         /// Reveal a searched field or begin its validated draft mutation.
@@ -318,7 +319,7 @@ pub fn ForHost(comptime Host: type) type {
                 e.list = .{};
                 e.form_row = 0;
                 e.content_focus = true;
-                self.settings_scroll_offset = self.settingsDocument().anchor(@backingInt(e.page));
+                self.settings_scroll_offset = Input.settingsDocument(self).anchor(@backingInt(e.page));
                 self.settings_scroll_grab = null;
                 var all: [settings.row_limit]settings.Row = undefined;
                 var shown: [settings.row_limit]u16 = undefined;
@@ -335,7 +336,7 @@ pub fn ForHost(comptime Host: type) type {
                 // Duplicate/Delete search results resolve to inline actions,
                 // not field rows; reveal their owning saved profile.
                 if (!found and e.page == .defaults and e.details_open) e.form_row = e.profile;
-                self.settingsRevealRow(e.page, e.form_row);
+                Input.settingsRevealRow(self, e.page, e.form_row);
                 self.cancelComposition();
                 return;
             }
@@ -345,7 +346,7 @@ pub fn ForHost(comptime Host: type) type {
                 e.page = .defaults;
                 e.details_open = true;
                 e.form_row = e.profile;
-                self.settingsRevealProfile();
+                Input.settingsRevealProfile(self);
                 e.content_focus = true;
                 return;
             }
@@ -376,18 +377,18 @@ pub fn ForHost(comptime Host: type) type {
                     e.profile = self.settingsConfiguration().profileCount() - 1;
                     e.details_open = true;
                     e.form_row = @as(usize, e.profile) + 1;
-                    self.settingsRevealProfile();
+                    Input.settingsRevealProfile(self);
                     try e.begin(.{ .page = .profiles, .label = "Name", .target = .{ .profile = .{ .index = e.profile, .field = .name } } }, self.settingsConfiguration());
                 },
                 1 => {
-                    const target = (try self.overviewCloneTarget()) orelse return error.SelectProfileToDuplicate;
+                    const target = (try Input.overviewCloneTarget(self)) orelse return error.SelectProfileToDuplicate;
                     try self.changeSetting(target, "");
                     e.profile = self.settingsConfiguration().profileCount() - 1;
                     e.details_open = true;
                     e.form_row = e.profile;
-                    self.settingsRevealProfile();
+                    Input.settingsRevealProfile(self);
                 },
-                2 => try self.scanSettingsProfiles(),
+                2 => try Input.scanSettingsProfiles(self),
                 else => {},
             }
             e.content_focus = true;
@@ -399,24 +400,24 @@ pub fn ForHost(comptime Host: type) type {
                 0 => {
                     e.details_open = false;
                     e.form_row = e.profile;
-                    self.settings_scroll_offset = self.settingsDocument().view.offset;
+                    self.settings_scroll_offset = Input.settingsDocument(self).view.offset;
                 },
                 1 => {
                     try self.changeSetting(.{ .clone_profile = e.profile }, "");
                     e.profile = self.settingsConfiguration().profileCount() - 1;
                     e.details_open = true;
                     e.form_row = e.profile;
-                    self.settingsRevealProfile();
+                    Input.settingsRevealProfile(self);
                 },
                 2 => {
                     if (e.profile == 0) return;
                     const before = self.settingsConfiguration().profileCount();
-                    try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
+                    try Input.activateSetting(self, .{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
                     if (self.settingsConfiguration().profileCount() < before) {
                         e.details_open = false;
                         e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
                         e.form_row = e.profile;
-                        self.settings_scroll_offset = self.settingsDocument().view.offset;
+                        self.settings_scroll_offset = Input.settingsDocument(self).view.offset;
                     }
                 },
                 else => {},
@@ -438,7 +439,7 @@ pub fn ForHost(comptime Host: type) type {
         /// Map selected catalogue row to a saved or scanned clone target.
         pub fn overviewCloneTarget(self: *Host) !?settings.Target {
             const e = &self.settings_editor.?;
-            if (self.profilesForm().detailIndex(e.form_row) != null) return .{ .clone_profile = e.profile };
+            if (Input.profilesForm(self).detailIndex(e.form_row) != null) return .{ .clone_profile = e.profile };
             var all: [settings.row_limit]settings.Row = undefined;
             var shown: [settings.row_limit]u16 = undefined;
             const count = try settings.rows(self.settingsConfiguration(), &all);
@@ -452,7 +453,7 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Bounds of one inline RGB channel slider.
         pub fn colorBar(self: *const Host, channel: usize) layout.Rect {
-            return self.colorForm().editorBar(channel);
+            return Input.colorForm(self).editorBar(channel);
         }
         /// Edit action aligned with a saved profile row.
         pub fn savedEditButton(row: layout.Rect) layout.Rect {
@@ -468,7 +469,7 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Preset reset action beside the inline color sliders.
         pub fn colorReset(self: *const Host) layout.Rect {
-            return self.colorForm().editorReset();
+            return Input.colorForm(self).editorReset();
         }
         /// Resolve the in-progress color edit against its current value.
         pub fn editedColor(self: *Host) !vt.Terminal.Rgb {
@@ -478,8 +479,8 @@ pub fn ForHost(comptime Host: type) type {
         /// Update the edited RGB hex buffer from a slider position.
         pub fn colorPoint(self: *Host, channel: u8, x: f32) !void {
             const e = &self.settings_editor.?;
-            const bar = self.colorBar(channel);
-            var rgb = try self.editedColor();
+            const bar = Input.colorBar(self, channel);
+            var rgb = try Input.editedColor(self);
             const value: u8 = @intFromFloat(@round(std.math.clamp((x - bar.x) / bar.width, 0, 1) * 255));
             switch (channel) {
                 0 => rgb.r = value,
@@ -496,20 +497,20 @@ pub fn ForHost(comptime Host: type) type {
         /// Route Settings pointer input through the owning page geometry.
         pub fn settingsClick(self: *Host, x: f32, y: f32, clicks: u8) !void {
             const e = &self.settings_editor.?;
-            const box = self.settingsRect();
-            if (self.settingsHeaderButton(.close).contains(x, y)) return self.toggleSettings();
-            if (self.settingsHeaderButton(.save).contains(x, y)) return self.settingsSave();
-            if (self.settingsHeaderButton(.cancel).contains(x, y)) return self.settingsCancel();
+            const box = Input.settingsRect(self);
+            if (Input.settingsHeaderButton(self, .close).contains(x, y)) return self.toggleSettings();
+            if (Input.settingsHeaderButton(self, .save).contains(x, y)) return self.settingsSave();
+            if (Input.settingsHeaderButton(self, .cancel).contains(x, y)) return self.settingsCancel();
             if (e.recording) e.cancel(); // A pointer leaves uncompleted capture unchanged.
-            if (self.settingsHeaderButton(.search).contains(x, y)) {
+            if (Input.settingsHeaderButton(self, .search).contains(x, y)) {
                 if (e.editing) |target| try self.changeSetting(target, e.buffer[0..e.len]);
-                self.settingsSetSearch(!e.search);
+                Input.settingsSetSearch(self, !e.search);
                 return;
             }
             if (e.editing) |target| {
                 const choice = (settings.Row{ .page = e.page, .label = "", .target = target }).choice();
                 if (choice) {
-                    const menu = self.settingsDropdown();
+                    const menu = Input.settingsDropdown(self);
                     if (menu.rows.hit(x, y)) |number| {
                         e.choice_list.reveal(settings.choiceCount(target, self.settingsConfiguration()), menu.rows.visible());
                         const index = number + e.choice_list.first;
@@ -519,22 +520,22 @@ pub fn ForHost(comptime Host: type) type {
                         }
                         return;
                     }
-                    if (self.settingsField().contains(x, y)) {
+                    if (Input.settingsField(self).contains(x, y)) {
                         e.cancel();
                         e.content_focus = false;
                         return;
                     }
                 }
-                if (self.settingsField().contains(x, y)) {
+                if (Input.settingsField(self).contains(x, y)) {
                     if (choice) e.cancel() else e.button = null;
                     return;
                 }
                 if (e.edit.kind == .color) {
-                    for (0..3) |channel| if (self.colorBar(channel).contains(x, y)) {
+                    for (0..3) |channel| if (Input.colorBar(self, channel).contains(x, y)) {
                         self.color_drag = @intCast(channel);
-                        return self.colorPoint(@intCast(channel), x);
+                        return Input.colorPoint(self, @intCast(channel), x);
                     };
-                    if (self.colorReset().contains(x, y)) {
+                    if (Input.colorReset(self).contains(x, y)) {
                         e.len = 0;
                         e.edit = .{ .kind = .color };
                         return;
@@ -547,16 +548,16 @@ pub fn ForHost(comptime Host: type) type {
                 // Closing an inline editor shifts every following color row.
                 // Never reinterpret this same pointer position after that shift.
                 if (collapsing_color_editor) {
-                    self.settings_scroll_offset = self.settingsDocument().view.offset;
+                    self.settings_scroll_offset = Input.settingsDocument(self).view.offset;
                     return;
                 }
             }
             if (!box.contains(x, y)) return;
-            const body = self.settingsBody();
-            if (self.settingsScrollbarPress(x, y)) return;
+            const body = Input.settingsBody(self);
+            if (Input.settingsScrollbarPress(self, x, y)) return;
             if (x < body.x - 12 and y >= box.y + settings_nav_top) {
                 for (0..settings.titles.len) |page| {
-                    if (!self.settingsNavRow(page).contains(x, y)) continue;
+                    if (!Input.settingsNavRow(self, page).contains(x, y)) continue;
                     self.cancelComposition();
                     e.page = @fromBackingInt(@intCast(page));
                     e.content_focus = false;
@@ -565,14 +566,14 @@ pub fn ForHost(comptime Host: type) type {
                     e.list = .{};
                     e.delete_pending = null;
                     e.form_row = 0;
-                    self.settings_scroll_offset = self.settingsDocument().anchor(page);
+                    self.settings_scroll_offset = Input.settingsDocument(self).anchor(page);
                     self.settings_scroll_grab = null;
                     break;
                 }
                 return;
             }
             if (!e.search) {
-                const section = self.settingsDocument().sectionAt(y) orelse return;
+                const section = Input.settingsDocument(self).sectionAt(y) orelse return;
                 const next: settings.Page = @fromBackingInt(@intCast(section));
                 if (e.page != next) {
                     e.page = next;
@@ -583,43 +584,43 @@ pub fn ForHost(comptime Host: type) type {
             }
             if (!e.search and e.page == .startup) {
                 if (!body.contains(x, y)) return;
-                const form = self.startupForm();
-                if (form.select().contains(x, y)) return self.activateSetting(.{ .page = .startup, .label = "", .target = .default_profile });
+                const form = Input.startupForm(self);
+                if (form.select().contains(x, y)) return Input.activateSetting(self, .{ .page = .startup, .label = "", .target = .default_profile });
                 return;
             }
-            if (self.appearanceSettings()) {
-                if (body.contains(x, y)) try self.settingsAppearanceClick(x, y);
+            if (Input.appearanceSettings(self)) {
+                if (body.contains(x, y)) try Input.settingsAppearanceClick(self, x, y);
                 return;
             }
-            if (self.colorSettings()) {
-                if (body.contains(x, y)) try self.settingsColorClick(x, y);
+            if (Input.colorSettings(self)) {
+                if (body.contains(x, y)) try Input.settingsColorClick(self, x, y);
                 return;
             }
-            if (self.shortcutSettings()) {
-                if (body.contains(x, y)) try self.settingsShortcutClick(x, y);
+            if (Input.shortcutSettings(self)) {
+                if (body.contains(x, y)) try Input.settingsShortcutClick(self, x, y);
                 return;
             }
-            if (self.profilesSettings()) {
+            if (Input.profilesSettings(self)) {
                 for ([_]settings.Target{ .discover_shells, .discover_ssh_hosts }, 0..) |target, number| {
-                    const row = self.settingsScanSourceRow(number);
+                    const row = Input.settingsScanSourceRow(self, number);
                     if (!body.contains(x, y) or !row.contains(x, y)) continue;
                     if (scanSourceSwitch(row).contains(x, y)) try self.changeSetting(target, "");
                     return;
                 }
             }
-            if (self.profilesSettings()) {
-                for (0..self.settingsToolbarCount()) |number| {
-                    if (body.contains(x, y) and self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
+            if (Input.profilesSettings(self)) {
+                for (0..Input.settingsToolbarCount(self)) |number| {
+                    if (body.contains(x, y) and Input.settingsToolbarButton(self, number).contains(x, y)) return Input.settingsToolbarAction(self, number);
                 }
                 if (e.details_open) for (0..3) |number| {
-                    if (body.contains(x, y) and self.settingsDetailButton(number).contains(x, y)) return self.settingsDetailAction(number);
+                    if (body.contains(x, y) and Input.settingsDetailButton(self, number).contains(x, y)) return Input.settingsDetailAction(self, number);
                 };
             }
-            if (self.profilesSettings()) {
-                if (body.contains(x, y)) try self.settingsProfilesClick(x, y, clicks);
+            if (Input.profilesSettings(self)) {
+                if (body.contains(x, y)) try Input.settingsProfilesClick(self, x, y, clicks);
                 return;
             }
-            const field = self.settingsField();
+            const field = Input.settingsField(self);
             if (e.search and field.contains(x, y)) {
                 e.query_edit = .{ .cursor = e.query_len };
                 self.cancelComposition();
@@ -630,22 +631,22 @@ pub fn ForHost(comptime Host: type) type {
             var indices: [settings.row_limit]u16 = undefined;
             const count = try settings.rows(self.settingsConfiguration(), &all);
             const visible = e.indices(all[0..count], &indices);
-            const start = self.settingsStart(visible);
-            const row = self.settingsRows().hit(x, y) orelse return;
+            const start = Input.settingsStart(self, visible);
+            const row = Input.settingsRows(self).hit(x, y) orelse return;
             const chosen = row + start;
             if (chosen >= visible) return;
             if (e.list.selected != chosen) e.delete_pending = null;
             e.list.selected = chosen;
             const selected_row = all[indices[chosen]];
-            const row_rect = self.settingsRows().row(row);
+            const row_rect = Input.settingsRows(self).row(row);
             if (selected_row.editable() and settingsEditButton(row_rect).contains(x, y)) {
                 e.content_focus = true;
-                if (e.search) try self.activateSetting(selected_row);
-                return self.activateSetting(selected_row);
+                if (e.search) try Input.activateSetting(self, selected_row);
+                return Input.activateSetting(self, selected_row);
             }
             if (selected_row.target == .font_family and !e.search and x >= row_rect.x + row_rect.width * 0.46) {
                 e.content_focus = true;
-                return self.activateSetting(selected_row);
+                return Input.activateSetting(self, selected_row);
             }
             if (selected_row.target == .font and !e.search and selected_row.target.font < 4) {
                 const row_field = settingsRowField(row_rect);
@@ -657,11 +658,11 @@ pub fn ForHost(comptime Host: type) type {
                 }
             }
             e.content_focus = true;
-            if (clicks >= 2 and selected_row.target == .set_default) try self.activateSetting(selected_row);
+            if (clicks >= 2 and selected_row.target == .set_default) try Input.activateSetting(self, selected_row);
         }
         /// Resolve Appearance row interactions from its page viewport.
         pub fn settingsAppearanceClick(self: *Host, x: f32, y: f32) !void {
-            const form = self.appearanceForm();
+            const form = Input.appearanceForm(self);
             const number = form.hit(x, y) orelse return;
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
@@ -674,11 +675,11 @@ pub fn ForHost(comptime Host: type) type {
             const edit_button = settingsEditButton(rect);
             if (row.editable() and edit_button.contains(x, y)) {
                 self.settings_editor.?.form_row = number;
-                return self.activateSetting(row);
+                return Input.activateSetting(self, row);
             }
             if (row.target == .font_family and field.contains(x, y)) {
                 self.settings_editor.?.form_row = number;
-                return self.activateSetting(row);
+                return Input.activateSetting(self, row);
             }
             if (row.target == .font and row.target.font < 4) {
                 const right: layout.Rect = .{ .x = field.x, .y = rect.y, .width = field.width, .height = rect.height };
@@ -689,12 +690,12 @@ pub fn ForHost(comptime Host: type) type {
             }
             if (row.editable() and row.choice() and field.contains(x, y)) {
                 self.settings_editor.?.form_row = number;
-                return self.activateSetting(row);
+                return Input.activateSetting(self, row);
             }
         }
         /// Resolve Color row edits and reset actions from its viewport.
         pub fn settingsColorClick(self: *Host, x: f32, y: f32) !void {
-            const form = self.colorForm();
+            const form = Input.colorForm(self);
             const number = form.hit(x, y) orelse return;
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
@@ -706,21 +707,21 @@ pub fn ForHost(comptime Host: type) type {
             const field = settingsRowField(rect);
             if (row.editable() and (settingsEditButton(rect).contains(x, y) or (row.choice() and field.contains(x, y)))) {
                 self.settings_editor.?.form_row = number;
-                try self.activateSetting(row);
+                try Input.activateSetting(self, row);
                 if (self.settings_editor.?.editing != null and self.settings_editor.?.edit.kind == .color) {
-                    const area = self.colorForm().editor();
-                    const body = self.settingsBody();
-                    if (area.y + area.height > body.y + body.height) self.settingsScrollBy(area.y + area.height - body.y - body.height);
+                    const area = Input.colorForm(self).editor();
+                    const body = Input.settingsBody(self);
+                    if (area.y + area.height > body.y + body.height) Input.settingsScrollBy(self, area.y + area.height - body.y - body.height);
                 }
                 return;
             }
             if ((row.target == .reset_app_colors or row.target == .reset_terminal_colors) and settingsResetButton(rect).contains(x, y)) {
-                return self.activateSetting(row);
+                return Input.activateSetting(self, row);
             }
         }
         /// Resolve a shortcut binding edit from its grouped card.
         pub fn settingsShortcutClick(self: *Host, x: f32, y: f32) !void {
-            const form = self.shortcutForm();
+            const form = Input.shortcutForm(self);
             const number = form.hit(x, y) orelse return;
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
@@ -730,12 +731,12 @@ pub fn ForHost(comptime Host: type) type {
             const row = all[indices[number]];
             if (row.editable() and settingsEditButton(form.row(number)).contains(x, y)) {
                 self.settings_editor.?.form_row = number;
-                return self.activateSetting(row);
+                return Input.activateSetting(self, row);
             }
         }
         /// Resolve catalogue selection, toggles and detail edits.
         pub fn settingsProfilesClick(self: *Host, x: f32, y: f32, clicks: u8) !void {
-            const form = self.profilesForm();
+            const form = Input.profilesForm(self);
             const number = form.hit(x, y) orelse return;
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
@@ -760,14 +761,14 @@ pub fn ForHost(comptime Host: type) type {
                     // The previous expansion may have interleaved rows before
                     // this entry. Its own catalogue index stays stable.
                     e.form_row = index;
-                    self.settings_scroll_offset = self.settingsDocument().view.offset;
+                    self.settings_scroll_offset = Input.settingsDocument(self).view.offset;
                     return;
                 },
                 else => {},
             };
-            if ((row.target == .add_environment or row.target == .delete_environment) and settingsRowField(rect).contains(x, y)) return self.activateSetting(row);
-            if (row.editable() and settingsEditButton(rect).contains(x, y)) return self.activateSetting(row);
-            if (row.editable() and row.choice() and settingsRowField(rect).contains(x, y)) return self.activateSetting(row);
+            if ((row.target == .add_environment or row.target == .delete_environment) and settingsRowField(rect).contains(x, y)) return Input.activateSetting(self, row);
+            if (row.editable() and settingsEditButton(rect).contains(x, y)) return Input.activateSetting(self, row);
+            if (row.editable() and row.choice() and settingsRowField(rect).contains(x, y)) return Input.activateSetting(self, row);
         }
 
         /// Handle Settings search, inline editing and shortcut capture keys.
@@ -778,7 +779,7 @@ pub fn ForHost(comptime Host: type) type {
             if (mods.control and key == c.SDLK_S and !e.recording) return self.settingsSave();
             if (mods.control and key == c.SDLK_F and !e.recording) {
                 if (e.editing) |target| try self.changeSetting(target, e.buffer[0..e.len]);
-                self.settingsSetSearch(true);
+                Input.settingsSetSearch(self, true);
                 return;
             }
             if (e.recording) {
@@ -818,7 +819,7 @@ pub fn ForHost(comptime Host: type) type {
             if (key == c.SDLK_ESCAPE) {
                 self.cancelComposition();
                 if (e.search) {
-                    self.settingsSetSearch(false);
+                    Input.settingsSetSearch(self, false);
                 } else try self.toggleSettings();
                 return;
             }

@@ -166,8 +166,9 @@ requires a fixed footer. Global Search retains a separate temporary results
 list and reveals matching fields in the continuous document.
 Settings policy remains in settings.zig; settings_pages.zig owns the document
 anchors and card geometry, settings_input.zig owns routing and scroll interactions, and
-settings_paint.zig owns Settings drawing. The SDL host binds those modules to
-its existing editor/draft state without constructing a second controller.
+settings_paint.zig owns Settings drawing. The SDL host calls both modules
+through explicit typed functions, without re-exporting their methods onto
+`App` or introducing a second controller or configuration state.
 Settings-specific document, interaction and pixel proofs live in settings_ui_test.zig.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,
 Ctrl+V pastes, Home/End and Left/Right move the caret, and Delete/Backspace edit

@@ -68,8 +68,8 @@ experimental:
     Settings document with five sidebar section anchors and the installed-font
     chooser retain atomic save/rollback. The single scroll viewport, section
     anchors and card geometry live in settings_pages.zig;
-    settings_input.zig and settings_paint.zig bind
-    explicit pointer/keyboard and paint behavior to the concrete SDL host.
+    settings_input.zig and settings_paint.zig expose explicit typed functions
+    called directly by the SDL host without an App method alias catalogue.
     settings.zig continues to own validated changes, while main.zig composes
     the host, draft lifecycle and dispatch without a second UI controller.
     Settings document and pixel acceptance tests live in settings_ui_test.zig.

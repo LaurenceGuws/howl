@@ -309,3 +309,13 @@ calls stay with that module. The remaining shared color resolution moved from
 the painter into `settings.zig`, where both the editor and its visual preview
 consume the same validated configured color. The Settings layout, controls,
 scrolling, draft transaction and rendered pixels remain unchanged.
+
+## Settings input is a direct module, not an App method catalogue (19 November 2026)
+
+The remaining 55 Settings input/geometry aliases were removed from `App`.
+The concrete host now calls `InputUI` and `PaintUI` module functions directly;
+both modules use their own typed methods with the same borrowed `App` pointer,
+not a second configuration owner. Tests exercise those module functions
+directly. Together with the prior painter cut, all 74 forwarded aliases are
+retired. Settings interaction, search, scrolling, layouts, Save/Cancel and
+software-render tests retain their accepted behavior.

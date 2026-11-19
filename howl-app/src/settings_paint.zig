@@ -33,20 +33,14 @@ const inset_radius = corner_radius - 1;
 pub fn ForHost(comptime Host: type) type {
     return struct {
         const Paint = @This();
-        const input_ui = input_ui_module.ForHost(Host);
-        const scanSourceSwitch = input_ui.scanSourceSwitch;
-        const savedEditButton = input_ui.savedEditButton;
-        const scannedEnableButton = input_ui.scannedEnableButton;
-        const settingsRowField = input_ui.settingsRowField;
-        const settingsEditButton = input_ui.settingsEditButton;
-        const settingsResetButton = input_ui.settingsResetButton;
+        const Input = input_ui_module.ForHost(Host);
 
         /// Paint the active choice menu above the Settings page.
         pub fn drawSettingsDropdown(self: *Host) !void {
             const e = &self.settings_editor.?;
             const target = e.editing orelse return;
             if (!(settings.Row{ .page = e.page, .label = "", .target = target }).choice()) return;
-            const menu = self.settingsDropdown();
+            const menu = Input.settingsDropdown(self);
             const count = settings.choiceCount(target, self.settingsConfiguration());
             e.choice_list.reveal(count, menu.rows.visible());
             const start = e.choice_list.first;
@@ -98,9 +92,9 @@ pub fn ForHost(comptime Host: type) type {
         /// Paint Startup controls from its immutable page geometry.
         pub fn drawStartupForm(self: *Host) !void {
             const editor = &self.settings_editor.?;
-            const form = self.startupForm();
+            const form = Input.startupForm(self);
             const colors = try self.uiPalette();
-            const body = self.settingsBody();
+            const body = Input.settingsBody(self);
             const card = form.card(0);
             if (card.y >= body.y + body.height or card.y + card.height <= body.y) return;
             try setClip(self.renderer, body);
@@ -159,10 +153,10 @@ pub fn ForHost(comptime Host: type) type {
         }
         /// Paint the active RGB editor in the expanded section immediately after its row.
         pub fn drawColorEditor(self: *Host) !void {
-            const rgb = try self.editedColor();
+            const rgb = try Input.editedColor(self);
             const colors = try self.uiPalette();
             for ([_]u8{ rgb.r, rgb.g, rgb.b }, [_][]const u8{ "R", "G", "B" }, 0..) |value, label, channel| {
-                const bar = self.colorBar(channel);
+                const bar = Input.colorBar(self, channel);
                 try self.clippedText(label, .{ .x = bar.x - 24, .y = bar.y - 4, .width = 24, .height = 24 }, bar.x - 24);
                 for (0..64) |step| {
                     var shade = rgb;
@@ -179,7 +173,7 @@ pub fn ForHost(comptime Host: type) type {
                 const thumb: layout.Rect = .{ .x = bar.x + @as(f32, @floatFromInt(value)) * bar.width / 255 - 2, .y = bar.y - 2, .width = 4, .height = bar.height + 4 };
                 try fill(self.renderer, thumb, colors.text);
             }
-            const reset = self.colorReset();
+            const reset = Input.colorReset(self);
             try Paint.drawSettingsControl(self, reset, self.isHovered(reset));
             try self.clippedText("Preset", reset, reset.x + 8);
             const sample: layout.Rect = .{ .x = reset.x + 8, .y = reset.y + 30, .width = reset.width - 16, .height = 22 };
@@ -202,18 +196,18 @@ pub fn ForHost(comptime Host: type) type {
         /// Paint the scrolled Discovery card and its source controls.
         pub fn drawProfileScanCard(self: *Host) !void {
             const colors = try self.uiPalette();
-            const card = self.settingsScanCard();
-            const button = self.settingsToolbarButton(2);
+            const card = Input.settingsScanCard(self);
+            const button = Input.settingsToolbarButton(self, 2);
             try Paint.drawSettingsCard(self, card);
             const label_width = @max(1, button.x - card.x - 24);
             try self.clippedText("Discovery", .{ .x = card.x + 16, .y = card.y + 10, .width = label_width, .height = 25 }, card.x + 16);
             try self.clippedTextColor("Read-only recipes, cached when you scan.", .{ .x = card.x + 16, .y = card.y + 34, .width = @max(1, card.width - 32), .height = 24 }, card.x + 16, colors.muted);
             for (0..2) |number| {
-                const row = self.settingsScanSourceRow(number);
-                const toggle = scanSourceSwitch(row);
+                const row = Input.settingsScanSourceRow(self, number);
+                const toggle = Input.scanSourceSwitch(row);
                 const enabled = if (number == 0) self.settingsConfiguration().value.discover_shells else self.settingsConfiguration().value.discover_ssh_hosts;
                 const narrow = card.width < 500;
-                const label: []const u8 = if (number == 0) (if (narrow) "Shells" else "Local shells and REPLs") else if (self.settingsScanCompact()) "SSH" else if (narrow) "SSH hosts" else "SSH config hosts";
+                const label: []const u8 = if (number == 0) (if (narrow) "Shells" else "Local shells and REPLs") else if (Input.settingsScanCompact(self)) "SSH" else if (narrow) "SSH hosts" else "SSH config hosts";
                 try self.clippedText(label, .{ .x = row.x, .y = row.y, .width = @max(1, toggle.x - row.x - (if (narrow) @as(f32, 8) else 44)), .height = row.height }, row.x);
                 if (!narrow) try self.clippedTextColor(if (enabled) "On" else "Off", .{ .x = toggle.x - 37, .y = row.y, .width = 30, .height = row.height }, toggle.x - 37, colors.muted);
                 try Paint.drawStartupSwitch(self, toggle, enabled, self.isHovered(toggle));
@@ -228,7 +222,7 @@ pub fn ForHost(comptime Host: type) type {
                 const card = form.card(number);
                 if (card.y >= form.view.bounds.y + form.view.bounds.height or card.y + card.height <= form.view.bounds.y) continue;
                 try Paint.drawSettingsCard(self, card);
-                const width = if (number == 1) @max(1, self.settingsToolbarButton(0).x - card.x - 24) else @max(1, card.width - 32);
+                const width = if (number == 1) @max(1, Input.settingsToolbarButton(self, 0).x - card.x - 24) else @max(1, card.width - 32);
                 const heading: layout.Rect = .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 };
                 const hint: layout.Rect = .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 };
                 try self.clippedText(if (number == 1) "Saved profiles" else "Scanned profiles", heading, heading.x);
@@ -252,16 +246,16 @@ pub fn ForHost(comptime Host: type) type {
         /// Paint contextual profile actions inside the owning card.
         pub fn drawProfilesToolbar(self: *Host) !void {
             const e = self.settings_editor.?;
-            const labels: [3][]const u8 = if (self.profilesForm().card(1).width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" };
+            const labels: [3][]const u8 = if (Input.profilesForm(self).card(1).width < 500) .{ "New", "Copy", "Scan now" } else .{ "New profile", "Duplicate", "Scan now" };
             for (labels, 0..) |label, number| {
-                const button = self.settingsToolbarButton(number);
+                const button = Input.settingsToolbarButton(self, number);
                 try Paint.drawSettingsControl(self, button, e.button == @as(u8, @intCast(number)));
                 try self.clippedText(label, button, button.x + 8);
             }
             if (!e.details_open) return;
             const detail_labels = [_][]const u8{ "Close", "Duplicate", if (e.profile == 0) "Built-in" else if (e.delete_pending != null) "Delete?" else "Delete" };
             for (detail_labels, 0..) |label, number| {
-                const button = self.settingsDetailButton(number);
+                const button = Input.settingsDetailButton(self, number);
                 try Paint.drawSettingsControl(self, button, self.isHovered(button));
                 try self.clippedText(label, button, button.x + 8);
             }
@@ -270,7 +264,7 @@ pub fn ForHost(comptime Host: type) type {
         pub fn drawSettingsListHeading(self: *Host) !void {
             std.debug.assert(self.settings_editor.?.search);
             const colors = try self.uiPalette();
-            const card = self.settingsListCard();
+            const card = Input.settingsListCard(self);
             const width = @max(1, card.width - 32);
             try self.clippedText("Search results", .{ .x = card.x + 16, .y = card.y + 10, .width = width, .height = 25 }, card.x + 16);
             try self.clippedTextColor("Select a result to open its settings section.", .{ .x = card.x + 16, .y = card.y + 34, .width = width, .height = 24 }, card.x + 16, colors.muted);
@@ -280,7 +274,7 @@ pub fn ForHost(comptime Host: type) type {
             const colors = try self.uiPalette();
             const pending = self.settings_draft != null or self.settings_editor.?.editing != null;
             for ([_]SettingsHeaderAction{ .save, .cancel, .search, .close }) |action| {
-                const rect = self.settingsHeaderButton(action);
+                const rect = Input.settingsHeaderButton(self, action);
                 const hovered = self.isHovered(rect);
                 if (action == .save or action == .cancel) {
                     const active = pending and action == .save;
@@ -301,8 +295,8 @@ pub fn ForHost(comptime Host: type) type {
         pub fn drawSettings(self: *Host) !void {
             const e = &self.settings_editor.?;
             const colors = try self.uiPalette();
-            const box = self.settingsRect();
-            const body = self.settingsBody();
+            const box = Input.settingsRect(self);
+            const body = Input.settingsBody(self);
             e.profile = @min(e.profile, self.settingsConfiguration().profileCount() - 1);
             try drawing.fillRounded(self.renderer, box, colors.border, corner_radius);
             try drawing.fillRounded(self.renderer, .{ .x = box.x + 1, .y = box.y + 1, .width = @max(1, box.width - 2), .height = @max(1, box.height - 2) }, colors.title, inset_radius);
@@ -325,12 +319,12 @@ pub fn ForHost(comptime Host: type) type {
                 }
             }
             if (box.width > 360) try self.drawText("Settings", box.x + 14, box.y + chrome.Geometry.top + 6);
-            const title_width = self.settingsHeaderButton(.save).x - body.x - 10;
+            const title_width = Input.settingsHeaderButton(self, .save).x - body.x - 10;
             if (title_width > 20) try self.clippedText(if (e.search) "Search settings" else "All settings", .{ .x = body.x, .y = box.y + chrome.Geometry.top, .width = title_width, .height = chrome.Geometry.chip_height }, body.x);
             try Paint.drawSettingsHeaderButtons(self);
-            const active = if (e.search) @as(usize, 0) else self.settingsDocument().active();
+            const active = if (e.search) @as(usize, 0) else Input.settingsDocument(self).active();
             for (settings.titles, 0..) |title, index| {
-                const row = self.settingsNavRow(index);
+                const row = Input.settingsNavRow(self, index);
                 if (!e.search and active == index) {
                     try drawing.fillRounded(self.renderer, row, colors.active, corner_radius);
                     try drawing.fillRounded(self.renderer, .{ .x = row.x, .y = row.y + 6, .width = 2, .height = row.height - 12 }, colors.accent, 1);
@@ -340,7 +334,7 @@ pub fn ForHost(comptime Host: type) type {
             if (e.search) {
                 try Paint.drawSettingsSection(self, null);
             } else {
-                const document = self.settingsDocument();
+                const document = Input.settingsDocument(self);
                 for (0..settings.titles.len) |index| {
                     const form_bounds = document.formBounds(index);
                     const heading = document.heading(index);
@@ -362,7 +356,7 @@ pub fn ForHost(comptime Host: type) type {
         pub fn drawSettingsSection(self: *Host, page: ?settings.Page) !void {
             const e = &self.settings_editor.?;
             const colors = try self.uiPalette();
-            const body = self.settingsBody();
+            const body = Input.settingsBody(self);
             const startup_form = page != null and page.? == .startup;
             const simple_form = page == null;
             const appearance_form = page != null and page.? == .appearance;
@@ -371,10 +365,10 @@ pub fn ForHost(comptime Host: type) type {
             const profiles_form = page != null and page.? == .defaults;
             const card_form = appearance_form or color_form or shortcut_form or profiles_form;
             if (simple_form and !card_form) {
-                try Paint.drawSettingsCard(self, self.settingsListCard());
+                try Paint.drawSettingsCard(self, Input.settingsListCard(self));
                 try Paint.drawSettingsListHeading(self);
             }
-            if (e.search) try self.drawField(self.settingsField(), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
+            if (e.search) try self.drawField(Input.settingsField(self), &e.query_edit, e.query[0..e.query_len], "Search settings", true);
             if (startup_form) {
                 try Paint.drawStartupForm(self);
                 return;
@@ -390,12 +384,12 @@ pub fn ForHost(comptime Host: type) type {
             const visible = current_section.indices(all[0..count], &indices);
             if (simple_form) e.list.selected = @min(e.list.selected, visible -| 1);
             if (profiles_form and e.page == .defaults) e.form_row = @min(e.form_row, visible -| 1);
-            const start = if (card_form) @as(usize, 0) else self.settingsStart(visible);
-            const rows = self.settingsRows();
-            const form: AppearanceForm = if (appearance_form) self.appearanceForm() else undefined;
-            const colors_form: ColorForm = if (color_form) self.colorForm() else undefined;
-            const shortcuts_form: ShortcutForm = if (shortcut_form) self.shortcutForm() else undefined;
-            const profiles: ProfilesForm = if (profiles_form) self.profilesForm() else undefined;
+            const start = if (card_form) @as(usize, 0) else Input.settingsStart(self, visible);
+            const rows = Input.settingsRows(self);
+            const form: AppearanceForm = if (appearance_form) Input.appearanceForm(self) else undefined;
+            const colors_form: ColorForm = if (color_form) Input.colorForm(self) else undefined;
+            const shortcuts_form: ShortcutForm = if (shortcut_form) Input.shortcutForm(self) else undefined;
+            const profiles: ProfilesForm = if (profiles_form) Input.profilesForm(self) else undefined;
             var clipped_rows = false;
             defer if (clipped_rows) clearClip(self.renderer);
             if (card_form) {
@@ -416,7 +410,7 @@ pub fn ForHost(comptime Host: type) type {
                 clipped_rows = true;
             }
             const paint_start = if (card_form) @as(usize, 0) else start;
-            const paint_end = if (card_form) visible else @min(visible, start + self.settingsVisible());
+            const paint_end = if (card_form) visible else @min(visible, start + Input.settingsVisible(self));
             for (indices[paint_start..paint_end], paint_start..) |index, number| {
                 const row = all[index];
                 const rect = if (appearance_form) form.row(number) else if (color_form) colors_form.row(number) else if (shortcut_form) shortcuts_form.row(number) else if (profiles_form) profiles.row(number) else rows.row(number - start);
@@ -452,17 +446,17 @@ pub fn ForHost(comptime Host: type) type {
                     try self.clippedText(name, left, left.x);
                     if (row.choice()) {
                         const display = (try settings.choiceAt(row.target, self.settingsConfiguration(), e.choice_list.selected)).label;
-                        const select_rect = self.settingsField();
+                        const select_rect = Input.settingsField(self);
                         if (simple_form) try Paint.drawSettingsSelect(self, select_rect, display, true, true) else {
                             try fill(self.renderer, select_rect, colors.panel);
                             try outline(self.renderer, select_rect, colors.accent);
                             try self.clippedText(display, .{ .x = select_rect.x + 7, .y = select_rect.y, .width = @max(1, select_rect.width - 32), .height = select_rect.height }, select_rect.x + 7);
                             try icons.draw(self.renderer, .chevron_up, .{ .x = select_rect.x + select_rect.width - 23, .y = select_rect.y, .width = 20, .height = select_rect.height }, colors.text);
                         }
-                    } else try self.drawFieldStyled(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null, simple_form);
+                    } else try self.drawFieldStyled(Input.settingsField(self), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null, simple_form);
                 } else if (row.target == .set_default and !e.search) {
                     try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
-                    const button = savedEditButton(rect);
+                    const button = Input.savedEditButton(rect);
                     try Paint.drawSettingsControl(self, button, self.isHovered(button));
                     try self.clippedText(if (e.details_open and e.profile == row.target.set_default) "Close" else "Edit", button, button.x + 17);
                 } else if (row.target == .scanned and !e.search) {
@@ -471,27 +465,27 @@ pub fn ForHost(comptime Host: type) type {
                     try self.clippedText(entry.recipe.name, name_rect, name_rect.x);
                     const status_rect: layout.Rect = .{ .x = rect.x + rect.width - 175, .y = rect.y, .width = 76, .height = rect.height };
                     try self.clippedTextColor(if (entry.stale) "Missing" else if (entry.enabled) "Scanned" else "Disabled", status_rect, status_rect.x, colors.muted);
-                    const button = scannedEnableButton(rect);
+                    const button = Input.scannedEnableButton(rect);
                     try Paint.drawSettingsControl(self, button, self.isHovered(button));
                     try self.clippedText(if (entry.enabled) "Disable" else "Enable", button, button.x + 12);
                 } else if ((row.target == .discover_shells or row.target == .discover_ssh_hosts) and !e.search and e.page == .defaults) {
                     try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 106), .height = rect.height }, rect.x + 8);
-                    const toggle = scanSourceSwitch(rect);
+                    const toggle = Input.scanSourceSwitch(rect);
                     const enabled = if (row.target == .discover_shells) self.settingsConfiguration().value.discover_shells else self.settingsConfiguration().value.discover_ssh_hosts;
                     try self.clippedTextColor(if (enabled) "On" else "Off", .{ .x = toggle.x - 39, .y = rect.y, .width = 34, .height = rect.height }, toggle.x - 39, colors.muted);
                     try Paint.drawStartupSwitch(self, toggle, enabled, self.isHovered(toggle));
                 } else {
                     try self.clippedText(name, left, left.x);
                     if (profiles_form and (row.target == .add_environment or row.target == .delete_environment)) {
-                        const action = settingsRowField(rect);
+                        const action = Input.settingsRowField(rect);
                         try Paint.drawSettingsControl(self, action, self.isHovered(action));
                         try self.clippedText(if (row.target == .add_environment) "Add" else "Remove", action, action.x + 8);
                     } else if (color_form and (row.target == .reset_app_colors or row.target == .reset_terminal_colors)) {
-                        const reset_button = settingsResetButton(rect);
+                        const reset_button = Input.settingsResetButton(rect);
                         try Paint.drawSettingsControl(self, reset_button, self.isHovered(reset_button));
                         try self.clippedText("Reset", reset_button, reset_button.x + 8);
                     } else if (simple_form and row.choice()) {
-                        try Paint.drawSettingsSelect(self, settingsRowField(rect), contents, if (card_form) self.isHovered(settingsRowField(rect)) else number == e.list.selected and e.content_focus, false);
+                        try Paint.drawSettingsSelect(self, Input.settingsRowField(rect), contents, if (card_form) self.isHovered(Input.settingsRowField(rect)) else number == e.list.selected and e.content_focus, false);
                     } else {
                         const rgb = try settings.resolvedColor(self.settingsConfiguration(), row.target);
                         var value_rect = right;
@@ -527,7 +521,7 @@ pub fn ForHost(comptime Host: type) type {
                     }
                 }
                 if (row.editable() and !(!e.search and e.page == .defaults and (row.target == .discover_shells or row.target == .discover_ssh_hosts))) {
-                    const edit_button = settingsEditButton(rect);
+                    const edit_button = Input.settingsEditButton(rect);
                     const active = editing_row;
                     if (simple_form or active or self.isHovered(edit_button)) try Paint.drawSettingsControl(self, edit_button, active);
                     try icons.draw(self.renderer, .pencil, .{ .x = edit_button.x + 5, .y = edit_button.y + 5, .width = edit_button.width - 10, .height = edit_button.height - 10 }, if (active or self.isHovered(edit_button)) colors.text else colors.muted);

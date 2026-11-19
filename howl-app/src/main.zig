@@ -206,117 +206,6 @@ pub const App = struct {
     const InputUI = settings_input.ForHost(@This());
     const PaintUI = settings_paint.ForHost(@This());
 
-    /// Bind Settings input and geometry for settings Rect to the SDL host.
-    pub const settingsRect = InputUI.settingsRect;
-    /// Bind Settings input and geometry for settings Nav Row to the SDL host.
-    pub const settingsNavRow = InputUI.settingsNavRow;
-    /// Bind Settings input and geometry for settings Header Button to the SDL host.
-    pub const settingsHeaderButton = InputUI.settingsHeaderButton;
-    /// Bind Settings input and geometry for settings Set Search to the SDL host.
-    pub const settingsSetSearch = InputUI.settingsSetSearch;
-    /// Bind Settings input and geometry for settings Body to the SDL host.
-    pub const settingsBody = InputUI.settingsBody;
-    /// Bind Settings input and geometry for settings Scan Compact to the SDL host.
-    pub const settingsScanCompact = InputUI.settingsScanCompact;
-    /// Bind Settings input and geometry for settings Scan Card to the SDL host.
-    pub const settingsScanCard = InputUI.settingsScanCard;
-    /// Bind Settings input and geometry for settings Scan Source Row to the SDL host.
-    pub const settingsScanSourceRow = InputUI.settingsScanSourceRow;
-    /// Bind Settings input and geometry for startup Form to the SDL host.
-    pub const startupForm = InputUI.startupForm;
-    /// Bind Settings input and geometry for appearance Form to the SDL host.
-    pub const appearanceForm = InputUI.appearanceForm;
-    /// Bind Settings input and geometry for color Form to the SDL host.
-    pub const colorForm = InputUI.colorForm;
-    /// Bind Settings input and geometry for shortcut Form to the SDL host.
-    pub const shortcutForm = InputUI.shortcutForm;
-    /// Bind Settings input and geometry for profiles Form to the SDL host.
-    pub const profilesForm = InputUI.profilesForm;
-    /// Bind Settings input and geometry for appearance Settings to the SDL host.
-    pub const appearanceSettings = InputUI.appearanceSettings;
-    /// Bind Settings input and geometry for color Settings to the SDL host.
-    pub const colorSettings = InputUI.colorSettings;
-    /// Bind Settings input and geometry for shortcut Settings to the SDL host.
-    pub const shortcutSettings = InputUI.shortcutSettings;
-    /// Bind Settings input and geometry for profiles Settings to the SDL host.
-    pub const profilesSettings = InputUI.profilesSettings;
-    /// Bind Settings input and geometry for settings Form View to the SDL host.
-    pub const settingsFormView = InputUI.settingsFormView;
-    /// Bind Settings input and geometry for settings Scroll By to the SDL host.
-    pub const settingsScrollBy = InputUI.settingsScrollBy;
-    /// Bind Settings input and geometry for settings Scrollbar Press to the SDL host.
-    pub const settingsScrollbarPress = InputUI.settingsScrollbarPress;
-    /// Bind Settings input and geometry for settings Scrollbar Move to the SDL host.
-    pub const settingsScrollbarMove = InputUI.settingsScrollbarMove;
-    /// Bind Settings input and geometry for settings List Card to the SDL host.
-    pub const settingsListCard = InputUI.settingsListCard;
-    /// Bind Settings input and geometry for settings Rows to the SDL host.
-    pub const settingsRows = InputUI.settingsRows;
-    /// Bind Settings input and geometry for settings Row Field to the SDL host.
-    pub const settingsRowField = InputUI.settingsRowField;
-    /// Bind Settings input and geometry for settings Edit Button to the SDL host.
-    pub const settingsEditButton = InputUI.settingsEditButton;
-    /// Bind Settings input and geometry for settings Reset Button to the SDL host.
-    pub const settingsResetButton = InputUI.settingsResetButton;
-    /// Bind Settings input and geometry for settings Field to the SDL host.
-    pub const settingsField = InputUI.settingsField;
-    /// Bind Settings input and geometry for settings Dropdown to the SDL host.
-    pub const settingsDropdown = InputUI.settingsDropdown;
-    /// Bind Settings input and geometry for settings Visible to the SDL host.
-    pub const settingsVisible = InputUI.settingsVisible;
-    /// Bind Settings input and geometry for settings Start to the SDL host.
-    pub const settingsStart = InputUI.settingsStart;
-    /// Bind Settings input and geometry for settings Toolbar Count to the SDL host.
-    pub const settingsToolbarCount = InputUI.settingsToolbarCount;
-    /// Bind Settings input and geometry for settings Toolbar Button to the SDL host.
-    pub const settingsToolbarButton = InputUI.settingsToolbarButton;
-    /// Bind Settings input and geometry for settings Toolbar Action to the SDL host.
-    pub const settingsToolbarAction = InputUI.settingsToolbarAction;
-    /// Bind inline saved-profile controls to the SDL host.
-    pub const settingsDetailButton = InputUI.settingsDetailButton;
-    /// Bind inline saved-profile actions to the SDL host.
-    pub const settingsDetailAction = InputUI.settingsDetailAction;
-    /// Bind inline saved-profile scroll reveal to the SDL host.
-    pub const settingsRevealProfile = InputUI.settingsRevealProfile;
-    /// Bind search navigation and field activation to the Settings input owner.
-    pub const activateSetting = InputUI.activateSetting;
-    /// Bind document row reveal to the Settings input owner.
-    pub const settingsRevealRow = InputUI.settingsRevealRow;
-    /// Bind document active-section tracking to the Settings input owner.
-    pub const settingsTrackSection = InputUI.settingsTrackSection;
-    /// Bind document geometry to the Settings input owner.
-    pub const settingsDocument = InputUI.settingsDocument;
-    /// Bind Settings input and geometry for scan Settings Profiles to the SDL host.
-    pub const scanSettingsProfiles = InputUI.scanSettingsProfiles;
-    /// Bind Settings input and geometry for overview Clone Target to the SDL host.
-    pub const overviewCloneTarget = InputUI.overviewCloneTarget;
-    /// Bind Settings input and geometry for color Bar to the SDL host.
-    pub const colorBar = InputUI.colorBar;
-    /// Bind Settings input and geometry for saved Edit Button to the SDL host.
-    pub const savedEditButton = InputUI.savedEditButton;
-    /// Bind Settings input and geometry for scanned Enable Button to the SDL host.
-    pub const scannedEnableButton = InputUI.scannedEnableButton;
-    /// Bind Settings input and geometry for scan Source Switch to the SDL host.
-    pub const scanSourceSwitch = InputUI.scanSourceSwitch;
-    /// Bind Settings input and geometry for color Reset to the SDL host.
-    pub const colorReset = InputUI.colorReset;
-    /// Bind Settings input and geometry for edited Color to the SDL host.
-    pub const editedColor = InputUI.editedColor;
-    /// Bind Settings input and geometry for color Point to the SDL host.
-    pub const colorPoint = InputUI.colorPoint;
-    /// Bind Settings input and geometry for settings Click to the SDL host.
-    pub const settingsClick = InputUI.settingsClick;
-    /// Bind Settings input and geometry for settings Appearance Click to the SDL host.
-    pub const settingsAppearanceClick = InputUI.settingsAppearanceClick;
-    /// Bind Settings input and geometry for settings Color Click to the SDL host.
-    pub const settingsColorClick = InputUI.settingsColorClick;
-    /// Bind Settings input and geometry for settings Shortcut Click to the SDL host.
-    pub const settingsShortcutClick = InputUI.settingsShortcutClick;
-    /// Bind Settings input and geometry for settings Profiles Click to the SDL host.
-    pub const settingsProfilesClick = InputUI.settingsProfilesClick;
-    /// Bind Settings input and geometry for settings Key to the SDL host.
-    pub const settingsKey = InputUI.settingsKey;
-
     fn deinit(self: *App) void {
         self.discardSettings();
         self.header_cache.deinit();
@@ -1030,11 +919,11 @@ pub const App = struct {
         }
     }
     fn chooserField(self: *const App) layout.Rect {
-        const box = self.settingsRect();
+        const box = InputUI.settingsRect(self);
         return .{ .x = box.x + 12, .y = box.y + 44, .width = @max(1, box.width - 24), .height = 32 };
     }
     fn chooserList(self: *const App) layout.Rect {
-        const box = self.settingsRect();
+        const box = InputUI.settingsRect(self);
         return .{ .x = box.x + 12, .y = box.y + 86, .width = @max(1, (box.width - 36) * 0.45), .height = @max(1, box.height - 142) };
     }
     fn chooserRows(self: *const App) widgets.Rows {
@@ -1048,7 +937,7 @@ pub const App = struct {
         return self.chooser.?.list.first;
     }
     fn chooserClick(self: *App, x: f32, y: f32) !void {
-        const box = self.settingsRect();
+        const box = InputUI.settingsRect(self);
         if (!box.contains(x, y)) return self.chooserCancel();
         if (self.chooserField().contains(x, y)) {
             self.chooser.?.button = null;
@@ -1067,7 +956,7 @@ pub const App = struct {
     fn drawChooser(self: *App) !void {
         const chooser = self.chooser.?;
         const colors = try self.uiPalette();
-        const box = self.settingsRect();
+        const box = InputUI.settingsRect(self);
         const list = self.chooserList();
         const field = self.chooserField();
         try fill(self.renderer, box, colors.title);
@@ -1493,7 +1382,7 @@ pub const App = struct {
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => if (self.rename_editor != null) try self.renameKey(value.key) else if (self.chooser != null) try self.chooserKey(value.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
+                    .overlay => if (self.rename_editor != null) try self.renameKey(value.key) else if (self.chooser != null) try self.chooserKey(value.key) else if (self.settings_editor != null) try InputUI.settingsKey(self, value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -1521,13 +1410,13 @@ pub const App = struct {
                 const button = mouseButton(value.button.button) orelse return;
                 if (button == .left and self.settings_scroll_grab != null) {
                     defer self.settings_scroll_grab = null;
-                    self.settingsScrollbarMove(value.button.y);
+                    InputUI.settingsScrollbarMove(self, value.button.y);
                     return;
                 }
                 if (button == .left and self.color_drag != null) {
                     const channel = self.color_drag.?;
                     self.color_drag = null;
-                    try self.colorPoint(channel, value.button.x);
+                    try InputUI.colorPoint(self, channel, value.button.x);
                     return;
                 }
                 if (button == .left and self.scrolling != null) {
@@ -1550,9 +1439,9 @@ pub const App = struct {
             },
             c.SDL_EVENT_MOUSE_MOTION => {
                 if (self.settings_scroll_grab != null) {
-                    self.settingsScrollbarMove(value.motion.y);
+                    InputUI.settingsScrollbarMove(self, value.motion.y);
                 } else if (self.color_drag) |channel| {
-                    try self.colorPoint(channel, value.motion.x);
+                    try InputUI.colorPoint(self, channel, value.motion.x);
                 } else if (self.scrolling != null) {
                     try self.scrollPoint(value.motion.y);
                 } else if (self.selecting) |*dragging| {
@@ -1620,7 +1509,7 @@ pub const App = struct {
             return;
         }
         if (self.settings_editor != null) {
-            if (button == .left) try self.settingsClick(x, y, clicks);
+            if (button == .left) try InputUI.settingsClick(self, x, y, clicks);
             return;
         }
         if (self.palette != null) {
@@ -1854,15 +1743,15 @@ pub const App = struct {
         if (self.settings_editor) |*editor| {
             if (!std.math.isFinite(wheel.y)) return;
             if (editor.editing) |target| {
-                if (settings.choiceCount(target, self.settingsConfiguration()) != 0 and self.settingsDropdown().rect.contains(wheel.mouse_x, wheel.mouse_y)) {
+                if (settings.choiceCount(target, self.settingsConfiguration()) != 0 and InputUI.settingsDropdown(self).rect.contains(wheel.mouse_x, wheel.mouse_y)) {
                     const offset: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
-                    editor.choice_list.scroll(offset, settings.choiceCount(target, self.settingsConfiguration()), self.settingsDropdown().rows.visible());
+                    editor.choice_list.scroll(offset, settings.choiceCount(target, self.settingsConfiguration()), InputUI.settingsDropdown(self).rows.visible());
                     try editor.selectChoice(self.settingsConfiguration(), editor.choice_list.selected);
                     return;
                 }
             }
-            if (self.settingsFormView()) |view| {
-                if (view.bounds.contains(wheel.mouse_x, wheel.mouse_y)) self.settingsScrollBy(-wheel.y * 48);
+            if (InputUI.settingsFormView(self)) |view| {
+                if (view.bounds.contains(wheel.mouse_x, wheel.mouse_y)) InputUI.settingsScrollBy(self, -wheel.y * 48);
                 return;
             }
             if (editor.editing != null) return;
@@ -1871,7 +1760,7 @@ pub const App = struct {
             const count = try settings.rows(self.settingsConfiguration(), &rows);
             const visible = editor.indices(rows[0..count], &filtered);
             const offset: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
-            editor.list.scroll(offset, visible, self.settingsVisible());
+            editor.list.scroll(offset, visible, InputUI.settingsVisible(self));
             editor.content_focus = true;
             return;
         }
@@ -2079,7 +1968,7 @@ pub const App = struct {
                 if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
                 return;
             }
-            clip = self.settingsField();
+            clip = InputUI.settingsField(self);
             const text = if (e.editing != null) e.buffer[0..e.len] else e.query[0..e.query_len];
             const edit = if (e.editing != null) e.edit else e.query_edit;
             x = clip.x + 7 + try self.textWidth(text[0..edit.cursor]) - edit.scroll;
@@ -2170,18 +2059,18 @@ pub const App = struct {
             return self.setPointer(if (self.chooserField().contains(x, y)) 2 else null);
         }
         if (self.settings_editor) |*e| {
-            if (self.settingsFormView() != null) {
+            if (InputUI.settingsFormView(self) != null) {
                 e.list.hovered = null;
                 const text_field = e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice();
-                return self.setPointer(if (text_field and self.settingsField().contains(x, y)) 2 else null);
+                return self.setPointer(if (text_field and InputUI.settingsField(self).contains(x, y)) 2 else null);
             }
             var all: [settings.row_limit]settings.Row = undefined;
             var indices: [settings.row_limit]u16 = undefined;
             const count = try settings.rows(self.settingsConfiguration(), &all);
             const shown = e.indices(all[0..count], &indices);
-            const start = self.settingsStart(shown);
-            e.list.hovered = if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
-            return self.setPointer(if ((e.search or (e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice())) and self.settingsField().contains(x, y)) 2 else null);
+            const start = InputUI.settingsStart(self, shown);
+            e.list.hovered = if (InputUI.settingsRows(self).hit(x, y)) |row| if (start + row < shown) start + row else null else null;
+            return self.setPointer(if ((e.search or (e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice())) and InputUI.settingsField(self).contains(x, y)) 2 else null);
         }
         if (self.rename_editor != null) return self.setPointer(if ((try self.renameField()).contains(x, y)) 2 else null);
         if (self.palette != null) return self.setPointer(if (self.paletteField().contains(x, y)) 2 else null);
@@ -2978,7 +2867,7 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     try app.event(event_value);
     try app.drawComposition();
     try std.testing.expect(c.SDL_GetTextInputArea(window, &area, &caret));
-    try std.testing.expect(@as(f32, @floatFromInt(area.x)) >= app.settingsField().x);
+    try std.testing.expect(@as(f32, @floatFromInt(area.x)) >= App.InputUI.settingsField(&app).x);
     try std.testing.expectEqual(canonical_before_edit, owner.snapshot().revision);
     event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 207, .windowID = c.SDL_GetWindowID(window), .text = "/owned-field" };
     try app.event(event_value);
