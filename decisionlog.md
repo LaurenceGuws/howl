@@ -373,3 +373,24 @@ pointer actions for fixed and fitted tab strips, at both 600 and 1,000-pixel
 window widths, including non-active close, menu/settings, and native button
 release cancellation. This is one less independent hit route, not a new input
 controller or changed pane lifetime.
+
+## Paint the retained header from one accepted picture (19 November 2026)
+
+`HeaderPicture` now supplies the palette, target hover, tab selection and
+geometry, drag position, maximize state and explicit text scale consumed by
+header painting. `App` constructs these inputs once per header state; drawing
+no longer re-reads the live window/configuration/pointer for its paint policy.
+The raw action-button hover is separately retained because actions may still
+highlight during a tab drag while tab-body hover is suppressed. Cache equality
+includes it, eliminating an otherwise unkeyed visual dependency. Text glyph
+sizing now accepts the captured scale through the existing text-draw path;
+ordinary UI callers continue using the current window scale.
+
+SDL software-render regression compares direct and retained header pixels
+exactly at integer scale across tab, button, drag, fitted width and palette
+transitions. The compositor's target-texture resampling at 1.25x can yield
+different bytes than direct primitive rasterization, so fractional-scale
+coverage instead requires exact equality for a retained cache rebuild and
+reuse. A frozen HeaderPicture also paints identically after unrelated live
+App state changes, while changing its captured maximize flag changes icon
+pixels. Cache size limits and direct-draw fallback are unchanged.

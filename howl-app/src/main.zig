@@ -126,6 +126,8 @@ const HeaderPicture = struct {
     active: u8,
     fitted: bool,
     hovered: chrome.HeaderTarget,
+    /// Action hover remains visible during tab drags, unlike tab-body hover.
+    action_hover: chrome.HeaderTarget = .none,
     dragging_tab: bool,
     drag_x: f32,
     maximized: bool,
@@ -134,7 +136,7 @@ const HeaderPicture = struct {
 
     fn eql(a: *const HeaderPicture, b: *const HeaderPicture) bool {
         if (a.width != b.width or a.scale != b.scale or a.count != b.count or a.active != b.active or
-            a.fitted != b.fitted or !std.meta.eql(a.hovered, b.hovered) or a.dragging_tab != b.dragging_tab or
+            a.fitted != b.fitted or !std.meta.eql(a.hovered, b.hovered) or !std.meta.eql(a.action_hover, b.action_hover) or a.dragging_tab != b.dragging_tab or
             a.drag_x != b.drag_x or a.maximized != b.maximized or !std.meta.eql(a.colors, b.colors)) return false;
         for (a.labels[0..a.count], b.labels[0..b.count]) |left, right| {
             if (!std.mem.eql(u8, left.text(), right.text())) return false;
@@ -224,11 +226,6 @@ pub const App = struct {
     /// Check pointer hover against one exact painted control rectangle.
     pub fn isHovered(self: *const App, rect: layout.Rect) bool {
         return if (self.hover_point) |point| rect.contains(point.x, point.y) else false;
-    }
-    fn headerHover(self: *const App) chrome.HeaderTarget {
-        if (self.headerHeight() == 0 or self.drag != .none) return .none;
-        const point = self.hover_point orelse return .none;
-        return chrome.headerAt(self.headerTabs(self.width), point.x, point.y);
     }
     fn headerTabs(self: *const App, width: f32) chrome.Tabs {
         return chrome.Tabs.init(self.tab_count, width, self.configuration.value.tab_width == .fit);
@@ -1142,7 +1139,7 @@ pub const App = struct {
         defer clearClip(self.renderer);
         const origin = inner.x - scroll;
         const ink_y = rect.y + 6;
-        try self.drawTextTint(self.ui_fonts.faces[0], if (text.len == 0) placeholder else text, origin, ink_y, if (text.len == 0) colors.muted else colors.text);
+        try self.drawTextTint(self.ui_fonts.faces[0], if (text.len == 0) placeholder else text, origin, ink_y, if (text.len == 0) colors.muted else colors.text, self.scale);
         if (active) if (edit.selected()) |range| {
             const left = origin + try self.textWidth(text[0..range.start]);
             const right = origin + try self.textWidth(text[0..range.end]);
@@ -1151,7 +1148,7 @@ pub const App = struct {
                 const selected = appearance.selection(colors);
                 try fill(self.renderer, area, selected.background);
                 try setClip(self.renderer, area);
-                try self.drawTextTint(self.ui_fonts.faces[0], text, origin, ink_y, selected.foreground);
+                try self.drawTextTint(self.ui_fonts.faces[0], text, origin, ink_y, selected.foreground, self.scale);
                 try setClip(self.renderer, inner);
             }
         };
@@ -1909,6 +1906,10 @@ pub const App = struct {
     }
     /// Paint tinted UI text without escaping its clipping bounds.
     pub fn clippedTextColor(self: *App, text: []const u8, rect: layout.Rect, x: f32, color: c.SDL_Color) !void {
+        return self.clippedTextColorAtScale(text, rect, x, color, self.scale);
+    }
+    /// Borrow an accepted header's scale instead of the mutable window scale.
+    fn clippedTextColorAtScale(self: *App, text: []const u8, rect: layout.Rect, x: f32, color: c.SDL_Color, scale: f32) !void {
         const nested = c.SDL_RenderClipEnabled(self.renderer);
         var previous: c.SDL_Rect = undefined;
         if (nested and !c.SDL_GetRenderClipRect(self.renderer, &previous)) return error.SDL;
@@ -1925,22 +1926,22 @@ pub const App = struct {
         defer if (nested) {
             std.debug.assert(c.SDL_SetRenderClipRect(self.renderer, &previous));
         } else clearClip(self.renderer);
-        try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color);
+        try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color, scale);
     }
     /// Paint a string using the app's active text font.
     pub fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
         try self.drawTextFont(self.ui_fonts.faces[0], bytes, x, y);
     }
     fn drawTextFont(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32) !void {
-        return self.drawTextTint(font, bytes, x, y, (try self.uiPalette()).text);
+        return self.drawTextTint(font, bytes, x, y, (try self.uiPalette()).text, self.scale);
     }
-    fn drawTextTint(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32, color: c.SDL_Color) !void {
+    fn drawTextTint(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32, color: c.SDL_Color, scale: f32) !void {
         if (bytes.len == 0) return;
         const surface = c.TTF_RenderText_Blended(font, bytes.ptr, bytes.len, color) orelse return error.TTF;
         defer c.SDL_DestroySurface(surface);
         const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse return error.SDL;
         defer c.SDL_DestroyTexture(texture);
-        const rect: c.SDL_FRect = .{ .x = x, .y = y, .w = @as(f32, @floatFromInt(surface.*.w)) / self.scale, .h = @as(f32, @floatFromInt(surface.*.h)) / self.scale };
+        const rect: c.SDL_FRect = .{ .x = x, .y = y, .w = @as(f32, @floatFromInt(surface.*.w)) / scale, .h = @as(f32, @floatFromInt(surface.*.h)) / scale };
         if (!c.SDL_RenderTexture(self.renderer, texture, null, &rect)) return error.SDL;
     }
     fn textWidth(self: *App, bytes: []const u8) !f32 {
@@ -2140,27 +2141,27 @@ pub const App = struct {
         }
         return false;
     }
-    fn drawTab(self: *App, picture: *const HeaderPicture, index: u8, rect: layout.Rect) !void {
-        const colors = try self.uiPalette();
-        const target = self.headerHover();
-        const base = if (index == self.active) colors.active else colors.idle;
+    fn drawTab(self: *App, picture: *const HeaderPicture, tabs: chrome.Tabs, index: u8, rect: layout.Rect) !void {
+        const colors = picture.colors;
+        const target = picture.hovered;
+        const base = if (index == picture.active) colors.active else colors.idle;
         const body_hovered = target == .tab and target.tab == index;
         try drawing.fillRounded(self.renderer, rect, if (body_hovered) appearance.hover(base) else base, chrome.Geometry.chip_radius);
-        const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) chrome.Geometry.close_width else 0;
+        const close_width: f32 = if (tabs.close(index) != null) chrome.Geometry.close_width else 0;
         if (target == .tab_close and target.tab_close == index) {
             const close_rect: layout.Rect = .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height };
             try drawing.fillRounded(self.renderer, chrome.closeSurface(close_rect), appearance.closeHover(base), chrome.Geometry.hover_radius);
         }
-        if (index == self.active) try fill(self.renderer, .{ .x = rect.x + chrome.Geometry.chip_radius, .y = rect.y + rect.height - chrome.Geometry.accent_bottom, .width = @max(0, rect.width - chrome.Geometry.chip_radius * 2), .height = chrome.Geometry.accent_height }, colors.accent);
+        if (index == picture.active) try fill(self.renderer, .{ .x = rect.x + chrome.Geometry.chip_radius, .y = rect.y + rect.height - chrome.Geometry.accent_bottom, .width = @max(0, rect.width - chrome.Geometry.chip_radius * 2), .height = chrome.Geometry.accent_height }, colors.accent);
         const title = chrome.titleArea(rect, close_width != 0);
-        if (title.width > 0) try self.clippedText(picture.labels[index].text(), title, title.x);
+        if (title.width > 0) try self.clippedTextColorAtScale(picture.labels[index].text(), title, title.x, colors.text, picture.scale);
         if (close_width != 0) try icons.draw(self.renderer, .x, .{ .x = rect.x + rect.width - close_width + 7, .y = rect.y + 7, .width = 16, .height = 16 }, colors.text);
     }
-    fn drawWindowControls(self: *App) !void {
-        const colors = try self.uiPalette();
+    fn drawWindowControls(self: *App, picture: *const HeaderPicture) !void {
+        const colors = picture.colors;
         for ([_]chrome.Button{ .minimize, .maximize, .close }) |button| {
-            const rect = chrome.control(button, self.width);
-            const target = self.headerHover();
+            const rect = chrome.control(button, picture.width);
+            const target = picture.hovered;
             const hovered = target == .window and target.window == button;
             if (hovered) try drawing.fillRounded(self.renderer, rect, if (button == .close) appearance.closeHover(colors.title) else appearance.hover(colors.title), chrome.Geometry.chip_radius);
             const color = if (hovered) colors.text else colors.muted;
@@ -2171,7 +2172,7 @@ pub const App = struct {
             switch (button) {
                 .minimize => try icons.draw(self.renderer, .minus, icon_rect, color),
                 .maximize => {
-                    const glyph = if (c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_MAXIMIZED != 0) chrome.restore_icon else chrome.maximize_icon;
+                    const glyph = if (picture.maximized) chrome.restore_icon else chrome.maximize_icon;
                     for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = y + part.y, .width = part.width, .height = part.height }, color);
                 },
                 .close => try icons.draw(self.renderer, .x, icon_rect, color),
@@ -2180,13 +2181,18 @@ pub const App = struct {
         }
     }
     fn headerPicture(self: *App) !HeaderPicture {
+        const hit: chrome.HeaderTarget = if (self.hover_point) |point| chrome.headerAt(self.headerTabs(self.width), point.x, point.y) else .none;
         var picture: HeaderPicture = .{
             .width = self.width,
             .scale = self.scale,
             .count = self.tab_count,
             .active = self.active,
             .fitted = self.configuration.value.tab_width == .fit,
-            .hovered = self.headerHover(),
+            .hovered = if (self.drag == .none) hit else .none,
+            .action_hover = switch (hit) {
+                .plus, .profiles, .settings => hit,
+                else => .none,
+            },
             .dragging_tab = self.drag == .tab,
             .drag_x = if (self.drag == .tab) self.drag.tab.x else 0,
             .maximized = c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_MAXIMIZED != 0,
@@ -2204,28 +2210,28 @@ pub const App = struct {
         return picture;
     }
     fn drawHeader(self: *App, picture: *const HeaderPicture) !void {
-        if (self.headerHeight() == 0) return;
-        const colors = try self.uiPalette();
-        try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = chrome.height }, colors.title);
-        for (0..self.tab_count) |number| {
+        const colors = picture.colors;
+        const tabs = chrome.Tabs.init(picture.count, picture.width, picture.fitted);
+        try fill(self.renderer, .{ .x = 0, .y = 0, .width = picture.width, .height = chrome.height }, colors.title);
+        for (0..picture.count) |number| {
             const index: u8 = @intCast(number);
-            const rect = self.headerTabs(self.width).tab(index);
-            if (self.drag == .tab and index == self.active) {
+            const rect = tabs.tab(index);
+            if (picture.dragging_tab and index == picture.active) {
                 try drawing.fillRounded(self.renderer, rect, colors.border, chrome.Geometry.chip_radius);
                 try drawing.fillRounded(self.renderer, chrome.dragInterior(rect), colors.title, chrome.Geometry.hover_radius);
-            } else try self.drawTab(picture, index, rect);
+            } else try self.drawTab(picture, tabs, index, rect);
         }
-        if (self.drag == .tab) {
-            var rect = self.headerTabs(self.width).tab(self.active);
-            rect.x = self.drag.tab.x;
+        if (picture.dragging_tab) {
+            var rect = tabs.tab(picture.active);
+            rect.x = picture.drag_x;
             try drawing.fillRounded(self.renderer, rect, colors.accent, chrome.Geometry.chip_radius);
-            try self.drawTab(picture, self.active, chrome.dragInterior(rect));
+            try self.drawTab(picture, tabs, picture.active, chrome.dragInterior(rect));
         }
-        for ([_]layout.Rect{ self.headerTabs(self.width).plus(), self.headerTabs(self.width).profiles(), chrome.settings(self.width) }, [_]icons.Name{ .plus, .chevron_right, .ellipsis }) |rect, glyph| {
-            if (self.isHovered(rect)) try drawing.fillRounded(self.renderer, rect, appearance.hover(colors.idle), chrome.Geometry.chip_radius);
+        for ([_]layout.Rect{ tabs.plus(), tabs.profiles(), chrome.settings(picture.width) }, [_]icons.Name{ .plus, .chevron_right, .ellipsis }, [_]chrome.HeaderTarget{ .plus, .profiles, .settings }) |rect, glyph, hit| {
+            if (std.meta.eql(picture.action_hover, hit)) try drawing.fillRounded(self.renderer, rect, appearance.hover(colors.idle), chrome.Geometry.chip_radius);
             try icons.draw(self.renderer, glyph, .{ .x = rect.x + 6, .y = rect.y + 5, .width = 20, .height = 20 }, colors.text);
         }
-        try self.drawWindowControls();
+        try self.drawWindowControls(picture);
     }
     fn drawRetainedHeader(self: *App) !void {
         if (self.headerHeight() == 0) {
@@ -2233,8 +2239,8 @@ pub const App = struct {
             return;
         }
         const picture = try self.headerPicture();
-        const width: c_int = @intFromFloat(@ceil(self.width * self.scale));
-        const height: c_int = @intFromFloat(@ceil(chrome.height * self.scale));
+        const width: c_int = @intFromFloat(@ceil(picture.width * picture.scale));
+        const height: c_int = @intFromFloat(@ceil(chrome.height * picture.scale));
         // A single bounded chrome surface, not one allocation per tab/icon.
         if (width <= 0 or height <= 0 or @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * 4 > 2 * 1024 * 1024) {
             self.header_cache.deinit();
@@ -2257,14 +2263,14 @@ pub const App = struct {
             // zig-audit: acknowledge discard
             // reason: On a failed chrome paint the window target must be restored best-effort before unwinding.
             errdefer _ = c.SDL_SetRenderTarget(self.renderer, null);
-            if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or
+            if (!c.SDL_SetRenderScale(self.renderer, picture.scale, picture.scale) or
                 !c.SDL_SetRenderDrawColor(self.renderer, picture.colors.title.r, picture.colors.title.g, picture.colors.title.b, 255) or
                 !c.SDL_RenderClear(self.renderer)) return error.SDL;
             try self.drawHeader(&picture);
-            if (!c.SDL_SetRenderTarget(self.renderer, null) or !c.SDL_SetRenderScale(self.renderer, self.scale, self.scale)) return error.SDL;
+            if (!c.SDL_SetRenderTarget(self.renderer, null) or !c.SDL_SetRenderScale(self.renderer, picture.scale, picture.scale)) return error.SDL;
             self.header_cache.picture = picture;
         }
-        const destination: c.SDL_FRect = .{ .x = 0, .y = 0, .w = self.width, .h = chrome.height };
+        const destination: c.SDL_FRect = .{ .x = 0, .y = 0, .w = picture.width, .h = chrome.height };
         if (!c.SDL_RenderTexture(self.renderer, self.header_cache.texture, null, &destination)) return error.SDL;
     }
     fn drawDivider(self: *App, divider: layout.Divider, color: c.SDL_Color) !void {
@@ -2631,6 +2637,9 @@ test "retained chrome identity ignores terminal work and detects every painted h
     changed.hovered = .{ .tab_close = 1 };
     try std.testing.expect(!initial.eql(&changed));
     changed = initial;
+    changed.action_hover = .plus;
+    try std.testing.expect(!initial.eql(&changed));
+    changed = initial;
     changed.dragging_tab = true;
     changed.drag_x = 70;
     try std.testing.expect(!initial.eql(&changed));
@@ -2652,6 +2661,166 @@ test "retained chrome identity ignores terminal work and detects every painted h
     changed = initial;
     changed.active = 1;
     try std.testing.expect(!initial.eql(&changed));
+}
+
+test "retained and direct header pixels agree across hover, drag, fitted widths and scale" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("header retention", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    const surface = c.SDL_CreateSurface(1050, 72, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    var first: Tab = .{ .recipe = undefined };
+    var second: Tab = .{ .recipe = undefined };
+    try first.title.set("Shell");
+    try second.title.set("Editor 界");
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .width = 1000,
+        .height = 650,
+        .bindings = try keybindings.Bindings.init(),
+        .tab_count = 2,
+    };
+    app.tabs[0] = &first;
+    app.tabs[1] = &second;
+    defer app.header_cache.deinit();
+    const expected = try a.alloc(c.SDL_Color, 1050 * 72);
+    defer a.free(expected);
+
+    for (0..13) |step| {
+        app.hover_point = null;
+        app.drag = .none;
+        app.active = if (step >= 8) 1 else 0;
+        configuration.value.tab_width = if (step >= 9) .fit else .fixed;
+        configuration.value.app_theme = if (step >= 10) "slate" else "howl_dark";
+        app.width = if (step >= 11) 760 else 1000;
+        app.scale = if (step >= 11) 1.25 else 1;
+        const tabs = app.headerTabs(app.width);
+        const hovered: ?layout.Rect = switch (step) {
+            1 => tabs.body(0),
+            2 => tabs.close(1).?,
+            3, 7 => tabs.plus(),
+            4 => tabs.profiles(),
+            5 => chrome.settings(app.width),
+            6 => chrome.control(.close, app.width),
+            else => null,
+        };
+        if (hovered) |rect| app.hover_point = .{ .x = rect.x + rect.width / 2, .y = rect.y + rect.height / 2 };
+        if (step == 7) {
+            app.drag = .{ .tab = chrome.Drag.begin(tabs.tab(0), tabs.tab(0).x + 15) };
+            app.drag.tab.x += 70;
+        }
+        if (step == 12) try second.title.set("Renamed tab");
+        const picture = try app.headerPicture();
+        if (step == 7) {
+            try std.testing.expect(picture.hovered == .none);
+            try std.testing.expect(picture.action_hover == .plus);
+        }
+        const width: usize = @intFromFloat(@ceil(app.width * app.scale));
+        const height: usize = @intFromFloat(@ceil(chrome.height * app.scale));
+        try std.testing.expect(width <= 1050 and height <= 72);
+        if (!c.SDL_SetRenderTarget(renderer, null) or !c.SDL_SetRenderClipRect(renderer, null) or
+            !c.SDL_SetRenderScale(renderer, app.scale, app.scale) or
+            !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) or !c.SDL_RenderClear(renderer)) return error.SDL;
+        try app.drawHeader(&picture);
+        if (!c.SDL_RenderPresent(renderer)) return error.SDL;
+        for (0..height) |y| {
+            for (0..width) |x| expected[y * width + x] = try testPixel(surface, @intCast(x), @intCast(y));
+        }
+
+        if (!c.SDL_SetRenderClipRect(renderer, null) or !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) or !c.SDL_RenderClear(renderer)) return error.SDL;
+        try app.drawRetainedHeader();
+        if (!c.SDL_RenderPresent(renderer)) return error.SDL;
+        try std.testing.expect(app.header_cache.picture.?.eql(&picture));
+        if (app.scale != 1) {
+            // SDL target-texture resampling differs from direct primitive
+            // rasterization at fractional scale. Compare the actual retained
+            // path against a fresh rebuild instead of accepting a wide pixel
+            // tolerance against a different rendering path.
+            for (0..height) |y| {
+                for (0..width) |x| expected[y * width + x] = try testPixel(surface, @intCast(x), @intCast(y));
+            }
+            app.header_cache.deinit();
+        }
+        for (0..2) |pass| {
+            if (!c.SDL_SetRenderClipRect(renderer, null) or !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) or !c.SDL_RenderClear(renderer)) return error.SDL;
+            try app.drawRetainedHeader();
+            if (!c.SDL_RenderPresent(renderer)) return error.SDL;
+            for (0..height) |y| for (0..width) |x| {
+                const actual = try testPixel(surface, @intCast(x), @intCast(y));
+                if (!std.meta.eql(expected[y * width + x], actual)) {
+                    std.debug.print("header mismatch step={d} pass={d} xy={d},{d} expected={any} actual={any}\n", .{ step, pass, x, y, expected[y * width + x], actual });
+                    return error.HeaderPixelMismatch;
+                }
+            };
+        }
+        const retained = app.header_cache.texture.?;
+        try app.drawRetainedHeader();
+        try std.testing.expectEqual(retained, app.header_cache.texture.?);
+    }
+
+    // A captured picture, including glyph colour and maximize shape, must not
+    // consult the current app state when it paints a previously accepted cut.
+    const frozen = try app.headerPicture();
+    const width: usize = @intFromFloat(@ceil(frozen.width * frozen.scale));
+    const height: usize = @intFromFloat(@ceil(chrome.height * frozen.scale));
+    if (!c.SDL_SetRenderTarget(renderer, null) or !c.SDL_SetRenderClipRect(renderer, null) or
+        !c.SDL_SetRenderScale(renderer, frozen.scale, frozen.scale) or
+        !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) or !c.SDL_RenderClear(renderer)) return error.SDL;
+    try app.drawHeader(&frozen);
+    if (!c.SDL_RenderPresent(renderer)) return error.SDL;
+    for (0..height) |y| {
+        for (0..width) |x| expected[y * width + x] = try testPixel(surface, @intCast(x), @intCast(y));
+    }
+    app.hover_point = .{ .x = 15, .y = 15 };
+    app.active = 0;
+    app.width = 1000;
+    app.scale = 1;
+    configuration.value.tab_width = .fixed;
+    configuration.value.app_theme = "howl_dark";
+    if (!c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) or !c.SDL_RenderClear(renderer)) return error.SDL;
+    try app.drawHeader(&frozen);
+    if (!c.SDL_RenderPresent(renderer)) return error.SDL;
+    for (0..height) |y| for (0..width) |x| {
+        try std.testing.expectEqual(expected[y * width + x], try testPixel(surface, @intCast(x), @intCast(y)));
+    };
+
+    var maximized = frozen;
+    maximized.maximized = !frozen.maximized;
+    if (!c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) or !c.SDL_RenderClear(renderer)) return error.SDL;
+    try app.drawHeader(&maximized);
+    if (!c.SDL_RenderPresent(renderer)) return error.SDL;
+    const control = chrome.control(.maximize, frozen.width);
+    var changed: usize = 0;
+    const left: usize = @intFromFloat(@floor(control.x * frozen.scale));
+    const right: usize = @intFromFloat(@ceil((control.x + control.width) * frozen.scale));
+    const top: usize = @intFromFloat(@floor(control.y * frozen.scale));
+    const bottom: usize = @intFromFloat(@ceil((control.y + control.height) * frozen.scale));
+    for (top..bottom) |y| for (left..right) |x| {
+        if (!std.meta.eql(expected[y * width + x], try testPixel(surface, @intCast(x), @intCast(y)))) changed += 1;
+    };
+    try std.testing.expect(changed > 0);
 }
 
 test "header pointer dispatch matches chrome targets and preserves close, drag and overlays" {
