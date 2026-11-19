@@ -2339,12 +2339,7 @@ pub const App = struct {
             try self.drawFind(p, rect, status);
             const failure: ?(CreationError || GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.creation_failure) |value| value else if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
             if (failure != null or status.closed) {
-                const clip: c.SDL_Rect = .{
-                    .x = @intFromFloat(@floor(outer.x)),
-                    .y = @intFromFloat(@floor(outer.y)),
-                    .w = @as(c_int, @intFromFloat(@ceil(outer.x + outer.w))) - @as(c_int, @intFromFloat(@floor(outer.x))),
-                    .h = @as(c_int, @intFromFloat(@ceil(outer.y + outer.h))) - @as(c_int, @intFromFloat(@floor(outer.y))),
-                };
+                const clip = drawing.clipBounds(outer);
                 if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
                 defer clearClip(self.renderer);
                 if (failure) |value| {

@@ -7,6 +7,7 @@ const selection = @import("selection.zig");
 const cursor_effects = @import("cursor.zig");
 const output_commands = @import("howl_vt_output_commands");
 const output_limits = @import("howl_vt_output_limits");
+const drawing = @import("pixels.zig");
 
 /// Host focus/blink composition over one immutable cursor frame.
 pub const CursorDisplay = enum { shown, hidden, outline };
@@ -346,7 +347,7 @@ pub const Canvas = struct {
             @memcpy(self.row_generations[0..snapshot.rows], snapshot.row_generations[0..snapshot.rows]);
             self.content_revision = snapshot.content_revision;
         }
-        const clip = pixelClip(pane);
+        const clip = drawing.clipBounds(pane);
         const dest: c.SDL_FRect = .{ .x = pane.x, .y = pane.y, .w = @floatFromInt(snapshot.surface.width), .h = @floatFromInt(snapshot.surface.height) };
         if (!c.SDL_SetRenderClipRect(renderer, &clip) or !c.SDL_RenderTexture(renderer, target, null, &dest)) return error.SDLTexture;
         try self.drawSelection(renderer, pane, value);
@@ -411,7 +412,7 @@ pub const Canvas = struct {
                 .solid => continue,
             }
             const replay = (try cursorRecolor(command, painted, ink, color_id)) orelse continue;
-            try self.appendCommand(renderer, geometry, pane, pixelClip(pane), replay);
+            try self.appendCommand(renderer, geometry, pane, drawing.clipBounds(pane), replay);
         };
         try geometry.finish(renderer);
     }
@@ -465,7 +466,7 @@ pub const Canvas = struct {
 
     /// Draws one flat final-command pass. Clear and redraw the target after failure.
     pub fn drawCommands(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, commands: []const output_commands.Command) !void {
-        const pane_clip = pixelClip(pane);
+        const pane_clip = drawing.clipBounds(pane);
         try beginCommands(renderer, geometry);
         for (commands) |command| try self.appendCommand(renderer, geometry, pane, pane_clip, command);
         try geometry.finish(renderer);
@@ -500,7 +501,7 @@ pub const Canvas = struct {
         device_clip: ?c.SDL_Rect,
     ) !void {
         if (first > end or end > snapshot.rows) return error.InvalidRows;
-        const pane_clip = pixelClip(pane);
+        const pane_clip = drawing.clipBounds(pane);
         var visible = pane_clip;
         if (device_clip) |clip| {
             if (!c.SDL_GetRectIntersection(&pane_clip, &clip, &visible)) return;
@@ -689,18 +690,12 @@ fn destination(rect: output_commands.Rect, pane: c.SDL_FRect) c.SDL_FRect {
     };
 }
 
-fn pixelClip(rect: c.SDL_FRect) c.SDL_Rect {
-    const x: c_int = @intFromFloat(@floor(rect.x));
-    const y: c_int = @intFromFloat(@floor(rect.y));
-    return .{ .x = x, .y = y, .w = @as(c_int, @intFromFloat(@ceil(rect.x + rect.w))) - x, .h = @as(c_int, @intFromFloat(@ceil(rect.y + rect.h))) - y };
-}
-
 fn commandClip(ink: output_commands.Rect, clip: output_commands.Rect, pane: c.SDL_FRect, pane_clip: c.SDL_Rect) ?c.SDL_Rect {
     if (contained(ink, clip)) {
         if (pane_clip.w <= 0 or pane_clip.h <= 0) return null;
         return pane_clip;
     }
-    const requested = pixelClip(destination(clip, pane));
+    const requested = drawing.clipBounds(destination(clip, pane));
     var visible: c.SDL_Rect = undefined;
     if (!c.SDL_GetRectIntersection(&requested, &pane_clip, &visible)) return null;
     return visible;
@@ -711,7 +706,7 @@ fn rectEqual(a: c.SDL_Rect, b: c.SDL_Rect) bool {
 }
 
 test "fractional pane clips cover edge pixels without crossing the integer pane bounds" {
-    const clip = pixelClip(.{ .x = 10.2, .y = 5.8, .w = 15.4, .h = 20.1 });
+    const clip = drawing.clipBounds(.{ .x = 10.2, .y = 5.8, .w = 15.4, .h = 20.1 });
     try std.testing.expectEqual(c.SDL_Rect{ .x = 10, .y = 5, .w = 16, .h = 21 }, clip);
 }
 
@@ -729,14 +724,14 @@ test "command clipping equals SDL for contained clipped fractional negative and 
             .w = @floatFromInt(if (i % 17 == 0) @as(usize, 0) else 1 + i % 257),
             .h = @floatFromInt(if (i % 19 == 0) @as(usize, 0) else 1 + i % 193),
         };
-        const pane_clip = pixelClip(pane);
+        const pane_clip = drawing.clipBounds(pane);
         const ink: output_commands.Rect = .{ .x = @as(i32, @intCast(i % 43)) - 21, .y = @as(i32, @intCast(i % 37)) - 18, .width = @intCast(2 + i % 19), .height = @intCast(2 + i % 29) };
         const clip: output_commands.Rect = switch (i % 3) {
             0 => ink,
             1 => .{ .x = ink.x + 1, .y = ink.y + 1, .width = ink.width - 1, .height = ink.height - 1 },
             else => .{ .x = 0, .y = 0, .width = 320, .height = 200 },
         };
-        const requested = if (contained(ink, clip)) pane_clip else pixelClip(destination(clip, pane));
+        const requested = if (contained(ink, clip)) pane_clip else drawing.clipBounds(destination(clip, pane));
         var intersection: c.SDL_Rect = undefined;
         const expected: ?c.SDL_Rect = if (c.SDL_GetRectIntersection(&requested, &pane_clip, &intersection)) intersection else null;
         try std.testing.expectEqualDeep(expected, commandClip(ink, clip, pane, pane_clip));

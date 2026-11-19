@@ -3,15 +3,50 @@ const std = @import("std");
 const c = @import("desktop");
 const layout = @import("layout.zig");
 
+/// Cover every logical edge with whole SDL clip pixels, including fractional
+/// negative origins. This is not the nearest-edge policy for drawn strokes.
+pub fn clipBounds(rect: c.SDL_FRect) c.SDL_Rect {
+    const x: c_int = @intFromFloat(@floor(rect.x));
+    const y: c_int = @intFromFloat(@floor(rect.y));
+    return .{
+        .x = x,
+        .y = y,
+        .w = @as(c_int, @intFromFloat(@ceil(rect.x + rect.w))) - x,
+        .h = @as(c_int, @intFromFloat(@ceil(rect.y + rect.h))) - y,
+    };
+}
+
 /// Shared SDL clip geometry used by host UI panels and their painters.
 pub fn setClip(renderer: *c.SDL_Renderer, rect: layout.Rect) error{SDL}!void {
-    const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.x + rect.width) - @floor(rect.x)), .h = @intFromFloat(@ceil(rect.y + rect.height) - @floor(rect.y)) };
+    const clip = clipBounds(.{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height });
     if (!c.SDL_SetRenderClipRect(renderer, &clip)) return error.SDL;
 }
 /// Restore unclipped drawing after a bounded Settings or host paint pass.
 pub fn clearClip(renderer: *c.SDL_Renderer) void {
     const success = c.SDL_SetRenderClipRect(renderer, null);
     std.debug.assert(success);
+}
+
+test "clip bounds cover fractional and negative SDL edges without stroke rounding" {
+    const checks = [_]struct { rect: c.SDL_FRect, expected: c.SDL_Rect }{
+        .{ .rect = .{ .x = 10.2, .y = 5.8, .w = 15.4, .h = 20.1 }, .expected = .{ .x = 10, .y = 5, .w = 16, .h = 21 } },
+        .{ .rect = .{ .x = -2.25, .y = -5.5, .w = 4, .h = 3 }, .expected = .{ .x = -3, .y = -6, .w = 5, .h = 4 } },
+        .{ .rect = .{ .x = 14.75, .y = 7.25, .w = 0.125, .h = 0.5 }, .expected = .{ .x = 14, .y = 7, .w = 1, .h = 1 } },
+        .{ .rect = .{ .x = 10, .y = 5, .w = 0, .h = 0 }, .expected = .{ .x = 10, .y = 5, .w = 0, .h = 0 } },
+    };
+    for (checks) |check| try std.testing.expectEqual(check.expected, clipBounds(check.rect));
+
+    const surface = c.SDL_CreateSurface(64, 64, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const geometry: layout.Rect = .{ .x = 10.2, .y = 5.8, .width = 15.4, .height = 20.1 };
+    try setClip(renderer, geometry);
+    var actual: c.SDL_Rect = undefined;
+    try std.testing.expect(c.SDL_GetRenderClipRect(renderer, &actual));
+    try std.testing.expectEqual(checks[0].expected, actual);
+    clearClip(renderer);
+    try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
 }
 
 /// Settings name stroke width at a 15-pixel font. Direct output accepts 1–16

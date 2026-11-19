@@ -333,3 +333,14 @@ product. All persisted shortcut IDs, including `recover_instance`, and their
 existing configurations remain unchanged. Focused tests prove the action
 registry identities and projection-retry state; terminal concurrency and
 Settings tests remain in the full repository graph.
+
+## One SDL clip coverage rule (19 November 2026)
+
+The app's physical clip bounds are owned by `pixels.clipBounds`: floor the
+origin and ceil the far edge of an SDL float rectangle. The shared pure
+conversion now serves Settings/UI `setClip`, Canvas command/overlay clipping,
+and the closed/error pane overlay in `main.zig`. This replaces three copies
+of the same coverage rule, while keeping the distinct nearest-edge stroke
+rounding policy unchanged. Fractional, negative, tiny and empty rectangles
+are checked alongside a software-renderer clip roundtrip and Canvas's
+existing 10,000-case intersection oracle and exact-pixel tests.
