@@ -473,7 +473,7 @@ pub fn ForHost(comptime Host: type) type {
         /// Resolve the in-progress color edit against its current value.
         pub fn editedColor(self: *Host) !vt.Terminal.Rgb {
             const e = self.settings_editor.?;
-            return color_config.parse(e.buffer[0..e.len]) catch (try self.settingRgb(.{ .page = e.page, .label = "", .target = e.editing.? })).?;
+            return color_config.parse(e.buffer[0..e.len]) catch (try settings.resolvedColor(self.settingsConfiguration(), e.editing.?)).?;
         }
         /// Update the edited RGB hex buffer from a slider position.
         pub fn colorPoint(self: *Host, channel: u8, x: f32) !void {

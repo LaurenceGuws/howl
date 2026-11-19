@@ -1,5 +1,7 @@
 const std = @import("std");
 const widgets = @import("widgets.zig");
+const vt = @import("howl_vt");
+const appearance = @import("appearance.zig");
 const config = @import("config.zig");
 const colors = @import("colors.zig");
 const themes = @import("themes.zig");
@@ -58,6 +60,47 @@ pub const Target = union(enum) {
     move_environment: struct { profile: u8, index: u8, delta: i8 },
     information: []const u8,
 };
+/// Resolve a configured Settings color for both the editor and its preview.
+pub fn resolvedColor(current: *const config.Config, target: Target) !?vt.Terminal.Rgb {
+    switch (target) {
+        .app_color => |index| {
+            const resolved = try appearance.resolve(current.value.app_theme, current.value.app_colors);
+            inline for (@typeInfo(appearance.Palette).@"struct".field_names, 0..) |field, i| if (index == i) {
+                const rgb = @field(resolved, field);
+                return .{ .r = rgb.r, .g = rgb.g, .b = rgb.b };
+            };
+            return error.InvalidColorRole;
+        },
+        .terminal_color => |index| {
+            const resolved = try current.value.terminal_colors.resolve(current.value.terminal_theme);
+            return switch (index) {
+                0 => resolved.foreground,
+                1 => resolved.background,
+                2 => resolved.cursor orelse resolved.foreground,
+                3...18 => resolved.palette[index - 3],
+                19 => resolved.cursor_text orelse resolved.background,
+                else => error.InvalidColorRole,
+            };
+        },
+        else => return null,
+    }
+}
+
+test "Settings editor and preview resolve the same colors and reject invalid roles" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    const palette = try appearance.resolve(current.value.app_theme, current.value.app_colors);
+    try std.testing.expectEqual(
+        vt.Terminal.Rgb{ .r = palette.window.r, .g = palette.window.g, .b = palette.window.b },
+        (try resolvedColor(&current, .{ .app_color = 0 })).?,
+    );
+    const terminal = try current.value.terminal_colors.resolve(current.value.terminal_theme);
+    try std.testing.expectEqual(terminal.foreground, (try resolvedColor(&current, .{ .terminal_color = 0 })).?);
+    try std.testing.expectEqual(@as(?vt.Terminal.Rgb, null), try resolvedColor(&current, .font_family));
+    try std.testing.expectError(error.InvalidColorRole, resolvedColor(&current, .{ .app_color = 255 }));
+    try std.testing.expectError(error.InvalidColorRole, resolvedColor(&current, .{ .terminal_color = 20 }));
+}
+
 /// Finite settings expose exact persisted values and separate human-facing labels.
 pub const Choice = struct { value: []const u8, label: []const u8 };
 

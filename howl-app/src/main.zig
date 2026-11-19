@@ -206,40 +206,6 @@ pub const App = struct {
     const InputUI = settings_input.ForHost(@This());
     const PaintUI = settings_paint.ForHost(@This());
 
-    /// Bind Settings painting for setting Rgb to the SDL host.
-    pub const settingRgb = PaintUI.settingRgb;
-    /// Bind Settings painting for draw Settings Dropdown to the SDL host.
-    pub const drawSettingsDropdown = PaintUI.drawSettingsDropdown;
-    /// Bind Settings painting for draw Settings Card to the SDL host.
-    pub const drawSettingsCard = PaintUI.drawSettingsCard;
-    /// Bind Settings painting for selected and hovered card rows to the SDL host.
-    pub const drawSettingsCardRow = PaintUI.drawSettingsCardRow;
-    /// Bind Settings painting for draw Startup Switch to the SDL host.
-    pub const drawStartupSwitch = PaintUI.drawStartupSwitch;
-    /// Bind Settings painting for draw Settings Control to the SDL host.
-    pub const drawSettingsControl = PaintUI.drawSettingsControl;
-    /// Bind Settings painting for draw Settings Select to the SDL host.
-    pub const drawSettingsSelect = PaintUI.drawSettingsSelect;
-    /// Bind Settings painting for draw Startup Form to the SDL host.
-    pub const drawStartupForm = PaintUI.drawStartupForm;
-    /// Bind Settings painting for draw Appearance Cards to the SDL host.
-    pub const drawAppearanceCards = PaintUI.drawAppearanceCards;
-    /// Bind Settings painting for draw Color Cards to the SDL host.
-    pub const drawColorCards = PaintUI.drawColorCards;
-    /// Bind Settings painting for draw Shortcut Cards to the SDL host.
-    pub const drawShortcutCards = PaintUI.drawShortcutCards;
-    /// Bind Settings painting for draw Profile Scan Card to the SDL host.
-    pub const drawProfileScanCard = PaintUI.drawProfileScanCard;
-    /// Bind Settings painting for draw Profiles Cards to the SDL host.
-    pub const drawProfilesCards = PaintUI.drawProfilesCards;
-    /// Bind Settings painting for draw Profiles Toolbar to the SDL host.
-    pub const drawProfilesToolbar = PaintUI.drawProfilesToolbar;
-    /// Bind Settings painting for draw Settings List Heading to the SDL host.
-    pub const drawSettingsListHeading = PaintUI.drawSettingsListHeading;
-    /// Bind Settings painting for draw Settings Header Buttons to the SDL host.
-    pub const drawSettingsHeaderButtons = PaintUI.drawSettingsHeaderButtons;
-    /// Bind Settings painting for draw Settings to the SDL host.
-    pub const drawSettings = PaintUI.drawSettings;
     /// Bind Settings input and geometry for settings Rect to the SDL host.
     pub const settingsRect = InputUI.settingsRect;
     /// Bind Settings input and geometry for settings Nav Row to the SDL host.
@@ -338,10 +304,6 @@ pub const App = struct {
     pub const editedColor = InputUI.editedColor;
     /// Bind Settings input and geometry for color Point to the SDL host.
     pub const colorPoint = InputUI.colorPoint;
-    /// Bind Settings painting for the inline Color Editor to the SDL host.
-    pub const drawColorEditor = PaintUI.drawColorEditor;
-    /// Bind document section painting to the SDL host.
-    pub const drawSettingsSection = PaintUI.drawSettingsSection;
     /// Bind Settings input and geometry for settings Click to the SDL host.
     pub const settingsClick = InputUI.settingsClick;
     /// Bind Settings input and geometry for settings Appearance Click to the SDL host.
@@ -2521,7 +2483,7 @@ pub const App = struct {
             try self.clippedText(self.notice[0..self.notice_len], notice, notice.x + 4);
         }
         if (self.palette != null) try self.drawPalette();
-        if (self.settings_editor != null) try self.drawSettings();
+        if (self.settings_editor != null) try PaintUI.drawSettings(self);
         if (self.chooser != null) try self.drawChooser();
         if (self.rename_editor) |*editor| try self.drawField(try self.renameField(), &editor.edit, editor.bytes[0..editor.len], "Automatic title", true);
         try self.drawComposition();

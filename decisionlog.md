@@ -300,3 +300,12 @@ the worker state in `terminal.zig`, with their existing tests preserved there.
 Only the worker sets the publication deadline and its visual scrollback anchor;
 the canonical VT still owns retained history and terminal semantics. This
 retires a redundant module and import, not a production behavior or boundary.
+
+## Settings painter is not an App method catalogue (19 November 2026)
+
+The SDL host now invokes the Settings painter through its explicitly typed
+module function, not through 18 forwarded App method aliases. Painter-internal
+calls stay with that module. The remaining shared color resolution moved from
+the painter into `settings.zig`, where both the editor and its visual preview
+consume the same validated configured color. The Settings layout, controls,
+scrolling, draft transaction and rendered pixels remain unchanged.

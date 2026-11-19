@@ -15,6 +15,7 @@ const font_owner = @import("fonts.zig");
 const pages = @import("settings_pages.zig");
 const root = @import("main.zig");
 const App = root.App;
+const PaintUI = @import("settings_paint.zig").ForHost(App);
 const testFonts = root.testFonts;
 const testPixel = root.testPixel;
 const settings_header_height = pages.settings_header_height;
@@ -657,7 +658,7 @@ test "Profiles cards paint inside the shared page viewport with an outer scrollb
     };
     const colors = try app.uiPalette();
     app.settings_scroll_offset = app.settingsDocument().anchor(4);
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const saved = app.profilesForm().card(1);
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(saved.x + 8), @intFromFloat(saved.y + 61)));
@@ -667,7 +668,7 @@ test "Profiles cards paint inside the shared page viewport with an outer scrollb
     try std.testing.expect(bar.track.x > saved.x + saved.width);
     try std.testing.expectEqual(colors.muted, try testPixel(surface, @intFromFloat(bar.thumb.x + bar.thumb.width / 2), @intFromFloat(bar.thumb.y + bar.thumb.height / 2)));
     app.settings_scroll_offset = 100000;
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const scanned = app.profilesForm().card(2);
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(scanned.x + 8), @intFromFloat(scanned.y + scanned.height - 20)));
@@ -676,7 +677,7 @@ test "Profiles cards paint inside the shared page viewport with an outer scrollb
     app.settings_editor.?.profile = 1;
     const expanded = app.profilesForm();
     app.settings_scroll_offset = app.settingsDocument().view.offset + expanded.detailCard().y - app.settingsBody().y - 16;
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const detail = app.profilesForm().detailCard();
     try std.testing.expect(app.profilesForm().view.scrollbar() == null);
@@ -723,7 +724,7 @@ test "one Settings document paints adjacent sections and tracks the sidebar on s
     const appearance_card = app.appearanceForm().card(0);
     try std.testing.expect(app.settingsBody().contains(startup.x + 8, startup.y + 74));
     try std.testing.expect(app.settingsBody().contains(appearance_card.x + 8, appearance_card.y + 74));
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(startup.x + 8), @intFromFloat(startup.y + 74)));
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(appearance_card.x + 8), @intFromFloat(appearance_card.y + 74)));
@@ -733,7 +734,7 @@ test "one Settings document paints adjacent sections and tracks the sidebar on s
     try std.testing.expectEqual(colors.active, try testPixel(surface, @intFromFloat(nav_startup.x + 4), @intFromFloat(nav_startup.y + 4)));
     const nav_appearance = app.settingsNavRow(1);
     app.settings_scroll_offset = app.settingsDocument().anchor(1);
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     try std.testing.expectEqual(@as(usize, 1), app.settingsDocument().active());
     try std.testing.expectEqual(colors.active, try testPixel(surface, @intFromFloat(nav_appearance.x + 4), @intFromFloat(nav_appearance.y + 4)));
@@ -776,7 +777,7 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     };
     const colors = try app.uiPalette();
     app.settings_scroll_offset = app.settingsDocument().anchor(3);
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const first = app.shortcutForm().card(0);
     // The Settings card and its header/sidebar elbow share the tab chip's
@@ -795,7 +796,7 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     try std.testing.expect(bar.track.x > first.x + first.width);
     const last_section = ShortcutForm.sections.len - 1;
     app.settings_scroll_offset = app.settingsDocument().formTop(3) + ShortcutForm.cardTop(last_section) + ShortcutForm.cardHeight(last_section) - app.settingsBody().height + 20;
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const last = app.shortcutForm().card(ShortcutForm.sections.len - 1);
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(last.x + 8), @intFromFloat(last.y + last.height - 20)));
@@ -803,7 +804,7 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     app.settings_editor.?.page = .startup;
     app.settings_editor.?.editing = .default_profile;
     app.settings_scroll_offset = 0;
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const select = app.startupForm().select();
     const menu = app.settingsDropdown();
@@ -816,7 +817,7 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     app.settings_editor.?.page = .colors;
     const before_preview = app.colorForm();
     app.settings_scroll_offset = app.settingsDocument().formTop(2) + before_preview.previewTop() + ColorForm.preview_height - app.settingsBody().height + ColorForm.outer_inset;
-    try app.drawSettings();
+    try PaintUI.drawSettings(&app);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const color_form = app.colorForm();
     const preview = color_form.previewCard();
