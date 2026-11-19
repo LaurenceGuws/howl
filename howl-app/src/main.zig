@@ -1268,7 +1268,7 @@ pub const App = struct {
         }
         if (self.palette) |*p| {
             p.list.hovered = null;
-            p.reveal(try p.indices(self.configuration, &matches), self.paletteRows());
+            p.list.reveal(try p.indices(self.configuration, &matches), self.paletteRows());
         }
     }
     fn findRequest(self: *App, p: *Pane, request: find.Request) !void {
@@ -1769,7 +1769,7 @@ pub const App = struct {
             var matches: [palette_limit]usize = undefined;
             const count = try palette.indices(self.configuration, &matches);
             const delta: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
-            palette.scroll(delta, count, self.paletteRows());
+            palette.list.scroll(delta, count, self.paletteRows());
             return;
         }
         if (self.pane().finder != null) return;
@@ -1820,7 +1820,7 @@ pub const App = struct {
         return .{ .x = box.x + 12 + @as(f32, @floatFromInt(index)) * width, .y = box.y + 54, .width = @max(1, width - 4), .height = 28 };
     }
     fn paletteStart(self: *App, count: usize) usize {
-        self.palette.?.reveal(count, self.paletteRows());
+        self.palette.?.list.reveal(count, self.paletteRows());
         return self.palette.?.list.first;
     }
     fn paletteList(self: *const App) widgets.Rows {

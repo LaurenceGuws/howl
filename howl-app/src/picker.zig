@@ -70,10 +70,6 @@ pub const Picker = struct {
         };
         self.reset();
     }
-    /// Moves the caret without changing query results.
-    pub fn moveCursor(self: *Picker, direction: i8) void {
-        self.edit.move(self.query[0..self.len], direction);
-    }
     /// Removes the previous scalar or an explicitly selected complete query.
     pub fn erase(self: *Picker, all: bool) void {
         if (all) self.edit.selectAll(self.len);
@@ -85,24 +81,12 @@ pub const Picker = struct {
         self.edit.erase(&self.query, &self.len, true);
         self.reset();
     }
-    /// Shares the measured-caret viewport.
-    pub fn revealCursor(self: *Picker, caret_width: f32, text_width: f32, width: f32) f32 {
-        return self.edit.reveal(caret_width, text_width, width);
-    }
     /// Changes category while retaining typed search; command palettes have no categories.
     pub fn cycle(self: *Picker, reverse: bool) void {
         if (!self.profile) return;
         const current: usize = @backingInt(self.filter);
         self.filter = @fromBackingInt(@intCast((current + (if (reverse) labels.len - 1 else @as(usize, 1))) % labels.len));
         self.reset();
-    }
-    /// Clamps after resize/filtering and moves the viewport only when selection leaves it.
-    pub fn reveal(self: *Picker, count: usize, visible: usize) void {
-        self.list.reveal(count, visible);
-    }
-    /// Scrolls using the same viewport policy as settings and fonts.
-    pub fn scroll(self: *Picker, delta: i32, count: usize, visible: usize) void {
-        self.list.scroll(delta, count, visible);
     }
 };
 
@@ -184,23 +168,23 @@ test "viewport stays still until needed; wheel, empty results and resize keep se
     var p: Picker = .{};
     for (0..6) |selected| {
         p.list.selected = selected;
-        p.reveal(100, 10);
+        p.list.reveal(100, 10);
         try std.testing.expectEqual(@as(usize, 0), p.list.first);
     }
     p.list.selected = 10;
-    p.reveal(100, 10);
+    p.list.reveal(100, 10);
     try std.testing.expectEqual(@as(usize, 1), p.list.first);
     p.list.hovered = 8;
-    p.scroll(8, 100, 10);
+    p.list.scroll(8, 100, 10);
     try std.testing.expectEqual(@as(usize, 9), p.list.first);
     try std.testing.expectEqual(@as(usize, 10), p.list.selected);
     try std.testing.expectEqual(@as(?usize, null), p.list.hovered);
-    p.scroll(1000, 100, 10);
+    p.list.scroll(1000, 100, 10);
     try std.testing.expectEqual(@as(usize, 90), p.list.first);
-    p.reveal(100, 4);
+    p.list.reveal(100, 4);
     try std.testing.expect(p.list.selected >= p.list.first and p.list.selected < p.list.first + 4);
-    p.scroll(-1000, 0, 0);
-    p.reveal(0, 0);
+    p.list.scroll(-1000, 0, 0);
+    p.list.reveal(0, 0);
     try std.testing.expectEqual(@as(usize, 0), p.list.first);
     try std.testing.expectEqual(@as(usize, 0), p.list.selected);
     const maximum: [128]u8 = @splat('a');
@@ -226,7 +210,7 @@ test "a full catalogue stays bounded and keeps exact launch indexes through filt
     try std.testing.expectEqual(@as(usize, config.scanned_limit), try p.indices(&configuration, &indexes));
     for (indexes[0..config.scanned_limit], 1..) |index, expected| try std.testing.expectEqual(expected, index);
     p.list.first = 500;
-    p.scroll(1, 0, 8);
+    p.list.scroll(1, 0, 8);
     try std.testing.expectEqual(@as(usize, 0), p.list.first);
     for (0..labels.len) |_| p.cycle(false);
     try std.testing.expectEqual(Filter.remote, p.filter);
@@ -236,8 +220,8 @@ test "a full catalogue stays bounded and keeps exact launch indexes through filt
 test "palette caret inserts and deletes inside UTF8 text without splitting codepoints or overflowing" {
     var p: Picker = .{};
     try p.append("a界z");
-    p.moveCursor(-1);
-    p.moveCursor(-1);
+    p.edit.move(p.query[0..p.len], -1);
+    p.edit.move(p.query[0..p.len], -1);
     try std.testing.expectEqual(@as(usize, 1), p.edit.cursor);
     try p.append("é");
     try std.testing.expectEqualStrings("aé界z", p.query[0..p.len]);
@@ -248,19 +232,19 @@ test "palette caret inserts and deletes inside UTF8 text without splitting codep
     try p.append("界");
     try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
     p.edit.cursor = 0;
-    p.moveCursor(-1);
+    p.edit.move(p.query[0..p.len], -1);
     p.erase(false);
     try std.testing.expectEqual(@as(usize, 0), p.edit.cursor);
     p.edit.cursor = p.len;
-    p.moveCursor(1);
+    p.edit.move(p.query[0..p.len], 1);
     p.delete();
     try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
     const too_long: [128]u8 = @splat('x');
     try std.testing.expectError(error.PickerQueryLimit, p.append(&too_long));
     try std.testing.expectEqual(@as(usize, 5), p.edit.cursor);
     try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
-    try std.testing.expectEqual(@as(f32, 80), p.revealCursor(100, 100, 20));
-    try std.testing.expectEqual(@as(f32, 0), p.revealCursor(0, 100, 20));
+    try std.testing.expectEqual(@as(f32, 80), p.edit.reveal(100, 100, 20));
+    try std.testing.expectEqual(@as(f32, 0), p.edit.reveal(0, 100, 20));
     p.erase(true);
     try std.testing.expectEqual(@as(usize, 0), p.edit.cursor);
 }
