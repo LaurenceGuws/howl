@@ -1,5 +1,5 @@
-//! Migration proof: a local host can compose canonical VT, Text and a borrowed
-//! direct-output owner without importing Instance or the legacy Renderer.
+//! Independent terminal ownership tests: one PTY/VT, borrowed Text output,
+//! and immutable leases, with no SDL window or redundant canonical owner.
 const std = @import("std");
 const vt = @import("howl_vt");
 const pty = @import("howl_pty");
@@ -7,9 +7,9 @@ const output = @import("howl_vt_output");
 const Borrowed = @import("output_state").State(false);
 
 test {
-    std.testing.refAllDecls(@import("canonical.zig"));
-    std.testing.refAllDecls(@import("direct_projection.zig"));
-    std.testing.refAllDecls(@import("direct_desktop.zig"));
+    std.testing.refAllDecls(@import("pty_vt.zig"));
+    std.testing.refAllDecls(@import("projection.zig"));
+    std.testing.refAllDecls(@import("consequences.zig"));
 }
 
 test "one canonical VT serves borrowed direct output with an independently retained Text store" {

@@ -1,6 +1,5 @@
-//! App-local canonical PTY/VT service, owned by the existing SDL worker.
-//! The live SDL app worker owns this canonical PTY/VT and its borrowed output.
-//! No separate scheduler, ABI or second terminal is introduced here.
+//! App-local PTY/VT service, owned exclusively by the terminal worker.
+//! No separate scheduler, ABI or second canonical terminal lives here.
 const std = @import("std");
 const pty = @import("howl_pty");
 const vt = @import("howl_vt");
@@ -434,7 +433,7 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
     };
 }
 
-test "direct app core preserves ordered shell input and terminal output without Instance" {
+test "app PTY/VT service preserves ordered shell input and terminal output" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();

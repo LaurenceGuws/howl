@@ -1,9 +1,9 @@
 const std = @import("std");
 const c = @import("desktop");
 const app_presentation = @import("presentation.zig");
-const canonical = @import("canonical.zig");
-const projection = @import("direct_projection.zig");
-const direct_desktop = @import("direct_desktop.zig");
+const pty_vt = @import("pty_vt.zig");
+const projection = @import("projection.zig");
+const consequences = @import("consequences.zig");
 const vt_output = @import("howl_vt_output");
 const vt = @import("howl_vt");
 const pty = @import("howl_pty");
@@ -53,8 +53,8 @@ const Copy = struct {
 };
 
 /// Exact failures produced by this terminal worker's owned operations.
-pub const Failure = canonical.InputError || canonical.ResizeError ||
-    canonical.ServiceError || std.posix.PollError || direct_desktop.Error;
+pub const Failure = pty_vt.InputError || pty_vt.ResizeError ||
+    pty_vt.ServiceError || std.posix.PollError || consequences.Error;
 
 /// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
 pub const PresentationFailure = @import("output_state").State(false).FlushError || error{SDLNotification};
@@ -113,7 +113,7 @@ pub const Terminal = opaque {
         allocator: std.mem.Allocator,
         io: std.Io,
         environ: std.process.Environ,
-        launch: canonical.Launch,
+        launch: pty_vt.Launch,
         presentation: app_presentation.Config,
         event_type: u32,
         initially_visible: bool,
@@ -216,7 +216,7 @@ pub const Terminal = opaque {
 const State = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    value: *canonical.Core,
+    core: *pty_vt.Core,
     projection: *projection.Projection,
     history_capacity: u16,
     wake_fd: posix.fd_t,
@@ -258,14 +258,14 @@ const State = struct {
     consequence_worked: bool = false,
 
     fn observe(self: *const State) *const vt.Terminal.Observation {
-        return self.value.terminal.observation();
+        return self.core.terminal.observation();
     }
 
     fn create(
         allocator: std.mem.Allocator,
         io: std.Io,
         environ: std.process.Environ,
-        launch: canonical.Launch,
+        launch: pty_vt.Launch,
         presentation: app_presentation.Config,
         event_type: u32,
         initially_visible: bool,
@@ -282,32 +282,20 @@ const State = struct {
         };
         defer if (presentation.text == .private) vt_output.releasePresentationStore(store);
         const cell = vt_output.presentationStoreCellSize(store);
-        const value = try allocator.create(canonical.Core);
-        errdefer allocator.destroy(value);
-        try value.initInto(allocator, environ, .{
-            .shell = launch.shell,
-            .command = launch.command,
-            .arguments = launch.arguments,
-            .cwd = launch.cwd,
-            .rows = launch.rows,
-            .columns = launch.columns,
-            .history_rows = launch.history_rows,
-            .term = launch.term,
-            .colorterm = launch.colorterm,
-            .color_defaults = launch.color_defaults,
-            .cursor_style = launch.cursor_style,
-        }, .{ .width = cell.width, .height = cell.height });
-        errdefer value.deinit();
-        const direct = try projection.Projection.create(allocator, &value.terminal, store, sharedConfig(presentation, launch.history_rows));
-        errdefer direct.destroy();
+        const core = try allocator.create(pty_vt.Core);
+        errdefer allocator.destroy(core);
+        try core.initInto(allocator, environ, launch, .{ .width = cell.width, .height = cell.height });
+        errdefer core.deinit();
+        const output_owner = try projection.Projection.create(allocator, &core.terminal, store, sharedConfig(presentation, launch.history_rows));
+        errdefer output_owner.destroy();
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (fd < 0) return error.WakeFailed;
         errdefer closeWake(fd);
         self.* = .{
             .allocator = allocator,
             .io = io,
-            .value = value,
-            .projection = direct,
+            .core = core,
+            .projection = output_owner,
             .history_capacity = launch.history_rows,
             .color_preference = desktop.colorPreference(launch.color_defaults.background),
             .wake_fd = fd,
@@ -329,8 +317,8 @@ const State = struct {
         closeWake(self.wake_fd);
         if (self.clipboard) |bytes| self.allocator.free(bytes);
         self.projection.destroy();
-        self.value.deinit();
-        self.allocator.destroy(self.value);
+        self.core.deinit();
+        self.allocator.destroy(self.core);
         const allocator = self.allocator;
         allocator.destroy(self);
     }
@@ -368,7 +356,7 @@ const State = struct {
     fn submit(self: *State, supplied: Task) !void {
         var task = supplied;
         const bytes = taskBytes(task);
-        if (bytes.len > canonical.input_event_limit) return error.InputLimit;
+        if (bytes.len > pty_vt.input_event_limit) return error.InputLimit;
         // Associated text shares the bounded owned byte lane; legacy fallback text is not submitted by this host.
         if (task == .input and task.input == .key and
             task.input.key.legacy_text.len != 0)
@@ -443,7 +431,7 @@ const State = struct {
             .current;
         self.frame_mutex.lockUncancelable(self.io);
         defer self.frame_mutex.unlock(self.io);
-        const result = self.projection.reconfigure(self.value, store, sharedConfig(request.config, self.history_capacity), target);
+        const result = self.projection.reconfigure(self.core, store, sharedConfig(request.config, self.history_capacity), target);
         if (result) |geometry| {
             // The sole producer invalidates only notification authority, never an accepted lease.
             // Reconfiguration completes before the GUI can start its next transfer; only a later
@@ -699,7 +687,7 @@ const State = struct {
                 self.selection_failure = failure;
             },
             .input => |input| {
-                try self.value.input(input);
+                try self.core.input(input);
                 // Committed input returns this pane to live; focus/mouse do not.
                 if (input == .bytes or input == .paste or input == .key) {
                     if (self.history.offset != 0) self.gate.pending = true;
@@ -713,7 +701,7 @@ const State = struct {
             .resize => |size| {
                 if (size.rows != live.rows or size.columns != live.cols) {
                     if (size.columns != live.cols) self.history.reset();
-                    try self.value.resize(size.rows, size.columns);
+                    try self.core.resize(size.rows, size.columns);
                     self.gate.pending = true;
                 }
             },
@@ -736,9 +724,9 @@ const State = struct {
         }
     }
 
-    fn service(self: *State, readable: bool, writable: bool, now: u64) !canonical.Service {
-        const result = try self.value.service(readable, writable, now);
-        var host = try direct_desktop.drain(&self.value.terminal, self.allocator, self.color_preference);
+    fn service(self: *State, readable: bool, writable: bool, now: u64) !pty_vt.Service {
+        const result = try self.core.service(readable, writable, now);
+        var host = try consequences.drain(&self.core.terminal, self.allocator, self.color_preference);
         defer host.deinit(self.allocator);
         self.consequence_worked = host.worked;
         var host_notify = false;
@@ -876,23 +864,23 @@ const State = struct {
         while (!self.stopRequested()) {
             // Blocked scalar work still targets the current screen and cursor.
             // Defer queued mutations until it has been applied.
-            const scalar_was_blocked = self.value.inputBlocked();
+            const scalar_was_blocked = self.core.inputBlocked();
             var queue_turn: QueueTurn = .empty;
             if (!scalar_was_blocked) {
                 queue_turn = try self.applyQueued();
                 if (self.takeCursor()) |style| {
-                    self.value.terminal.setDefaultCursorStyle(style);
+                    self.core.terminal.setDefaultCursorStyle(style);
                     self.gate.pending = true;
                 }
                 if (self.takeColors()) |defaults| {
-                    self.value.terminal.setColorDefaults(defaults);
+                    self.core.terminal.setColorDefaults(defaults);
                     const preference = desktop.colorPreference(defaults.background);
                     self.preference_pending = self.preference_pending or preference != self.color_preference;
                     self.color_preference = preference;
                     self.gate.pending = true;
                 }
                 if (self.preference_pending) {
-                    const sent: ?bool = self.value.terminal.reportColorSchemePreference(self.color_preference) catch |failure| switch (failure) {
+                    const sent: ?bool = self.core.terminal.reportColorSchemePreference(self.color_preference) catch |failure| switch (failure) {
                         error.ReplyLimit => null,
                         else => return failure,
                     };
@@ -901,12 +889,12 @@ const State = struct {
             } else {
                 self.rejectBlockedControls();
             }
-            const room_before = self.value.writeRoom();
+            const room_before = self.core.writeRoom();
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
-            const retry_after_write_progress = queue_turn == .backpressured and self.value.writeRoom() > room_before;
+            const retry_after_write_progress = queue_turn == .backpressured and self.core.writeRoom() > room_before;
             // Queued work received while blocked must not wait for another wake.
-            const retry_after_scalar_recovery = scalar_was_blocked and !self.value.inputBlocked();
+            const retry_after_scalar_recovery = scalar_was_blocked and !self.core.inputBlocked();
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.gate.waitMs(now),
@@ -919,12 +907,12 @@ const State = struct {
             // Runnable queue work and newly available outbox room both need a
             // fresh PTY readiness snapshot. A zero-timeout poll retries now
             // without pinning readable=false through sustained input traffic.
-            if (queue_turn == .more or retry_after_write_progress or retry_after_scalar_recovery or self.value.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
-            const can_read = self.value.readAdmissible();
-            const can_write = result.write_pending or self.value.writePending();
+            if (queue_turn == .more or retry_after_write_progress or retry_after_scalar_recovery or self.core.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            const can_read = self.core.readAdmissible();
+            const can_write = result.write_pending or self.core.writePending();
             var fds = [_]posix.pollfd{
                 .{
-                    .fd = if (!can_read and !can_write) -1 else try self.value.descriptor(),
+                    .fd = if (!can_read and !can_write) -1 else try self.core.descriptor(),
                     .events = (if (can_read) @as(i16, posix.POLL.IN | posix.POLL.HUP) else 0) | (if (can_write) @as(i16, posix.POLL.OUT) else 0),
                     .revents = 0,
                 },
@@ -934,7 +922,7 @@ const State = struct {
             // reason: Readiness is consumed from each exact revents mask below; the aggregate ready count adds no authority.
             _ = try posix.poll(&fds, timeout);
             if (fds[1].revents & posix.POLL.IN != 0) self.drainWake();
-            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or self.value.bufferedOutputRunnable();
+            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or self.core.bufferedOutputRunnable();
             writable = fds[0].revents & posix.POLL.OUT != 0;
         }
     }
@@ -1050,7 +1038,7 @@ test "OSC 52 sets become coalesced copied desktop facts without pacing canonical
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("Two", text);
     try std.testing.expect((try owner.takeClipboardSet(std.testing.allocator)) == null);
-    try std.testing.expectEqual(@as(u16, 0), owner.state().value.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u16, 0), owner.state().core.terminal.consequenceCount());
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 
@@ -1109,12 +1097,12 @@ test "oversized paste fails at admission and leaves the terminal worker alive" {
 test "full PTY outbox retains accepted input in FIFO order until capacity returns" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const core = try std.testing.allocator.create(canonical.Core);
+    const core = try std.testing.allocator.create(pty_vt.Core);
     defer std.testing.allocator.destroy(core);
     core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
     try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
     defer core.terminal.deinit();
-    const filler: [canonical.input_event_limit]u8 = @splat('x');
+    const filler: [pty_vt.input_event_limit]u8 = @splat('x');
     try core.input(.{ .bytes = &filler });
     const room_before = core.writeRoom();
     try std.testing.expectEqual(@as(usize, 12), room_before);
@@ -1125,7 +1113,7 @@ test "full PTY outbox retains accepted input in FIFO order until capacity return
     var state: State = .{
         .allocator = std.testing.allocator,
         .io = threaded.io(),
-        .value = core,
+        .core = core,
         .projection = undefined,
         .history_capacity = 8,
         .wake_fd = wake_fd,
@@ -1157,7 +1145,7 @@ test "full PTY outbox retains accepted input in FIFO order until capacity return
 test "borrowed-control rejection compacts a wrapped queue without retiring later input" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const core = try std.testing.allocator.create(canonical.Core);
+    const core = try std.testing.allocator.create(pty_vt.Core);
     defer std.testing.allocator.destroy(core);
     core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
     try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
@@ -1168,7 +1156,7 @@ test "borrowed-control rejection compacts a wrapped queue without retiring later
     var state: State = .{
         .allocator = std.testing.allocator,
         .io = threaded.io(),
-        .value = core,
+        .core = core,
         .projection = undefined,
         .history_capacity = 8,
         .wake_fd = wake_fd,
@@ -1197,7 +1185,7 @@ test "borrowed-control rejection compacts a wrapped queue without retiring later
 test "late accepted input after PTY write closure retires without killing read-side service" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const core = try std.testing.allocator.create(canonical.Core);
+    const core = try std.testing.allocator.create(pty_vt.Core);
     defer std.testing.allocator.destroy(core);
     core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
     try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 20, 8);
@@ -1210,7 +1198,7 @@ test "late accepted input after PTY write closure retires without killing read-s
     var state: State = .{
         .allocator = std.testing.allocator,
         .io = threaded.io(),
-        .value = core,
+        .core = core,
         .projection = undefined,
         .history_capacity = 8,
         .wake_fd = wake_fd,

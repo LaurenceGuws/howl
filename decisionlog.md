@@ -278,3 +278,15 @@ the same pointer/paint geometry. Global Search temporarily displays results
 and reveals the matched field back in the document. Field activation and
 section routing now live in settings_input.zig rather than main.zig; main.zig
 retains live config, draft persistence, and terminal ownership.
+
+## App ownership-first refit (19 November 2026)
+
+Howl App is the target, with other independently versioned modules in scope
+only when an issue belongs to their owner. Keep observable behavior and the
+accepted Settings UI unchanged; prefer direct Zig modules, removing redundant
+code and historical names before adding structure. The first terminal-chain
+cut names the app-owned PTY/VT service `pty_vt.zig`, its borrowed output lease
+owner `projection.zig`, and its terminal-originated reply policy
+`consequences.zig`. The independent output test is named for its current
+purpose rather than the original migration. The opaque terminal worker and
+SDL boundary remain unchanged.

@@ -784,10 +784,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1288,10 +1288,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1304,10 +1304,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1320,10 +1320,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1660,10 +1660,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1764,10 +1764,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1878,10 +1878,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -1925,10 +1925,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2416,10 +2416,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2432,10 +2432,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2448,10 +2448,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2464,10 +2464,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2480,10 +2480,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2496,10 +2496,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2512,10 +2512,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2528,10 +2528,10 @@ references:
             relevance: query
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2544,10 +2544,10 @@ references:
             relevance: query
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2572,10 +2572,10 @@ references:
             relevance: query
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -2588,10 +2588,10 @@ references:
             relevance: query
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -3225,10 +3225,10 @@ references:
             howl:
               support: full
               owner: howl-app
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
           kitty.csi.resize_cells_unsupported:
             raw: CSI 8 ; rows ; cols t
@@ -3240,10 +3240,10 @@ references:
             howl:
               support: full
               owner: howl-app
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop declines container geometry and window mutations without changing VT
           kitty.csi.restore_cursor: {raw: "CSI u", effect: restore cursor,
             conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
@@ -3417,10 +3417,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -3433,10 +3433,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -3449,10 +3449,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -3465,10 +3465,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop only requests attention for focus and attention notifications
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
@@ -3552,10 +3552,10 @@ references:
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/direct_desktop.zig
+              source: howl-app/src/consequences.zig
               symbol: drain
               proof:
-                path: howl-app/src/direct_desktop.zig
+                path: howl-app/src/consequences.zig
                 symbol: direct desktop owns latest clipboard, attention and exact typed reply FIFO
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.

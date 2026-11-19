@@ -1,8 +1,8 @@
-//! App-owned desktop consequences on the one mutable canonical VT. The SDL
-//! worker uses this policy directly, with its FIFO behavior covered by tests.
+//! Terminal-originated requests and replies. The sole terminal worker drains
+//! these consequences without granting the SDL window mutable VT access.
 const std = @import("std");
 const vt = @import("howl_vt");
-const runtime = @import("canonical.zig");
+const pty_vt = @import("pty_vt.zig");
 
 const clipboard_limit = 1024 * 1024;
 
@@ -87,7 +87,7 @@ pub fn drain(terminal: *vt.Terminal, allocator: std.mem.Allocator, preference: v
     return result;
 }
 
-test "direct desktop owns latest clipboard, attention and exact typed reply FIFO" {
+test "terminal consequences own latest clipboard, attention and typed reply FIFO" {
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -106,7 +106,7 @@ test "direct desktop owns latest clipboard, attention and exact typed reply FIFO
     try std.testing.expectEqual(@as(?[]u8, null), idle.clipboard);
 }
 
-test "direct desktop declines container geometry and window mutations without changing VT" {
+test "terminal consequences decline container geometry and window mutation without changing VT" {
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -146,7 +146,7 @@ test "direct desktop declines container geometry and window mutations without ch
     }
 }
 
-test "direct desktop only requests attention for focus and attention notifications" {
+test "terminal consequences only request attention for focus and attention notifications" {
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -175,11 +175,11 @@ test "direct desktop only requests attention for focus and attention notificatio
     }
 }
 
-test "direct desktop replies pass through canonical PTY before subsequent input" {
+test "terminal consequence replies pass through PTY before subsequent input" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
-    const core = try allocator.create(runtime.Core);
+    const core = try allocator.create(pty_vt.Core);
     defer allocator.destroy(core);
     try core.initInto(allocator, std.testing.environ, .{
         .shell = "/bin/sh",

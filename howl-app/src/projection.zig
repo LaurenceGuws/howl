@@ -1,11 +1,10 @@
-//! App-private checked handoff of VT-owned borrowed output. The SDL worker
-//! serializes prepare/replace/release; GUI consumers only hold immutable cuts.
-//! The app worker owns this projection; the independent proof covers its boundary.
+//! Checked lease handoff of VT-owned borrowed output. The terminal worker
+//! serializes prepare/replace/release; SDL only receives immutable cuts.
 const std = @import("std");
 const vt = @import("howl_vt");
 const output = @import("howl_vt_output");
 const state = @import("output_state");
-const runtime = @import("canonical.zig");
+const pty_vt = @import("pty_vt.zig");
 const Borrowed = state.State(false);
 
 /// Copied descriptor with a borrowed immutable output snapshot. Copies retain
@@ -25,7 +24,7 @@ pub const ReleaseError = error{InvalidLease};
 /// Replacement also validates the previous caller-provided cut.
 pub const ReplaceError = HoldError || ReleaseError;
 /// Shared Text staging, canonical geometry and generation admission failures.
-pub const ConfigureError = Borrowed.StageReplaceError || runtime.ResizeError || error{ GenerationOverflow, InvalidOwner };
+pub const ConfigureError = Borrowed.StageReplaceError || pty_vt.ResizeError || error{ GenerationOverflow, InvalidOwner };
 /// Target geometry: retain the current grid, choose a grid, or derive one from a surface.
 pub const Target = union(enum) {
     current,
@@ -80,13 +79,13 @@ pub const Projection = struct {
     /// Retain the old Text/output owner until all fallible work succeeds.
     /// Font staging can wait on a shared Text claim, matching the current app contract.
     /// The caller serializes this with canonical service and output preparation.
-    pub fn reconfigure(self: *Projection, core: *runtime.Core, store: *output.PresentationStore, config: state.SharedConfig, target: Target) ConfigureError!Geometry {
+    pub fn reconfigure(self: *Projection, core: *pty_vt.Core, store: *output.PresentationStore, config: state.SharedConfig, target: Target) ConfigureError!Geometry {
         return self.reconfigureWith(core, core, store, config, target);
     }
 
     // zig-audit: acknowledge anytype
     // reason: The actual app Core and a scripted resize failure prove the same atomic stage/commit path.
-    fn reconfigureWith(self: *Projection, core: *runtime.Core, resizer: anytype, store: *output.PresentationStore, config: state.SharedConfig, target: Target) ConfigureError!Geometry {
+    fn reconfigureWith(self: *Projection, core: *pty_vt.Core, resizer: anytype, store: *output.PresentationStore, config: state.SharedConfig, target: Target) ConfigureError!Geometry {
         if (self.canonical != &core.terminal) return error.InvalidOwner;
         if (core.inputBlocked()) return error.InputPending;
         const next_generation = std.math.add(u64, self.presentation_generation, 1) catch return error.GenerationOverflow;
@@ -233,7 +232,7 @@ test "app-owned shared font reconfigure rolls back stage and PTY failure before 
     const next_cell = output.presentationStoreCellSize(next);
     try std.testing.expect(next_cell.width > initial_cell.width);
 
-    const core = try allocator.create(runtime.Core);
+    const core = try allocator.create(pty_vt.Core);
     defer allocator.destroy(core);
     try core.initInto(allocator, std.testing.environ, .{
         .shell = "/bin/sh",
@@ -266,7 +265,7 @@ test "app-owned shared font reconfigure rolls back stage and PTY failure before 
 
     const Failure = struct {
         calls: usize = 0,
-        fn resizeGeometry(self: *@This(), _: u16, _: u16, _: vt.Terminal.CellPixelSize) runtime.ResizeError!void {
+        fn resizeGeometry(self: *@This(), _: u16, _: u16, _: vt.Terminal.CellPixelSize) pty_vt.ResizeError!void {
             self.calls += 1;
             return error.ResizeFailed;
         }

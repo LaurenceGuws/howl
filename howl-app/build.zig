@@ -65,19 +65,19 @@ pub fn build(b: *std.Build) void {
     const app = b.addExecutable(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
     b.installArtifact(app);
     const tests = b.addTest(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
-    // Independent direct-composition proof uses the same VT/Text output identity
-    // as the integrated app worker's Core and Projection.
-    const direct_proof = b.createModule(.{ .root_source_file = b.path("src/direct_output_proof.zig"), .target = target, .optimize = optimize, .link_libc = true });
-    direct_proof.addImport("howl_vt", vt.module("howl_vt"));
-    direct_proof.addImport("howl_pty", pty.module("howl_pty"));
-    direct_proof.addImport("howl_vt_output", direct_output.owner);
-    direct_proof.addImport("output_state", direct_output.owner.import_table.get("output_state").?);
-    direct_proof.addImport("test_fonts", text.module("howl_text_test_fonts"));
-    const direct_tests = b.addTest(.{ .name = "howl-app-direct-output-ownership", .root_module = direct_proof, .use_llvm = true, .use_lld = false });
+    // Independent PTY/VT + Text output proof uses the same module identities
+    // as the terminal worker, without creating an SDL app or second owner.
+    const output_proof = b.createModule(.{ .root_source_file = b.path("src/terminal_output_test.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    output_proof.addImport("howl_vt", vt.module("howl_vt"));
+    output_proof.addImport("howl_pty", pty.module("howl_pty"));
+    output_proof.addImport("howl_vt_output", direct_output.owner);
+    output_proof.addImport("output_state", direct_output.owner.import_table.get("output_state").?);
+    output_proof.addImport("test_fonts", text.module("howl_text_test_fonts"));
+    const output_tests = b.addTest(.{ .name = "howl-app-direct-output-ownership", .root_module = output_proof, .use_llvm = true, .use_lld = false });
     const check = b.step("check", "Compile the direct Zig SDL app and its proofs");
     check.dependOn(&app.step);
     check.dependOn(&tests.step);
-    check.dependOn(&direct_tests.step);
+    check.dependOn(&output_tests.step);
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
     zig_audit.setCwd(b.path("."));
@@ -85,9 +85,9 @@ pub fn build(b: *std.Build) void {
     check.dependOn(audit);
     const test_step = b.step("test", "Run application ownership and behavior proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
-    const direct_run = b.addRunArtifact(direct_tests);
-    test_step.dependOn(&direct_run.step);
-    b.step("test:direct-owner", "Prove independent VT/Text borrowed output without Render or Instance").dependOn(&direct_run.step);
+    const output_run = b.addRunArtifact(output_tests);
+    test_step.dependOn(&output_run.step);
+    b.step("test:terminal-output", "Prove one PTY/VT with independently borrowed Text output").dependOn(&output_run.step);
     const run = b.addRunArtifact(app);
     run.addPassthruArgs();
     b.step("run", "Run howl-app").dependOn(&run.step);
