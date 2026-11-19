@@ -1540,26 +1540,28 @@ pub const App = struct {
         }
         if (y < self.headerHeight()) {
             if (button != .left) return;
-            for (0..self.tab_count) |number| {
-                const index: u8 = @intCast(number);
-                const rect = self.headerTabs(self.width).tab(index);
-                if (!rect.contains(x, y)) continue;
-                try self.selectTab(index);
-                if (if (self.headerTabs(self.width).close(index)) |close| close.contains(x, y) else false) {
+            const tabs = self.headerTabs(self.width);
+            switch (chrome.headerAt(tabs, x, y)) {
+                .tab_close => |index| {
+                    // Keep the original selected-tab handoff before retirement.
+                    try self.selectTab(index);
                     try self.closeTab();
                     self.consume_left_release = true;
-                } else if (clicks >= 2) {
-                    try self.beginRename();
-                    self.consume_left_release = true;
-                } else self.drag = .{ .tab = chrome.Drag.begin(rect, x) };
-                return;
-            }
-            if (self.headerTabs(self.width).plus().contains(x, y)) {
-                try self.createTab(try self.startup(), null);
-            } else if (self.headerTabs(self.width).profiles().contains(x, y)) {
-                try self.openPalette(true);
-            } else if (chrome.settings(self.width).contains(x, y)) {
-                try self.toggleSettings();
+                    return;
+                },
+                .tab => |index| {
+                    try self.selectTab(index);
+                    if (clicks >= 2) {
+                        try self.beginRename();
+                        self.consume_left_release = true;
+                    } else self.drag = .{ .tab = chrome.Drag.begin(tabs.tab(index), x) };
+                    return;
+                },
+                .plus => try self.createTab(try self.startup(), null),
+                .profiles => try self.openPalette(true),
+                .settings => try self.toggleSettings(),
+                // Native caption controls are handled earlier by chromeEvent.
+                else => {},
             }
             self.consume_left_release = true;
             return;
@@ -2650,6 +2652,110 @@ test "retained chrome identity ignores terminal work and detects every painted h
     changed = initial;
     changed.active = 1;
     try std.testing.expect(!initial.eql(&changed));
+}
+
+test "header pointer dispatch matches chrome targets and preserves close, drag and overlays" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    const window = c.SDL_CreateWindow("header click routing", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var environment = std.process.Environ.Map.init(std.testing.allocator);
+    defer environment.deinit();
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    // An empty font catalogue makes tab creation exercise the host's
+    // unavailable-pane path without launching a process or opening a font.
+    var fonts: font_owner.Fonts = .{ .allocator = allocator };
+    defer fonts.deinit();
+    for ([_]f32{ 600, 600, 1000, 1000 }, [_]bool{ false, true, false, true }) |width, fit| {
+        configuration.value.tab_width = if (fit) .fit else .fixed;
+        var app: App = .{
+            .init = .{
+                .minimal = .{ .environ = .empty, .args = undefined },
+                .arena = undefined,
+                .gpa = allocator,
+                .io = threaded.io(),
+                .environ_map = &environment,
+                .preopens = undefined,
+            },
+            .configuration = &configuration,
+            .fonts = &fonts,
+            .window = window,
+            .renderer = undefined,
+            .ui_fonts = undefined,
+            .geometry = undefined,
+            .wake_event = 0,
+            .scale = 1,
+            .width = width,
+            .height = 650,
+            .bindings = try keybindings.Bindings.init(),
+        };
+        defer app.deinit();
+        try app.createTab(try configuration.profile(0), null);
+        try app.createTab(try configuration.profile(0), null);
+        try std.testing.expect(app.tabs[0].?.panes[0].?.owner == null);
+        try std.testing.expect(app.tabs[1].?.panes[0].?.owner == null);
+        const survivor = app.tabs[1].?;
+        const tabs = app.headerTabs(app.width);
+        const close = tabs.close(0).?;
+        const close_x = close.x + close.width / 2;
+        const y = close.y + close.height / 2;
+        try std.testing.expectEqualDeep(chrome.HeaderTarget{ .tab_close = 0 }, chrome.headerAt(tabs, close_x, y));
+        try app.pointerDown(close_x, y, .left, .{}, 1);
+        try std.testing.expectEqual(@as(u8, 1), app.tab_count);
+        try std.testing.expectEqual(@as(u8, 0), app.active);
+        try std.testing.expectEqual(survivor, app.tabs[0].?);
+        try std.testing.expect(app.consume_left_release and app.running);
+        app.consume_left_release = false;
+
+        const plus = app.headerTabs(app.width).plus();
+        try app.pointerDown(plus.x + 10, plus.y + 15, .left, .{}, 1);
+        try std.testing.expectEqual(@as(u8, 2), app.tab_count);
+        try std.testing.expectEqual(@as(u8, 1), app.active);
+        try std.testing.expect(app.consume_left_release);
+        app.consume_left_release = false;
+
+        const body = app.headerTabs(app.width).body(0);
+        try app.pointerDown(body.x + 12, body.y + 12, .left, .{}, 1);
+        try std.testing.expectEqual(@as(u8, 0), app.active);
+        try std.testing.expect(app.drag == .tab);
+        try std.testing.expectEqual(app.headerTabs(app.width).tab(0).x, app.drag.tab.x);
+        app.cancelDrag();
+        app.consume_left_release = false;
+        try app.pointerDown(body.x + 12, body.y + 12, .left, .{}, 2);
+        try std.testing.expect(app.rename_editor != null and app.drag == .none);
+        try app.finishRename(false);
+
+        const menu = app.headerTabs(app.width).profiles();
+        try app.pointerDown(menu.x + 10, menu.y + 15, .left, .{}, 1);
+        try std.testing.expect(app.palette != null and app.palette.?.profile);
+        app.palette = null;
+        const settings_rect = chrome.settings(app.width);
+        try app.pointerDown(settings_rect.x + 10, settings_rect.y + 15, .left, .{}, 1);
+        try std.testing.expect(app.settings_editor != null);
+        try app.toggleSettings();
+        try std.testing.expect(app.settings_editor == null);
+
+        // Native caption actions intercept before tab dispatch, and a release
+        // outside the pressed control must never close the window.
+        const native = chrome.control(.close, app.width);
+        var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+        event_value.button = .{ .type = c.SDL_EVENT_MOUSE_BUTTON_DOWN, .button = c.SDL_BUTTON_LEFT, .x = native.x + 8, .y = native.y + 8 };
+        try app.event(event_value);
+        try std.testing.expectEqual(chrome.Button.close, app.chrome_pressed);
+        event_value.button.type = c.SDL_EVENT_MOUSE_BUTTON_UP;
+        event_value.button.x = app.headerTabs(app.width).caption().x;
+        try app.event(event_value);
+        try std.testing.expectEqual(chrome.Button.none, app.chrome_pressed);
+        try std.testing.expect(app.running);
+        const caption = app.headerTabs(app.width).caption();
+        if (caption.width > 0) {
+            try std.testing.expectEqualDeep(chrome.HeaderTarget.caption, chrome.headerAt(app.headerTabs(app.width), caption.x + caption.width / 2, caption.y + 15));
+        }
+    }
 }
 
 test "command palette exposes every mapping including directional multiplexing commands" {

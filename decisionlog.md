@@ -361,3 +361,15 @@ Direct Canvas raster tests retain their upload assertions, and a new injected
 allocation-failure test proves the previous accepted texture survives and
 replacement succeeds on retry. Other validated output-owner and host API
 boundaries stay unchanged.
+
+## Header clicks use the header's one classifier (19 November 2026)
+
+The host's `pointerDown` now switches on `chrome.headerAt` rather than
+reimplementing tab/close/button hit classification with repeated rectangle
+checks. `chromeEvent` still intercepts native caption presses/releases first;
+`App` still owns selected-tab handoff before close, double-click rename,
+chip drag capture, and overlay/navigation effects. SDL tests exercise actual
+pointer actions for fixed and fitted tab strips, at both 600 and 1,000-pixel
+window widths, including non-active close, menu/settings, and native button
+release cancellation. This is one less independent hit route, not a new input
+controller or changed pane lifetime.
