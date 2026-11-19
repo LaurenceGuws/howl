@@ -295,7 +295,11 @@ to occupy the canonical cell; font changes resize that cell rather than its ink.
 ## User desktop installation (Linux)
 
 Normal `zig build install` keeps Zig's prefix/staging semantics and does not
-register a launcher in your desktop. After building and testing the app, run:
+register a launcher in your desktop. **Run the `install` build step for the
+desired optimization mode before promoting a binary.** Plain `zig build`
+checks the source but does not refresh `zig-out/bin/howl-app`; the version
+string alone cannot distinguish a stale binary from current source.
+After building and testing the app, run:
 
 ```sh
 ./install.sh                         # uses this package's zig-out/bin/howl-app
