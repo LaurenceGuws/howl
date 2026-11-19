@@ -229,7 +229,8 @@ A scan and its saved cache each hold at most 512 entries. Discovery input is bou
 eight include levels, 256 KiB per file and 2 MiB total; Include expansion inspects
 at most 8,192 directory entries and 32 path components. A failed scan reports
 its error and leaves the saved cache unchanged. Cached discoveries persist in
-app.json but are not added to the saved-default selector.
+app.json and enabled, non-stale cached entries remain selectable as startup
+defaults until disabled or marked stale.
 The new cache field is not understood by older strict howl-app binaries; use
 an isolated XDG_CONFIG_HOME for pre-promotion canaries, and keep the prior
 app.json when rehearsing a binary rollback.

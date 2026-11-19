@@ -37,17 +37,12 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.FeedError || vt.Terminal.ClipboardReplyError ||
     vt.Terminal.ColorPreferenceReplyError || vt.Terminal.ContainerReplyError ||
     vt.Terminal.PointerShapeReplyError || error{WriteQueueFull};
-/// Copied progress and deadlines; no mutable PTY or VT storage escapes.
+/// Only the progress and deadlines consumed by the owning terminal worker.
 pub const Service = struct {
-    changed: bool,
-    viewport_changed: bool,
     synchronized_output: vt.Terminal.SynchronizedOutputProgress = .{},
-    retained_consequence_fallback: bool,
     stream_closed: bool,
     child_exit: ?pty.ChildExit,
     write_pending: bool,
-    write_closed: bool,
-    undelivered_bytes: usize,
     animation_wait_ms: ?u32,
     input_retry_wait_ms: ?u32,
 };
@@ -243,17 +238,14 @@ pub const Core = struct {
 
     /// One bounded service turn, retaining host consequences for desktop policy.
     pub fn service(self: *Core, readable: bool, writable: bool, timestamp_ns: u64) ServiceError!Service {
-        const revision_before = self.terminal.semanticSequence();
-        var viewport_changed = false;
         var synchronized_output: vt.Terminal.SynchronizedOutputProgress = .{};
-        var fallback = false;
         if (writable and self.writePending()) try self.flushWriteTurn(&self.transport);
         if (!self.terminal.inputBlocked()) {
             self.collectReplies() catch |failure| switch (failure) {
-                error.WriteQueueFull => return self.result(revision_before, timestamp_ns, viewport_changed, synchronized_output, fallback),
+                error.WriteQueueFull => return self.result(timestamp_ns, synchronized_output),
             };
         }
-        try self.processBuffered(timestamp_ns, &viewport_changed, &synchronized_output, &fallback);
+        try self.processBuffered(timestamp_ns, &synchronized_output);
         if (self.input_retry_at == null and self.terminal.replyBytes().len == 0 and
             self.read_start == self.read_end and readable and !self.stream_closed)
         {
@@ -273,7 +265,7 @@ pub const Core = struct {
                 read_calls += 1;
                 self.read_start = 0;
                 self.read_end = count;
-                try self.processBuffered(timestamp_ns, &viewport_changed, &synchronized_output, &fallback);
+                try self.processBuffered(timestamp_ns, &synchronized_output);
                 if (self.read_start != self.read_end or self.writes.count != 0) break;
                 if (self.terminal.consequenceHead() != null) break;
             }
@@ -282,10 +274,10 @@ pub const Core = struct {
             .running => {},
             .exited => |value| self.child_exit = value,
         }
-        return self.result(revision_before, timestamp_ns, viewport_changed, synchronized_output, fallback);
+        return self.result(timestamp_ns, synchronized_output);
     }
 
-    fn processBuffered(self: *Core, timestamp_ns: u64, viewport_changed: *bool, synced: *vt.Terminal.SynchronizedOutputProgress, fallback: *bool) ServiceError!void {
+    fn processBuffered(self: *Core, timestamp_ns: u64, synced: *vt.Terminal.SynchronizedOutputProgress) ServiceError!void {
         if (self.input_retry_at) |deadline| if (timestamp_ns < deadline) return;
         while (self.read_start < self.read_end or self.terminal.inputBlocked()) {
             const blocked = self.terminal.inputBlocked();
@@ -298,9 +290,7 @@ pub const Core = struct {
             const progress = try self.terminal.feedAtServiceBoundaryRelievingConsequences(bytes, timestamp_ns, relieveConsequencePressure);
             std.debug.assert(progress.consumed <= self.read_end - self.read_start);
             self.read_start += progress.consumed;
-            viewport_changed.* = viewport_changed.* or progress.summary.mutations.viewport;
             synced.merge(progress.summary.synchronized_output);
-            fallback.* = fallback.* or progress.consequence_pressure_relieved;
             std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
             if (progress.input_blocked) |failure| {
                 if (failure == error.ScalarCapacity) return error.ScalarCapacity;
@@ -318,18 +308,13 @@ pub const Core = struct {
         self.read_end = 0;
     }
 
-    fn result(self: *Core, before: u64, now: u64, viewport: bool, synced: vt.Terminal.SynchronizedOutputProgress, fallback: bool) Service {
+    fn result(self: *Core, now: u64, synced: vt.Terminal.SynchronizedOutputProgress) Service {
         const animation = self.terminal.serviceAnimations(now);
         return .{
-            .changed = self.terminal.semanticSequence() != before,
-            .viewport_changed = viewport,
             .synchronized_output = synced,
-            .retained_consequence_fallback = fallback,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
             .write_pending = self.writePending(),
-            .write_closed = self.write_closed,
-            .undelivered_bytes = self.undelivered_bytes,
             .animation_wait_ms = animation.next_ms,
             .input_retry_wait_ms = if (self.input_retry_at) |deadline| retry: {
                 const remaining = deadline -| now;
@@ -503,17 +488,15 @@ test "canonical service yields the unread suffix on synchronized-output release"
     const bytes = "\x1b[?2026hA\x1b[?2026lB";
     @memcpy(core.reads[0..bytes.len], bytes);
     core.read_end = bytes.len;
-    var viewport = false;
     var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
-    var fallback = false;
-    try core.processBuffered(0, &viewport, &synchronized, &fallback);
+    try core.processBuffered(0, &synchronized);
     try std.testing.expect(synchronized.ended);
     try std.testing.expect(core.read_start < core.read_end);
     try std.testing.expect(core.bufferedOutputRunnable());
     try std.testing.expect(!core.readAdmissible());
-    try std.testing.expect(!fallback);
+    try std.testing.expectEqual(@as(u16, 0), core.terminal.consequenceCount());
     synchronized = .{};
-    try core.processBuffered(0, &viewport, &synchronized, &fallback);
+    try core.processBuffered(0, &synchronized);
     try std.testing.expectEqual(@as(usize, 0), core.read_start);
     try std.testing.expectEqual(@as(usize, 0), core.read_end);
     try std.testing.expect(core.readAdmissible());
@@ -545,27 +528,25 @@ test "app canonical scalar pressure retries the retained input without re-readin
     length += tail.len;
     core.read_end = length;
     failing.fail_index = failing.alloc_index;
-    var viewport = false;
     var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
-    var fallback = false;
-    try core.processBuffered(1, &viewport, &synchronized, &fallback);
+    try core.processBuffered(1, &synchronized);
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expect(core.inputBlocked());
     try std.testing.expect(!core.readAdmissible());
     const unread = core.read_start;
     try std.testing.expect(unread < core.read_end);
     const retry_at = core.input_retry_at.?;
-    try core.processBuffered(retry_at - 1, &viewport, &synchronized, &fallback);
+    try core.processBuffered(retry_at - 1, &synchronized);
     try std.testing.expectEqual(unread, core.read_start);
     try std.testing.expect(core.inputBlocked());
 
-    try core.processBuffered(retry_at, &viewport, &synchronized, &fallback);
+    try core.processBuffered(retry_at, &synchronized);
     try std.testing.expect(core.inputBlocked());
     try std.testing.expectEqual(unread, core.read_start);
     const second_retry = core.input_retry_at.?;
     try std.testing.expect(second_retry > retry_at);
     failing.fail_index = std.math.maxInt(usize);
-    try core.processBuffered(second_retry, &viewport, &synchronized, &fallback);
+    try core.processBuffered(second_retry, &synchronized);
     try std.testing.expect(!core.inputBlocked());
     try std.testing.expect(core.input_retry_at == null);
     try std.testing.expectEqual(@as(usize, 0), core.read_end);
@@ -590,11 +571,10 @@ test "canonical consequence pressure advances past retained bells without losing
     bytes[65] = 'Y';
     @memcpy(core.reads[0..bytes.len], &bytes);
     core.read_end = bytes.len;
-    var viewport = false;
     var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
-    var fallback = false;
-    try core.processBuffered(1, &viewport, &synchronized, &fallback);
-    try std.testing.expect(fallback);
+    try core.processBuffered(1, &synchronized);
+    // More bells than the retained consequence capacity plus a final text byte
+    // prove pressure relief advanced the feed instead of stalling it.
     try std.testing.expectEqual(@as(u16, 32), core.terminal.consequenceCount());
     const view = core.terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
