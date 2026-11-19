@@ -97,10 +97,6 @@ const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
 const SelectionHit = struct { point: vt.Terminal.TextPoint, columns: u16, alternate: bool };
 const SettingsHeaderAction = enum { save, cancel, search, close };
-const SettingsScrollGrab = union(enum) {
-    form: f32,
-    list: struct { bar: widgets.FormViewport.Scrollbar, grab: f32, count: usize, visible: usize },
-};
 const settings_header_height: f32 = chrome.height;
 const settings_nav_top: f32 = settings_header_height + chrome.Geometry.bottom;
 const settings_card_gutter: f32 = 12;
@@ -385,7 +381,7 @@ const App = struct {
     settings_editor: ?settings.Editor = null,
     settings_draft: ?config.Config = null,
     settings_scroll_offset: f32 = 0,
-    settings_scroll_grab: ?SettingsScrollGrab = null,
+    settings_scroll_grab: ?f32 = null,
     chooser: ?*font_chooser.Chooser = null,
     chooser_preview_base: ?config.Config = null,
     drag: Drag = .none,
@@ -2326,67 +2322,22 @@ const App = struct {
         const view = self.settingsFormView() orelse return;
         self.settings_scroll_offset = std.math.clamp(view.offset + delta, 0, @max(0, view.content_height - view.bounds.height));
     }
-    fn settingsListScrollbar(self: *const App, count: usize) ?widgets.FormViewport.Scrollbar {
-        const editor = self.settings_editor.?;
-        if (editor.search or (editor.page != .defaults and editor.page != .profiles)) return null;
-        const shown = @min(count, self.settingsVisible());
-        if (count <= shown) return null;
-        const body = self.settingsBody();
-        const row_height = body.height / @as(f32, @floatFromInt(shown));
-        return widgets.FormViewport.atOffset(body, row_height * @as(f32, @floatFromInt(count)), row_height * @as(f32, @floatFromInt(editor.list.first))).scrollbar();
-    }
-    fn settingsScrollbarContains(bar: widgets.FormViewport.Scrollbar, x: f32, y: f32) bool {
-        return x >= bar.track.x - 11 and x < bar.track.x + bar.track.width + 1 and y >= bar.track.y and y < bar.track.y + bar.track.height;
-    }
     fn settingsScrollbarPress(self: *App, x: f32, y: f32) bool {
         const view = self.settingsFormView() orelse return false;
         const bar = view.scrollbar() orelse return false;
-        if (!settingsScrollbarContains(bar, x, y)) return false;
-        self.settings_scroll_grab = .{ .form = if (y >= bar.thumb.y and y < bar.thumb.y + bar.thumb.height) y - bar.thumb.y else bar.thumb.height / 2 };
-        self.settingsScrollbarMove(y);
-        return true;
-    }
-    fn settingsListScrollbarPress(self: *App, x: f32, y: f32) !bool {
-        const editor = &self.settings_editor.?;
-        if (editor.search or (editor.page != .defaults and editor.page != .profiles)) return false;
-        const body = self.settingsBody();
-        if (x < body.x + body.width - 15 or !body.contains(x, y)) return false;
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(self.settingsConfiguration(), &all);
-        const visible = editor.indices(all[0..count], &indices);
-        editor.list.reveal(visible, self.settingsVisible());
-        const bar = self.settingsListScrollbar(visible) orelse return false;
-        if (!settingsScrollbarContains(bar, x, y)) return false;
-        self.settings_scroll_grab = .{ .list = .{
-            .bar = bar,
-            .grab = if (y >= bar.thumb.y and y < bar.thumb.y + bar.thumb.height) y - bar.thumb.y else bar.thumb.height / 2,
-            .count = visible,
-            .visible = self.settingsVisible(),
-        } };
+        if (x < bar.track.x - 11 or x >= bar.track.x + bar.track.width + 1 or y < bar.track.y or y >= bar.track.y + bar.track.height) return false;
+        self.settings_scroll_grab = if (y >= bar.thumb.y and y < bar.thumb.y + bar.thumb.height) y - bar.thumb.y else bar.thumb.height / 2;
         self.settingsScrollbarMove(y);
         return true;
     }
     fn settingsScrollbarMove(self: *App, y: f32) void {
         const grab = self.settings_scroll_grab orelse return;
-        switch (grab) {
-            .form => |offset| {
-                const view = self.settingsFormView() orelse return;
-                const bar = view.scrollbar() orelse return;
-                const travel = bar.track.height - bar.thumb.height;
-                if (travel <= 0) return;
-                const thumb_y = std.math.clamp(y - offset - bar.track.y, 0, travel);
-                self.settings_scroll_offset = thumb_y / travel * (view.content_height - view.bounds.height);
-            },
-            .list => |list| {
-                const travel = list.bar.track.height - list.bar.thumb.height;
-                if (travel <= 0) return;
-                const thumb_y = std.math.clamp(y - list.grab - list.bar.track.y, 0, travel);
-                const first: usize = @intFromFloat(@round(thumb_y / travel * @as(f32, @floatFromInt(list.count - list.visible))));
-                const current = self.settings_editor.?.list.first;
-                self.settings_editor.?.list.scroll(@as(i32, @intCast(first)) - @as(i32, @intCast(current)), list.count, list.visible);
-            },
-        }
+        const view = self.settingsFormView() orelse return;
+        const bar = view.scrollbar() orelse return;
+        const travel = bar.track.height - bar.thumb.height;
+        if (travel <= 0) return;
+        const thumb_y = std.math.clamp(y - grab - bar.track.y, 0, travel);
+        self.settings_scroll_offset = thumb_y / travel * (view.content_height - view.bounds.height);
     }
     fn simpleSettingsForm(self: *const App) bool {
         const editor = self.settings_editor.?;
@@ -2670,7 +2621,6 @@ const App = struct {
         if (!box.contains(x, y)) return;
         const body = self.settingsBody();
         if (self.settingsScrollbarPress(x, y)) return;
-        if (try self.settingsListScrollbarPress(x, y)) return;
         if (x < body.x - 12 and y >= box.y + settings_nav_top) {
             for (0..settings.titles.len) |page| {
                 if (!self.settingsNavRow(page).contains(x, y)) continue;
@@ -3250,9 +3200,6 @@ const App = struct {
                 try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
                 try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
             }
-        } else if (self.settingsListScrollbar(visible)) |bar| {
-            try drawing.fillRounded(self.renderer, bar.track, colors.border, 2);
-            try drawing.fillRounded(self.renderer, bar.thumb, colors.muted, 2);
         } else try self.drawListScroll(rows, start, visible);
         try self.drawSettingsDropdown();
         if (e.editing != null and e.edit.kind == .color) {
@@ -4819,50 +4766,6 @@ test "Profiles footer remains actionable across scroll selection and cached entr
     try std.testing.expectEqualStrings("auto.repl.python", (try app.settingsConfiguration().defaultProfile()).id);
 }
 
-test "Profiles lists scroll beside their cards with an actionable outer thumb" {
-    var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
-        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}],"scanned_profiles":[{"kind":"repl","recipe":{"id":"auto.repl.one","name":"One","shell":"/bin/sh"}},{"kind":"repl","recipe":{"id":"auto.repl.two","name":"Two","shell":"/bin/sh"}},{"kind":"ssh","recipe":{"id":"auto.ssh.three","name":"Three","shell":"/usr/bin/ssh"}}]}
-    );
-    defer configuration.deinit();
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = undefined,
-        .window = undefined,
-        .renderer = undefined,
-        .ui_fonts = undefined,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 900,
-        .height = 560,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .defaults },
-    };
-    for ([_]settings.Page{ .defaults, .profiles }) |page| {
-        app.settings_editor.?.page = page;
-        app.settings_editor.?.profile = 1;
-        app.settings_editor.?.list = .{};
-        var all: [settings.row_limit]settings.Row = undefined;
-        var indices: [settings.row_limit]u16 = undefined;
-        const count = try settings.rows(&configuration, &all);
-        const visible = app.settings_editor.?.indices(all[0..count], &indices);
-        const bar = app.settingsListScrollbar(visible).?;
-        const body = app.settingsBody();
-        const card = app.settingsListCard();
-        try std.testing.expect(bar.track.x > card.x + card.width);
-        try std.testing.expectApproxEqAbs(body.x + body.width - 4, bar.track.x, 0.01);
-        try std.testing.expectEqual(body.y, bar.track.y);
-        try std.testing.expectEqual(body.height, bar.track.height);
-        try app.settingsClick(bar.track.x + 1, bar.track.y + bar.track.height - 2, 1);
-        try std.testing.expect(app.settings_scroll_grab != null);
-        try std.testing.expect(app.settings_editor.?.list.first > 0);
-        app.settingsScrollbarMove(bar.track.y + 1);
-        try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.list.first);
-        app.settings_scroll_grab = null;
-    }
-}
-
 test "startup controls own clicks; choice editing and global Cancel preserve the live configuration" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
@@ -5445,61 +5348,6 @@ test "shortcut cards paint separately from the page and retain the outer scrollb
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     const last = app.shortcutForm().card(ShortcutForm.sections.len - 1);
     try std.testing.expectEqual(colors.panel, try testPixel(surface, @intFromFloat(last.x + 8), @intFromFloat(last.y + last.height - 20)));
-}
-test "Profiles scrollbar paints in the outer gutter, beyond the catalogue card" {
-    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
-    defer c.SDL_Quit();
-    if (!c.TTF_Init()) return error.TTF;
-    defer c.TTF_Quit();
-    const a = std.testing.allocator;
-    const window = c.SDL_CreateWindow("profiles scroll paint", 920, 560, 0) orelse return error.SDL;
-    defer c.SDL_DestroyWindow(window);
-    const surface = c.SDL_CreateSurface(920, 560, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
-    defer c.SDL_DestroySurface(surface);
-    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
-    defer c.SDL_DestroyRenderer(renderer);
-    var fonts = try testFonts(a);
-    defer fonts.deinit();
-    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
-    defer ui_fonts.deinit();
-    var configuration = config.Config.defaults(a);
-    defer configuration.deinit();
-    const scanned = [_]config.ScannedProfile{
-        .{ .kind = .repl, .recipe = .{ .id = "auto.repl.one", .name = "One" } },
-        .{ .kind = .repl, .recipe = .{ .id = "auto.repl.two", .name = "Two" } },
-        .{ .kind = .repl, .recipe = .{ .id = "auto.repl.three", .name = "Three" } },
-        .{ .kind = .repl, .recipe = .{ .id = "auto.repl.four", .name = "Four" } },
-        .{ .kind = .repl, .recipe = .{ .id = "auto.repl.five", .name = "Five" } },
-    };
-    configuration.value.scanned_profiles = &scanned;
-    var app: App = .{
-        .init = undefined,
-        .configuration = &configuration,
-        .fonts = &fonts,
-        .window = window,
-        .renderer = renderer,
-        .ui_fonts = &ui_fonts,
-        .geometry = undefined,
-        .wake_event = 0,
-        .scale = 1,
-        .width = 920,
-        .height = 560,
-        .bindings = try keybindings.Bindings.init(),
-        .settings_editor = .{ .page = .defaults },
-    };
-    try app.drawSettings();
-    try std.testing.expect(c.SDL_RenderPresent(renderer));
-    var all: [settings.row_limit]settings.Row = undefined;
-    var indices: [settings.row_limit]u16 = undefined;
-    const count = try settings.rows(&configuration, &all);
-    const visible = app.settings_editor.?.indices(all[0..count], &indices);
-    const bar = app.settingsListScrollbar(visible).?;
-    const card = app.settingsListCard();
-    try std.testing.expect(bar.track.x > card.x + card.width);
-    const colors = try app.uiPalette();
-    try std.testing.expectEqual(colors.border, try testPixel(surface, @intFromFloat(bar.track.x + 1), @intFromFloat(bar.track.y + bar.track.height - 8)));
-    try std.testing.expectEqual(colors.title, try testPixel(surface, @intFromFloat(card.x + card.width + 3), @intFromFloat(bar.track.y + bar.track.height - 8)));
 }
 test "Gruvbox selected text stays inside even a short scrolled text field" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));

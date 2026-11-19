@@ -157,8 +157,6 @@ Shortcuts groups application, window, tab, pane, pane navigation and terminal
 actions into separate cards on one page-level scroller. The cards change only
 presentation: shortcut IDs, bindings and recording remain unchanged. Profiles
 keeps its separate saved/scanned catalogue with its persistent default footer.
-The Profiles catalogue and profile details place their draggable scroll thumb
-alongside the card, using the same outer gutter as the other Settings pages.
 Search preserves normal row geometry. Settings, installed fonts and both palettes
 share text editing, list viewports, row hit geometry and selection/hover styling.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,
