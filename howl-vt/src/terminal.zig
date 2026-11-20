@@ -3779,34 +3779,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const changed = screen.scrollDownRegion(screen.scroll_top, screen.scrollBottom(), count);
             return scrollGraphicsRegion(vt, screen, screen.scroll_top, screen.scrollBottom(), count, false) or changed;
         },
-        .forward_index => {
-            const screen = vt.screen_state.active();
-            const shifts = screen.cursor.col == screen.rightBoundary();
-            const changed = screen.forwardIndex();
-            if (!shifts) return changed;
-            return vt.graphics.shiftColumns(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                screen.leftBoundary(),
-                screen.rightBoundary(),
-                1,
-                true,
-            ) or changed;
-        },
-        .back_index => {
-            const screen = vt.screen_state.active();
-            const shifts = screen.cursor.col == screen.leftBoundary();
-            const changed = screen.backIndex();
-            if (!shifts) return changed;
-            return vt.graphics.shiftColumns(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                screen.leftBoundary(),
-                screen.rightBoundary(),
-                1,
-                false,
-            ) or changed;
-        },
+        .forward_index => return applyHorizontalIndex(vt, .forward),
+        .back_index => return applyHorizontalIndex(vt, .backward),
         .shift_left_columns => |count| return vt.screen_state.active().shiftColumnsLeft(count),
         .shift_right_columns => |count| return vt.screen_state.active().shiftColumnsRight(count),
         .reverse_index => {
@@ -3993,6 +3967,20 @@ fn applyLineEdit(vt: *Terminal, kind: Screen.LineEdit, count: u16) bool {
         @max(count, 1),
         kind == .delete,
     ) or edit.changed;
+}
+
+fn applyHorizontalIndex(vt: *Terminal, direction: Screen.HorizontalIndex) bool {
+    const screen = vt.screen_state.active();
+    const result = screen.indexHorizontal(direction);
+    const shift = result.shift orelse return result.changed;
+    return vt.graphics.shiftColumns(
+        graphicsBank(vt),
+        graphicsScreenOrigin(vt) + screen.cursor.row,
+        shift.left,
+        shift.right,
+        1,
+        direction == .forward,
+    ) or result.changed;
 }
 
 fn graphicsScreenOrigin(vt: *const Terminal) u64 {

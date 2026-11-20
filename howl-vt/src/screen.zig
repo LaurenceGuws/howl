@@ -3832,37 +3832,40 @@ pub const Screen = struct {
         return self.cursor.row != row or changed;
     }
 
-    /// Applies DECFI within the cursor's horizontal region.
-    pub fn forwardIndex(self: *Screen) bool {
-        var changed = self.cancelPendingWrap();
-        if (self.rows == 0 or self.cols == 0) return changed;
-        const inside = self.cursorWithinHorizontalMargins();
-        const right = if (inside and self.left_right_margin_mode) self.right_margin else self.cols - 1;
-        if (self.cursor.col < right) {
-            self.cursor.setColByClient(self.cursor.col + 1);
-            return true;
-        }
-        if (self.cursor.col == right) {
-            changed = self.shiftColumnsLeftInBounds(1, if (inside) self.leftBoundary() else 0, right) or changed;
-        }
-        return changed;
-    }
+    /// Selects the DECFI or DECBI movement, including a shift at the row edge.
+    pub const HorizontalIndex = enum { forward, backward };
+    /// Reports exactly which columns the owning Screen shifted, if any.
+    pub const HorizontalIndexResult = struct {
+        changed: bool = false,
+        shift: ?struct { left: u16, right: u16 } = null,
+    };
 
-    /// Applies DECBI within the cursor's horizontal region.
-    pub fn backIndex(self: *Screen) bool {
+    /// Applies horizontal index once, returning the actual row-shift region.
+    /// A cursor beyond DECSLRM uses the physical row edge, not the margin.
+    pub fn indexHorizontal(self: *Screen, direction: HorizontalIndex) HorizontalIndexResult {
         var changed = self.cancelPendingWrap();
-        if (self.rows == 0 or self.cols == 0) return changed;
+        if (self.rows == 0 or self.cols == 0) return .{ .changed = changed };
         const inside = self.cursorWithinHorizontalMargins();
         const left = if (inside and self.left_right_margin_mode) self.left_margin else 0;
-        if (self.cursor.col > left) {
-            self.cursor.setColByClient(self.cursor.col - 1);
-            return true;
+        const right = if (inside and self.left_right_margin_mode) self.right_margin else self.cols - 1;
+        const moves = switch (direction) {
+            .forward => self.cursor.col < right,
+            .backward => self.cursor.col > left,
+        };
+        if (moves) {
+            self.cursor.setColByClient(if (direction == .forward) self.cursor.col + 1 else self.cursor.col - 1);
+            return .{ .changed = true };
         }
-        if (self.cursor.col == left) {
-            const right = if (inside and self.left_right_margin_mode) self.right_margin else self.cols - 1;
-            changed = self.shiftColumnsRightInBounds(1, left, right) or changed;
-        }
-        return changed;
+        const at_edge = switch (direction) {
+            .forward => self.cursor.col == right,
+            .backward => self.cursor.col == left,
+        };
+        if (!at_edge) return .{ .changed = changed };
+        changed = (if (direction == .forward)
+            self.shiftColumnsLeftInBounds(1, left, right)
+        else
+            self.shiftColumnsRightInBounds(1, left, right)) or changed;
+        return .{ .changed = changed, .shift = .{ .left = left, .right = right } };
     }
 
     fn scrollUp(self: *Screen) void {
@@ -9181,6 +9184,37 @@ test "line-edit admission is independent of pending-wrap mutation" {
         try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
         try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
     }
+}
+
+test "horizontal index reports physical or margin shift geometry from its owner" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 6);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.setLeftRightMarginMode(true));
+    try std.testing.expect(screen.setLeftRightMargins(1, 3));
+
+    screen.cursor.setPositionByClient(0, 3);
+    const right_margin = screen.indexHorizontal(.forward);
+    try std.testing.expect(right_margin.shift != null);
+    try std.testing.expectEqual(@as(u16, 1), right_margin.shift.?.left);
+    try std.testing.expectEqual(@as(u16, 3), right_margin.shift.?.right);
+
+    screen.cursor.setPositionByClient(0, 5);
+    const physical_right = screen.indexHorizontal(.forward);
+    try std.testing.expect(physical_right.shift != null);
+    try std.testing.expectEqual(@as(u16, 0), physical_right.shift.?.left);
+    try std.testing.expectEqual(@as(u16, 5), physical_right.shift.?.right);
+
+    screen.cursor.setPositionByClient(0, 0);
+    const physical_left = screen.indexHorizontal(.backward);
+    try std.testing.expect(physical_left.shift != null);
+    try std.testing.expectEqual(@as(u16, 0), physical_left.shift.?.left);
+    try std.testing.expectEqual(@as(u16, 5), physical_left.shift.?.right);
+
+    screen.cursor.setPositionByClient(0, 2);
+    const movement = screen.indexHorizontal(.forward);
+    try std.testing.expect(movement.changed);
+    try std.testing.expect(movement.shift == null);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
 }
 
 test "IL and DL clear crossing multiline fragments but retain intact neighbors" {

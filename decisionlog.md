@@ -648,3 +648,26 @@ No protocol support classification or runtime behavior was expanded.
 This is an intentional contraction of the ownership graph, not a general
 new terminal-operation abstraction. Keep subsequent debt payoffs narrow,
 source-owned, and justified by a demonstrated duplication or defect.
+
+## Screen owns horizontal-index shift geometry (20 November 2026)
+
+DECFI/DECBI exposed the same authority split as CSI IL/DL. Screen chose
+whether to move the cursor or shift the row, using the physical row edges
+when the cursor was outside DECSLRM. Terminal separately compared the cursor
+to the configured margins and sometimes failed to shift image placements
+when Screen had shifted cells.
+
+The distinct Screen.forwardIndex/backIndex paths are now one
+Screen.indexHorizontal(direction) operation. Its result includes the exact
+shifted column interval, or no shift for cursor-only movement. Terminal
+consumes that interval directly for graphics without recomputing boundaries.
+A red-before/green-after terminal test established the physical-edge image
+mismatch in both directions; owner tests additionally prove inside-margin,
+outside-margin, and cursor-only results. VT Debug/ReleaseFast, complete root
+ReleaseFast check/test/audit, protocol validation, format and diff checks are
+green. Two protocol source links follow the new owner. No new protocol was
+admitted, and no implementation or GPU backend was installed or launched.
+
+As with the line-edit consolidation, the typed result is a semantic fact
+from the owner, not a second terminal model. Avoid general-purpose wrappers
+until a proven divergence warrants one.

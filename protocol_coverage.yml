@@ -1119,7 +1119,7 @@ references:
             conditions: iTerm2 gates the command to VT400 while Howl has no legacy emulation level,
             howl: {support: partial, disposition: excluded,
               rationale: *howl_cursor_compatibility_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.forwardIndex, proof: {
+              source: howl-vt/src/screen.zig, symbol: Screen.indexHorizontal, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges"}}}
           iterm2.esc.decrc: {raw: "ESC 8", effect: restore cursor,
@@ -1138,7 +1138,7 @@ references:
             conditions: iTerm2 gates the command to VT400 while Howl has no legacy emulation level,
             howl: {support: partial, disposition: excluded,
               rationale: *howl_cursor_compatibility_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.backIndex, proof: {
+              source: howl-vt/src/screen.zig, symbol: Screen.indexHorizontal, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges"}}}
           iterm2.esc.ind: {raw: "ESC D", effect: index, howl: {support: full,

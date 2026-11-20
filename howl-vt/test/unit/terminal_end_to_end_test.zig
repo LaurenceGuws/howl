@@ -1042,6 +1042,40 @@ test "terminal: DECFI and DECBI shift exact active margin rows at horizontal edg
     try std.testing.expect(!(try terminal.feed("\x1b9")).stateChanged());
 }
 
+test "terminal: DECFI and DECBI outside horizontal margins shift matching image columns" {
+    const cases = [_]struct {
+        command: []const u8,
+        image_col: u16,
+        cursor_col: u16,
+        expected_col: u16,
+        expected_text: u21,
+    }{
+        .{ .command = "\x1b9", .image_col = 4, .cursor_col = 5, .expected_col = 3, .expected_text = 'E' },
+        .{ .command = "\x1b6", .image_col = 2, .cursor_col = 0, .expected_col = 3, .expected_text = 'C' },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HABCDEF");
+        var cmd: [24]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&cmd, "\x1b[1;{d}H", .{case.image_col + 1}));
+        try feed(&terminal, "\x1b_Ga=T,f=32,s=1,v=1,i=37,C=1;AQIDBA==\x1b\\");
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(case.image_col, terminal.images(0).placement(0).?.col);
+        try feed(&terminal, "\x1b[?69h\x1b[2;4s");
+        try feed(&terminal, try std.fmt.bufPrint(&cmd, "\x1b[1;{d}H", .{case.cursor_col + 1}));
+        const before = terminal.images(0);
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(case.expected_col, after.placement(0).?.col);
+        try std.testing.expectEqual(case.expected_text, terminal.semanticView(0).cellAt(0, 3));
+        try std.testing.expect(after.generation > before.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+}
+
 test "terminal: CSI cursor positioning shares parameter, margin, and origin bounds" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 8, 12);
