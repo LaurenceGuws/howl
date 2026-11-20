@@ -75,6 +75,30 @@ test "terminal cursor: DECSCUSR restores the canonical default and rejects unsup
 
     try std.testing.expect((try terminal.feed("\x1bP$q q\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings("\x1bP1$r1 q\x1b\\", terminal.replyBytes());
+
+    // A caller-configured default must win over a previous program override,
+    // not silently restore the constructor's blinking block.
+    var configured = try Terminal.init(allocator, 2, 4);
+    defer configured.deinit();
+    configured.setDefaultCursorStyle(.{ .shape = .bar, .blink = false });
+    try feed(&configured, "\x1b[2;3H\x1b[3 q");
+    try std.testing.expectEqual(.underline, view(&configured).cursor_shape);
+    try std.testing.expect(view(&configured).cursor_blink);
+    try std.testing.expect(!(try configured.feed("\x1b[0 ")).stateChanged());
+    try std.testing.expect((try configured.feed("q")).stateChanged());
+    try std.testing.expectEqual(.bar, view(&configured).cursor_shape);
+    try std.testing.expect(!view(&configured).cursor_blink);
+    try std.testing.expectEqual(@as(u16, 1), view(&configured).cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), view(&configured).cursor_col);
+    const revision = configured.semanticSequence();
+    try std.testing.expect(!(try configured.feed("\x1b[0 q\x1b[7 q")).stateChanged());
+    try std.testing.expectEqual(revision, configured.semanticSequence());
+    try feed(&configured, "\x1b[?47h\x1b[4 q\x1b[0 q");
+    try std.testing.expectEqual(.bar, view(&configured).cursor_shape);
+    try std.testing.expect(!view(&configured).cursor_blink);
+    try feed(&configured, "\x1b[?47l");
+    try std.testing.expectEqual(.bar, view(&configured).cursor_shape);
+    try std.testing.expect(!view(&configured).cursor_blink);
 }
 
 test "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops" {
@@ -120,6 +144,39 @@ test "terminal cursor: Kitty DCS restores each bank default across fragmented in
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|x\x1b\\")).stateChanged());
+
+    // Both screen banks must restore the caller's configured shape/blink,
+    // visibility and cursor-color override, not just the factory block style.
+    terminal.setDefaultCursorStyle(.{ .shape = .bar, .blink = false });
+    try feed(&terminal, "\x1b[2;2H\x1b[3 q\x1b[?25l\x1b]12;#010203\x1b\\");
+    try std.testing.expectEqual(.underline, view(&terminal).cursor_shape);
+    try std.testing.expect(view(&terminal).cursor_blink);
+    try std.testing.expect(!view(&terminal).cursor_visible);
+    try std.testing.expect(terminal.presentation().cursor != null);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appear")).stateChanged());
+    try std.testing.expect((try terminal.feed("ance|\x1b\\")).stateChanged());
+    try std.testing.expectEqual(.bar, view(&terminal).cursor_shape);
+    try std.testing.expect(!view(&terminal).cursor_blink);
+    try std.testing.expect(view(&terminal).cursor_visible);
+    try std.testing.expectEqual(@as(?Terminal.Rgb, null), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(u16, 1), view(&terminal).cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), view(&terminal).cursor_col);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|\x1b\\")).stateChanged());
+
+    try feed(&terminal, "\x1b[?47h\x1b[1;3H\x1b[6 q\x1b[?25l\x1b]12;#040506\x1b\\");
+    try std.testing.expectEqual(.bar, view(&terminal).cursor_shape);
+    try std.testing.expect(!view(&terminal).cursor_blink);
+    try std.testing.expect(!view(&terminal).cursor_visible);
+    try std.testing.expect((try terminal.feed("\x90@kitty-restore-cursor-appearance|\x9c")).stateChanged());
+    try std.testing.expectEqual(.bar, view(&terminal).cursor_shape);
+    try std.testing.expect(!view(&terminal).cursor_blink);
+    try std.testing.expect(view(&terminal).cursor_visible);
+    try std.testing.expectEqual(@as(?Terminal.Rgb, null), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), view(&terminal).cursor_col);
+    try feed(&terminal, "\x1b[?47l");
+    try std.testing.expectEqual(.bar, view(&terminal).cursor_shape);
+    try std.testing.expect(!view(&terminal).cursor_blink);
 }
 
 test "terminal cursor: savepoint restores presentation while caller colors remain current" {

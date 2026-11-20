@@ -1400,6 +1400,72 @@ test "terminal: SGR font and baseline retain exact cell save resize and bank sta
     try std.testing.expect(!(try terminal.feed("\x1b[0m")).stateChanged());
 }
 
+test "terminal: CSI T scroll down preserves bounded margins, cursor and exact mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 6);
+    defer terminal.deinit();
+    try feed(
+        &terminal,
+        "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD" ++
+            "\x1b[2;4r\x1b[?69h\x1b[2;5s\x1b[2;3H",
+    );
+    const before = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 1), before.cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), before.cursor_col);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[")).stateChanged());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    const one = try terminal.feed("T");
+    try std.testing.expect(one.stateChanged());
+    try std.testing.expect(!one.historyLost());
+    try std.testing.expect(terminal.semanticSequence() > sequence);
+    const scrolled = terminal.semanticView(0);
+    try std.testing.expectEqual(before.cursor_row, scrolled.cursor_row);
+    try std.testing.expectEqual(before.cursor_col, scrolled.cursor_col);
+    for ([_][]const u8{ "AAAAAA", "B    B", "CBBBBC", "DCCCCD" }, 0..) |expected, row| {
+        for (expected, 0..) |letter, col| {
+            try std.testing.expectEqual(@as(u21, if (letter == ' ') 0 else letter), scrolled.cellAt(@intCast(row), @intCast(col)));
+        }
+    }
+    const two = try terminal.feed("\x1b[2T");
+    try std.testing.expect(two.stateChanged());
+    try std.testing.expect(!two.historyLost());
+    const cleared = terminal.semanticView(0);
+    for ([_][]const u8{ "AAAAAA", "B    B", "C    C", "D    D" }, 0..) |expected, row| {
+        for (expected, 0..) |letter, col| {
+            try std.testing.expectEqual(@as(u21, if (letter == ' ') 0 else letter), cleared.cellAt(@intCast(row), @intCast(col)));
+        }
+    }
+    try std.testing.expectEqual(before.cursor_row, cleared.cursor_row);
+    try std.testing.expectEqual(before.cursor_col, cleared.cursor_col);
+    try std.testing.expectEqual(@as(u32, 0), cleared.history_count);
+    const stable = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[?T")).stateChanged());
+    try std.testing.expectEqual(stable, terminal.semanticSequence());
+
+    // Writing the last margin cell requests delayed wrap; CSI T cancels it
+    // rather than allowing the next printable character to advance a row.
+    try feed(&terminal, "\x1b[2;5H!");
+    try std.testing.expect((try terminal.feed("\x1b[T")).stateChanged());
+    try feed(&terminal, "Z");
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(1, 4));
+    const final = terminal.semanticView(0);
+    for (0..4) |row| {
+        try std.testing.expectEqual(@as(u21, "ABCD"[row]), final.cellAt(@intCast(row), 0));
+        try std.testing.expectEqual(@as(u21, "ABCD"[row]), final.cellAt(@intCast(row), 5));
+    }
+
+    var one_row = try Terminal.init(std.testing.allocator, 1, 3);
+    defer one_row.deinit();
+    try feed(&one_row, "\x1b[1;1HBBB\x1b[1;2H");
+    try std.testing.expect((try one_row.feed("\x1b[999999T")).stateChanged());
+    const narrow = one_row.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 0), narrow.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), narrow.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u16, 0), narrow.cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), narrow.cursor_col);
+}
+
 test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     const allocator = std.testing.allocator;
 

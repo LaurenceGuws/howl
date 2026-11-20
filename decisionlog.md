@@ -407,3 +407,16 @@ PNG f=100 graphics. Ordinary and selective graphics erasure need distinct
 residual descriptions. Comma-bearing YAML flow values must be quoted; the
 catalogue validator now rejects unknown howl-record fields, with a corrupt
 fixture confirming it catches the prior split-rationale failure.
+
+## Protocol proofs use executable test names, not stale source lines (20 November 2026)
+
+The proof census keeps each cited source path and exact named Zig test, but
+drops 52 optional test declaration line numbers that had all drifted. Fifty
+stale proof-name references now resolve to maintained tests; the three CSI T
+scroll-down records use a new terminal-stream proof of bounded margins,
+cursor and text mutation rather than an oversized Screen no-op. Existing
+DECSCUSR and Kitty cursor-appearance DCS proofs now include non-factory
+configured defaults across both banks, visibility and cursor colors.
+All 617 proof-bearing records resolved to named declarations after the fix;
+declaration-aware validation is a separate later change, not established by
+path-only protocol validation. Reference source line anchors remain intact.
