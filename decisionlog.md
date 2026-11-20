@@ -811,3 +811,33 @@ or image policy was expanded to claim full iTerm2 DECERA/DECSERA parity:
 protected-cell/attribute differences, external image lifetimes and host
 selection consequences remain separate pinned-reference questions. No
 catalogue status changed, binary installed, or running session modified.
+
+## Kitty private erasure is not identical to DEC-protected selective erasure (20 November 2026)
+
+Reinspection of pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8
+shows `screen_erase_in_line` and `screen_erase_in_display` use their
+private flag to clear text while preserving formatting. In
+`kitty/line.c:line_clear_text` the CPU cells are replaced without
+modifying the GPU formatting array; there is no DEC-protected-cell
+admission check in this private path. The same commands call
+`screen_dirty_line_graphics` only for lines with image placeholders.
+`grman_remove_cell_images` removes nonvirtual *cell-image* references
+in those rows, not every noncell/virtual graphics placement. Pinned Kitty
+graphics tests explicitly prove placeholder-image disappearance after
+ordinary erasure.
+
+Howl's CSI ? K/J intentionally implements DEC selective semantics:
+DEC-protected text survives, and its canonical Unicode placeholder
+projection follows text mutation. Direct physical Kitty placements are
+not erased by Howl's selective EL, while its selective ED applies physical
+placement erasure. Treating all Kitty private erasures as generic
+`graphics.erase` operations would conflate these distinct ownership
+and protection models, potentially deleting unrelated image placements.
+
+The Kitty DECSEL and DECSED catalogue residuals now document the exact
+remaining comparison rather than claiming an unqualified lack of graphics
+support. Both remain partial/deferred, pending a bounded independent test
+of protected text, attributes, placeholder-image lifetime, stored-image
+lifetime and selection policy against this pinned reference. No new
+feature, security privilege, status promotion or GUI behavior was accepted.
+The full root ReleaseFast check/test/audit and protocol gates passed.
