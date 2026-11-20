@@ -744,3 +744,25 @@ preserves decoded image data. Owner tests prove normal and default-count
 range coordinates. VT Debug/ReleaseFast, full root ReleaseFast check/test,
 Zig/project audit, protocol validator, formatting and diff gates passed.
 There is no new permission or graphics backend; no support rating was changed.
+
+## EL graphics erasure follows Screen's logical row range (20 November 2026)
+
+Screen.eraseLine clipped CSI 0/1/2 K text erasure to the current row's
+logical DEC line width. Terminal separately constructed a graphics erase
+interval using the physical grid width, causing graphics outside a
+DEC double-width row's logical region to be removed even though Screen
+left the corresponding cells untouched. A terminal-stream test was red
+before the change and green afterward.
+
+Screen now returns the same narrowly typed `EraseResult` used by ECH,
+with a changed fact and an optional accepted inclusive logical range.
+Terminal consumes that range for ordinary EL, and its old independent
+`eraseLineColumns` predicate is deleted. Selective DEC EL retains its
+existing text/protection and graphics policy, with no speculative change.
+Tests cover 0K/1K/2K on DEC double-width rows, retained in-range/out-of-
+range image placements, decoded-image lifetime and exact Screen ranges
+including repeated erase on already-blank text. The full VT Debug/
+ReleaseFast suite, root ReleaseFast check/test, project/zig-audit, protocol
+validation, formatting and diff checks passed. No support statuses,
+installed binary or running session changed. Selective erase and other
+screen-region graphics coupling remain separate unproven review candidates.

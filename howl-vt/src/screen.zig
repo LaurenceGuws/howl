@@ -1984,18 +1984,26 @@ pub const Screen = struct {
         return self.cell_pixel_size;
     }
 
+    /// Reports the accepted erased logical range independently from a mutation.
+    /// A caller must not infer the affected graphics columns from a physical
+    /// screen width or the `changed` flag.
+    pub const EraseResult = struct {
+        changed: bool,
+        range: ?struct { row: u16, left: u16, right: u16 } = null,
+    };
+
     /// Erases one active-line mode, preserving protected cells when `selective` is set.
-    /// Returns whether cells, continuation, or pending wrap changed; it cannot fail.
-    pub fn eraseLine(self: *Screen, mode: EraseMode, selective: bool) bool {
+    /// Returns exact logical cell admission even when text is already blank.
+    pub fn eraseLine(self: *Screen, mode: EraseMode, selective: bool) EraseResult {
         var changed = self.cancelPendingWrap();
-        if (self.cells == null) return changed;
-        if (self.rows == 0 or self.cols == 0) return changed;
+        if (self.cells == null) return .{ .changed = changed };
+        if (self.rows == 0 or self.cols == 0) return .{ .changed = changed };
         const line_cols = self.lineColumnCount(self.cursor.row);
         const range: [2]u16 = switch (mode) {
             .cursor_to_end => .{ self.cursor.col, line_cols },
             .start_to_cursor => .{ @as(u16, 0), self.cursor.col + 1 },
             .all => .{ @as(u16, 0), line_cols },
-            .scrollback => return changed,
+            .scrollback => return .{ .changed = changed },
         };
         changed = self.eraseRowRange(self.cursor.row, range[0], range[1], selective) or changed;
         if (mode == .all or mode == .cursor_to_end) {
@@ -2007,18 +2015,19 @@ pub const Screen = struct {
             self.forgetRowScanEnd(self.cursor.row);
             self.refreshRowIdentity(self.cursor.row);
         }
-        return changed;
+        const right_exclusive = @min(range[1], line_cols);
+        return .{
+            .changed = changed,
+            .range = if (range[0] < right_exclusive)
+                .{ .row = self.cursor.row, .left = range[0], .right = right_exclusive - 1 }
+            else
+                null,
+        };
     }
-
-    /// Reports one accepted logical-row ECH interval and its actual mutation.
-    pub const EraseCharsResult = struct {
-        changed: bool,
-        range: ?struct { row: u16, left: u16, right: u16 } = null,
-    };
 
     /// Erases at least one character through the logical row edge and tells
     /// consumers the exact accepted range, independent of text-cell mutation.
-    pub fn eraseChars(self: *Screen, count: u16) EraseCharsResult {
+    pub fn eraseChars(self: *Screen, count: u16) EraseResult {
         var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0) return .{ .changed = changed };
         const line_cols = self.lineColumnCount(self.cursor.row);

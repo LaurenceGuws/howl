@@ -63,7 +63,12 @@ test "screen: erase_line mode 0 clears from cursor to end of line" {
     defer s.deinit(gpa);
     apply(&s, Action{ .write_text = "helloworld" });
     s.cursor.setColByClient(5);
-    try std.testing.expect(s.eraseLine(.cursor_to_end, false));
+    const erased = s.eraseLine(.cursor_to_end, false);
+    try std.testing.expect(erased.changed);
+    try std.testing.expect(erased.range != null);
+    try std.testing.expectEqual(@as(u16, 0), erased.range.?.row);
+    try std.testing.expectEqual(@as(u16, 5), erased.range.?.left);
+    try std.testing.expectEqual(@as(u16, 9), erased.range.?.right);
     try std.testing.expectEqual(@as(u21, 'h'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'e'), s.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 5));
@@ -77,7 +82,11 @@ test "screen: erase_line mode 1 clears from start to cursor" {
     defer s.deinit(gpa);
     apply(&s, Action{ .write_text = "helloworld" });
     s.cursor.setColByClient(4);
-    try std.testing.expect(s.eraseLine(.start_to_cursor, false));
+    const erased = s.eraseLine(.start_to_cursor, false);
+    try std.testing.expect(erased.changed);
+    try std.testing.expect(erased.range != null);
+    try std.testing.expectEqual(@as(u16, 0), erased.range.?.left);
+    try std.testing.expectEqual(@as(u16, 4), erased.range.?.right);
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 4));
     try std.testing.expectEqual(@as(u21, 'w'), s.cellAt(0, 5));
@@ -90,7 +99,15 @@ test "screen: erase_line mode 2 clears full line" {
     defer s.deinit(gpa);
     apply(&s, Action{ .write_text = "helloworld" });
     s.cursor.setColByClient(3);
-    try std.testing.expect(s.eraseLine(.all, false));
+    const erased = s.eraseLine(.all, false);
+    try std.testing.expect(erased.changed);
+    try std.testing.expect(erased.range != null);
+    try std.testing.expectEqual(@as(u16, 0), erased.range.?.left);
+    try std.testing.expectEqual(@as(u16, 9), erased.range.?.right);
+    const again = s.eraseLine(.all, false);
+    try std.testing.expect(!again.changed);
+    try std.testing.expect(again.range != null);
+    try std.testing.expectEqual(@as(u16, 9), again.range.?.right);
     for (0..10) |i| {
         try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, @intCast(i)));
     }
@@ -158,7 +175,7 @@ test "screen: erase_display mode 2 clears entire screen" {
 test "screen: erase ops no-op without cell buffer" {
     var s = Grid.init(4, 10);
     s.cursor.setColByClient(3);
-    try std.testing.expect(!s.eraseLine(EraseMode.all, false));
+    try std.testing.expect(!s.eraseLine(EraseMode.all, false).changed);
     try std.testing.expect(!s.eraseDisplay(.all, false));
     try std.testing.expectEqual(@as(u16, 3), s.cursor.col);
 }
@@ -301,7 +318,7 @@ test "screen: erase_line uses current background for empty cells" {
 
     s.current_attrs.bg = Grid.Color.rgbComponents(40, 44, 52);
     apply(&s, Action{ .write_text = "~" });
-    try std.testing.expect(s.eraseLine(.cursor_to_end, false));
+    try std.testing.expect(s.eraseLine(.cursor_to_end, false).changed);
 
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 1));
     const cell = s.cellInfoAt(0, 1);

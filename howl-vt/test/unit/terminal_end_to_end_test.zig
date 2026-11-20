@@ -361,6 +361,33 @@ test "terminal: ECH graphics use the logical DEC row width, not physical columns
     try std.testing.expectEqual(image_content_generation, terminal.images(0).content_generation);
 }
 
+test "terminal: EL graphics follow the accepted DEC logical row width" {
+    for ([_]struct { command: []const u8, cursor_col: u16 }{
+        .{ .command = "\x1b[0K", .cursor_col = 2 },
+        .{ .command = "\x1b[1K", .cursor_col = 3 },
+        .{ .command = "\x1b[2K", .cursor_col = 2 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;4H\x1b_Ga=T,f=32,s=1,v=1,i=83,C=1;AQIDBA==\x1b\\");
+        try feed(&terminal, "\x1b[1;6H\x1b_Ga=T,f=32,s=1,v=1,i=84,C=1;AQIDBA==\x1b\\");
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        const image_content = terminal.images(0).content_generation;
+
+        var cursor: [12]u8 = undefined;
+        try feed(&terminal, "\x1b[1;1H\x1b#6");
+        try feed(&terminal, try std.fmt.bufPrint(&cursor, "\x1b[1;{d}H", .{case.cursor_col + 1}));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+        try std.testing.expectEqual(image_content, terminal.images(0).content_generation);
+    }
+}
+
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 6);
     defer terminal.deinit();

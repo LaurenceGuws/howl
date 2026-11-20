@@ -3689,18 +3689,18 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .erase_line => |mode| {
             const screen = vt.screen_state.active();
-            const changed = screen.eraseLine(mode, false);
-            const range = eraseLineColumns(screen, mode);
+            const result = screen.eraseLine(mode, false);
+            const range = result.range orelse return result.changed;
             return vt.graphics.erase(
                 graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                range[0],
-                range[1],
-            ) or changed;
+                graphicsScreenOrigin(vt) + range.row,
+                graphicsScreenOrigin(vt) + range.row,
+                range.left,
+                range.right,
+            ) or result.changed;
         },
         .selective_erase_line => |mode| {
-            return vt.screen_state.active().eraseLine(mode, true);
+            return vt.screen_state.active().eraseLine(mode, true).changed;
         },
         .erase_chars => |count| {
             const screen = vt.screen_state.active();
@@ -4005,17 +4005,6 @@ fn graphicsScreenOrigin(vt: *const Terminal) u64 {
     if (vt.screen_state.alt_active) return 0;
     const primary = &vt.screen_state.primary;
     return @as(u64, primary.historyRowBase()) + primary.historyCount();
-}
-
-fn eraseLineColumns(screen: *const Screen, mode: ScreenEraseMode) [2]u16 {
-    return switch (mode) {
-        .cursor_to_end => .{ screen.cursor.col, screen.cols - 1 },
-        .start_to_cursor => .{ 0, screen.cursor.col },
-        .all => .{ 0, screen.cols - 1 },
-        // zig-audit: acknowledge unreachable
-        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
-        .scrollback => unreachable,
-    };
 }
 
 fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool {
