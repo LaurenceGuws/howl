@@ -2062,9 +2062,16 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DCS configuration commands retain bounded cross-family order"}}
           iterm2.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
-            conditions: "Howl answers Co, colors, RGB, Tc, and Su without exposing term identity, profile, key mapping,
-              or arbitrary terminfo",
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+            conditions: "Pinned iTerm2 resolves terminfo through an xterm or screen host profile, dynamic key
+              mappings and asynchronous host promises. Howl answers only an explicitly owned bounded subset,
+              now including Kitty-pinned am, ccc, XF, BE and BD alongside Co, colors, RGB, Tc and Su.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned iTerm2 obtains runtime terminfo strings, host key mappings, terminal identity
+                and profile name through its embedding application. VT cannot derive those values from
+                canonical state or answer asynchronous host queries without inventing a second owner.",
+              residual: "Howl's bounded named values and ordered responses are proven; the added Kitty-pinned
+                names do not imply matching iTerm2 profile values. Dynamic terminfo, keyboard mapping,
+                terminal name, host profile and async reply policy remain different.",
               source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
@@ -3769,12 +3776,19 @@ references:
         recognition: implemented
         records:
           kitty.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap values, relevance: query,
-            conditions: "Howl answers Co, colors, RGB, Tc, and Su without term identity, dimensions, key strings,
-              OS queries, or Kitty queries",
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+            conditions: "Pinned Kitty dispatches DCS +q to Python get_capabilities. Howl now answers pinned
+              am, ccc and XF booleans and exact BE/BD bracketed-paste control strings alongside Co, colors,
+              RGB, Tc and Su; it does not expose TERM identity, OS/window queries or arbitrary terminfo.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The pinned Kitty resolver has a much broader terminfo inventory plus dynamic
+                terminal, OS, window and application query values. VT must not invent a selected TERM,
+                host configuration, platform identity or host-dependent key mapping.",
+              residual: "Five new capability names match executable pinned Kitty get_capabilities results
+                and pass fragmented, C1, ordered and rollback tests. Kitty's broader dynamic and static
+                string/numeric inventory remains unqualified.",
               source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
+              symbol: "XTGETTCAP answers pinned Kitty owned wrap palette focus and bracketed paste capabilities"}}}
           kitty.dcs.decrqss: {raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
             conditions: "Howl recognizes Kitty's four requests; retained SGR fields, hidden cursor mapping, and
               DECSACE report value differ",

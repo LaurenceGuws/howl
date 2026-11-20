@@ -2523,6 +2523,15 @@ fn termcapValue(encoded_name: []const u8) ?TermcapValue {
     if (hexNameEquals(encoded_name, "Co") or hexNameEquals(encoded_name, "colors"))
         return .{ .encoded = "323536" };
     if (hexNameEquals(encoded_name, "RGB")) return .{ .encoded = "38" };
+    // Pinned Kitty capabilities for behavior VT already owns: automatic
+    // margins, OSC 4 palette changes, and focus reporting on DEC 1004.
+    if (hexNameEquals(encoded_name, "am") or
+        hexNameEquals(encoded_name, "ccc") or
+        hexNameEquals(encoded_name, "XF")) return .flag;
+    // Pinned Kitty's terminfo strings for the existing DEC 2004 mode.
+    // The value is the exact control sequence encoded as lowercase hex.
+    if (hexNameEquals(encoded_name, "BE")) return .{ .encoded = "1b5b3f3230303468" };
+    if (hexNameEquals(encoded_name, "BD")) return .{ .encoded = "1b5b3f323030346c" };
     if (hexNameEquals(encoded_name, "Tc") or hexNameEquals(encoded_name, "Su")) return .flag;
     return null;
 }
@@ -2572,12 +2581,15 @@ test "XTGETTCAP reply allocation failure rolls back the complete ordered respons
 fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
     var output = replies.Buffer.init(allocator);
     defer output.deinit();
-    appendTermcapReports(allocator, &output, "436F;5463;626F677573") catch |failure| {
+    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;626F677573") catch |failure| {
         try std.testing.expectEqual(@as(usize, 0), output.bytes().len);
         return failure;
     };
     try std.testing.expectEqualStrings(
-        "\x1bP1+r436F=323536\x1b\\\x1bP1+r5463\x1b\\\x1bP0+r626F677573\x1b\\",
+        "\x1bP1+r436F=323536\x1b\\\x1bP1+r5463\x1b\\" ++
+            "\x1bP1+r4245=1b5b3f3230303468\x1b\\" ++
+            "\x1bP1+r4244=1b5b3f323030346c\x1b\\" ++
+            "\x1bP1+r5846\x1b\\\x1bP0+r626F677573\x1b\\",
         output.bytes(),
     );
 }

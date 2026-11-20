@@ -2103,6 +2103,46 @@ test "XTGETTCAP replies preserve ordered names values failures and C1 serializat
     try std.testing.expectEqualStrings("\x901+r436f=323536\x9c\x901+r5463\x9c", pendingOutput(&terminal));
 }
 
+test "XTGETTCAP answers pinned Kitty owned wrap palette focus and bracketed paste capabilities" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    // These are fixed capability descriptions, not current mode-state
+    // queries. TN and arbitrary terminfo keys remain outside VT ownership.
+    try std.testing.expect(!(try terminal.feed("\x1bP+q616d;636363;5846;4245")).stateChanged());
+    try std.testing.expect((try terminal.feed(";4244;544e;626f677573\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r616d\x1b\\" ++
+            "\x1bP1+r636363\x1b\\" ++
+            "\x1bP1+r5846\x1b\\" ++
+            "\x1bP1+r4245=1b5b3f3230303468\x1b\\" ++
+            "\x1bP1+r4244=1b5b3f323030346c\x1b\\" ++
+            "\x1bP0+r544e\x1b\\" ++
+            "\x1bP0+r626f677573\x1b\\",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    // Disabling autowrap does not revoke the capability to enable it.
+    // Focus and bracketed paste modes already have their own VT owners.
+    write(&terminal, "\x1b[?7l\x1b[?1004h\x1b[?2004h\x1b G");
+    try std.testing.expect((try terminal.feed("\x90+q616D;636363;5846;4245;4244\x9c")).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x901+r616D\x9c" ++
+            "\x901+r636363\x9c" ++
+            "\x901+r5846\x9c" ++
+            "\x901+r4245=1b5b3f3230303468\x9c" ++
+            "\x901+r4244=1b5b3f323030346c\x9c",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+    write(&terminal, "\x9b?7$p\x9b?1004$p\x9b?2004$p");
+    try std.testing.expectEqualStrings(
+        "\x9b?7;2$y\x9b?1004;1$y\x9b?2004;1$y",
+        pendingOutput(&terminal),
+    );
+}
+
 test "XTGETTCAP response capacity failure rolls back every requested reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

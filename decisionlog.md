@@ -1021,3 +1021,43 @@ unchanged; full parity requires a deliberately selected compatibility
 contract, not automatic runtime inference or a new mirrored cursor.
 Full root ReleaseFast check/test, audit, protocol validation and diff
 gates passed without modifying terminal behavior.
+
+## XTGETTCAP reports five more pinned Kitty capabilities from existing VT owners (20 November 2026)
+
+Pinned Kitty revision d4106ef2db687579a69fefc949a6dc1b662f3ca8
+delegates DCS +q through screen_request_capabilities to its Python
+get_capabilities resolver in kitty/terminfo.py. The source advertises
+the boolean capabilities am (automatic right margin), ccc (changeable
+palette), and XF (focus events), plus the string capabilities BE
+(ESC[?2004h) and BD (ESC[?2004l), with lowercase-hex string values.
+A read-only Python oracle executed the exact pinned terminfo.py code
+against inert stand-ins for Kitty's imported runtime modules, verifying
+five successes and one unknown name. It did not start Kitty or query
+the OS, TERM, GPU, input devices or current user profile.
+
+Howl already owned every advertised behavior: Screen auto-wrap,
+OSC 4 palette mutation, DEC 1004 focus reporting, and DEC 2004
+bracketed paste. Its XTGETTCAP termcapValue table previously returned
+0+r for those names. The table now answers the three booleans with
+1+r, and BE/BD with the exact fixed control bytes encoded as lowercase
+hex, without new mutable mode state, terminfo database or host-specific
+identity. The terminal-stream test failed before this correction and
+passed afterward. It verifies ordered mixed known/unknown responses,
+fragmented DCS, 8-bit C1 serialization, exact echoed hex spelling,
+queries remaining capability descriptions after changing DEC modes,
+and the underlying independent 7/1004/2004 state. The existing
+checkAllAllocationFailures probe now includes BE/BD/XF and proves
+transactional rollback of the entire ordered result on error.
+
+The pinned iTerm2 VT100Terminal.m instead resolves XTGETTCAP through
+a chosen xterm/screen terminfo profile, asynchronous host key mapping
+and application name/profile callbacks. These are not owned by VT.
+The Kitty and iTerm2 reference-specific records therefore remain
+partial with exact remaining obligations, not inflated as full.
+Unknown TERM, arbitrary key strings, OS names, window capabilities,
+and unsupported capability names still answer 0+r. This is fixed
+capability reporting, not a new terminfo engine or a caller policy.
+
+VT Debug/ReleaseFast, root ReleaseFast check/test, complete Zig and
+project audit, declaration-aware protocol validation, Zig formatting
+and diff gates passed. No installed binary or running process changed.
