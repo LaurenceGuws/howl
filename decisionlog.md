@@ -394,3 +394,16 @@ coverage instead requires exact equality for a retained cache rebuild and
 reuse. A frozen HeaderPicture also paints identically after unrelated live
 App state changes, while changing its captured maximize flag changes icon
 pixels. Cache size limits and direct-draw fallback are unchanged.
+
+## Pinned protocol census describes actual evidence (20 November 2026)
+
+The schema-3 protocol census remains 662 reference-specific records across
+34 groups with separate support and residual-disposition fields. Correct
+catalogue wording when source/tests have moved or new behavior landed, without
+increasing the support score or silently moving a reference revision. In
+particular, the pinned Kitty DECSTR switch rejects CSI ! p even though Howl
+and newer Kitty implement it, and current Howl already decodes bounded direct
+PNG f=100 graphics. Ordinary and selective graphics erasure need distinct
+residual descriptions. Comma-bearing YAML flow values must be quoted; the
+catalogue validator now rejects unknown howl-record fields, with a corrupt
+fixture confirming it catches the prior split-rationale failure.

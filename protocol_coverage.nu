@@ -5,6 +5,7 @@ const catalogue_path = ($protocol_root | path join protocol_coverage.yml)
 export const protocol_support = [full partial missing unassessed]
 export const protocol_disposition = ["none" active delegated deferred excluded]
 export const protocol_owner = [howl-vt howl-pty howl-app]
+const howl_record_fields = [support disposition owner residual rationale milestone source symbol proof]
 export const protocol_cheatsheet = [
   "protocol                         compact coverage summary"
   "protocol gaps                    active partial/missing/unassessed records"
@@ -143,6 +144,10 @@ export def "protocol validate" [--fail] {
           $"expected ($group.facts.census.semantic_branches) records, found ($group.facts.records | columns | length)"))
       }
       for record in ($group.facts.records | transpose id value) {
+        for field in (($record.value.howl? | default {}) | columns | where {|field| $field not-in $howl_record_fields }) {
+          $findings = ($findings | append (diagnostic $record.id unknown_howl_field
+            $"unknown howl field: ($field)"))
+        }
         if ($record.value.howl.support? | default null) == null {
           $findings = ($findings | append (diagnostic $record.id explicit_support "howl.support is required"))
         }

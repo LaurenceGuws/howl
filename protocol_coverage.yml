@@ -96,12 +96,20 @@ classifications:
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
   kitty_erase_display_graphics: &howl_kitty_erase_display_graphics {support: partial, disposition: deferred,
-    owner: howl-vt, milestone: graphics, residual: Matching Kitty graphics-plane display erasure remains.,
+    owner: howl-vt, milestone: graphics,
+    residual: Howl already erases intersecting image placements during ordinary and selective display erasure; exact Kitty protection-sensitive placement and stored-image lifetime remain to be qualified.,
     rationale: *howl_erase_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
   kitty_erase_line_graphics: &howl_kitty_erase_line_graphics {support: partial, disposition: deferred,
-    owner: howl-vt, milestone: graphics, residual: Matching Kitty graphics-plane line erasure remains.,
+    owner: howl-vt, milestone: graphics,
+    residual: Howl already removes intersecting image placements during ordinary line erasure; exact Kitty erase modes and stored-image lifetime remain to be qualified.,
+    rationale: *howl_erase_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.eraseLine,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
+  kitty_selective_erase_line_graphics: &howl_kitty_selective_erase_line_graphics {
+    support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
+    residual: Howl selectively erases text cells but does not currently erase the associated image placements on DECSEL; Kitty graphics and protection semantics remain to be qualified.,
     rationale: *howl_erase_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.eraseLine,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
@@ -2944,7 +2952,7 @@ references:
               clipboard policy remain deferred. Howl also cancels pending wrap at the mode boundary.
             relevance: input
             howl: {support: partial, disposition: excluded,
-              rationale: Howl deliberately leaves permission prompts, selection, and MIME policy to the caller.,
+              rationale: "Howl deliberately leaves permission prompts, selection, and MIME policy to the caller.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "low priority private modes and media copy retain caller-neutral state"}}
@@ -2968,8 +2976,8 @@ references:
               deferred composition; Kitty does none of those three.
             relevance: input
             howl: {support: partial, disposition: excluded,
-              rationale: Howl deliberately preserves query, save/restore, and pending-wrap mutation truth for every
-                accepted DEC mode rather than reproducing Kitty's hidden mode exception.,
+              rationale: "Howl deliberately preserves query, save/restore, and pending-wrap mutation truth for every
+                accepted DEC mode rather than reproducing Kitty's hidden mode exception.",
               residual: Kitty neither reports nor saves mode 19997 and does not cancel pending wrap at its boundary.,
               source: howl-vt/src/terminal.zig, symbol: Terminal.termiosSignalsEnabled, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -3086,7 +3094,7 @@ references:
             howl: *howl_kitty_erase_line_graphics}
           kitty.csi.decsel: {raw: "CSI ? [Ps=0] K", effect: selective erase line,
             conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
-            howl: *howl_kitty_erase_line_graphics}
+            howl: *howl_kitty_selective_erase_line_graphics}
           kitty.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
@@ -3336,10 +3344,14 @@ references:
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/terminal.zig,
               symbol: scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal Kitty unscroll consumes primary history in row order"}}}
-          kitty.csi.decstr: {raw: "CSI ! p", effect: soft reset,
-            conditions: Howl clears both Kitty keyboard stacks including saved predecessors like Kitty while
-              retaining its non-erasing no-cursor-movement and no-bank-switch soft-reset policy,
-            howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
+          kitty.csi.decstr: {raw: "CSI ! p", effect: reject unrecognized soft-reset spelling,
+            recognition: rejected_known,
+            conditions: "The pinned Kitty revision rejects this CSI spelling; a later Kitty revision implements it.
+              Howl deliberately accepts DECSTR and clears both keyboard stacks without erasing, moving the cursor, or switching banks.",
+            howl: {support: partial, disposition: excluded,
+              residual: The pinned reference rejects CSI ! p while Howl intentionally implements a bounded soft reset.,
+              rationale: Exact rejection parity would discard useful standard DECSTR behavior already owned by Howl.,
+              source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECSTR clears both Kitty stacks without erasing moving or switching banks"}}}
           kitty.csi.decrqm: {raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
@@ -3568,8 +3580,8 @@ references:
               BEL termination; permission, MIME, and clipboard policy remain deferred.
             relevance: host consequence
             howl: {support: partial, disposition: excluded,
-              rationale: Howl deliberately excludes arbitrary MIME, write transactions, primary selection, persistent
-                grants, and interactive permission prompts.,
+              rationale: "Howl deliberately excludes arbitrary MIME, write transactions, primary selection, persistent
+                grants, and interactive permission prompts.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "Kitty OSC 5522 shares ordered clipboard admission without caller policy"}}
@@ -3830,7 +3842,7 @@ references:
             bounds: parser command and payload bounds,
             conditions: Howl routes dedicated bounded Kitty graphics streaming into its common image plane,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "PNG/file/shared-memory media plus relative-parent placement remain. U=1 virtual prototypes and U+10EEEE placeholders project from canonical cell colors/diacritics through the ordinary graphics manifest; fractional virtual source crops are quantized to graphics_v2 integers. Visible virtual prototypes participate in the canonical animation scheduler without a client clock. Direct RGB/RGBA accepts raw or o=z zlib payloads.",
+              residual: "File/shared-memory media plus relative-parent placement remain. U=1 virtual prototypes and U+10EEEE placeholders project from canonical cell colors/diacritics through the ordinary graphics manifest; fractional virtual source crops are quantized to graphics_v2 integers. Visible virtual prototypes participate in the canonical animation scheduler without a client clock. Direct RGB/RGBA and PNG f=100 accept bounded payloads, optionally o=z zlib-compressed.",
               source: howl-vt/src/terminal.zig, symbol: applyKittyGraphicsPacket,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
@@ -3985,7 +3997,7 @@ references:
           kitty.graphics.transmit_default: {raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
             relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl accepts bounded direct raw or o=z zlib-compressed RGB/RGBA payloads with dimensions using Kitty's anonymous id-zero form, an explicit image id, or an image number with generated stable id; bounded N usage hints are advisory no-op metadata, and ordinary display placements honor default cursor advance/scroll or C=1 no-move. Non-direct media and encoded image formats remain.",
+              residual: "Howl accepts bounded direct RGB/RGBA and PNG f=100 payloads (optionally zlib-compressed), including anonymous id-zero, explicit image id, or image number with generated stable id; ordinary display placements honor default cursor advance/scroll or C=1 no-move. Howl also accepts bounded N usage hints as advisory no-op metadata, although this pinned Kitty revision rejects the N key. Non-direct file/shared-memory media and other reference-specific placement policy remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: Yazi-style anonymous Kitty preview is quiet stationary and deletable"}}}
           kitty.graphics.transmit: {raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
@@ -4002,7 +4014,7 @@ references:
           kitty.graphics.frame: {raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
             relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
               milestone: advanced_graphics,
-              residual: "Howl fully coalesces at most 256 direct raw or o=z zlib-compressed RGB/RGBA animation frames inside the existing byte quotas. Direct frame loading supports partial x/y updates, c=base frames, r=existing/root edits with untouched-pixel preservation, zero/positive/gapless timing, Y RGBA background canvases, documented X=1 and current-Kitty C=1 overwrite spellings, and advisory N hints. Non-direct media and encoded image formats remain.",
+              residual: "Howl fully coalesces at most 256 direct raw or o=z zlib-compressed RGB/RGBA animation frames inside existing byte quotas, with partial x/y updates, c=base, r=existing/root edits, timing, Y RGBA backgrounds, X=1 and C=1 overwrite spellings. Bounded N hints are forward-compatible advisory no-ops in Howl, not recognized at this pinned Kitty revision. Non-direct frame media and encoded animation-frame formats remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.finishFrame, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty frame loading preserves edits background bases and action-specific composition"}}}
           kitty.graphics.put: {raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
