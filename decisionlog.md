@@ -492,3 +492,27 @@ status UI or protocol implementation commitment. The review inventory increases
 to 38 groups and 668 reference-specific records while all preexisting records
 and their pinned revisions remain unchanged. The narrower observed scope avoids
 misclassifying Ghostty's parse-only OSC 66/99/3008 branches as applied effects.
+
+## New Kitty semantics use a delta pin, not a duplicate full census (20 November 2026)
+
+The frozen Kitty reference remains at
+`d4106ef2db687579a69fefc949a6dc1b662f3ca8`. The later reviewed
+`f7a16a93191a1103665905398d807ca79dab74a2` is captured separately as
+`kitty_delta`, a *new-semantic-subset* reference linked mechanically to the
+older base revision. It adds four scoped facts: OSC 7501 program status,
+indexed `f=8` and `f=16` image formats, and the `N=1` advisory eviction hint.
+Existing commands such as CSI ! p keep their historical ID and earlier
+recognition record; changed behavior is noted without duplicating that
+identity. OSC 7501 is one wire family independently observed in newer Kitty
+and Ghostty, not two required Howl implementations.
+
+Scoped Windows Terminal and Ghostty references now also declare their partial
+census nature explicitly. Their independently reviewed inventory includes
+exact new-group ID rosters, not just counts. The validator proves pin, baseline,
+scope, branch membership, and approved identity integrity, including rejected
+wrong-branch and changed-base fixtures. Ten new reference records remain
+unassessed with active *evidence-review* obligations; no feature, permission,
+status surface or GPU policy is automatically authorized. The accepted
+inventory now contains 41 groups and 672 reference-specific records while
+all original 662 records, their full/partial/missing ratings and their pinned
+revisions remain unchanged.

@@ -4076,6 +4076,10 @@ references:
   windows_terminal:
     revision: 9853bc96076e811cef5eab4469095fc9be58201e
     root: src
+    kind: scoped
+    scope: >-
+      Four reviewed branches in OSC 52, primary DA1 and OSC 9;4 only.
+      This is not a census of all Windows Terminal parser and host dispatch.
     groups:
       osc52_clipboard:
         source: terminal/parser/OutputStateMachineEngine.cpp
@@ -4181,6 +4185,10 @@ references:
   ghostty:
     revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
     root: src
+    kind: scoped
+    scope: >-
+      Two reviewed OSC 7501 query/report outcomes only, not a census of
+      every Ghostty OSC parser branch or optional host effect.
     groups:
       osc7501_status:
         source: terminal/stream_terminal.zig
@@ -4230,6 +4238,121 @@ references:
                 Assess status parsing, cancellation, resource limits and
                 immutable VT-to-host handoff. No app presentation, new tab
                 state or notification policy has been accepted.
+
+  kitty_delta:
+    revision: f7a16a93191a1103665905398d807ca79dab74a2
+    root: kitty
+    kind: delta
+    base_reference: kitty
+    base_revision: d4106ef2db687579a69fefc949a6dc1b662f3ca8
+    scope: >-
+      Reviewed new semantic branches only, NOT a complete census of this newer
+      Kitty revision. Existing commands such as CSI ! p retain their historical
+      IDs under the frozen Kitty reference; altered recognition is recorded
+      there rather than minting duplicate command identities.
+    groups:
+      dispatch_osc_program_status:
+        source: vt-parser.c
+        symbol: dispatch_osc
+        line: 669
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          The new OSC 7501 case dispatches to program_status_report. This is
+          the same wire family independently observed in pinned Ghostty, not
+          two separate Howl feature requirements. This group does not claim
+          the complete OSC dispatcher of current Kitty.
+        records:
+          kitty_delta.osc.program_status:
+            raw: "OSC 7501 ; ? | state=... (BEL|ST)"
+            effect: query, update or clear bounded program-status records
+            relevance: host consequence
+            conditions: >-
+              The newer Kitty revision adds program-status parsing, queries,
+              per-window state and bounded identifiers and text. Its
+              program_status.py implementation defines update and clear
+              lifetime; the frozen earlier revision has no OSC 7501 dispatch.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Assess this shared OSC 7501 family with Ghostty's query/report
+                semantics and a separately owned optional app consumer.
+                An application status surface is not yet authorized.
+      indexed_graphics_formats:
+        source: graphics.c
+        symbol: initialize_load_data
+        line: 889
+        census: {semantic_branches: 2}
+        recognition: implemented
+        conditions: >-
+          Only the new image format values 8 and 16 within existing Kitty
+          transmit/query actions are in scope. This is not a second census
+          of all nine graphics actions or twelve delete selectors.
+        records:
+          kitty_delta.graphics.format_indexed8:
+            raw: "APC G a=t|T|q,f=8,Pm ; Pb ST"
+            effect: transmit or query opaque palette-indexed image pixels
+            relevance: graphics
+            conditions: >-
+              Each pixel carries one palette index; displayed pixels respond
+              to palette changes. The reference's parser supports direct and
+              zlib-compressed payloads but rejects this format in animation
+              and composition paths.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Howl currently admits 24/32/100 formats but not f=8. Assess
+                palette-coupled resource identity, native presentation and
+                capacity failure before selecting any implementation.
+          kitty_delta.graphics.format_indexed16:
+            raw: "APC G a=t|T|q,f=16,Pm ; Pb ST"
+            effect: transmit or query palette-indexed pixels with alpha
+            relevance: graphics
+            conditions: >-
+              Each pixel has an index plus an alpha byte; the rendered colour
+              follows palette changes while alpha remains per-pixel. The
+              reference excludes indexed animation and composition.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Howl currently admits 24/32/100 formats but not f=16.
+                Assess alpha layering and palette generations with bounded
+                upload/rollback proof before admitting this feature.
+      transient_usage_hint:
+        source: parse-graphics-command.h
+        symbol: parse_graphics_code
+        line: 47
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          The new N key belongs to the graphics control parser and is an
+          advisory storage-eviction hint, not an outer graphics action.
+        records:
+          kitty_delta.graphics.usage_hint_transient:
+            raw: "APC G a=t|T|f,N=1,Pm ; Pb ST"
+            effect: prefer transient image eviction when memory is pressured
+            relevance: graphics
+            conditions: >-
+              This revision accepts the N usage_hints field; root/frame data
+              may be marked transient and preferred for storage eviction.
+              The published protocol allows terminals to ignore this hint.
+              Frozen Kitty rejected the N key; Howl already accepts it as
+              bounded advisory no-op metadata.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Decide whether tested bounded no-op admission already satisfies
+                the advisory protocol or whether different resource-pressure
+                behavior merits an optional performance change. No change to
+                canonical image eviction is automatically required.
 
 selective_overlaps:
   - id: overlap.csi_s

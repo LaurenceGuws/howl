@@ -8,7 +8,7 @@ export const protocol_support = [full partial missing unassessed]
 export const protocol_disposition = ["none" active delegated deferred excluded]
 export const protocol_owner = [howl-vt howl-pty howl-app]
 const howl_record_fields = [support disposition owner residual rationale milestone source symbol proof]
-const reference_fields = [revision root groups]
+const reference_fields = [revision root groups kind base_reference base_revision scope]
 const group_fields = [source line census recognition records bounds symbol conditions]
 const record_fields = [raw effect relevance howl conditions recognition bounds source symbol line]
 export const protocol_cheatsheet = [
@@ -157,11 +157,39 @@ export def "protocol inventory diagnostics" [catalogue: record, inventory: recor
       $findings = ($findings | append (diagnostic $reference.reference reference_pin
         "reference revision or root differs from the independently reviewed pin"))
     }
+    let expected_kind = ($reference.expected.kind? | default snapshot)
+    let actual_kind = ($actual.kind? | default snapshot)
+    if ($actual_kind != $expected_kind or
+        ($actual.base_reference? | default "") != ($reference.expected.base_reference? | default "") or
+        ($actual.base_revision? | default "") != ($reference.expected.base_revision? | default "") or
+        ($actual.scope? | default "") != ($reference.expected.scope? | default "")) {
+      $findings = ($findings | append (diagnostic $reference.reference reference_scope
+        "reference snapshot/delta scope differs from the reviewed inventory"))
+    }
+    if $expected_kind == delta {
+      let base_name = ($reference.expected.base_reference? | default "")
+      if $base_name not-in $expected_names {
+        $findings = ($findings | append (diagnostic $reference.reference delta_baseline
+          "delta baseline reference is not part of the reviewed inventory"))
+      } else {
+        let base_revision = ($inventory.references | get $base_name | get revision)
+        if $base_revision != ($reference.expected.base_revision? | default "") {
+          $findings = ($findings | append (diagnostic $reference.reference delta_baseline
+            "delta must cite the reviewed immutable baseline revision"))
+        }
+      }
+    }
     let current_groups = ($actual.groups | columns | sort)
     let approved_groups = ($reference.expected.groups | columns | sort)
     if $current_groups != $approved_groups {
       $findings = ($findings | append (diagnostic $reference.reference group_inventory
         "group names differ from the reviewed dispatch subtree inventory"))
+    }
+    let accepted_ids = ($reference.expected.group_ids? | default {})
+    let accepted_id_groups = ($accepted_ids | columns | sort)
+    if $expected_kind != snapshot and $accepted_id_groups != $approved_groups {
+      $findings = ($findings | append (diagnostic $reference.reference branch_roster_scope
+        "reviewed group ID roster must cover each scoped group"))
     }
     let branch_count = ($actual.groups | transpose name group
       | each {|group| $group.group.records | columns | length } | math sum)
@@ -176,6 +204,14 @@ export def "protocol inventory diagnostics" [catalogue: record, inventory: recor
         if $actual_branch_count != $group.count {
           $findings = ($findings | append (diagnostic $"($reference.reference).($group.name)" branch_inventory
             $"expected ($group.count) reviewed branches, found ($actual_branch_count)"))
+        }
+        if $group.name in $accepted_id_groups {
+          let actual_ids = ($actual.groups | get $group.name | get records | columns | sort)
+          let expected_ids = ($accepted_ids | get $group.name | sort)
+          if $actual_ids != $expected_ids {
+            $findings = ($findings | append (diagnostic $"($reference.reference).($group.name)" branch_roster
+              "branch identities differ from the reviewed reference group"))
+          }
         }
       }
     }
