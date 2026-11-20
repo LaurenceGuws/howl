@@ -2,6 +2,7 @@
 
 const protocol_root = (path self | path dirname)
 const catalogue_path = ($protocol_root | path join protocol_coverage.yml)
+const inventory_path = ($protocol_root | path join protocol_coverage_inventory.yml)
 const evidence_path = ($protocol_root | path join tools protocol_evidence.py)
 export const protocol_support = [full partial missing unassessed]
 export const protocol_disposition = ["none" active delegated deferred excluded]
@@ -119,8 +120,72 @@ export def "protocol summary" [] {
 
 def diagnostic [id: string, rule: string, detail: string] { {id: $id, rule: $rule, detail: $detail} }
 
+export def "protocol inventory diagnostics" [catalogue: record, inventory: record] {
+  mut findings = []
+  if $inventory.schema != 1 {
+    $findings = ($findings | append (diagnostic inventory schema "inventory schema must be 1"))
+  }
+  let actual_names = ($catalogue.references | columns | sort)
+  let expected_names = ($inventory.references | columns | sort)
+  if $actual_names != $expected_names {
+    $findings = ($findings | append (diagnostic inventory reference_inventory
+      $"reference set differs: expected ($expected_names | to json -r), got ($actual_names | to json -r)"))
+  }
+  let accepted_count = ($inventory.references | transpose reference facts
+    | each {|reference| $reference.facts.groups | values | math sum }
+    | math sum)
+  let accepted_groups = ($inventory.references | transpose reference facts
+    | each {|reference| $reference.facts.groups | columns | length }
+    | math sum)
+  if $accepted_count != $inventory.total_records or $accepted_groups != $inventory.total_groups {
+    $findings = ($findings | append (diagnostic inventory inventory_total
+      "reviewed group totals disagree with the independent inventory totals"))
+  }
+  let group_count = ($catalogue.references | transpose reference facts
+    | each {|reference| $reference.facts.groups | columns | length }
+    | math sum)
+  if $group_count != $inventory.total_groups {
+    $findings = ($findings | append (diagnostic catalogue group_count
+      $"expected ($inventory.total_groups) reviewed groups, found ($group_count)"))
+  }
+  for reference in ($inventory.references | transpose reference expected) {
+    if $reference.reference not-in $actual_names {
+      continue
+    }
+    let actual = ($catalogue.references | get $reference.reference)
+    if $actual.revision != $reference.expected.revision or $actual.root != $reference.expected.root {
+      $findings = ($findings | append (diagnostic $reference.reference reference_pin
+        "reference revision or root differs from the independently reviewed pin"))
+    }
+    let current_groups = ($actual.groups | columns | sort)
+    let approved_groups = ($reference.expected.groups | columns | sort)
+    if $current_groups != $approved_groups {
+      $findings = ($findings | append (diagnostic $reference.reference group_inventory
+        "group names differ from the reviewed dispatch subtree inventory"))
+    }
+    let branch_count = ($actual.groups | transpose name group
+      | each {|group| $group.group.records | columns | length } | math sum)
+    if ($branch_count != $reference.expected.total_records or
+        ($reference.expected.groups | values | math sum) != $reference.expected.total_records) {
+      $findings = ($findings | append (diagnostic $reference.reference reference_count
+        "record count differs from the independently reviewed reference total"))
+    }
+    for group in ($reference.expected.groups | transpose name count) {
+      if $group.name in $current_groups {
+        let actual_branch_count = ($actual.groups | get $group.name | get records | columns | length)
+        if $actual_branch_count != $group.count {
+          $findings = ($findings | append (diagnostic $"($reference.reference).($group.name)" branch_inventory
+            $"expected ($group.count) reviewed branches, found ($actual_branch_count)"))
+        }
+      }
+    }
+  }
+  $findings
+}
+
 export def "protocol validate" [--fail] {
   let catalogue = (load-catalogue)
+  let inventory = (open $inventory_path)
   mut findings = []
   if $catalogue.schema != 3 {
     $findings = ($findings | append (diagnostic catalogue schema "schema must be 3"))
@@ -134,13 +199,7 @@ export def "protocol validate" [--fail] {
     $findings = ($findings | append (diagnostic catalogue schema_values
       "catalogue enums and query completions differ"))
   }
-  let group_count = ($catalogue.references | transpose reference facts
-    | each {|reference| $reference.facts.groups | columns | length }
-    | math sum)
-  if $group_count != 34 {
-    $findings = ($findings | append (diagnostic catalogue group_count
-      $"expected 34 groups, found ($group_count)"))
-  }
+  $findings = ($findings | append (protocol inventory diagnostics $catalogue $inventory))
   for reference in ($catalogue.references | transpose reference facts) {
     for field in ($reference.facts | columns | where {|field| $field not-in $reference_fields }) {
       $findings = ($findings | append (diagnostic $reference.reference unknown_reference_field $"unknown reference field: ($field)"))
@@ -172,9 +231,9 @@ export def "protocol validate" [--fail] {
     }
   }
   let records = (protocol records)
-  if ($records | length) != 662 {
+  if ($records | length) != $inventory.total_records {
     $findings = ($findings | append (diagnostic catalogue record_count
-      $"expected 662 records, found ($records | length)"))
+      $"expected ($inventory.total_records) reviewed records, found ($records | length)"))
   }
   let duplicate_ids = ($records | group-by id --to-table | where ($it.items | length) != 1 | get id)
   for id in $duplicate_ids { $findings = ($findings | append (diagnostic $id duplicate_id "id must be unique")) }

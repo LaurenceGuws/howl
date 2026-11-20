@@ -4073,6 +4073,111 @@ references:
           kitty.graphics.delete_default: {raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
             relevance: graphics, howl: *howl_static_graphics_delete}
 
+  windows_terminal:
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    root: src
+    groups:
+      osc52_clipboard:
+        source: terminal/parser/OutputStateMachineEngine.cpp
+        symbol: OutputStateMachineEngine::ActionOscDispatch
+        line: 821
+        census: {semantic_branches: 2}
+        recognition: implemented
+        conditions: >-
+          Scoped to the two outcomes of OSC 52 clipboard handling, not the
+          reference's complete OSC dispatcher. The clipboard selection parameter
+          is ignored; actual clipboard writes belong to the reference host.
+        records:
+          windows_terminal.osc52.set:
+            raw: "OSC 52 ; Pc ; base64 (BEL|ST)"
+            effect: decode and pass clipboard text to the host
+            relevance: host consequence
+            source: terminal/parser/OutputStateMachineEngine.cpp
+            symbol: OutputStateMachineEngine::_GetOscSetClipboard
+            line: 1105
+            conditions: >-
+              The reference ignores Pc, requires valid base64 and declines
+              malformed and extra fields; the output dispatch calls SetClipboard
+              only for non-query data. Parsed text can include Unicode.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-app
+              residual: >-
+                Evaluate the direct application's existing OSC 52 set policy
+                against this pinned reference and prove the permission and
+                base64 boundaries. A new clipboard behavior is not authorized.
+          windows_terminal.osc52.query_ignored:
+            raw: "OSC 52 ; Pc ; ? (BEL|ST)"
+            effect: recognize a clipboard query without reading or replying
+            relevance: host consequence
+            source: terminal/parser/OutputStateMachineEngine.cpp
+            symbol: OutputStateMachineEngine::ActionOscDispatch
+            line: 825
+            conditions: >-
+              _GetOscSetClipboard recognizes the question mark but dispatch
+              suppresses SetClipboard for queries and emits no read reply.
+              Howl's existing explicit empty response is a separate policy.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-app
+              residual: >-
+                Assess the reference's no-reply policy against Howl's current
+                deterministic OSC 52 query response, with negative host tests
+                before deciding any compatibility change.
+      da1_clipboard_write:
+        source: terminal/adapter/adaptDispatch.cpp
+        symbol: AdaptDispatch::DeviceAttributes
+        line: 1435
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          Only the optional ClipboardWrite extension in primary DA1 is in
+          scope; other DA1 extension codes are not re-censused here.
+        records:
+          windows_terminal.da1.clipboard_write_advertisement:
+            raw: "CSI [0] c"
+            effect: conditionally advertise extension 52 in DA1
+            relevance: report
+            conditions: >-
+              DeviceAttributes includes 52 only when the reference's
+              OptionalFeature::ClipboardWrite bit is enabled.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Assess whether the static Howl DA1 contract intentionally
+                differs, and whether host clipboard policy should affect its
+                advertisement. Preserve caller-neutral VT ownership.
+      osc9_progress:
+        source: terminal/adapter/adaptDispatch.cpp
+        symbol: AdaptDispatch::DoConEmuAction
+        line: 3558
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          Only OSC 9;4 taskbar progress is in scope. OSC 9;9 working-directory
+          and OSC 9;12 prompt-mark actions are separate branches.
+        records:
+          windows_terminal.osc9.task_progress:
+            raw: "OSC 9 ; 4 ; state [;percent] (BEL|ST)"
+            effect: report taskbar progress to the host
+            relevance: host consequence
+            conditions: >-
+              The reference accepts states 0 through 4, clamps percentages
+              greater than 100, and invokes the host taskbar API; Howl currently
+              rejects percentages over 100 in its terminal progress state.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Assess strict-versus-clamped progress policy and prove malformed
+                and fragmented input. Host taskbar display is an independent
+                app concern, not automatic VT behavior.
+
 selective_overlaps:
   - id: overlap.csi_s
     raw: "CSI Pm s"

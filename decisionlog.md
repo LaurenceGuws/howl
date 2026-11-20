@@ -460,3 +460,23 @@ record-specific diagnostic. The result is citation validity, **not** proof of
 semantic parity or a comprehensive AST/compiler-level analysis. The pinned
 reference census count gate remains unchanged until separately reviewed
 reference expansion.
+
+## Reviewed reference-census inventory and Windows pilot (20 November 2026)
+
+An independently maintained `protocol_coverage_inventory.yml` now records
+exact reference pins, accepted group names and branch counts. The Nu validator
+compares the catalogue against that manifest instead of hard-coding 34 groups
+and 662 rows or trusting totals calculated from the catalogue itself. An
+in-memory fixture suite proves that additional approved groups are admitted
+while missing/unapproved/miscounted groups, wrong reference pins and incomplete
+subtrees are rejected. The original libvterm, iTerm2 and Kitty snapshots and
+all 662 of their records remain unchanged.
+
+The first scoped expansion pins Windows Terminal at
+`9853bc96076e811cef5eab4469095fc9be58201e`. Its four explicit records
+cover OSC 52 set and ignored query, the optional clipboard-write DA1 extension,
+and OSC 9;4 progress. Each is `unassessed` with an active *evidence-review*
+obligation, not authorization to change VT, clipboard permissions or taskbar
+policy. Pinned source functions and the four record IDs were independently
+checked. The acceptance inventory is 37 groups and 666 reference-specific
+records; a row count is a census scope check, not a compatibility score.
