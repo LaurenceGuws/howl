@@ -874,3 +874,36 @@ The Kitty DECSED record remains partial/deferred: pinned Kitty's private
 text erasure preserves formatting rather than Howl's DEC protection, and
 reference cell-image/selection lifetimes require further qualification.
 No installed app or running session was changed.
+
+## Automatic selection invalidation is not a user error (20 November 2026)
+
+A dedicated private KWin visual acceptance run exercised the prior CSI IL
+selection-generation implementation with Howl 0.1.9-dev. A pointer drag
+created a visible highlighted selection; a FIFO-controlled PTY producer
+then emitted CSI L without additional user input. The selection correctly
+cleared, but the app also surfaced the normal internal invalidation as a
+bottom-of-window "SelectionContextChanged" error notice.
+
+The direct app worker now clears its selection and requests redraw
+*silently* when the canonical VT structural-edit generation changes.
+Explicitly rejected stale user selection/extension requests still use
+the existing error path. The previously accepted app unit test was updated
+to assert the no-error result and failed before the code change; the changed
+code passed in app Debug and ReleaseFast plus full root ReleaseFast tests,
+audit, protocol validation and format/diff checks.
+
+A fresh, temporary debug app build ran in a separate Fleet-owned private KWin
+seat at 1280x800 scale 1. WMIO created the same drag selection and a
+FIFO-triggered CSI L then cleared it, with no bottom notice. A second
+turn-based case changed only a different text row; the screenshot's selected
+row band was pixel-identical before and after that ordinary output. A
+separate image scene tested selective ED with a colored physical placement
+and a virtual Unicode-placeholder projection: after CSI ? 0 J, the
+placeholder image vanished and the independent physical image remained.
+These were actual private compositor/pixel observations, not just tests
+rendered or inferred from canonical VT. Captures and temporary binaries
+belong to the test workload and do not enter the repository.
+
+No physical graphical environment, installed Howl executable, production
+configuration or unrelated process was touched. Semantic protocol support
+ratings remain separate from this UX and graphics acceptance.

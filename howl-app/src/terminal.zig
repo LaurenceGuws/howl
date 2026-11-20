@@ -622,7 +622,10 @@ const State = struct {
         const range = self.selected orelse return;
         if (observation.structuralEditGeneration() != self.selection_structural_edit_generation) {
             self.selected = null;
-            self.selection_failure = error.SelectionContextChanged;
+            // The terminal itself invalidated this selection as a normal
+            // consequence of CSI IL/DL. An error belongs to an explicitly
+            // rejected user selection/copy request, not passive output.
+            self.selection_failure = null;
             self.output_gate.pending = true;
             return;
         }
@@ -1234,7 +1237,7 @@ test "selected terminal text survives ordinary output but not admitted CSI line 
     try std.testing.expect((try core.terminal.feed("\x1b[2;1H\x1b[L")).stateChanged());
     state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
     try std.testing.expect(state.selected == null);
-    try std.testing.expectEqual(error.SelectionContextChanged, state.selection_failure.?);
+    try std.testing.expect(state.selection_failure == null);
     try std.testing.expect(state.output_gate.pending);
 
     // Re-selecting after the edit binds the new generation, so an idle turn
@@ -1253,7 +1256,7 @@ test "selected terminal text survives ordinary output but not admitted CSI line 
     try std.testing.expect((try core.terminal.feed("\x1b[2;1H\x1b[M")).stateChanged());
     state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
     try std.testing.expect(state.selected == null);
-    try std.testing.expectEqual(error.SelectionContextChanged, state.selection_failure.?);
+    try std.testing.expect(state.selection_failure == null);
 }
 
 test "oversized paste fails at admission and leaves the terminal worker alive" {
