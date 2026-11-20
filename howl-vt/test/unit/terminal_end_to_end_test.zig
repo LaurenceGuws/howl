@@ -2386,6 +2386,36 @@ test "terminal: partial top scroll retains same images for bulk and single rows"
     try std.testing.expectEqual(@as(u16, 3), bulk.images(0).placement(1).?.row);
 }
 
+test "terminal: top-anchored LF and NEL keep scrolling and fixed graphics aligned" {
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+    for ([_][]const u8{ "\n", "\x1bE" }) |control| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[2;1H" ++ image ++ "\x1b[4;1H" ++ image);
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 3), terminal.images(0).placement(1).?.row);
+
+        // The top three rows scroll into history; the fourth is a fixed
+        // composer. After the second scroll the first image moves into
+        // projected history, but the fixed image must remain on row four.
+        try feed(&terminal, "\x1b[1;3r\x1b[3;1H");
+        try std.testing.expect((try terminal.feed(control)).stateChanged());
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 3), terminal.images(0).placement(1).?.row);
+
+        try std.testing.expect((try terminal.feed(control)).stateChanged());
+        try std.testing.expectEqual(@as(u32, 2), terminal.semanticView(0).history_count);
+        try std.testing.expect(terminal.images(0).placement(0) == null);
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(1).placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 3), terminal.images(0).placement(1).?.row);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    }
+}
+
 test "terminal: non-top margin scroll moves only images inside the region" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
     defer terminal.deinit();

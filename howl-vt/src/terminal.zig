@@ -3887,13 +3887,9 @@ fn writeSizedTextGrowing(vt: *Terminal, payload: []const u8, offset: usize) Scre
     const screen = vt.screen_state.active();
     const before = graphicsScreenOrigin(vt);
     const progress = screen.writeSizedTextGrowing(payload, offset);
-    const full_width = !screen.left_right_margin_mode or
-        (screen.left_margin == 0 and screen.right_margin + 1 == screen.cols);
-    if (!vt.screen_state.alt_active and screen.history_capacity != 0 and
-        screen.scroll_top == 0 and full_width and screen.scrollBottom() < screen.rows -| 1)
-    {
-        shiftFixedImages(vt, screen, before, graphicsScreenOrigin(vt));
-    }
+    const after = graphicsScreenOrigin(vt);
+    if (after > before and screen.scrollBottom() < screen.rows -| 1)
+        shiftFixedImages(vt, screen, before, after);
     return progress;
 }
 
@@ -3907,11 +3903,11 @@ fn applyInputLineFeed(vt: *Terminal, next_line: bool) error{ OutOfMemory, Histor
     };
     defer active.discardLineFeed(&prepared);
     const scrolls = prepared.scrolls;
-    const history_scroll = fullScreenHistoryScroll(vt, active);
+    const before = graphicsScreenOrigin(vt);
     if (!vt.screen_state.alt_active) vt.screen_state.primary.finalizeOutputLine();
     active.commitLineFeed(&prepared, next_line);
-    if (scrolls and !history_scroll) {
-        const changed = scrollGraphicsRegion(vt, active, active.scroll_top, active.scrollBottom(), 1, true);
+    if (scrolls) {
+        const changed = alignGraphicsAfterLineFeed(vt, active, before);
         std.debug.assert(!changed or vt.graphics.generation() != 0);
     }
 }
@@ -3920,14 +3916,20 @@ fn graphicsBank(vt: *const Terminal) graphics_mod.Bank {
     return if (vt.screen_state.alt_active) .alternate else .primary;
 }
 
-// Only a full-width primary scroll backed by retained history can move the
-// graphics viewport without translating individual placements. An otherwise
-// identical full-screen LF with history disabled must move placements with
-// the cell rows, as must a scroll within narrow horizontal margins.
-fn fullScreenHistoryScroll(vt: *const Terminal, screen: *const Screen) bool {
-    return !vt.screen_state.alt_active and screen.history_capacity != 0 and
-        screen.scroll_top == 0 and screen.scrollBottom() == screen.rows - 1 and
-        (!screen.left_right_margin_mode or (screen.left_margin == 0 and screen.right_margin + 1 == screen.cols));
+// Screen already decided whether this line feed admitted a history row.
+// Follow its committed origin: the rows inside that scroll keep absolute
+// image anchors, while rows below a partial top region shift with the origin.
+// Without history motion, image placements must scroll with the visible cells.
+fn alignGraphicsAfterLineFeed(vt: *Terminal, screen: *Screen, before: u64) bool {
+    const after = graphicsScreenOrigin(vt);
+    std.debug.assert(after >= before);
+    if (after > before) {
+        if (screen.scrollBottom() == screen.rows - 1) return false;
+        const generation = vt.graphics.generation();
+        shiftFixedImages(vt, screen, before, after);
+        return vt.graphics.generation() != generation;
+    }
+    return scrollGraphicsRegion(vt, screen, screen.scroll_top, screen.scrollBottom(), 1, true);
 }
 
 fn scrollGraphicsRegion(
@@ -4712,17 +4714,10 @@ const TerminalStream = struct {
             var remaining = occupied_rows -| 1;
             while (remaining != 0) : (remaining -= 1) {
                 const scrolls = screen.cursor.row == screen.scrollBottom();
-                const history_scroll = fullScreenHistoryScroll(self.terminal, screen);
+                const before = graphicsScreenOrigin(self.terminal);
                 screen.lineFeed();
-                if (scrolls and !history_scroll) {
-                    const graphics_changed = scrollGraphicsRegion(
-                        self.terminal,
-                        screen,
-                        screen.scroll_top,
-                        screen.scrollBottom(),
-                        1,
-                        true,
-                    );
+                if (scrolls) {
+                    const graphics_changed = alignGraphicsAfterLineFeed(self.terminal, screen, before);
                     std.debug.assert(!graphics_changed or self.terminal.graphics.generation() != 0);
                 }
             }
@@ -4867,18 +4862,10 @@ fn applyKittyGraphicsCursorAdvance(
     var remaining = advance.rows -| 1;
     while (remaining != 0) : (remaining -= 1) {
         const scrolls = screen.cursor.row == screen.scrollBottom();
-        const history_scroll = fullScreenHistoryScroll(terminal, screen);
+        const before = graphicsScreenOrigin(terminal);
         screen.lineFeed();
-        if (scrolls and !history_scroll) {
-            graphics_changed = scrollGraphicsRegion(
-                terminal,
-                screen,
-                screen.scroll_top,
-                screen.scrollBottom(),
-                1,
-                true,
-            ) or graphics_changed;
-        }
+        if (scrolls)
+            graphics_changed = alignGraphicsAfterLineFeed(terminal, screen, before) or graphics_changed;
     }
     const column_changed = advance.cols != 0 and
         screen.moveCursor(.{ .cursor_forward = advance.cols });

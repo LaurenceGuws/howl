@@ -671,3 +671,30 @@ admitted, and no implementation or GPU backend was installed or launched.
 As with the line-edit consolidation, the typed result is a semantic fact
 from the owner, not a second terminal model. Avoid general-purpose wrappers
 until a proven divergence warrants one.
+
+## LF graphics follow committed Screen history, not a second eligibility rule (20 November 2026)
+
+Terminal's former `fullScreenHistoryScroll` predicate recognized only a
+whole-screen primary scroll as history-backed. Screen can also retain a top-
+anchored partial-height region in history. That mismatch shifted image
+anchors within the wrong absolute interval and left fixed rows below the
+region out of alignment with their text.
+
+LF/NEL, SIXEL cursor advancement and Kitty graphics cursor advancement now
+inspect the actual Screen history-origin transition after each committed row
+move. If the origin advanced, placements inside the scrolling top region
+retain their absolute identities and only fixed rows below it translate.
+Without origin motion, visible placements scroll with their cells. The
+separate full-screen-history eligibility predicate was deleted; the sized-
+text path also uses the committed origin change instead of repeating Screen's
+margin and history-capacity policy.
+
+A terminal-stream test failed on the old partial-top LF mapping and passes
+after the correction. It covers LF and NEL for two successive rows: first
+moving a scrolling image to row zero, then into projected history, while a
+fixed-row image stays on its physical row throughout. VT Debug/ReleaseFast,
+the root ReleaseFast check/test and audit graph, protocol validation,
+formatting and diff checks passed. No support label, binary or running app
+changed. The approved Screen state transition is the single authority; the
+terminal's graphics adjustment follows the resulting identity rather than
+predicting policy independently.
