@@ -24,8 +24,12 @@ for group in ($reviewed_ids | transpose name ids) {
     error make {msg: $"Windows reference group ($group.name) differs from the reviewed command IDs"}
   }
 }
+let ghostty_ids = ($catalogue.references.ghostty.groups.osc7501_status.records | columns | sort)
+if $ghostty_ids != ([ghostty.osc7501.status_query ghostty.osc7501.status_report] | sort) {
+  error make {msg: "Ghostty OSC 7501 group differs from the two reviewed branch IDs"}
+}
 
-let bad_total = ($inventory | update total_records 667)
+let bad_total = ($inventory | update total_records 669)
 require-rule (protocol inventory diagnostics $catalogue $bad_total) inventory_total
 
 let bad_pin = ($catalogue | update references.windows_terminal.revision "not-the-pinned-commit")
@@ -60,8 +64,8 @@ let expanded_ref = ($inventory.references.windows_terminal
   | update groups ($inventory.references.windows_terminal.groups | insert accepted_future 2))
 let approved_inventory = ($inventory
   | update references.windows_terminal $expanded_ref
-  | update total_groups 38
-  | update total_records 668)
+  | update total_groups 39
+  | update total_records 670)
 let approved = (protocol inventory diagnostics $approved_cat $approved_inventory)
 if ($approved | length) != 0 {
   error make {msg: $"correctly approved future group failed: ($approved | to json -r)"}

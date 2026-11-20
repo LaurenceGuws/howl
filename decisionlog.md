@@ -480,3 +480,15 @@ obligation, not authorization to change VT, clipboard permissions or taskbar
 policy. Pinned source functions and the four record IDs were independently
 checked. The acceptance inventory is 37 groups and 666 reference-specific
 records; a row count is a census scope check, not a compatibility score.
+
+## Ghostty program-status reference is a scoped, optional host contract (20 November 2026)
+
+The pinned Ghostty revision `5813c9461d5af78b6307a1254d00b1bc190eaccd`
+is indexed only for OSC 7501 query and report. The query replies with a
+fixed capabilities string *only when* the program-status effect is installed;
+reports are bounded and delivered to that optional effect, otherwise ignored.
+Howl's support remains unassessed, with active evidence review but no automatic
+status UI or protocol implementation commitment. The review inventory increases
+to 38 groups and 668 reference-specific records while all preexisting records
+and their pinned revisions remain unchanged. The narrower observed scope avoids
+misclassifying Ghostty's parse-only OSC 66/99/3008 branches as applied effects.

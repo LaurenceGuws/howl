@@ -4178,6 +4178,59 @@ references:
                 and fragmented input. Host taskbar display is an independent
                 app concern, not automatic VT behavior.
 
+  ghostty:
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    root: src
+    groups:
+      osc7501_status:
+        source: terminal/stream_terminal.zig
+        symbol: Handler.programStatus
+        line: 984
+        census: {semantic_branches: 2}
+        recognition: implemented
+        conditions: >-
+          Scoped only to OSC 7501 query and status report. The parser admits
+          valid commands, while a separately installed program_status effect
+          decides whether a query is answered and whether reports are delivered.
+        records:
+          ghostty.osc7501.status_query:
+            raw: "OSC 7501 ; ? (BEL|ST)"
+            effect: report supported status states and kinds when a host callback exists
+            relevance: host consequence
+            conditions: >-
+              Without a registered program_status effect, Ghostty deliberately
+              emits no reply. With the effect it returns a fixed capability list,
+              preserving the query's BEL or ST terminator and never echoing
+              status contents.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Assess bounded terminal-owned OSC 7501 capability framing and
+                optional app reply policy. Merely recognizing this command
+                would not authorize a program-status UI or callback.
+          ghostty.osc7501.status_report:
+            raw: "OSC 7501 ; state=...[:id=...][:msg=...] (BEL|ST)"
+            effect: parse bounded program status and deliver it to an optional host effect
+            relevance: host consequence
+            source: terminal/osc/parsers/program_status.zig
+            symbol: parse
+            line: 309
+            conditions: >-
+              The parser bounds IDs, keys, encoded text and UTF-8; invalid
+              reports are discarded. A registered callback receives exact
+              fragmented reports; otherwise reports are ignored. Hard reset
+              delivers a clear-status event through the same callback.
+            howl:
+              support: unassessed
+              disposition: active
+              owner: howl-vt
+              residual: >-
+                Assess status parsing, cancellation, resource limits and
+                immutable VT-to-host handoff. No app presentation, new tab
+                state or notification policy has been accepted.
+
 selective_overlaps:
   - id: overlap.csi_s
     raw: "CSI Pm s"
