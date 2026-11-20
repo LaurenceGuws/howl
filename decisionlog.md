@@ -961,3 +961,34 @@ Matching Kitty instead would require a separately selected compatibility
 mode with a deliberate contract and test matrix. No automatic TERM
 guessing, hidden fallback, mode switch, or unsupported full status was
 accepted. Reconsider only if product requirements justify that scope.
+
+## DECRQM reports existing iTerm2 capability and mouse-format state (20 November 2026)
+
+Immutable iTerm2 VT100Terminal.m at
+1d6e758a390f7141f6e21b06e2663a53a02409c6 reports DEC private 1048
+as 1 (supported) even though save/restore is a one-shot cursor action, not
+a boolean mode state. Its DEC private DECRQM 10016 asks for
+MOUSE_FORMAT_SGR_PIXEL, although its mode setter uses 1016. Howl already
+owns both actual capabilities: 1048 saves/restores the cursor and 1016
+selects SGR-pixel mouse reporting. Pure mode_report.decState now reports
+1048 as 1 and answers 10016 from the existing 1016 state, with neither
+new storage nor an invented 10016 setter. Terminal and mode-owner tests
+were red before this change and green after. They cover supported and
+reset states, unknown 9999, C1 framing, negative 10016 setter, and actual
+1016 toggling.
+
+The fixed-reference differences are now explicit. iTerm2 returns 4
+(permanently reset) for unknown ANSI/DEC mode identities, while pinned
+Kitty report_mode_status and libvterm request_dec_mode use 0 (unknown).
+Pinned Kitty/libvterm also do not recognize query 1048 or the iTerm2
+10016 alias, so one universal reply table cannot exactly match all three
+on those bytes. These four DECRQM reference records remain partial,
+without score inflation. Their catalogue semantic owner citations now
+reference mode_report.decState/ansiState instead of the appendDec/appendAnsi
+framing-only functions. No new host policy, mutable mode or GUI behavior
+was introduced.
+
+Accepted gates: affected VT Debug/ReleaseFast, full root ReleaseFast
+check/test graph, project and Zig audits, declaration-aware protocol
+validation, formatting and diff checks. No installed binary or active
+session changed.

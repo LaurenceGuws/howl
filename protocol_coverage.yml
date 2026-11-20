@@ -626,8 +626,10 @@ references:
               symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           libvterm.csi.decrqm: {raw: "CSI ? Ps $ p", effect: report DEC mode state, relevance: query,
             conditions: supported mode sets differ,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
-              source: howl-vt/src/mode_report.zig, symbol: appendDec, proof: {
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned libvterm replies 0 for unsupported DEC identities including 1048 and 10016, while Howl now truthfully reports its cursor-save support and its iTerm2-compatible SGR-pixel query alias. A single reply cannot be both libvterm's unknown code and Howl's supported state.",
+              residual: "All scoped libvterm recognized DEC states are already represented in Howl; exact unknown-mode identity parity remains incompatible with the additional supported query names. The surrounding state and parser gates still need full differential qualification.",
+              source: howl-vt/src/mode_report.zig, symbol: decState, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig, symbol: "DEC mode queries append DECRPM replies"}}}
           libvterm.csi.xtversion: {raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
@@ -1419,13 +1421,18 @@ references:
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           iterm2.csi.decrqm_dec: {raw: "CSI ? Ps $ p", effect: query DEC mode,
             conditions: supported mode sets and policy-derived states differ, howl: {support: partial,
-              disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/mode_report.zig,
-              symbol: appendDec, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+              disposition: excluded,
+              rationale: "Pinned iTerm2 reports 1048 as set for supported save/restore and queries 10016 for the mouse format selected by 1016; Howl now matches both without additional mutable modes. iTerm2 also returns permanently reset (4) for unknown requests, whereas Kitty and libvterm use unknown (0), so full cross-reference parity is impossible under one fixed reply policy.",
+              residual: "1048 capability and 10016/1016 SGR-pixel state are now byte-proved, including C1 framing and a rejected 10016 setter. Additional iTerm2 host-gated reporting, special supported mode identities and its permanent-reset unknown reply still differ.",
+              source: howl-vt/src/mode_report.zig,
+              symbol: decState, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC mode queries append DECRPM replies"}}}
           iterm2.csi.decrqm_ansi: {raw: "CSI Ps $ p", effect: query ANSI mode,
             conditions: supported mode sets differ, howl: {support: partial, disposition: excluded,
-              rationale: *howl_report_policy_difference, source: howl-vt/src/mode_report.zig,
-              symbol: appendAnsi, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+              rationale: "Pinned iTerm2 reports 4 (permanently reset) for unsupported ANSI identities while Howl and Kitty report 0 (unknown). Changing the universal fallback would break the other pinned comparator. The supported mutable ANSI mode sets also differ.",
+              residual: "Howl owns modes 2,4,12,20 and exact state/reply framing, but iTerm2's unsupported-mode report policy cannot be matched by the same universal classifier.",
+              source: howl-vt/src/mode_report.zig,
+              symbol: ansiState, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "ANSI mode queries and XTREPORTCOLORS append caller output"}}}
           iterm2.csi.decstr: {raw: "CSI ! p", effect: soft reset,
             conditions: iTerm2 resets additional product input and resize-notification policy,
@@ -3365,8 +3372,11 @@ references:
               symbol: "DECSTR clears both Kitty stacks without erasing moving or switching banks"}}}
           kitty.csi.decrqm: {raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
             conditions: supported ANSI and DEC mode sets differ, howl: {support: partial,
-              disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/mode_report.zig,
-              symbol: appendDec, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+              disposition: excluded,
+              rationale: "Pinned Kitty's report_mode_status recognizes a curated fixed mode set and answers unknown (0) for DEC 1048 and 10016. Howl additionally reports those two iTerm2-compatible queries using existing owned cursor and SGR-pixel state. Neither response can be exact for both immutable references, and supported mode sets differ further.",
+              residual: "Howl's common mode states and SGR-pixel 1016 reply are implemented, but extra supported iTerm2 query identities and Kitty-only mode/query gates prevent full pinned Kitty reply parity.",
+              source: howl-vt/src/mode_report.zig,
+              symbol: decState, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC mode queries append DECRPM replies"}}}
           kitty.csi.sgr: {raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
             disposition: excluded, rationale: *howl_rendition_policy_difference,

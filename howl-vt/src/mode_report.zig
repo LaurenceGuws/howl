@@ -66,6 +66,9 @@ pub fn decState(view: DecView, mode: u16) u8 {
         66 => boolState(view.application_keypad),
         25 => boolState(view.cursor_visible),
         47, 1047, 1049 => boolState(view.alt_active),
+        // Pinned iTerm2 reports support for the save/restore cursor action
+        // without treating that one-shot operation as a boolean mode.
+        1048 => 1,
         9 => boolState(view.mouse_tracking == .x10),
         1000 => boolState(view.mouse_tracking == .normal),
         1002 => boolState(view.mouse_tracking == .button_event),
@@ -74,7 +77,9 @@ pub fn decState(view: DecView, mode: u16) u8 {
         1005 => boolState(view.mouse_protocol == .utf8),
         1006 => boolState(view.mouse_protocol == .sgr),
         1007 => boolState(view.alternate_scroll),
-        1016 => boolState(view.mouse_protocol == .sgr_pixel),
+        // Pinned iTerm2 queries 10016 for the mode that its 1016 setter owns.
+        // They share an existing state; 10016 is not a separate mode setter.
+        1016, 10016 => boolState(view.mouse_protocol == .sgr_pixel),
         1015 => boolState(view.mouse_protocol == .urxvt),
         1036 => boolState(view.meta_sends_escape),
         1337 => boolState(view.report_key_up),
@@ -201,6 +206,19 @@ test "DEC mouse reports name exactly one active tracking and protocol mode" {
             decState(view, candidate.mode),
         );
     }
+}
+
+test "DEC saved-cursor and iTerm2 pixel mouse query names use existing owned state" {
+    // The pinned iTerm2 query reports 1048 as supported even though saving
+    // and restoring the cursor do not retain a boolean mode. Its 10016 query
+    // reads the same mouse-format state set by standard DEC mode 1016.
+    try std.testing.expectEqual(@as(u8, 1), decState(.{}, 1048));
+    try std.testing.expectEqual(@as(u8, 2), decState(.{}, 10016));
+    try std.testing.expectEqual(@as(u8, 2), decState(.{}, 1016));
+    const pixel = DecView{ .mouse_protocol = .sgr_pixel };
+    try std.testing.expectEqual(@as(u8, 1), decState(pixel, 10016));
+    try std.testing.expectEqual(@as(u8, 1), decState(pixel, 1016));
+    try std.testing.expectEqual(@as(u8, 0), decState(pixel, 10017));
 }
 
 test "ANSI report inventory is closed and exact" {

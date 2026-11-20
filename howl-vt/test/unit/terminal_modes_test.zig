@@ -1978,6 +1978,36 @@ test "DEC mode queries append DECRPM replies" {
     try std.testing.expectEqualStrings("\x1b[?1004;1$y\x1b[?2004;1$y\x1b[?1002;1$y\x1b[?1006;1$y\x1b[?25;1$y\x1b[?9999;0$y", pendingOutput(&terminal));
 }
 
+test "iTerm2 pinned DECRQM 1048 and 10016 report existing cursor and SGR pixel support" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    // A query for cursor-save capability is always set; pixel mode is reset
+    // until the standard 1016 setter selects the SGR-pixel protocol.
+    write(&terminal, "\x1b[?1048$p\x1b[?10016$p\x1b[?1016$p\x1b[?9999$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?1048;1$y\x1b[?10016;2$y\x1b[?1016;2$y\x1b[?9999;0$y",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    write(&terminal, "\x1b[?1016h\x1b[?10016$p\x1b[?1016$p\x1b[?1048$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?10016;1$y\x1b[?1016;1$y\x1b[?1048;1$y",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    // 10016 is query-only in the pinned iTerm2 revision. Its setter is 1016.
+    try std.testing.expect(!(try terminal.feed("\x1b[?10016l")).stateChanged());
+    write(&terminal, "\x1b G\x9b?10016$p\x9b?1048$p");
+    try std.testing.expectEqualStrings("\x9b?10016;1$y\x9b?1048;1$y", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    write(&terminal, "\x1b[?1016l\x9b?10016$p\x9b?1016$p");
+    try std.testing.expectEqualStrings("\x9b?10016;2$y\x9b?1016;2$y", pendingOutput(&terminal));
+}
+
 test "DECRQSS replies for owned state and invalid requests" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
