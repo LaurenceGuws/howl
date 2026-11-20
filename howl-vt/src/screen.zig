@@ -4278,15 +4278,18 @@ pub const Screen = struct {
         const full_width = !self.left_right_margin_mode or (self.left_margin == 0 and self.right_margin + 1 == self.cols);
         const restore_full_screen = restoring and top == 0 and bounded_bottom == self.rows - 1 and full_width;
         const full_screen = top == 0 and bounded_bottom == self.rows - 1 and full_width;
-        if (full_screen) {
+        if (full_screen or (full_width and !restoring)) {
             if (!restoring) {
-                // A continuation whose lead remains in history would split.
-                // Live leads move intact; restoration moves its lead back too.
+                // A continuation whose lead lies above this region would
+                // split when its row moves. A complete multicell lead
+                // beginning at the top edge, however, can move intact.
+                // Kitty's IL boundary cleanup makes this same distinction;
+                // do not erase its lead merely because it is at the edge.
                 const cells = self.cells.?;
                 for (0..self.cols) |col| {
-                    const cell = cells[self.rowStart(0) + col];
+                    const cell = cells[self.rowStart(top) + col];
                     if (cell.y != 0)
-                        changed = self.clearClusterAt(0, @intCast(col), false) or changed;
+                        changed = self.clearClusterAt(top, @intCast(col), false) or changed;
                 }
             }
         } else {
@@ -9133,6 +9136,75 @@ test "single-row scroll sequence matches bulk scroll across multicell boundaries
             for (0..bulk.cols) |col| try std.testing.expectEqualDeep(bulk.cellInfoAt(@intCast(row), @intCast(col)), single.cellInfoAt(@intCast(row), @intCast(col)));
         }
         for (0..bulk.historyCount()) |offset| for (0..bulk.cols) |col| try std.testing.expectEqualDeep(bulk.historyCellAt(@intCast(offset), @intCast(col)), single.historyCellAt(@intCast(offset), @intCast(col)));
+    }
+}
+
+test "IL retains a complete multiline lead at the insertion edge" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 5, 8);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.setScrollRegion(1, 4));
+    screen.cursor.setPositionByClient(1, 2);
+    try std.testing.expect(screen.writeSizedText("s=2:w=2;X"));
+    const before = screen.cellInfoAt(1, 2);
+    try std.testing.expectEqual(@as(u32, 'X'), before.codepoint);
+    try std.testing.expectEqual(@as(u8, 2), before.height);
+    screen.cursor.setPositionByClient(1, 0);
+
+    // In pinned Kitty, an IL only nukes a multiline cluster at its top
+    // border if that row contains the continuation of a lead above it.
+    // A lead beginning at the insertion row can move down intact.
+    try std.testing.expect(screen.insertLines(1));
+    try std.testing.expectEqual(@as(u32, 'X'), screen.cellInfoAt(2, 2).codepoint);
+    for (0..before.height) |y| for (0..before.width) |x| {
+        const cell = screen.cellInfoAt(@intCast(2 + y), @intCast(2 + x));
+        try std.testing.expectEqual(before.width, cell.width);
+        try std.testing.expectEqual(before.height, cell.height);
+        try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+        try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+    };
+    try std.testing.expectEqual(@as(u32, 0), screen.cellInfoAt(1, 2).codepoint);
+}
+
+test "IL and DL clear crossing multiline fragments but retain intact neighbors" {
+    for ([_]struct { insert: bool, lead_row: u16, edit_row: u16, should_retain: bool, expected_row: u16 }{
+        .{ .insert = true, .lead_row = 0, .edit_row = 1, .should_retain = false, .expected_row = 0 },
+        .{ .insert = true, .lead_row = 3, .edit_row = 2, .should_retain = false, .expected_row = 0 },
+        .{ .insert = false, .lead_row = 1, .edit_row = 1, .should_retain = false, .expected_row = 0 },
+        .{ .insert = false, .lead_row = 2, .edit_row = 1, .should_retain = true, .expected_row = 1 },
+    }) |case| {
+        var screen = try Screen.initWithCells(std.testing.allocator, 5, 8);
+        defer screen.deinit(std.testing.allocator);
+        try std.testing.expect(screen.setScrollRegion(1, 4));
+        screen.cursor.setPositionByClient(case.lead_row, 2);
+        try std.testing.expect(screen.writeSizedText("s=2;X"));
+        const old_lead = screen.cellInfoAt(case.lead_row, 2);
+        try std.testing.expectEqual(@as(u8, 2), old_lead.height);
+        screen.cursor.setPositionByClient(case.edit_row, 0);
+
+        const changed = if (case.insert) screen.insertLines(1) else screen.deleteLines(1);
+        try std.testing.expect(changed);
+        try std.testing.expectEqual(@as(u16, case.edit_row), screen.cursor.row);
+        try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+        if (case.should_retain) {
+            const lead = screen.cellInfoAt(case.expected_row, 2);
+            try std.testing.expectEqual(@as(u32, 'X'), lead.codepoint);
+            try std.testing.expectEqual(old_lead.width, lead.width);
+            try std.testing.expectEqual(old_lead.height, lead.height);
+            for (0..old_lead.height) |y| for (0..old_lead.width) |x| {
+                const cell = screen.cellInfoAt(@intCast(case.expected_row + y), @intCast(2 + x));
+                try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+                try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+            };
+        } else {
+            for (0..screen.rows) |row| for (0..screen.cols) |col| {
+                const cell = screen.cellInfoAt(@intCast(row), @intCast(col));
+                try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+                try std.testing.expectEqual(@as(u8, 1), cell.width);
+                try std.testing.expectEqual(@as(u8, 1), cell.height);
+                try std.testing.expectEqual(@as(u8, 0), cell.x);
+                try std.testing.expectEqual(@as(u8, 0), cell.y);
+            };
+        }
     }
 }
 

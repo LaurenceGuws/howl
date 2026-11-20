@@ -577,3 +577,24 @@ Kitty IL/DL/SU/SD catalogue records retain **partial/deferred**: exact pinned
 multicell, selection and graphics/history semantics still need independent
 proof. This checkpoint improves actual terminal behavior without altering
 protocol status counts, host permissions or running GUI instances.
+
+## CSI IL multiline preservation follows the pinned Kitty boundary (20 November 2026)
+
+A red-before/green-after screen and OSC 66 terminal-stream differential
+against Kitty's frozen `screen_insert_lines` handler identified excessive
+cluster erasure in Howl's partial-height, full-width downward row move.
+Kitty clears a multiline character at the top edge only when that cell is a
+*continuation* whose lead lies above the insertion region, not when a complete
+cluster begins at the insertion row and can move intact. Howl previously
+cleared any cluster touching the top row and lost valid sized text.
+
+`Screen.scrollDownRegionRestoring` now preserves complete top-row leads in
+non-restoring full-width moves and still clears cross-boundary fragments.
+Partial-column moves retain their conservative cluster cleanup, and history
+restoration retains its separate protection. Adversarial Screen cases cover
+complete, top-crossing, bottom-crossing and deleted clusters; the terminal
+stream covers OSC 66 lead movement through fragmented CSI L/M, cursor homing
+and the same height/width/x/y cell provenance. VT Debug/ReleaseFast and the
+root ReleaseFast check/test, audit and protocol gates passed. This is actual
+terminal behavior, not an index promotion: Kitty's `partial` status remains
+until selection and further multiline/graphics semantics are proven.

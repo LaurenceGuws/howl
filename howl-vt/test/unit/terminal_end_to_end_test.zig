@@ -2432,6 +2432,40 @@ test "terminal: CSI insert and delete lines move admitted graphics with retained
     }
 }
 
+test "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M" {
+    const sized = "\x1b]66;s=2;X\x07";
+    for ([_]struct { sequence: []const u8, lead: u16, edit: u16, destination: u16 }{
+        .{ .sequence = "\x1b[L", .lead = 1, .edit = 1, .destination = 2 },
+        .{ .sequence = "\x1b[M", .lead = 2, .edit = 1, .destination = 1 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 5, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;5r");
+        var cursor: [24]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&cursor, "\x1b[{d};3H", .{case.lead + 1}));
+        try feed(&terminal, sized);
+        const initial = terminal.semanticView(0).cellInfoAt(case.lead, 2);
+        try std.testing.expectEqual(@as(u21, 'X'), initial.codepoint);
+        try std.testing.expectEqual(@as(u8, 2), initial.height);
+
+        try feed(&terminal, try std.fmt.bufPrint(&cursor, "\x1b[{d};1H", .{case.edit + 1}));
+        try std.testing.expect(!(try terminal.feed(case.sequence[0..2])).stateChanged());
+        try std.testing.expect((try terminal.feed(case.sequence[2..])).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'X'), view.cellInfoAt(case.destination, 2).codepoint);
+        try std.testing.expectEqual(@as(u16, case.edit), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+        for (0..initial.height) |row| for (0..initial.width) |col| {
+            const cell = view.cellInfoAt(@intCast(case.destination + row), @intCast(2 + col));
+            try std.testing.expectEqual(initial.width, cell.width);
+            try std.testing.expectEqual(initial.height, cell.height);
+            try std.testing.expectEqual(@as(u8, @intCast(row)), cell.y);
+            try std.testing.expectEqual(@as(u8, @intCast(col)), cell.x);
+        };
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+}
+
 test "terminal: CSI row scrolls respect horizontal margins for graphics as for cells" {
     const outside = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=19,C=1;AQIDBA==\x1b\\";
     const inside = "\x1b[3;4H\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1;AQIDBA==\x1b\\";
