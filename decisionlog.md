@@ -727,3 +727,20 @@ once per row, preserving the low-cost presentation path.
 VT Debug and ReleaseFast, the full root ReleaseFast check/test/audit graph,
 protocol validation, formatting and diff checks passed. No catalogue status
 promotion, installed binary, application process or GUI session change.
+
+## ECH graphics erasure follows Screen's logical row width (20 November 2026)
+
+Terminal previously reconstructed the graphics range for CSI ECH using the
+physical grid width even though Screen erases only through the current row's
+logical width. With DEC double-width line geometry, a bounded ECH could erase
+image placements at columns that Screen did not touch. The terminal-stream
+regression was red before the correction and passed afterward.
+
+Screen.eraseChars now returns its exact accepted logical-row interval and the
+independent changed fact; Terminal consumes the interval for graphics erasure
+rather than redoing bounds arithmetic. A 999-count ECH on a double-width row
+retains a placement outside the logical erasure, removes the one inside, and
+preserves decoded image data. Owner tests prove normal and default-count
+range coordinates. VT Debug/ReleaseFast, full root ReleaseFast check/test,
+Zig/project audit, protocol validator, formatting and diff gates passed.
+There is no new permission or graphics backend; no support rating was changed.

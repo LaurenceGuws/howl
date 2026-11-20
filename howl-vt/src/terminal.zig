@@ -3704,18 +3704,15 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .erase_chars => |count| {
             const screen = vt.screen_state.active();
-            const changed = screen.eraseChars(count);
-            const right = @min(
-                @as(u32, screen.cols - 1),
-                @as(u32, screen.cursor.col) + @max(count, 1) - 1,
-            );
+            const result = screen.eraseChars(count);
+            const range = result.range orelse return result.changed;
             return vt.graphics.erase(
                 graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                screen.cursor.col,
-                @intCast(right),
-            ) or changed;
+                graphicsScreenOrigin(vt) + range.row,
+                graphicsScreenOrigin(vt) + range.row,
+                range.left,
+                range.right,
+            ) or result.changed;
         },
         .rect_erase => |area| {
             const screen = vt.screen_state.active();

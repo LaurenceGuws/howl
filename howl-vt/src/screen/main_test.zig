@@ -315,7 +315,12 @@ test "screen: ECH uses current background without moving cursor" {
 
     s.current_attrs.bg = Grid.Color.rgbComponents(40, 44, 52);
     s.cursor.setColByClient(2);
-    try std.testing.expect(s.eraseChars(3));
+    const erased = s.eraseChars(3);
+    try std.testing.expect(erased.changed);
+    try std.testing.expect(erased.range != null);
+    try std.testing.expectEqual(@as(u16, 0), erased.range.?.row);
+    try std.testing.expectEqual(@as(u16, 2), erased.range.?.left);
+    try std.testing.expectEqual(@as(u16, 4), erased.range.?.right);
 
     try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
     var col: u16 = 2;
@@ -333,7 +338,11 @@ test "screen: zero-count ECH defaults to one cell" {
 
     screen.writeText("abcd");
     screen.cursor.setColByClient(1);
-    try std.testing.expect(screen.eraseChars(0));
+    const erased = screen.eraseChars(0);
+    try std.testing.expect(erased.changed);
+    try std.testing.expect(erased.range != null);
+    try std.testing.expectEqual(@as(u16, 1), erased.range.?.left);
+    try std.testing.expectEqual(@as(u16, 1), erased.range.?.right);
 
     try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
     try std.testing.expectEqual(@as(u21, 'a'), screen.cellAt(0, 0));

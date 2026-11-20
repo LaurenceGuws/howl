@@ -2010,14 +2010,21 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Erases at least one character through the logical row edge.
-    /// Returns whether cells, continuation, or pending wrap changed; it cannot fail.
-    pub fn eraseChars(self: *Screen, count: u16) bool {
+    /// Reports one accepted logical-row ECH interval and its actual mutation.
+    pub const EraseCharsResult = struct {
+        changed: bool,
+        range: ?struct { row: u16, left: u16, right: u16 } = null,
+    };
+
+    /// Erases at least one character through the logical row edge and tells
+    /// consumers the exact accepted range, independent of text-cell mutation.
+    pub fn eraseChars(self: *Screen, count: u16) EraseCharsResult {
         var changed = self.cancelPendingWrap();
-        if (self.rows == 0 or self.cols == 0) return changed;
+        if (self.rows == 0 or self.cols == 0) return .{ .changed = changed };
         const line_cols = self.lineColumnCount(self.cursor.row);
-        if (self.cursor.col >= line_cols) return changed;
+        if (self.cursor.col >= line_cols) return .{ .changed = changed };
         const amount = @min(@max(count, 1), line_cols - self.cursor.col);
+        const right = self.cursor.col + amount - 1;
         changed = self.eraseRowRange(self.cursor.row, self.cursor.col, self.cursor.col + amount, false) or changed;
         if (self.cursor.col + amount == line_cols) {
             changed = self.clearRowContinuation(self.cursor.row) or changed;
@@ -2026,7 +2033,7 @@ pub const Screen = struct {
             self.forgetRowScanEnd(self.cursor.row);
             self.refreshRowIdentity(self.cursor.row);
         }
-        return changed;
+        return .{ .changed = changed, .range = .{ .row = self.cursor.row, .left = self.cursor.col, .right = right } };
     }
 
     /// Select ISO, DEC, or unprotected provenance for subsequently written cells.
@@ -7848,7 +7855,7 @@ test "styled blank state survives projected history and newest restore" {
 
     screen.current_attrs.bg = Screen.Color.rgbComponents(10, 20, 30);
     screen.cursor.setPositionByClient(0, 5);
-    try std.testing.expect(screen.eraseChars(1));
+    try std.testing.expect(screen.eraseChars(1).changed);
 
     const before = screen.cellInfoAt(0, 5);
     try std.testing.expectEqual(@as(u32, 0), before.codepoint);
@@ -7968,7 +7975,7 @@ test "resize preserves styled blank state without extending logical output text"
     screen.writeText("A");
     screen.current_attrs.bg = Screen.Color.rgbComponents(10, 20, 30);
     screen.cursor.setPositionByClient(0, 5);
-    try std.testing.expect(screen.eraseChars(1));
+    try std.testing.expect(screen.eraseChars(1).changed);
 
     const before = screen.cellInfoAt(0, 5);
     try std.testing.expectEqual(@as(u32, 0), before.codepoint);
@@ -8477,7 +8484,7 @@ test "row scan hints preserve canonical state and text extents" {
 
     // Shrinking/structural mutation discards the hint instead of repairing it.
     screen.cursor.setPositionByClient(screen.rows - 1, 2);
-    try std.testing.expect(screen.eraseChars(3));
+    try std.testing.expect(screen.eraseChars(3).changed);
     try std.testing.expectEqual(screen.cols, screen.rowScanEnd(screen.rows - 1));
     try Oracle.expectAll(&screen);
 

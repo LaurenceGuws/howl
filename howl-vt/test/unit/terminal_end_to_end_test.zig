@@ -340,6 +340,27 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
 }
 
+test "terminal: ECH graphics use the logical DEC row width, not physical columns" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    // Image at logical column four and one at physical column six, which
+    // ceases to be addressable when the row changes to double-width.
+    try feed(&terminal, "\x1b[1;4H\x1b_Ga=T,f=32,s=1,v=1,i=81,C=1;AQIDBA==\x1b\\");
+    try feed(&terminal, "\x1b[1;6H\x1b_Ga=T,f=32,s=1,v=1,i=82,C=1;AQIDBA==\x1b\\");
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+    const image_content_generation = terminal.images(0).content_generation;
+
+    try feed(&terminal, "\x1b[1;1H\x1b#6\x1b[1;3H");
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+    try std.testing.expect((try terminal.feed("\x1b[999X")).stateChanged());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(image_content_generation, terminal.images(0).content_generation);
+}
+
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 6);
     defer terminal.deinit();
