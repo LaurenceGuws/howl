@@ -435,3 +435,28 @@ reference pins, test proofs or VT behavior. A declaration preflight resolved
 all 614 cited owners; a maintained negative-tested validator must enforce
 that invariant separately, without mistaking a matching method for complete
 semantic protocol equivalence.
+
+## Protocol evidence links are mechanically checked (20 November 2026)
+
+After restoring 153 outdated owner citations and redirecting 12 getter-only
+citations to their action owners, a declaration-aware lexical inspection
+caught 41 additional references that named real Zig functions without their
+owning Terminal, TerminalStream or Parser type. The catalogue now cites the
+actual method declarations. Two iTerm title/icon conditions were also found
+to have silently split at YAML commas; they are quoted as complete strings.
+All 662 records retain their support ratings, dispositions, and pinned
+reference revisions.
+
+The maintained protocol validator rejects unknown reference, group, record
+and Howl fields; checks source/proof paths are canonical and repository-local;
+resolves source functions and Type.methods to actual Zig declarations rather
+than call sites, comments or strings; and checks exact named test declarations
+against the static imports of maintained test roots and build registration.
+A bounded, read-only Python standard-library scanner performs this work once
+per source file, through the existing Nu command. Sixteen positive/negative
+fixtures run in the root protocol build gate, alongside the ordinary catalogue
+validation. A disposable malformed-title YAML fixture also produced a
+record-specific diagnostic. The result is citation validity, **not** proof of
+semantic parity or a comprehensive AST/compiler-level analysis. The pinned
+reference census count gate remains unchanged until separately reviewed
+reference expansion.

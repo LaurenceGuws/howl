@@ -2,10 +2,14 @@
 
 const protocol_root = (path self | path dirname)
 const catalogue_path = ($protocol_root | path join protocol_coverage.yml)
+const evidence_path = ($protocol_root | path join tools protocol_evidence.py)
 export const protocol_support = [full partial missing unassessed]
 export const protocol_disposition = ["none" active delegated deferred excluded]
 export const protocol_owner = [howl-vt howl-pty howl-app]
 const howl_record_fields = [support disposition owner residual rationale milestone source symbol proof]
+const reference_fields = [revision root groups]
+const group_fields = [source line census recognition records bounds symbol conditions]
+const record_fields = [raw effect relevance howl conditions recognition bounds source symbol line]
 export const protocol_cheatsheet = [
   "protocol                         compact coverage summary"
   "protocol gaps                    active partial/missing/unassessed records"
@@ -138,20 +142,30 @@ export def "protocol validate" [--fail] {
       $"expected 34 groups, found ($group_count)"))
   }
   for reference in ($catalogue.references | transpose reference facts) {
+    for field in ($reference.facts | columns | where {|field| $field not-in $reference_fields }) {
+      $findings = ($findings | append (diagnostic $reference.reference unknown_reference_field $"unknown reference field: ($field)"))
+    }
     for group in ($reference.facts.groups | transpose group facts) {
+      for field in ($group.facts | columns | where {|field| $field not-in $group_fields }) {
+        $findings = ($findings | append (diagnostic $"($reference.reference).($group.group)" unknown_group_field $"unknown group field: ($field)"))
+      }
       if ($group.facts.records | columns | length) != $group.facts.census.semantic_branches {
         $findings = ($findings | append (diagnostic $"($reference.reference).($group.group)" census
           $"expected ($group.facts.census.semantic_branches) records, found ($group.facts.records | columns | length)"))
       }
       for record in ($group.facts.records | transpose id value) {
-        for field in (($record.value.howl? | default {}) | columns | where {|field| $field not-in $howl_record_fields }) {
+        let howl = ($record.value.howl? | default {})
+        for field in ($record.value | columns | where {|field| $field not-in $record_fields }) {
+          $findings = ($findings | append (diagnostic $record.id unknown_record_field $"unknown record field: ($field)"))
+        }
+        for field in ($howl | columns | where {|field| $field not-in $howl_record_fields }) {
           $findings = ($findings | append (diagnostic $record.id unknown_howl_field
             $"unknown howl field: ($field)"))
         }
-        if ($record.value.howl.support? | default null) == null {
+        if ($howl.support? | default null) == null {
           $findings = ($findings | append (diagnostic $record.id explicit_support "howl.support is required"))
         }
-        if ($record.value.howl.disposition? | default active) == excluded and ($record.value.howl.owner? | default null) != null {
+        if ($howl.disposition? | default active) == excluded and ($howl.owner? | default null) != null {
           $findings = ($findings | append (diagnostic $record.id excluded_owner "excluded records omit owner"))
         }
       }
@@ -247,6 +261,10 @@ export def "protocol validate" [--fail] {
     }
     if ($findings | length) >= 256 { break }
   }
+  # One bounded pass over each cited Zig file; unlike path-only checks this
+  # verifies named test declarations, real function owners and test-root reachability.
+  let declarations = ($records | to json | python3 -B $evidence_path $protocol_root | from json)
+  $findings = ($findings | append $declarations)
   let result = if ($findings | length) >= 256 {
     $findings | first 255 | append (diagnostic catalogue diagnostic_limit "validation stopped at 256 diagnostics")
   } else { $findings }

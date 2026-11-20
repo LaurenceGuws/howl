@@ -77,6 +77,9 @@ pub fn build(b: *std.Build) void {
     });
     protocol_command.setCwd(b.path("."));
     protocol.dependOn(&protocol_command.step);
+    const protocol_evidence_test = b.addSystemCommand(&.{ "python3", "-B", "tools/protocol_evidence.py", "--self-test" });
+    protocol_evidence_test.setCwd(b.path("."));
+    protocol.dependOn(&protocol_evidence_test.step);
     tests.dependOn(protocol);
 
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
