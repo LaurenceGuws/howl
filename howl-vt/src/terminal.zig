@@ -3751,22 +3751,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .insert_chars => |count| return vt.screen_state.active().insertChars(count),
         .delete_chars => |count| return vt.screen_state.active().deleteChars(count),
-        .insert_lines => |count| {
-            const screen = vt.screen_state.active();
-            const admitted = cursorWithinLineEditMargins(screen);
-            const changed = screen.insertLines(count);
-            if (!admitted) return changed;
-            advanceIdentity(&vt.structural_edit_generation);
-            return scrollGraphicsRegion(vt, screen, screen.cursor.row, screen.scrollBottom(), @max(count, 1), false) or changed;
-        },
-        .delete_lines => |count| {
-            const screen = vt.screen_state.active();
-            const admitted = cursorWithinLineEditMargins(screen);
-            const changed = screen.deleteLines(count);
-            if (!admitted) return changed;
-            advanceIdentity(&vt.structural_edit_generation);
-            return scrollGraphicsRegion(vt, screen, screen.cursor.row, screen.scrollBottom(), @max(count, 1), true) or changed;
-        },
+        .insert_lines => |count| return applyLineEdit(vt, .insert, count),
+        .delete_lines => |count| return applyLineEdit(vt, .delete, count),
         .scroll_up_lines => |count| {
             const screen = vt.screen_state.active();
             const full_width = !screen.left_right_margin_mode or
@@ -3992,13 +3978,21 @@ fn scrollGraphicsRegion(
     return vt.graphics.scroll(graphicsBank(vt), origin + top, origin + bottom, count, upward);
 }
 
-// A rejected CSI L/M must not move image placements while Screen retains its
-// text rows. Match Screen's vertical and horizontal margin admission exactly;
-// the Screen operation still owns pending-wrap cancellation on rejection.
-fn cursorWithinLineEditMargins(screen: *const Screen) bool {
-    if (screen.cursor.row < screen.scroll_top or screen.cursor.row > screen.scrollBottom()) return false;
-    return !screen.left_right_margin_mode or
-        (screen.cursor.col >= screen.left_margin and screen.cursor.col <= screen.right_margin);
+// Screen alone decides whether IL/DL was admitted. The terminal applies its
+// graphics and selection consequences only after receiving that decision.
+fn applyLineEdit(vt: *Terminal, kind: Screen.LineEdit, count: u16) bool {
+    const screen = vt.screen_state.active();
+    const edit = screen.editLines(kind, count);
+    if (!edit.admitted) return edit.changed;
+    advanceIdentity(&vt.structural_edit_generation);
+    return scrollGraphicsRegion(
+        vt,
+        screen,
+        screen.cursor.row,
+        screen.scrollBottom(),
+        @max(count, 1),
+        kind == .delete,
+    ) or edit.changed;
 }
 
 fn graphicsScreenOrigin(vt: *const Terminal) u64 {

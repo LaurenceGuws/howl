@@ -198,7 +198,7 @@ test "screen: DECSTBM and IL shift rows down inside region" {
 
     try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, Action{ .cursor_position = .{ .row = 1, .col = 0 } });
-    try std.testing.expect(s.insertLines(1));
+    try std.testing.expect(s.editLines(.insert, 1).changed);
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 0));
@@ -222,7 +222,7 @@ test "screen: DECSTBM and DL shift rows up inside region" {
 
     try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, Action{ .cursor_position = .{ .row = 1, .col = 0 } });
-    try std.testing.expect(s.deleteLines(1));
+    try std.testing.expect(s.editLines(.delete, 1).changed);
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'C'), s.cellAt(1, 0));
@@ -693,14 +693,14 @@ test "screen: structural edits clear pending wrap and report mutation" {
 
     screen.cursor.setPositionByClient(1, 0);
     screen.wrap_pending = true;
-    try std.testing.expect(screen.insertLines(0));
+    try std.testing.expect(screen.editLines(.insert, 0).changed);
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(!screen.insertLines(999));
+    try std.testing.expect(!screen.editLines(.insert, 999).changed);
 
     screen.wrap_pending = true;
-    try std.testing.expect(screen.deleteLines(0));
+    try std.testing.expect(screen.editLines(.delete, 0).changed);
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(!screen.deleteLines(999));
+    try std.testing.expect(!screen.editLines(.delete, 999).changed);
 
     try std.testing.expect(screen.setScrollRegion(1, 2));
     screen.wrap_pending = true;

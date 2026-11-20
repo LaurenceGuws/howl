@@ -2486,6 +2486,23 @@ test "terminal: structural line-edit generation distinguishes admission from ord
     try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
 }
 
+test "terminal: clearing pending wrap does not admit a CSI line edit" {
+    for ([_][]const u8{ "\x1b[L", "\x1b[M" }) |operation| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;4r\x1b[1;8H!");
+        const initial = terminal.observation().structuralEditGeneration();
+        const cursor = terminal.semanticView(0);
+        try std.testing.expect((try terminal.feed(operation)).stateChanged());
+        try std.testing.expectEqual(initial, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqual(cursor.cursor_row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(cursor.cursor_col, terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 7));
+        try std.testing.expect(!(try terminal.feed(operation)).stateChanged());
+        try std.testing.expectEqual(initial, terminal.observation().structuralEditGeneration());
+    }
+}
+
 test "terminal: CSI row scrolls respect horizontal margins for graphics as for cells" {
     const outside = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=19,C=1;AQIDBA==\x1b\\";
     const inside = "\x1b[3;4H\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1;AQIDBA==\x1b\\";

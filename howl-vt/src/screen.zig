@@ -4003,36 +4003,31 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Insert at least one line at an admitted cursor inside both active regions.
-    ///
-    /// Counts clamp to the remaining region; accepted IL returns the cursor to
-    /// the left edge, as in the pinned Kitty CSI line-edit handler. An outside
-    /// cursor changes only pending wrap and keeps its position unchanged.
-    pub fn insertLines(self: *Screen, count: u16) bool {
-        const changed = self.cancelPendingWrap();
-        const bottom = self.scrollBottom();
-        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
-        if (!self.cursorWithinHorizontalMargins()) return changed;
-        const scrolled = self.scrollDownRegion(self.cursor.row, bottom, @max(count, 1));
-        const previous_col = self.cursor.col;
-        self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
-        return scrolled or changed or self.cursor.col != previous_col;
-    }
+    /// Selects one row-edit direction without transferring admission policy.
+    pub const LineEdit = enum { insert, delete };
+    /// Separates cursor/margin admission from exact retained-state mutation.
+    pub const LineEditResult = struct {
+        /// Whether the cursor was inside both active margins.
+        admitted: bool = false,
+        /// Exact cell, cursor, or pending-wrap mutation, independent of admission.
+        changed: bool = false,
+    };
 
-    /// Delete at least one line at an admitted cursor inside both active regions.
-    ///
-    /// Counts clamp to the remaining region; accepted DL returns the cursor to
-    /// the left edge, as in the pinned Kitty CSI line-edit handler. An outside
-    /// cursor changes only pending wrap and keeps its position unchanged.
-    pub fn deleteLines(self: *Screen, count: u16) bool {
+    /// Admit CSI IL/DL once, perform its ordered row edit, and report both
+    /// admission and mutation. Callers must not derive admission from change:
+    /// clearing pending wrap can change state while the row edit is rejected.
+    pub fn editLines(self: *Screen, kind: LineEdit, count: u16) LineEditResult {
         const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
-        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
-        if (!self.cursorWithinHorizontalMargins()) return changed;
-        const scrolled = self.scrollUpRegion(self.cursor.row, bottom, @max(count, 1));
+        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom or
+            !self.cursorWithinHorizontalMargins()) return .{ .changed = changed };
+        const scrolled = switch (kind) {
+            .insert => self.scrollDownRegion(self.cursor.row, bottom, @max(count, 1)),
+            .delete => self.scrollUpRegion(self.cursor.row, bottom, @max(count, 1)),
+        };
         const previous_col = self.cursor.col;
         self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
-        return scrolled or changed or self.cursor.col != previous_col;
+        return .{ .admitted = true, .changed = scrolled or changed or self.cursor.col != previous_col };
     }
 
     fn cursorWithinHorizontalMargins(self: *const Screen) bool {
@@ -9153,7 +9148,7 @@ test "IL retains a complete multiline lead at the insertion edge" {
     // In pinned Kitty, an IL only nukes a multiline cluster at its top
     // border if that row contains the continuation of a lead above it.
     // A lead beginning at the insertion row can move down intact.
-    try std.testing.expect(screen.insertLines(1));
+    try std.testing.expect(screen.editLines(.insert, 1).changed);
     try std.testing.expectEqual(@as(u32, 'X'), screen.cellInfoAt(2, 2).codepoint);
     for (0..before.height) |y| for (0..before.width) |x| {
         const cell = screen.cellInfoAt(@intCast(2 + y), @intCast(2 + x));
@@ -9163,6 +9158,29 @@ test "IL retains a complete multiline lead at the insertion edge" {
         try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
     };
     try std.testing.expectEqual(@as(u32, 0), screen.cellInfoAt(1, 2).codepoint);
+}
+
+test "line-edit admission is independent of pending-wrap mutation" {
+    for ([_]Screen.LineEdit{ .insert, .delete }) |kind| {
+        var screen = try Screen.initWithCells(std.testing.allocator, 4, 8);
+        defer screen.deinit(std.testing.allocator);
+        try std.testing.expect(screen.setScrollRegion(1, 3));
+        screen.cursor.setPositionByClient(0, 2);
+        screen.wrap_pending = true;
+        const rejected = screen.editLines(kind, 1);
+        try std.testing.expect(!rejected.admitted);
+        try std.testing.expect(rejected.changed);
+        try std.testing.expect(!screen.wrap_pending);
+        try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
+        try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+
+        screen.cursor.setPositionByClient(1, 2);
+        const admitted = screen.editLines(kind, 1);
+        try std.testing.expect(admitted.admitted);
+        try std.testing.expect(admitted.changed);
+        try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+        try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+    }
 }
 
 test "IL and DL clear crossing multiline fragments but retain intact neighbors" {
@@ -9181,7 +9199,7 @@ test "IL and DL clear crossing multiline fragments but retain intact neighbors" 
         try std.testing.expectEqual(@as(u8, 2), old_lead.height);
         screen.cursor.setPositionByClient(case.edit_row, 0);
 
-        const changed = if (case.insert) screen.insertLines(1) else screen.deleteLines(1);
+        const changed = screen.editLines(if (case.insert) .insert else .delete, 1).changed;
         try std.testing.expect(changed);
         try std.testing.expectEqual(@as(u16, case.edit_row), screen.cursor.row);
         try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);

@@ -626,3 +626,25 @@ project audit, declaration-aware protocol validator, Zig format and diff gates
 were green. This is a real local-app behavior improvement, not a claim of
 full pinned Kitty selection/UI/graphics parity. No installed binary or active
 user window was changed.
+
+## Screen decides CSI IL/DL admission once (20 November 2026)
+
+The earlier margin/graphics divergence was an ownership fault: Terminal
+reimplemented Screen's IL/DL margin-admission predicate before calling the
+real row mutator. Two independent copies could drift and cause rejected
+text edits to move graphics or invalidate selections.
+
+Screen now owns one `editLines(kind, count)` operation returning separate
+`admitted` and `changed` facts. It shares cursor/margin admission, row
+motion, and cursor homing between IL and DL; Terminal consumes the admitted
+result to apply graphics movement and the structural-edit generation, with
+no duplicate margin predicate. The distinction matters when a rejected
+command merely cancels pending wrap: `changed` can be true while
+`admitted` remains false. Owner and terminal-stream tests prove that
+case, along with ordinary admitted edits, including selection generation.
+The six protocol source citations now identify the shared Screen owner.
+No protocol support classification or runtime behavior was expanded.
+
+This is an intentional contraction of the ownership graph, not a general
+new terminal-operation abstraction. Keep subsequent debt payoffs narrow,
+source-owned, and justified by a demonstrated duplication or defect.
