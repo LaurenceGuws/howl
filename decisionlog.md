@@ -1061,3 +1061,34 @@ capability reporting, not a new terminfo engine or a caller policy.
 VT Debug/ReleaseFast, root ReleaseFast check/test, complete Zig and
 project audit, declaration-aware protocol validation, Zig formatting
 and diff gates passed. No installed binary or running process changed.
+
+## Rejected Kitty application escape mode is a complete protocol no-op (20 November 2026)
+
+Frozen Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 at
+kitty/screen.c:set_mode_from_const has a dedicated private DEC 7727 case.
+Both setting and resetting it only emit an internal log_error saying that
+application escape mode is unsupported, then break. They do not mutate
+terminal modes, cursor, pending wrap, cells or child-directed output.
+Logging is a product diagnostic, not a terminal-protocol consequence.
+
+Howl already rejected the same raw CSI ? 7727 h/l through its bounded
+unknown-mode path. The new terminal-level test proves 7-bit and 8-bit
+CSI, split input, unchanged canonical semantic/content identities,
+pending-wrap preservation, zero replies and caller consequences,
+querying the unsupported mode as unknown, and successful subsequent
+wrapped text. No runtime code or new mode state was necessary.
+
+Exactly one reviewed reference record, kitty.mode.application_escape,
+was promoted from partial/excluded to full with a named proof. Counts
+change from 291 full / 323 partial to 292 full / 322 partial; 48
+missing and 10 unassessed remain. This is classification accuracy for
+existing implementation, not an added feature. VT Debug/ReleaseFast,
+complete root ReleaseFast check/test and audit graph, protocol
+validation, formatting and diff checks passed.
+
+DECSACE was separately examined but not changed: frozen Kitty
+screen_decsace treats all parameters other than 2 as stream extent,
+while pinned iTerm2 executeDECSACE ignores parameters outside 0/1/2.
+Howl currently matches the already-full iTerm2 record. Changing the
+default to claim Kitty full would violate existing verified coverage.
+A compatibility-profile policy is not authorized for this difference.

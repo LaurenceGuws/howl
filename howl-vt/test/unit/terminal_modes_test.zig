@@ -2615,6 +2615,32 @@ test "ignored and unknown DEC modes preserve pending wrap and grid state" {
     };
 }
 
+test "Kitty application escape mode rejection is an exact no-op for both toggle values" {
+    // Frozen Kitty's 7727 branch logs a diagnostic and returns without
+    // changing state. Diagnostic logging is not terminal protocol output.
+    for ([_][]const u8{ "\x1b[?7727h", "\x1b[?7727l", "\x9b?7727h", "\x9b?7727l" }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 2);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("AB")).stateChanged());
+        const semantic_before = terminal.semanticSequence();
+        const content_before = terminal.contentSequence();
+        const split = command.len - 1;
+        try std.testing.expect(!(try terminal.feed(command[0..split])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(command[split..])).stateChanged());
+        try std.testing.expectEqual(semantic_before, terminal.semanticSequence());
+        try std.testing.expectEqual(content_before, terminal.contentSequence());
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
+        try std.testing.expectEqual(@as(usize, 0), pendingOutput(&terminal).len);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        // The ignored mode neither consumes pending wrap nor poisons the
+        // next input sequence. Its mode query is correctly unknown (0).
+        try std.testing.expect((try terminal.feed("C\x1b[?7727$p")).stateChanged());
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
+        try std.testing.expectEqualStrings("\x1b[?7727;0$y", pendingOutput(&terminal));
+    }
+}
+
 test "application keypad modes affect keypad encoding and DECRQM" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

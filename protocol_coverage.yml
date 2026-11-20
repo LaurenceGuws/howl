@@ -2986,10 +2986,10 @@ references:
             conditions: >-
               Kitty recognizes and logs rejection; Howl silently rejects it through the unknown-mode path while
               preserving pending wrap, grid, and subsequent input. Neither terminal mutates application-escape state.
-            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+            howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "ignored and unknown DEC modes preserve pending wrap and grid state"}}
+              symbol: "Kitty application escape mode rejection is an exact no-op for both toggle values"}}
           kitty.mode.termios_signals:
             raw: "CSI ? 19997 h|l"
             effect: toggle terminal-generated termios signals
