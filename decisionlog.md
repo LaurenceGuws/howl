@@ -516,3 +516,33 @@ status surface or GPU policy is automatically authorized. The accepted
 inventory now contains 41 groups and 672 reference-specific records while
 all original 662 records, their full/partial/missing ratings and their pinned
 revisions remain unchanged.
+
+## Protocol completeness is presumed; exclusions need fresh proof (20 November 2026)
+
+Captain raised full, useful terminal-protocol coverage to the default target.
+Historical `partial/excluded` classifications, many inherited from July
+intake, are not permanent product decisions. Their burden of proof is now on
+the *exclusion*: cite the pinned reference branch and exact differing state or
+observable effect; reproduce it through current canonical VT/PTY/host or GUI
+tests; identify the correct layer and an alternative implementation; then
+document a concrete incompatibility, safety boundary, or disproportionate
+cost with a reviewed decision. Generic "outside the complete Howl family",
+reference-specific diagnostics, and old tooling constraints do not suffice.
+
+A protocol can be complete through a deliberate no-op when the reference also
+has no protocol-visible action; reference logging is not a VT protocol effect.
+For the 27 Kitty OSC selectors pinned as ignored cases, direct reference
+dispatcher inspection and expanded VT turn-by-turn proofs establish stable
+semantic/content identities, no reply or host consequence, bounded payload
+cancellation, and recovery of subsequent valid text/OSC. These are now
+`full/none`, not `partial/excluded`; 350 partial records become 323 without
+a runtime behavior change. This is a classification correction, not 27 new
+features. The next tranches must prioritize *newly completed* cursor/edit,
+reports, colour and graphics behavior, with differential reference oracles and
+deterministic private-seat acceptance where presentation is implicated.
+
+Keep VT canonical and nonblocking. OS clipboard, permissions, window control,
+file and remote execution belong to the host/PTY and still require explicit
+consent/security gates; those gates are implementation requirements, not an
+excuse for unexamined permanent exclusion. Record exact promoted IDs, before/
+after counts, test gates and genuine blockers for each subsequent tranche.

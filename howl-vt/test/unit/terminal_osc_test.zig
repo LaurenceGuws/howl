@@ -231,14 +231,25 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     };
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
+    const baseline = terminal.semanticSequence();
+    const baseline_content = terminal.contentSequence();
 
-    for (ignored, 0..) |command, index| {
+    for (ignored) |command| {
         var sequence_buf: [64]u8 = undefined;
-        const terminator = if (index % 2 == 0) "\x07" else "\x1b\\";
-        const sequence = try std.fmt.bufPrint(&sequence_buf, "\x1b]{d};ignored{s}", .{ command, terminator });
-        const split = sequence.len / 2;
-        try std.testing.expect(!(try terminal.feed(sequence[0..split])).stateChanged());
-        try std.testing.expect(!(try terminal.feed(sequence[split..])).stateChanged());
+        for ([_][]const u8{ "\x07", "\x1b\\" }) |terminator| {
+            const sequence = try std.fmt.bufPrint(&sequence_buf, "\x1b]{d};ignored{s}", .{ command, terminator });
+            // Exhaustively split every selector/terminator boundary. All 27
+            // reference branches are protocol no-ops; logging in Kitty is
+            // diagnostic, not a state transition or an OSC reply.
+            for (1..sequence.len) |split| {
+                try std.testing.expect(!(try terminal.feed(sequence[0..split])).stateChanged());
+                try std.testing.expect(!(try terminal.feed(sequence[split..])).stateChanged());
+                try std.testing.expectEqual(baseline, terminal.semanticSequence());
+                try std.testing.expectEqual(baseline_content, terminal.contentSequence());
+                try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+                try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
+            }
+        }
     }
     try std.testing.expect(!(try terminal.feed("\x1b]46;canceled\x18")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b]50;restart\x07")).stateChanged());
@@ -260,6 +271,17 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     try sequence.append(std.testing.allocator, 0x07);
     try std.testing.expect(!(try terminal.feed(sequence.items)).stateChanged());
     try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
+    try std.testing.expectEqual(baseline, terminal.semanticSequence());
+    try std.testing.expectEqual(baseline_content, terminal.contentSequence());
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+
+    // Oversized ignored controls must not poison the following valid OSC,
+    // visible text, or the caller's next deterministic observation turn.
+    try std.testing.expect((try terminal.feed("\x1b]2;continued\x1b\\Z")).stateChanged());
+    try std.testing.expectEqualStrings("continued", terminal.title().?);
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
 }
 
 test "working-directory report limit preserves the prior complete value" {
