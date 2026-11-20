@@ -841,3 +841,36 @@ of protected text, attributes, placeholder-image lifetime, stored-image
 lifetime and selection policy against this pinned reference. No new
 feature, security privilege, status promotion or GUI behavior was accepted.
 The full root ReleaseFast check/test/audit and protocol gates passed.
+
+## Partial DEC selective ED preserves independent physical graphics (20 November 2026)
+
+Pinned Kitty d4106ef2... distinguishes line-placeholder cell-image references
+from independent physical image placements. Its private CSI ? 0/1 J paths
+clear text with retained formatting and clean up only cell-image references
+on placeholder-bearing lines, whereas CSI ? 2 J invokes the graphics
+manager's full visible-image clear. Howl's DEC selective owner instead
+preserves DEC-protected cells, with virtual Kitty image projection derived
+from the canonical placeholder cells. The independent physical placements
+should not be unconditionally deleted by *partial* selective ED.
+
+Terminal no longer erases physical image placements for selective
+cursor-to-end and start-to-cursor display erasure. Screen remains sole
+owner of DEC protection and text admission, and erasing unprotected
+placeholders automatically removes their projected graphics. Full-display
+selective erase retains its existing full physical placement removal.
+No new second graphics model or broad cell-image deletion path was added.
+
+A terminal test was red with the prior partial selective physical erase and
+is green after the change. It covers ?0J, ?1J and ?2J separately with one
+virtual prototype, a live placeholder projection, an unrelated physical
+placement and unchanged decoded image allocations. Another test checks that
+protected placeholder text/image survives while an unprotected placeholder
+is erased, retaining image data. The first selective EL test independently
+proves the same protection-vs-physical-lifetime distinction.
+VT Debug/ReleaseFast, full root ReleaseFast check/test/audit, protocol
+validation, format and diff gates passed.
+
+The Kitty DECSED record remains partial/deferred: pinned Kitty's private
+text erasure preserves formatting rather than Howl's DEC protection, and
+reference cell-image/selection lifetimes require further qualification.
+No installed app or running session was changed.

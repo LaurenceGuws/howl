@@ -103,10 +103,10 @@ classifications:
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
   kitty_selective_erase_display_graphics: &howl_kitty_selective_erase_display_graphics {
     support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
-    residual: "Howl's CSI ? J retains DEC-protected text and erases intersecting physical placements. Pinned Kitty's private erasure clears text while preserving formatting, removes cell-image references on placeholder-bearing lines, and handles full display clear separately. Exact protection, selection, and image-lifetime parity remains unproved.",
+    residual: "Howl's CSI ? 0/1 J now retains independent physical image placements while unprotected Unicode-placeholder projections disappear through canonical cell erasure; CSI ? 2 J still clears physical placements. Pinned Kitty's private operation preserves cell formatting rather than DEC-protected text, and retires nonvirtual cell-image references specifically on placeholder-bearing rows. Exact formatting, protection, selection and graphics lifetime parity remains unproved.",
     rationale: *howl_erase_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-      symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
+      symbol: "terminal: DEC selective ED clears placeholder projection without erasing unrelated physical images"}}
   kitty_erase_line_graphics: &howl_kitty_erase_line_graphics {support: partial, disposition: deferred,
     owner: howl-vt, milestone: graphics,
     residual: Howl already removes intersecting image placements during ordinary line erasure; exact Kitty erase modes and stored-image lifetime remain to be qualified.,

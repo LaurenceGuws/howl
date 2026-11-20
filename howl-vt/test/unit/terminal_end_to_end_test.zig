@@ -2085,6 +2085,119 @@ test "terminal: Kitty Unicode placeholders project invisible virtual placements"
     try std.testing.expect(images.placement(0) == null);
 }
 
+test "terminal: DEC selective EL preserves protected placeholder and retires unprotected projection" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    const virtual_image = "\x1b_Ga=T,f=32,s=1,v=1,i=42,U=1,C=1,q=2;AQIDBA==\x1b\\";
+    const physical_image = "\x1b[2;5H\x1b_Ga=T,f=32,s=1,v=1,i=74,C=1,q=2;AQIDBA==\x1b\\";
+    try feed(&terminal, virtual_image ++ physical_image);
+    try feed(&terminal, "\x1b[1;1H\x1b[1\"q\x1b[38;5;42m" ++ placeholder ++
+        "\x1b[2\"q\x1b[1;3H" ++ placeholder ++ "\x1b[0m");
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 0).attrs.protected == .dec);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 2).attrs.protected == .none);
+
+    var before = terminal.images(0).placementIterator();
+    var initial_count: usize = 0;
+    while (before.next()) |_| initial_count += 1;
+    try std.testing.expectEqual(@as(usize, 3), initial_count);
+    const data_generation = terminal.images(0).content_generation;
+
+    try feed(&terminal, "\x1b[1;1H\x1b[?2K");
+    try std.testing.expectEqual(@as(u21, 0x10EEEE), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(data_generation, terminal.images(0).content_generation);
+    var after = terminal.images(0).placementIterator();
+    var retained_protected = false;
+    var retained_physical = false;
+    var erased_unprotected = true;
+    while (after.next()) |entry| {
+        if (entry.placement.row == 0 and entry.placement.col == 0) retained_protected = true;
+        if (entry.placement.row == 1 and entry.placement.col == 4) retained_physical = true;
+        if (entry.placement.row == 0 and entry.placement.col == 2) erased_unprotected = false;
+    }
+    try std.testing.expect(retained_protected);
+    try std.testing.expect(retained_physical);
+    try std.testing.expect(erased_unprotected);
+}
+
+test "terminal: DEC selective ED clears placeholder projection without erasing unrelated physical images" {
+    const cases = [_]struct {
+        command: []const u8,
+        cursor: []const u8,
+        physical_retained: bool,
+    }{
+        .{ .command = "\x1b[?0J", .cursor = "\x1b[1;1H", .physical_retained = true },
+        .{ .command = "\x1b[?1J", .cursor = "\x1b[2;1H", .physical_retained = true },
+        .{ .command = "\x1b[?2J", .cursor = "\x1b[2;1H", .physical_retained = false },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(10, 20);
+        try feed(&terminal, "\x1b_Ga=T,f=32,s=1,v=1,i=42,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b[1;5H\x1b_Ga=T,f=32,s=1,v=1,i=75,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b[1;1H\x1b[38;5;42m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m");
+        try consumeReplies(&terminal);
+        const before = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 2), before.imageCount());
+        var projected_before = before.placementIterator();
+        var visible_count: usize = 0;
+        while (projected_before.next()) |_| visible_count += 1;
+        try std.testing.expectEqual(@as(usize, 2), visible_count);
+
+        try feed(&terminal, case.cursor);
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+        const after = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 2), after.imageCount());
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        var projected_after = after.placementIterator();
+        var remaining: usize = 0;
+        while (projected_after.next()) |entry| {
+            try std.testing.expect(case.physical_retained);
+            try std.testing.expectEqual(@as(u16, 0), entry.placement.row);
+            try std.testing.expectEqual(@as(u16, 4), entry.placement.col);
+            remaining += 1;
+        }
+        try std.testing.expectEqual(@as(usize, if (case.physical_retained) 1 else 0), remaining);
+    }
+}
+
+test "terminal: selective ED retains DEC-protected projected image and retires only unprotected placeholder" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    try feed(&terminal, "\x1b_Ga=T,f=32,s=1,v=1,i=42,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+        "\x1b[1;1H\x1b[1\"q\x1b[38;5;42m" ++ placeholder ++
+        "\x1b[2\"q\x1b[1;3H" ++ placeholder ++ "\x1b[0m");
+    try consumeReplies(&terminal);
+    const image_generation = terminal.images(0).content_generation;
+    var initial = terminal.images(0).placementIterator();
+    try std.testing.expect(initial.next() != null);
+    try std.testing.expect(initial.next() != null);
+    try std.testing.expect(initial.next() == null);
+
+    try feed(&terminal, "\x1b[1;1H");
+    try std.testing.expect((try terminal.feed("\x1b[?0J")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 0x10EEEE), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 0).attrs.protected == .dec);
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 2));
+    const images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(image_generation, images.content_generation);
+    var remaining = images.placementIterator();
+    const protected_image = remaining.next() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 0), protected_image.placement.row);
+    try std.testing.expectEqual(@as(u16, 0), protected_image.placement.col);
+    try std.testing.expect(remaining.next() == null);
+}
+
 test "terminal: Kitty Unicode placeholders select placement id and high image byte" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

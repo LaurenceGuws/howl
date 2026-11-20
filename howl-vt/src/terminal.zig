@@ -3634,6 +3634,10 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .erase_display_below => |protected| {
             const screen = vt.screen_state.active();
             const changed = screen.eraseDisplay(.cursor_to_end, protected);
+            // DEC selective text erasure already removes projected placeholder
+            // images through the canonical cells. Pinned Kitty's partial
+            // private ED does not delete independent physical placements.
+            if (protected) return changed;
             const origin = graphicsScreenOrigin(vt);
             var graphics_changed = vt.graphics.erase(
                 graphicsBank(vt),
@@ -3655,6 +3659,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .erase_display_above => |protected| {
             const screen = vt.screen_state.active();
             const changed = screen.eraseDisplay(.start_to_cursor, protected);
+            if (protected) return changed;
             const origin = graphicsScreenOrigin(vt);
             var graphics_changed = vt.graphics.erase(
                 graphicsBank(vt),
