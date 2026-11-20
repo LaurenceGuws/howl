@@ -1189,3 +1189,56 @@ audits, declaration-aware protocol validation and inventory fixtures,
 formatting and diff checks passed. Remaining libvterm/iTerm2 tab
 bank-lifetime differences deserve their own re-audit before any
 broader source or catalogue change.
+
+## libvterm and iTerm2 tab ownership differs from Kitty and Howl (20 November 2026)
+
+The strict review of 10 unregistered tab records compared immutable
+libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3,
+iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 and
+Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8.
+
+Pinned libvterm src/state.c allocates a single VTermState tabstops
+array, and the same set_col_tabstop, clear_col_tabstop and tab
+functions operate on it before and after mode 1047/1049 switches.
+Line-info and grid callbacks select an alternate bank, but tabstops
+does not. Pinned iTerm2 VT100ScreenMutableState.m also has one
+self.tabStops collection, and showAltBuffer/showPrimaryBuffer swap
+currentGrid without swapping the tab collection. Its tab, backtab,
+set, clear and restore delegates read/write that one collection.
+Pinned Kitty instead owns separate main_tabstops and alt_tabstops,
+which Howl's per-Screen tab_stops state already matches.
+
+A new terminal-stream test proves Howl's primary custom stop is
+absent on alternate HT/CHT/CBT, that alternate C1/ESC HTS and TBC
+change only the alternate stops, and that primary custom stops
+survive entering/leaving alternate. The pinned libvterm/iTerm2
+handlers would share those changes across banks. The same test
+preserves the already accepted Kitty owner; no terminal-global
+refactor is appropriate without an explicitly selected contract.
+
+iTerm2 adds other observable differences: VT100ScreenMutableState.m
+prepopulates stops to 1000 columns (with a user-configurable default
+spacing), and clearing stops then resizing does not silently add
+stops in newly visible columns. Howl adds default stops on growth.
+Pinned iTerm2 appendTabAtCursor also emits TAB_FILLER/source text
+effects on otherwise blank spans, where Howl's canonical C0 HT and
+CSI CHT retain only cursor movement. iTerm2 TBC supports 0 and 3
+but ignores 5, contrary to pinned libvterm and Howl's TBC 5
+all-clear. These are not merely diagnostic or presentation differences.
+
+Previously marked full libvterm.c0.ht, libvterm.c1.hts,
+libvterm.csi.cht, libvterm.csi.cbt and libvterm.csi.tbc are now
+partial/excluded with exact global-tab-owner residuals. Previously
+full iterm2.c0.ht, iterm2.esc.hts, iterm2.csi.cht,
+iterm2.csi.cbt and iterm2.csi.tbc are similarly partial/excluded,
+with further notes for iTerm2 filler, offscreen stops and TBC 5.
+All original 672 record IDs and reference pins are unchanged.
+
+This checkpoint **does not remove features or introduce regressions**:
+it corrects ten historical full support overclaims. Count changes from
+289 full / 325 partial to 279 full / 335 partial, missing 48 and
+unassessed 10 unchanged. The preferred existing Howl per-screen
+tab-stop state remains stable and matches pinned Kitty. VT
+Debug/ReleaseFast, full root ReleaseFast check/test/audits,
+protocol validator/inventory fixtures, format and diff checks green.
+No installed binary, user session or compositor altered.

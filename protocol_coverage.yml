@@ -73,6 +73,16 @@ classifications:
     Howl keeps one VT-level-independent bounded cursor, savepoint, presentation, and tab-stop model; conflicting
     emulation gates, row crossing, command ambiguity, permissive parsing, unbounded retention, and multiple-cursor
     policy are outside the complete Howl family.
+  libvterm_global_tabs_difference: &howl_libvterm_global_tabs_difference >-
+    Pinned libvterm state.c owns one VTermState tabstops array shared by the main and alternate screen,
+    while Howl owns independent tab-stop arrays in its two Screens, matching pinned Kitty. Cursor movement,
+    tab set and clear remain implemented within a bank, but a change on one bank is not visible on the other.
+    Replacing this with terminal-global storage would break the already verified Kitty bank-local contract.
+  iterm2_global_tabs_difference: &howl_iterm2_global_tabs_difference >-
+    Pinned iTerm2 VT100ScreenMutableState retains one tabStops set while currentGrid changes between primary
+    and alternate. Howl's bank-local tab stops instead match Kitty. The iTerm2 input path additionally emits
+    a TAB_FILLER representation on blank spans; iTerm2 can preserve custom/offscreen stops outside current
+    geometry, so blanket parity is not established by matching simple cursor movement.
   metadata_policy_difference: &howl_metadata_policy_difference >-
     Howl retains exact bounded host-neutral title, icon, directory, remote-host, shell identity, and hyperlink state;
     reference-specific trust, sanitization, decoding, structured-session, pool-reclamation, and presentation policy is
@@ -238,10 +248,16 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.backspace, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
-          libvterm.c0.ht: {raw: "\\x09", effect: next tab stop, relevance: core, howl: {support: full,
+          libvterm.c0.ht: {raw: "\\x09", effect: next tab stop, relevance: core,
+            conditions: "libvterm HT uses the same tabstop array on both screen banks; Howl HT uses
+              the active bank's independent set, so primary custom stops are absent on alt.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_libvterm_global_tabs_difference,
+            residual: "HT cursor movement agrees in ordinary single-bank cases; shared primary/alternate
+              stop ownership does not.",
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           libvterm.c0.lf: {raw: "\\x0a", effect: line feed, conditions: LNM also returns carriage,
             relevance: core, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -274,10 +290,16 @@ references:
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
-          libvterm.c1.hts: {raw: "\\x88", effect: set tab stop, relevance: core, howl: {support: full,
+          libvterm.c1.hts: {raw: "\\x88", effect: set tab stop, relevance: core,
+            conditions: "libvterm C1 HTS updates terminal-global tabstops; Howl C1 HTS updates only
+              the active Screen tab-stop storage.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_libvterm_global_tabs_difference,
+            residual: "C1 encoding and local-column set agree, but a stop installed in alt must remain
+              available on primary in pinned libvterm and does not in Howl.",
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           libvterm.c1.ri: {raw: "\\x8d", effect: reverse index, relevance: core, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -472,10 +494,15 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
-          libvterm.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs, howl: {support: full,
+          libvterm.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
+            conditions: "libvterm forward-tab traversal reads terminal-global tabstops, including stops
+              installed on a previously active screen.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_libvterm_global_tabs_difference,
+            residual: "Default and bounded counts agree within a bank; cross-bank configured stops differ.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           libvterm.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display, conditions: Ps 0|1|2|3,
             howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -526,10 +553,16 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
-          libvterm.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {support: full,
+          libvterm.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs,
+            conditions: "libvterm backtab traversal shares one global stop table with primary and alternate
+              screens; Howl and pinned Kitty traverse the active bank's own set.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_libvterm_global_tabs_difference,
+            residual: "Single-bank counts and clamps are implemented; switches between banks with custom
+              tab stops yield different target columns.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           libvterm.csi.hpa: {raw: "CSI [Ps=1] `", effect: absolute column,
             conditions: clamps to the current logical row width, howl: {support: full,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
@@ -573,9 +606,13 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           libvterm.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stops, conditions: Ps 0|3|5,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_libvterm_global_tabs_difference,
+            residual: "TBC modes 0, 3 and 5 agree, unlike pinned Kitty mode 5. But clearing a stop in
+              one screen also removes it for the other in pinned libvterm and not in Howl.",
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           libvterm.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes,
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
             howl: *howl_ansi_first_parameter_excluded}
@@ -1010,10 +1047,16 @@ references:
             source: howl-vt/src/screen.zig, symbol: Screen.backspace, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
-          iterm2.c0.ht: {raw: "\\x09", effect: next tab stop, howl: {support: full,
+          iterm2.c0.ht: {raw: "\\x09", effect: next tab stop,
+            conditions: "Pinned iTerm2 shares tabStops across the two screen grids and emits a TAB_FILLER
+              side effect on a blank span; Howl retains cursor-only movement on active-bank stops.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_iterm2_global_tabs_difference,
+            residual: "Cross-bank configured stop lookup and iTerm2's blank-span tab text provenance are
+              absent; ordinary in-bank cursor tab movement remains supported.",
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+              symbol: "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells"}}}
           iterm2.c0.lf: {raw: "\\x0a", effect: line feed, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1159,10 +1202,16 @@ references:
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
-          iterm2.esc.hts: {raw: "ESC H", effect: set tab stop, howl: {support: full,
+          iterm2.esc.hts: {raw: "ESC H", effect: set tab stop,
+            conditions: "Pinned iTerm2 setTabStopAtCursor inserts into one shared tabStops set independently
+              of currentGrid, while Howl adds only to its active Screen's storage.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_iterm2_global_tabs_difference,
+            residual: "Setting a primary stop that survives into alternate and vice versa is not supported
+              by Howl's Kitty-compatible bank-local owner.",
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           iterm2.esc.ri: {raw: "ESC M", effect: reverse index, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1233,10 +1282,16 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
-          iterm2.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs, howl: {support: full,
+          iterm2.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
+            conditions: "Pinned iTerm2 repeats appendTabAtCursor against one shared tabStops set and can
+              insert TAB_FILLER on blank spans; Howl uses bank-local cursor-only movement.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_iterm2_global_tabs_difference,
+            residual: "Cross-bank tab-stop lookup and retained blank-span tab text differ. iTerm2's
+              optional tabsWrapAround host preference is also outside the fixed VT contract.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells"}}}
           iterm2.csi.da: {raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
             conditions: iTerm2 identity and optional attributes depend on emulation and host policy,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
@@ -1275,10 +1330,16 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           iterm2.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes, howl: *howl_ansi_mode_breadth_excluded}
-          iterm2.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stops, howl: {support: full,
+          iterm2.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stops,
+            conditions: "Pinned iTerm2 clears its one cross-bank tabStops collection for 0/current or 3/all,
+              ignoring mode 5; Howl clears only the active bank and also accepts libvterm TBC 5 as all.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_iterm2_global_tabs_difference,
+            residual: "Two independent divergences: clearing stops across screen switches and accepting
+              mode 5 where iTerm2 ignores it. The libvterm mode-5 contract remains supported.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: TBC 5 libvterm all-clear contradicts iTerm2 and Kitty no-op"}}}
           iterm2.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: multiline character and selection consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -1358,10 +1419,16 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.scrollDownRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI T scroll down preserves bounded margins, cursor and exact mutation"}}}
-          iterm2.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {support: full,
+          iterm2.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs,
+            conditions: "Pinned iTerm2 backTab walks one shared tabStops set after screen changes,
+              while Howl's Screen tab-stop array is bank-local.",
+            howl: {support: partial, disposition: excluded,
+            rationale: *howl_iterm2_global_tabs_difference,
+            residual: "Backward movement/count handling works within a bank but differs after
+              bank-specific stop edits; iTerm2 custom offscreen stop retention also differs on resize.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
           iterm2.csi.cha: {raw: "CSI [Ps=1] G", effect: absolute column,
             conditions: double-width current-line column addressing, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,

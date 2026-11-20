@@ -1050,7 +1050,9 @@ test "terminal: tab stops remain bank local and Kitty DECST8C resets only the ac
 
     // Change the alternate's tabs, then reset default spacing on that bank
     // only. Re-entering the alternate later preserves this reset.
-    try feed(&terminal, "\x1b[3g\x1b[13G\x1bH\r\t");
+    // C1 HTS and ESC HTS share libvterm's one set_col_tabstop owner.
+    // Both change only the active bank in Howl.
+    try feed(&terminal, "\x1b[3g\x1b[13G\x88\x1bH\r\t");
     try std.testing.expectEqual(@as(u16, 12), terminal.semanticView(0).cursor_col);
     // Only private CSI ? 5 W is DECST8C. An ordinary CSI 5 W or an
     // unknown private option must not reset the custom alternate stops.
@@ -1074,6 +1076,79 @@ test "terminal: tab stops remain bank local and Kitty DECST8C resets only the ac
     try std.testing.expectEqual(@as(u16, 24), terminal.semanticView(0).cursor_col);
     try feed(&terminal, "\x1b[?1049l\r\t");
     try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 20);
+    defer terminal.deinit();
+
+    // One custom primary stop, no default stops.
+    try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+
+    // Pinned libvterm and iTerm2 store one tab-stop owner outside the
+    // primary/alternate grid. Their alternate HT/CHT/CBT all see column 5;
+    // Howl and pinned Kitty retain separate banks, so alt starts at 8.
+    try feed(&terminal, "\x1b[?1049h\r\t");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\r\x1b[I");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[19G\x1b[Z");
+    try std.testing.expectEqual(@as(u16, 16), terminal.semanticView(0).cursor_col);
+
+    // Alternate HTS plus TBC alter only Howl's active bank. On the frozen
+    // libvterm/iTerm2 global owner these changes replace primary's stops.
+    try feed(&terminal, "\x1b[3g\x1b[13G\x1bH\r\t");
+    try std.testing.expectEqual(@as(u16, 12), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?1049l\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[20G\x1b[Z");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+
+    // The alternate remains independent after a second enter/exit.
+    try feed(&terminal, "\x1b[?1049h\r\t\x1b[?1049l\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: tab-stop growth differs from pinned iTerm2's retained offscreen stops" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[3g\r\t");
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+
+    // iTerm2 creates the default stop set out to 1000 columns. Clearing
+    // it removes even out-of-view stops. Howl allocates only 20 columns
+    // and after growth installs new 8-column stops at columns 24, etc.
+    try terminal.resize(2, 30);
+    try feed(&terminal, "\r\t");
+    try std.testing.expectEqual(@as(u16, 24), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: TBC 5 libvterm all-clear contradicts iTerm2 and Kitty no-op" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+    // iTerm2 execute TBC checks modes 0/current and 3/all only; Kitty
+    // likewise ignores mode 5, but libvterm accepts 5 as all-clear.
+    try feed(&terminal, "\x1b[5g\r\t");
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[H\t");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    // Pinned iTerm2 appendTabAtCursor inserts TAB_FILLER and publishes
+    // the tab through screenAppendScreenCharArray on a blank span.
+    // Howl's C0 HT / CSI CHT are cursor-only and do not retain it.
+    for (0..8) |col| {
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, @intCast(col)));
+    }
+    try feed(&terminal, "\r\x1b[I");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
 }
 
 test "terminal: TBC mode 5 selects libvterm all-clear instead of pinned Kitty no-op" {
