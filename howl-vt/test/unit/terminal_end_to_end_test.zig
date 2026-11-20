@@ -2362,3 +2362,144 @@ test "terminal: non-top margin scroll moves only images inside the region" {
     try std.testing.expectEqual(@as(u16, 3), terminal.images(0).placement(1).?.row);
     try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
 }
+
+test "terminal: CSI insert and delete lines leave graphics unchanged outside active margins" {
+    const image_at_third_row = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=19,C=1;AQIDBA==\x1b\\";
+    for ([_][]const u8{ "\x1b[L", "\x1b[M" }) |operation| {
+        for ([_]bool{ false, true }) |outside_horizontal| {
+            var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+            defer terminal.deinit();
+            try terminal.setCellPixelSize(1, 1);
+            try feed(&terminal, image_at_third_row);
+            try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+            try consumeReplies(&terminal);
+
+            if (outside_horizontal) {
+                // The cursor is in the vertical region but outside DECSLRM.
+                try feed(&terminal, "\x1b[?69h\x1b[3;6s\x1b[2;4r\x1b[2;1H");
+            } else {
+                // The cursor is above DECSTBM, independently of DECSLRM.
+                try feed(&terminal, "\x1b[2;4r\x1b[1;1H");
+            }
+            const placement_before = terminal.images(0).placement(0).?;
+            const generation_before = terminal.images(0).generation;
+            const image_generation_before = terminal.images(0).content_generation;
+            const content_before = terminal.contentSequence();
+            const row_before = terminal.semanticView(0).cursor_row;
+            const col_before = terminal.semanticView(0).cursor_col;
+
+            // Two halves ensure the decoder does not move graphics at a
+            // framing boundary before the line-edit admission decision.
+            try std.testing.expect(!(try terminal.feed(operation[0..2])).stateChanged());
+            try std.testing.expect(!(try terminal.feed(operation[2..])).stateChanged());
+            try std.testing.expectEqualDeep(placement_before, terminal.images(0).placement(0).?);
+            try std.testing.expectEqual(generation_before, terminal.images(0).generation);
+            try std.testing.expectEqual(image_generation_before, terminal.images(0).content_generation);
+            try std.testing.expectEqual(content_before, terminal.contentSequence());
+            try std.testing.expectEqual(row_before, terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(col_before, terminal.semanticView(0).cursor_col);
+            try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+            try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
+        }
+    }
+}
+
+test "terminal: CSI insert and delete lines move admitted graphics with retained text rows" {
+    const image_at_third_row = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=19,C=1;AQIDBA==\x1b\\";
+    for ([_]struct { bytes: []const u8, expected_row: u16 }{
+        .{ .bytes = "\x1b[L", .expected_row = 3 },
+        .{ .bytes = "\x1b[M", .expected_row = 1 },
+    }) |operation| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, image_at_third_row);
+        try consumeReplies(&terminal);
+        try feed(&terminal, "\x1b[2;4r\x1b[2;3H");
+        const before = terminal.images(0);
+        try std.testing.expectEqual(@as(u16, 2), before.placement(0).?.row);
+        const cursor_row = terminal.semanticView(0).cursor_row;
+        const cursor_col = terminal.semanticView(0).cursor_col;
+        try std.testing.expect((try terminal.feed(operation.bytes)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(operation.expected_row, after.placement(0).?.row);
+        try std.testing.expect(after.generation > before.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+        try std.testing.expectEqual(cursor_row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u16, 2), cursor_col);
+    }
+}
+
+test "terminal: CSI row scrolls respect horizontal margins for graphics as for cells" {
+    const outside = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=19,C=1;AQIDBA==\x1b\\";
+    const inside = "\x1b[3;4H\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1;AQIDBA==\x1b\\";
+    for ([_]struct { bytes: []const u8, expected_row: u16 }{
+        .{ .bytes = "\x1b[L", .expected_row = 3 },
+        .{ .bytes = "\x1b[M", .expected_row = 1 },
+        .{ .bytes = "\x1b[S", .expected_row = 1 },
+        .{ .bytes = "\x1b[T", .expected_row = 3 },
+    }) |operation| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[3;1HO\x1b[3;4HI");
+        try feed(&terminal, outside ++ inside);
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(1).?.row);
+        try feed(&terminal, "\x1b[?69h\x1b[3;6s\x1b[2;4r\x1b[2;5H");
+        const image_generation = terminal.images(0).content_generation;
+
+        try std.testing.expect((try terminal.feed(operation.bytes)).stateChanged());
+        const images = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 2), images.placementCount());
+        try std.testing.expectEqual(@as(u16, 2), images.placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 0), images.placement(0).?.col);
+        try std.testing.expectEqual(operation.expected_row, images.placement(1).?.row);
+        try std.testing.expectEqual(@as(u16, 3), images.placement(1).?.col);
+        try std.testing.expectEqual(@as(u21, 'O'), terminal.semanticView(0).cellAt(2, 0));
+        try std.testing.expectEqual(@as(u21, 'I'), terminal.semanticView(0).cellAt(operation.expected_row, 3));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(2, 3));
+        const cursor_col: u16 = if (operation.bytes[2] == 'L' or operation.bytes[2] == 'M') 2 else 4;
+        try std.testing.expectEqual(cursor_col, terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(image_generation, images.content_generation);
+    }
+}
+
+test "terminal: full-screen LF scrolls graphics both with and without retained history" {
+    for ([_]u16{ 0, 2 }) |history_capacity| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, history_capacity);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=27,C=1;AQIDBA==\x1b\\");
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
+        const source_generation = terminal.images(0).content_generation;
+        try std.testing.expect((try terminal.feed("\n")).stateChanged());
+        try std.testing.expectEqual(history_capacity != 0, terminal.semanticView(0).history_count > 0);
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqual(source_generation, terminal.images(0).content_generation);
+    }
+}
+
+test "terminal: horizontal margin row edits retire only straddling graphics placements" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[3;2H\x1b_Ga=T,f=32,s=2,v=1,i=31,C=1;AQIDBAUGBwg=\x1b\\");
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    const pixels = terminal.images(0).content_generation;
+    try feed(&terminal, "\x1b[?69h\x1b[3;6s\x1b[2;4r\x1b[2;3H");
+    try std.testing.expect((try terminal.feed("\x1b[L")).stateChanged());
+    // One image spans the left DECSLRM edge. Translating it wholesale would
+    // move pixels outside the text region, so keep data and drop placement.
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expectEqual(pixels, terminal.images(0).content_generation);
+}

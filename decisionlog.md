@@ -546,3 +546,34 @@ file and remote execution belong to the host/PTY and still require explicit
 consent/security gates; those gates are implementation requirements, not an
 excuse for unexamined permanent exclusion. Record exact promoted IDs, before/
 after counts, test gates and genuine blockers for each subsequent tranche.
+
+## CSI row edits own cursor admission and graphics geometry (20 November 2026)
+
+A differential review of the pinned Kitty CSI IL/DL/SU/SD handlers and current
+Howl state transitions exposed real runtime defects, separate from stale
+protocol classifications:
+
+- Screen declined CSI L/M when the cursor was outside DECSTBM or DECSLRM,
+  but Terminal still scrolled Kitty image placements. Graphics now follow
+  precisely the Screen admission decision, including a rejected pending-wrap
+  operation that only cancels wrap.
+- Accepted CSI L/M return the cursor to column zero (the active left margin
+  when DECSLRM is enabled), matching Kitty's pinned carriage-return effect.
+  Rejected edits leave the cursor where it was.
+- Text scrolls constrained to horizontal margins no longer move image
+  placements outside those columns. Entirely contained placements scroll;
+  straddling placements are retired without deleting image data, since one
+  image anchor cannot represent a partially clipped row move.
+- Full-screen LF without actual retained history now scrolls graphics with
+  text. The previous shortcut incorrectly skipped graphics whenever vertical
+  margins covered the screen, even when history was disabled or the row move
+  was limited by horizontal margins. Normal retained-history views continue
+  to follow their absolute row origin without duplicate image translation.
+
+Red-before/green-after VT tests cover CSI L/M rejection, both admitted line
+edits and cursor homing, CSI S/T column-limited motion, boundary-crossing
+image preservation/retirement, and LF with/without history. The accepted
+Kitty IL/DL/SU/SD catalogue records retain **partial/deferred**: exact pinned
+multicell, selection and graphics/history semantics still need independent
+proof. This checkpoint improves actual terminal behavior without altering
+protocol status counts, host permissions or running GUI instances.

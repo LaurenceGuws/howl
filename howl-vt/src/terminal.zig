@@ -3753,25 +3753,17 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .delete_chars => |count| return vt.screen_state.active().deleteChars(count),
         .insert_lines => |count| {
             const screen = vt.screen_state.active();
+            const admitted = cursorWithinLineEditMargins(screen);
             const changed = screen.insertLines(count);
-            return vt.graphics.scroll(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                graphicsScreenOrigin(vt) + screen.scrollBottom(),
-                @max(count, 1),
-                false,
-            ) or changed;
+            if (!admitted) return changed;
+            return scrollGraphicsRegion(vt, screen, screen.cursor.row, screen.scrollBottom(), @max(count, 1), false) or changed;
         },
         .delete_lines => |count| {
             const screen = vt.screen_state.active();
+            const admitted = cursorWithinLineEditMargins(screen);
             const changed = screen.deleteLines(count);
-            return vt.graphics.scroll(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.cursor.row,
-                graphicsScreenOrigin(vt) + screen.scrollBottom(),
-                @max(count, 1),
-                true,
-            ) or changed;
+            if (!admitted) return changed;
+            return scrollGraphicsRegion(vt, screen, screen.cursor.row, screen.scrollBottom(), @max(count, 1), true) or changed;
         },
         .scroll_up_lines => |count| {
             const screen = vt.screen_state.active();
@@ -3792,24 +3784,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 return progress.completed != 0;
             }
             const changed = screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
-            return vt.graphics.scroll(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.scroll_top,
-                graphicsScreenOrigin(vt) + screen.scrollBottom(),
-                count,
-                true,
-            ) or changed;
+            return scrollGraphicsRegion(vt, screen, screen.scroll_top, screen.scrollBottom(), count, true) or changed;
         },
         .scroll_down_lines => |count| {
             const screen = vt.screen_state.active();
             const changed = screen.scrollDownRegion(screen.scroll_top, screen.scrollBottom(), count);
-            return vt.graphics.scroll(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.scroll_top,
-                graphicsScreenOrigin(vt) + screen.scrollBottom(),
-                count,
-                false,
-            ) or changed;
+            return scrollGraphicsRegion(vt, screen, screen.scroll_top, screen.scrollBottom(), count, false) or changed;
         },
         .forward_index => {
             const screen = vt.screen_state.active();
@@ -3846,13 +3826,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const scrolls = screen.cursor.row == screen.scroll_top;
             const changed = screen.reverseIndex();
             if (!scrolls) return changed;
-            return vt.graphics.scroll(
-                graphicsBank(vt),
-                graphicsScreenOrigin(vt) + screen.scroll_top,
-                graphicsScreenOrigin(vt) + screen.scrollBottom(),
-                1,
-                false,
-            ) or changed;
+            return scrollGraphicsRegion(vt, screen, screen.scroll_top, screen.scrollBottom(), 1, false) or changed;
         },
         .scroll_down_from_history => |count| return vt.screen_state.active().scrollDownFromHistory(count),
         .cursor_up,
@@ -3971,24 +3945,58 @@ fn applyInputLineFeed(vt: *Terminal, next_line: bool) error{ OutOfMemory, Histor
     };
     defer active.discardLineFeed(&prepared);
     const scrolls = prepared.scrolls;
-    const history_scroll = !vt.screen_state.alt_active and active.scroll_top == 0 and
-        active.scrollBottom() == active.rows - 1;
+    const history_scroll = fullScreenHistoryScroll(vt, active);
     if (!vt.screen_state.alt_active) vt.screen_state.primary.finalizeOutputLine();
     active.commitLineFeed(&prepared, next_line);
     if (scrolls and !history_scroll) {
-        const changed = vt.graphics.scroll(
-            graphicsBank(vt),
-            graphicsScreenOrigin(vt) + active.scroll_top,
-            graphicsScreenOrigin(vt) + active.scrollBottom(),
-            1,
-            true,
-        );
+        const changed = scrollGraphicsRegion(vt, active, active.scroll_top, active.scrollBottom(), 1, true);
         std.debug.assert(!changed or vt.graphics.generation() != 0);
     }
 }
 
 fn graphicsBank(vt: *const Terminal) graphics_mod.Bank {
     return if (vt.screen_state.alt_active) .alternate else .primary;
+}
+
+// Only a full-width primary scroll backed by retained history can move the
+// graphics viewport without translating individual placements. An otherwise
+// identical full-screen LF with history disabled must move placements with
+// the cell rows, as must a scroll within narrow horizontal margins.
+fn fullScreenHistoryScroll(vt: *const Terminal, screen: *const Screen) bool {
+    return !vt.screen_state.alt_active and screen.history_capacity != 0 and
+        screen.scroll_top == 0 and screen.scrollBottom() == screen.rows - 1 and
+        (!screen.left_right_margin_mode or (screen.left_margin == 0 and screen.right_margin + 1 == screen.cols));
+}
+
+fn scrollGraphicsRegion(
+    vt: *Terminal,
+    screen: *const Screen,
+    top: u16,
+    bottom: u16,
+    count: u16,
+    upward: bool,
+) bool {
+    const origin = graphicsScreenOrigin(vt);
+    if (screen.left_right_margin_mode and (screen.left_margin != 0 or screen.right_margin + 1 != screen.cols))
+        return vt.graphics.scrollColumns(
+            graphicsBank(vt),
+            origin + top,
+            origin + bottom,
+            screen.left_margin,
+            screen.right_margin,
+            count,
+            upward,
+        );
+    return vt.graphics.scroll(graphicsBank(vt), origin + top, origin + bottom, count, upward);
+}
+
+// A rejected CSI L/M must not move image placements while Screen retains its
+// text rows. Match Screen's vertical and horizontal margin admission exactly;
+// the Screen operation still owns pending-wrap cancellation on rejection.
+fn cursorWithinLineEditMargins(screen: *const Screen) bool {
+    if (screen.cursor.row < screen.scroll_top or screen.cursor.row > screen.scrollBottom()) return false;
+    return !screen.left_right_margin_mode or
+        (screen.cursor.col >= screen.left_margin and screen.cursor.col <= screen.right_margin);
 }
 
 fn graphicsScreenOrigin(vt: *const Terminal) u64 {
@@ -4720,14 +4728,14 @@ const TerminalStream = struct {
             var remaining = occupied_rows -| 1;
             while (remaining != 0) : (remaining -= 1) {
                 const scrolls = screen.cursor.row == screen.scrollBottom();
-                const history_scroll = !self.terminal.screen_state.alt_active and screen.scroll_top == 0 and
-                    screen.scrollBottom() == screen.rows - 1;
+                const history_scroll = fullScreenHistoryScroll(self.terminal, screen);
                 screen.lineFeed();
                 if (scrolls and !history_scroll) {
-                    const graphics_changed = self.terminal.graphics.scroll(
-                        bank,
-                        graphicsScreenOrigin(self.terminal) + screen.scroll_top,
-                        graphicsScreenOrigin(self.terminal) + screen.scrollBottom(),
+                    const graphics_changed = scrollGraphicsRegion(
+                        self.terminal,
+                        screen,
+                        screen.scroll_top,
+                        screen.scrollBottom(),
                         1,
                         true,
                     );
@@ -4868,7 +4876,6 @@ fn applyKittyGraphicsCursorAdvance(
     advance: graphics_mod.CursorAdvance,
 ) bool {
     const screen = terminal.screen_state.active();
-    const bank = graphicsBank(terminal);
     const cursor_before = screen.cursor;
     const wrap_before = screen.wrap_pending;
     var graphics_changed = false;
@@ -4876,14 +4883,14 @@ fn applyKittyGraphicsCursorAdvance(
     var remaining = advance.rows -| 1;
     while (remaining != 0) : (remaining -= 1) {
         const scrolls = screen.cursor.row == screen.scrollBottom();
-        const history_scroll = !terminal.screen_state.alt_active and screen.scroll_top == 0 and
-            screen.scrollBottom() == screen.rows - 1;
+        const history_scroll = fullScreenHistoryScroll(terminal, screen);
         screen.lineFeed();
         if (scrolls and !history_scroll) {
-            graphics_changed = terminal.graphics.scroll(
-                bank,
-                graphicsScreenOrigin(terminal) + screen.scroll_top,
-                graphicsScreenOrigin(terminal) + screen.scrollBottom(),
+            graphics_changed = scrollGraphicsRegion(
+                terminal,
+                screen,
+                screen.scroll_top,
+                screen.scrollBottom(),
                 1,
                 true,
             ) or graphics_changed;

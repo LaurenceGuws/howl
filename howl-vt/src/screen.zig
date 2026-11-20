@@ -4005,26 +4005,34 @@ pub const Screen = struct {
 
     /// Insert at least one line at an admitted cursor inside both active regions.
     ///
-    /// Counts clamp to the remaining region. An outside cursor changes only a
-    /// pending-wrap state; the result reports exact row or wrap mutation.
+    /// Counts clamp to the remaining region; accepted IL returns the cursor to
+    /// the left edge, as in the pinned Kitty CSI line-edit handler. An outside
+    /// cursor changes only pending wrap and keeps its position unchanged.
     pub fn insertLines(self: *Screen, count: u16) bool {
         const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
         if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
         if (!self.cursorWithinHorizontalMargins()) return changed;
-        return self.scrollDownRegion(self.cursor.row, bottom, @max(count, 1)) or changed;
+        const scrolled = self.scrollDownRegion(self.cursor.row, bottom, @max(count, 1));
+        const previous_col = self.cursor.col;
+        self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
+        return scrolled or changed or self.cursor.col != previous_col;
     }
 
     /// Delete at least one line at an admitted cursor inside both active regions.
     ///
-    /// Counts clamp to the remaining region. An outside cursor changes only a
-    /// pending-wrap state; the result reports exact row or wrap mutation.
+    /// Counts clamp to the remaining region; accepted DL returns the cursor to
+    /// the left edge, as in the pinned Kitty CSI line-edit handler. An outside
+    /// cursor changes only pending wrap and keeps its position unchanged.
     pub fn deleteLines(self: *Screen, count: u16) bool {
         const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
         if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
         if (!self.cursorWithinHorizontalMargins()) return changed;
-        return self.scrollUpRegion(self.cursor.row, bottom, @max(count, 1)) or changed;
+        const scrolled = self.scrollUpRegion(self.cursor.row, bottom, @max(count, 1));
+        const previous_col = self.cursor.col;
+        self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
+        return scrolled or changed or self.cursor.col != previous_col;
     }
 
     fn cursorWithinHorizontalMargins(self: *const Screen) bool {

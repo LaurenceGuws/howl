@@ -1374,6 +1374,23 @@ pub const Plane = struct {
         count: u16,
         upward: bool,
     ) bool {
+        return self.scrollColumns(bank, top, bottom, 0, std.math.maxInt(u32), count, upward);
+    }
+
+    /// Scroll only the cells admitted by a horizontal region. Keep placements
+    /// completely outside it stationary; a placement straddling its boundary
+    /// cannot be translated as one image and loses only its placement, not
+    /// its retained decoded image data.
+    pub fn scrollColumns(
+        self: *Plane,
+        bank: Bank,
+        top: u64,
+        bottom: u64,
+        left: u32,
+        right: u32,
+        count: u16,
+        upward: bool,
+    ) bool {
         if (count == 0) return false;
         var changed = false;
         var index: usize = 0;
@@ -1381,6 +1398,16 @@ pub const Plane = struct {
             const retained = &self.placements[index];
             if (retained.virtual or retained.bank != bank or retained.row < top or retained.row > bottom) {
                 index += 1;
+                continue;
+            }
+            const placement_right: u32 = @as(u32, retained.col) + retained.cols - 1;
+            if (retained.col > right or placement_right < left) {
+                index += 1;
+                continue;
+            }
+            if (retained.col < left or placement_right > right) {
+                self.removePlacement(index);
+                changed = true;
                 continue;
             }
             if (upward) {

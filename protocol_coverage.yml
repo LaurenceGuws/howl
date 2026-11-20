@@ -3097,15 +3097,17 @@ references:
           kitty.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Howl admits edits only inside active margins, returns the cursor to the active left edge and scrolls whole-contained image placements with text while preserving outside placements; exact Kitty multiline boundary repair, selection invalidation and full-row policy remain to be qualified.",
               source: howl-vt/src/screen.zig, symbol: Screen.insertLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: CSI row scrolls respect horizontal margins for graphics as for cells"}}}
           kitty.csi.dl: {raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Howl admits edits only inside active margins, returns the cursor to the active left edge and scrolls whole-contained image placements with text while preserving outside placements; exact Kitty multiline boundary repair, selection invalidation and full-row policy remain to be qualified.",
               source: howl-vt/src/screen.zig, symbol: Screen.deleteLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: CSI row scrolls respect horizontal margins for graphics as for cells"}}}
           kitty.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -3329,15 +3331,17 @@ references:
           kitty.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: Kitty shifts full rows plus graphics and history references, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Howl scrolls bounded images and text together across the admitted column region, retaining decoded image data; exact Kitty graphics/history, selection and multicell behavior still require differential proof.",
               source: howl-vt/src/screen.zig, symbol: Screen.scrollUpRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: CSI row scrolls respect horizontal margins for graphics as for cells"}}}
           kitty.csi.sd: {raw: "CSI [Ps=1] T", effect: scroll down,
             conditions: Kitty shifts full rows plus graphics references, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Howl scrolls bounded images and text together across the admitted column region, retaining decoded image data; exact Kitty placement clipping, selection and multicell behavior still require differential proof.",
               source: howl-vt/src/screen.zig, symbol: Screen.scrollDownRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI T scroll down preserves bounded margins, cursor and exact mutation"}}}
+                symbol: "terminal: CSI row scrolls respect horizontal margins for graphics as for cells"}}}
           kitty.csi.scrollback_fill: {raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
             conditions: Howl restores bounded primary text rows and retained cell and line state but has no graphics plane,
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/screen.zig,
