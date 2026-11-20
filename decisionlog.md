@@ -420,3 +420,18 @@ configured defaults across both banks, visibility and cursor colors.
 All 617 proof-bearing records resolved to named declarations after the fix;
 declaration-aware validation is a separate later change, not established by
 path-only protocol validation. Reference source line anchors remain intact.
+
+## Protocol source citations follow their semantic owners (20 November 2026)
+
+The protocol census's implementation source/symbol fields identify the
+function that actually performs each action, not a stale pre-extraction
+wrapper or a read-only observation view. The 153 verified stale citations
+now resolve to Screen, color_control, mode_report, modes, properties,
+iterm_control, charset, consequences and true Terminal action methods.
+Twelve additional observation-view citations now point to the actual color
+or graphics action (iTerm SetColors retains its distinct command owner).
+All 165 normalized citations changed without changing support/disposition,
+reference pins, test proofs or VT behavior. A declaration preflight resolved
+all 614 cited owners; a maintained negative-tested validator must enforce
+that invariant separately, without mistaking a matching method for complete
+semantic protocol equivalence.
