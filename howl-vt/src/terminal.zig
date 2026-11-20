@@ -3756,6 +3756,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const admitted = cursorWithinLineEditMargins(screen);
             const changed = screen.insertLines(count);
             if (!admitted) return changed;
+            advanceIdentity(&vt.structural_edit_generation);
             return scrollGraphicsRegion(vt, screen, screen.cursor.row, screen.scrollBottom(), @max(count, 1), false) or changed;
         },
         .delete_lines => |count| {
@@ -3763,6 +3764,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const admitted = cursorWithinLineEditMargins(screen);
             const changed = screen.deleteLines(count);
             if (!admitted) return changed;
+            advanceIdentity(&vt.structural_edit_generation);
             return scrollGraphicsRegion(vt, screen, screen.cursor.row, screen.scrollBottom(), @max(count, 1), true) or changed;
         },
         .scroll_up_lines => |count| {
@@ -6336,6 +6338,13 @@ pub const Terminal = struct {
             return self.terminal().contentSequence();
         }
 
+        /// Counts admitted CSI IL/DL row-structure edits independently of
+        /// ordinary text writes and scrolling. The embedding caller owns any
+        /// selection response to this canonical edit fact.
+        pub fn structuralEditGeneration(self: *const Observation) u64 {
+            return self.terminal().structural_edit_generation;
+        }
+
         /// Borrows canonical cells and cursor state at one history offset.
         pub fn semanticView(self: *const Observation, history_offset: u32) SemanticView {
             return self.terminal().semanticView(history_offset);
@@ -6492,6 +6501,7 @@ pub const Terminal = struct {
     occurrence_identity: u64,
     semantic_sequence: u64 = 1,
     content_sequence: u64 = 1,
+    structural_edit_generation: u64 = 1,
     resize_prepared: bool = false,
     // -------------------------------------------------------------------------
     // Construction and feed

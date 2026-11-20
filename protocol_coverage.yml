@@ -3097,17 +3097,17 @@ references:
           kitty.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Howl admits edits only inside active margins, returns the cursor to the active left edge and scrolls whole-contained image placements with text while preserving outside placements; exact Kitty multiline boundary repair, selection invalidation and full-row policy remain to be qualified.",
+              residual: "Howl now preserves complete OSC 66 multiline leads at full-width IL insertion boundaries and clears the direct app's selection on admitted CSI L, while retaining exact cursor and margin admission. Full Kitty multiline, selection and graphics behavior across all resize, history and clipping cases still needs reference qualification.",
               source: howl-vt/src/screen.zig, symbol: Screen.insertLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI row scrolls respect horizontal margins for graphics as for cells"}}}
+                symbol: "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M"}}}
           kitty.csi.dl: {raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Howl admits edits only inside active margins, returns the cursor to the active left edge and scrolls whole-contained image placements with text while preserving outside placements; exact Kitty multiline boundary repair, selection invalidation and full-row policy remain to be qualified.",
+              residual: "Howl retains intact OSC 66 multiline clusters below the deleted region, clears crossing fragments, and clears the direct app's selection on admitted CSI M. Exact Kitty multiline, selection and graphics behavior across all resize, history and clipping cases still needs reference qualification.",
               source: howl-vt/src/screen.zig, symbol: Screen.deleteLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI row scrolls respect horizontal margins for graphics as for cells"}}}
+                symbol: "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M"}}}
           kitty.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,

@@ -598,3 +598,31 @@ and the same height/width/x/y cell provenance. VT Debug/ReleaseFast and the
 root ReleaseFast check/test, audit and protocol gates passed. This is actual
 terminal behavior, not an index promotion: Kitty's `partial` status remains
 until selection and further multiline/graphics semantics are proven.
+
+## Admitted CSI line edits invalidate direct-app selections (20 November 2026)
+
+Kitty's pinned `screen_insert_lines` and `screen_delete_lines` handlers
+clear selections after an admitted edit, even when the selected row itself
+is not rewritten. Howl's local selection owner previously validated only
+bank/columns/history retention, allowing stale ranges to survive an in-place
+CSI L/M row rearrangement.
+
+VT now exposes a read-only `Observation.structuralEditGeneration` counter,
+advanced only after Screen admits CSI L or M within active vertical and
+horizontal margins. No selection state enters VT, and ordinary writes,
+scrolling, fragmented or rejected line edits do not increment the counter.
+The local app worker binds each new manual or search-result selection to the
+observed generation; a later changed generation clears the selected range
+and triggers immutable selection-overlay publication without blocking PTY
+progress. Attempted extension of a stale selection is rejected before
+its previous endpoints can be applied. Existing bank/history/geometry
+invalidation remains intact.
+
+VT and app in-process tests prove the positive and negative turns, including
+rejected line edits, live output preserving selection, admitted IL/DL
+invalidating the prior range, and a fresh selection surviving idle service.
+The full root Debug/ReleaseFast affected-package tests, ReleaseFast check/test,
+project audit, declaration-aware protocol validator, Zig format and diff gates
+were green. This is a real local-app behavior improvement, not a claim of
+full pinned Kitty selection/UI/graphics parity. No installed binary or active
+user window was changed.

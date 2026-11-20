@@ -317,6 +317,7 @@ const State = struct {
     viewport: HistoryViewport = .{},
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
+    selection_structural_edit_generation: u64 = 0,
     selection_failure: ?SelectionError = null,
     paint: selection.Paint = .{},
     search: find.Find = .{},
@@ -589,6 +590,8 @@ const State = struct {
             .start => self.selected = try selection.start(view, row_index, intent.point.col),
             .extend => {
                 const range = self.selected orelse return;
+                if (self.selection_structural_edit_generation != self.observe().structuralEditGeneration())
+                    return error.SelectionContextChanged;
                 switch (range.validity(current)) {
                     .valid => {},
                     .context_changed => return error.SelectionContextChanged,
@@ -600,14 +603,40 @@ const State = struct {
             .row => self.selected = try selection.visualRow(view, @intCast(row_index)),
             .clear => {},
         }
+        if (self.selected != null) self.selection_structural_edit_generation = self.observe().structuralEditGeneration();
     }
     fn selectMatch(self: *State, range: selection.Range) void {
         self.selected = range;
+        self.selection_structural_edit_generation = self.observe().structuralEditGeneration();
         self.selection_failure = null;
         const live = self.observe().semanticView(0);
         const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
         self.viewport.seek(@intCast(@min(@as(i64, live.history_count), @max(0, top - range.anchor.row))), live.history_count, live.history_row_base, live.is_alternate_screen);
         self.output_gate.pending = true;
+    }
+
+    // A structural CSI L/M rearranges rows in place, even when geometry and
+    // history identity do not change. Kitty clears its selection on admission;
+    // an ordinary text write or a history viewport scroll must not do so.
+    fn reconcileSelection(self: *State, observation: *const vt.Terminal.Observation, live: vt.Terminal.SemanticView) void {
+        const range = self.selected orelse return;
+        if (observation.structuralEditGeneration() != self.selection_structural_edit_generation) {
+            self.selected = null;
+            self.selection_failure = error.SelectionContextChanged;
+            self.output_gate.pending = true;
+            return;
+        }
+        switch (range.validity(selection.Context.fromView(live))) {
+            .valid => {},
+            .context_changed => {
+                self.selected = null;
+                self.selection_failure = error.SelectionContextChanged;
+            },
+            .evicted => {
+                self.selected = null;
+                self.selection_failure = error.SelectionEvicted;
+            },
+        }
     }
     fn applyFind(self: *State, request: find.Request) void {
         self.selection_serial = request.serial;
@@ -813,17 +842,7 @@ const State = struct {
         const live = observation.semanticView(0);
         self.viewport.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
-        if (self.selected) |range| switch (range.validity(selection.Context.fromView(live))) {
-            .valid => {},
-            .context_changed => {
-                self.selected = null;
-                self.selection_failure = error.SelectionContextChanged;
-            },
-            .evicted => {
-                self.selected = null;
-                self.selection_failure = error.SelectionEvicted;
-            },
-        };
+        self.reconcileSelection(observation, live);
         const search_changed = self.search.step(observation) catch |failure| failed: {
             self.search.fail(failure);
             break :failed true;
@@ -1170,6 +1189,71 @@ test "projection retry clears only worker output blockage and restores a credit"
     try std.testing.expect(state.credit.load(.acquire));
     try std.testing.expect(!state.new_frame.load(.acquire));
     try std.testing.expectEqual(before, core.terminal.observation().semanticSequence());
+}
+
+test "selected terminal text survives ordinary output but not admitted CSI line edits" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var core: pty_vt.Core = .{
+        .allocator = std.testing.allocator,
+        .transport = undefined,
+        .terminal = undefined,
+    };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 8, 0);
+    defer core.terminal.deinit();
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .io = threaded.io(),
+        .core = &core,
+        .projection = undefined,
+        .history_capacity = 0,
+        .wake_fd = -1,
+        .event_type = 0,
+    };
+    try std.testing.expect((try core.terminal.feed("alpha")).stateChanged());
+    const context = selection.Context.fromView(core.terminal.semanticView(0));
+    try state.applySelection(.{
+        .serial = 1,
+        .kind = .word,
+        .context = context,
+        .point = .{ .row = 0, .col = 2 },
+    });
+    try std.testing.expect(state.selected != null);
+    const generation = core.terminal.observation().structuralEditGeneration();
+    try std.testing.expectEqual(generation, state.selection_structural_edit_generation);
+
+    // The row above the active DEC margins is unaffected. Ordinary output and
+    // a rejected CSI L cannot invalidate a selected word on that row.
+    try std.testing.expect((try core.terminal.feed("\x1b[2;4r\x1b[1;1H\x1b[L\x1b[2;1Hz")).stateChanged());
+    state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
+    try std.testing.expect(state.selected != null);
+    try std.testing.expectEqual(generation, core.terminal.observation().structuralEditGeneration());
+
+    // The command is admitted on row two, even though the selected text on
+    // row one is unchanged. Kitty clears all selection on structural IL/DL.
+    try std.testing.expect((try core.terminal.feed("\x1b[2;1H\x1b[L")).stateChanged());
+    state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
+    try std.testing.expect(state.selected == null);
+    try std.testing.expectEqual(error.SelectionContextChanged, state.selection_failure.?);
+    try std.testing.expect(state.output_gate.pending);
+
+    // Re-selecting after the edit binds the new generation, so an idle turn
+    // does not repeatedly discard the new selection.
+    state.output_gate.pending = false;
+    try state.applySelection(.{
+        .serial = 2,
+        .kind = .word,
+        .context = selection.Context.fromView(core.terminal.semanticView(0)),
+        .point = .{ .row = 0, .col = 2 },
+    });
+    state.output_gate.pending = false;
+    state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
+    try std.testing.expect(state.selected != null);
+    try std.testing.expect(!state.output_gate.pending);
+    try std.testing.expect((try core.terminal.feed("\x1b[2;1H\x1b[M")).stateChanged());
+    state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
+    try std.testing.expect(state.selected == null);
+    try std.testing.expectEqual(error.SelectionContextChanged, state.selection_failure.?);
 }
 
 test "oversized paste fails at admission and leaves the terminal worker alive" {

@@ -2466,6 +2466,26 @@ test "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M" {
     }
 }
 
+test "terminal: structural line-edit generation distinguishes admission from ordinary output" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    const before = terminal.observation().structuralEditGeneration();
+    try feed(&terminal, "ABCD\x1b[2;4r\x1b[1;1H");
+    try std.testing.expectEqual(before, terminal.observation().structuralEditGeneration());
+    try std.testing.expect(!(try terminal.feed("\x1b[L")).stateChanged());
+    try std.testing.expectEqual(before, terminal.observation().structuralEditGeneration());
+    try feed(&terminal, "\x1b[2;2H");
+    try std.testing.expect(!(try terminal.feed("\x1b[")).stateChanged());
+    try std.testing.expectEqual(before, terminal.observation().structuralEditGeneration());
+    try feed(&terminal, "L");
+    try std.testing.expectEqual(before + 1, terminal.observation().structuralEditGeneration());
+    try feed(&terminal, "\x1b[M");
+    try std.testing.expectEqual(before + 2, terminal.observation().structuralEditGeneration());
+    try feed(&terminal, "\x1b[S\x1b[TQ");
+    try std.testing.expectEqual(before + 2, terminal.observation().structuralEditGeneration());
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+}
+
 test "terminal: CSI row scrolls respect horizontal margins for graphics as for cells" {
     const outside = "\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=19,C=1;AQIDBA==\x1b\\";
     const inside = "\x1b[3;4H\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1;AQIDBA==\x1b\\";
