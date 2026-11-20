@@ -992,3 +992,32 @@ Accepted gates: affected VT Debug/ReleaseFast, full root ReleaseFast
 check/test graph, project and Zig audits, declaration-aware protocol
 validation, formatting and diff checks. No installed binary or active
 session changed.
+
+## DSR origin and status replies have incompatible pinned reference policies (20 November 2026)
+
+Reading frozen Kitty screen.c:report_device_status, libvterm
+state.c:on_csi and iTerm2 VT100Terminal.m:
+handleDeviceStatusReportWithToken reveals three incompatible policies
+for the same CSI 6n and private CSI ? 6n sequences under DECOM.
+
+Libvterm always reports absolute cursor row and column. Kitty reports the
+row relative to its vertical top margin, but retains absolute column.
+iTerm2 queries both relative X and Y under origin mode, subject to its
+terminalShouldSendReport host gate. Howl chooses origin-relative row
+and column for the normal case and uses saturating coordinates if a
+saved cursor predates changed margins; iTerm2 instead subtracts its
+relative coordinates. Kitty reports private status 5 without a '?'
+prefix while libvterm prefixes that private status. Howl follows the
+unprefixed form, along with its separate DEC locator and color queries.
+
+The existing 'device and status queries retain exact scalar transcripts
+and origin coordinates' tests prove Howl's selected behavior, malformed
+controls and reply framing, including the restored-cursor corner.
+There is no one-profile reply that simultaneously matches all three
+frozen implementations. Four DSR catalogue records now give this
+specific distinction rather than invoking the inherited broad
+exclusion wording. Their support/disposition/source/proof fields remain
+unchanged; full parity requires a deliberately selected compatibility
+contract, not automatic runtime inference or a new mirrored cursor.
+Full root ReleaseFast check/test, audit, protocol validation and diff
+gates passed without modifying terminal behavior.

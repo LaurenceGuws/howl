@@ -609,13 +609,15 @@ references:
           libvterm.csi.dsr: {raw: "CSI [Ps=0] n", effect: device status or cursor report,
             conditions: Ps 5|6; libvterm reports absolute CPR while Howl reports from the active DECOM origin,
             relevance: query,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+            howl: {support: partial, disposition: excluded, rationale: "Pinned libvterm state.c emits absolute cursor row and column for DSR 6 even under origin mode; pinned iTerm2 and Howl report relative to DEC origin under DECOM. One unchanged CSI 6n query cannot produce both coordinate systems.",
+              residual: "DSR 5 is supported; DSR 6 remains intentionally origin-relative in Howl, matching iTerm2 for ordinary positions rather than libvterm absolute-position policy. Restored-cursor underflow is a separate bounded difference.",
               source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           libvterm.csi.decdsr: {raw: "CSI ? [Ps=0] n", effect: DEC status report, relevance: query,
             conditions: libvterm prefixes status 5 and CPR replies and can report host theme state,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+            howl: {support: partial, disposition: excluded, rationale: "Pinned libvterm state.c prefixes status 5 and CPR replies with question mark and reports absolute cursor coordinates. Pinned Kitty and Howl omit that private prefix for status 5 and use their own DECOM-relative cursor conventions; one fixed response cannot satisfy both.",
+              residual: "Howl supplies bounded private DSR and locator replies, and retains optional color-preference queries, but reply-prefix, cursor-origin and host-theme behavior remain different from pinned libvterm.",
               source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
@@ -1248,7 +1250,8 @@ references:
           iterm2.csi.dsr: {raw: "CSI [Ps=0] n", effect: status or cursor report, relevance: query,
             conditions: "iTerm2 gates reports by host policy and emulation level, supports additional status codes,
               and directly subtracts active margins where Howl saturates a restored cursor preceding the origin",
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+            howl: {support: partial, disposition: excluded, rationale: "Pinned iTerm2 gates DSR through terminalShouldSendReport and queries relative cursor X and Y under DECOM. Howl matches ordinary origin-relative coordinates but clamps saved cursors preceding changed margins, where iTerm2 directly subtracts. Neutral VT cannot invent iTerm2 host reporting permissions.",
+              residual: "Ready status and cursor position are implemented with bounded replies and C1 framing; host permission gates, additional iTerm2 status codes and restored-cursor underflow behavior remain different.",
               source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
@@ -3181,7 +3184,8 @@ references:
           kitty.csi.rm: {raw: "CSI Pm l", effect: reset modes, howl: *howl_ansi_mode_breadth_excluded}
           kitty.csi.dsr: {raw: "CSI [Ps=0] n", effect: report device status,
             conditions: under DECOM Kitty makes only the row origin-relative while Howl also applies the left margin,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+            howl: {support: partial, disposition: excluded, rationale: "Pinned Kitty report_device_status adjusts only cursor row for DECOM and reports absolute column. Pinned iTerm2 and Howl instead report both coordinates relative to the active DEC origin. One CSI 6n response cannot match both when DECSLRM and DECOM are enabled.",
+              residual: "Howl implements ready status, cursor reports and C1 framing; Kitty row-only origin, permissive out-of-column cursor adjustment and unsupported query handling differ from Howl bounded reporting contract.",
               source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
