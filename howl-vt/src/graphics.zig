@@ -1442,26 +1442,53 @@ pub const Plane = struct {
         count: u16,
         toward_left: bool,
     ) bool {
-        if (count == 0) return false;
+        return self.shiftColumnRows(bank, row, row, left, right, count, toward_left);
+    }
+
+    /// Applies one bounded column shift across a row range in a single
+    /// placement scan; the decoded image allocations remain unchanged.
+    pub fn shiftColumnRows(
+        self: *Plane,
+        bank: Bank,
+        top: u64,
+        bottom: u64,
+        left: u16,
+        right: u16,
+        count: u16,
+        toward_left: bool,
+    ) bool {
+        if (count == 0 or top > bottom or left > right) return false;
         var changed = false;
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = &self.placements[index];
-            if (retained.virtual or retained.bank != bank or retained.row != row or
-                retained.col < left or retained.col > right)
+            if (retained.virtual or retained.bank != bank or retained.row < top or retained.row > bottom or
+                retained.col > right)
             {
                 index += 1;
                 continue;
             }
+            const placement_right = @as(u32, retained.col) + retained.cols - 1;
+            if (placement_right < left) {
+                index += 1;
+                continue;
+            }
+            // A placement overlapping the boundary cannot be translated as
+            // one anchor without changing pixels in unshifted columns.
+            if (retained.col < left or placement_right > right) {
+                self.removePlacement(index);
+                changed = true;
+                continue;
+            }
             if (toward_left) {
-                if (retained.col < left + count) {
+                if (@as(u32, retained.col) < @as(u32, left) + count) {
                     self.removePlacement(index);
                     changed = true;
                     continue;
                 }
                 retained.col -= count;
             } else {
-                if (@as(u32, retained.col) + count > right) {
+                if (placement_right + count > right) {
                     self.removePlacement(index);
                     changed = true;
                     continue;

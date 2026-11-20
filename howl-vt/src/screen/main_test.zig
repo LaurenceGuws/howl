@@ -354,7 +354,7 @@ test "screen: SL shifts scroll-region rows left" {
     apply(&s, Action{ .write_text = "KLMNO" });
 
     try std.testing.expect(s.setScrollRegion(1, 2));
-    try std.testing.expect(s.shiftColumnsLeft(2));
+    try std.testing.expect(s.shiftColumns(.left, 2).changed);
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'B'), s.cellAt(0, 1));
@@ -377,13 +377,36 @@ test "screen: SR respects horizontal margins" {
     apply(&s, Action{ .write_text = "ABCDE" });
     apply(&s, Action{ .left_right_margin_mode = true });
     try std.testing.expect(s.setLeftRightMargins(1, 3));
-    try std.testing.expect(s.shiftColumnsRight(1));
+    try std.testing.expect(s.shiftColumns(.right, 1).changed);
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 'B'), s.cellAt(0, 2));
     try std.testing.expectEqual(@as(u21, 'C'), s.cellAt(0, 3));
     try std.testing.expectEqual(@as(u21, 'E'), s.cellAt(0, 4));
+}
+
+test "screen: column shift separates wrap-only change from bounded admitted region" {
+    const gpa = std.testing.allocator;
+    var s = try Grid.initWithCells(gpa, 3, 8);
+    defer s.deinit(gpa);
+    try std.testing.expect(s.setScrollRegion(1, 2));
+    try std.testing.expect(s.setLeftRightMarginMode(true));
+    try std.testing.expect(s.setLeftRightMargins(2, 5));
+    s.wrap_pending = true;
+
+    const zero = s.shiftColumns(.left, 0);
+    try std.testing.expect(zero.changed);
+    try std.testing.expect(zero.region == null);
+    try std.testing.expect(!s.wrap_pending);
+
+    const large = s.shiftColumns(.right, 999);
+    try std.testing.expect(large.region != null);
+    try std.testing.expectEqual(@as(u16, 1), large.region.?.top);
+    try std.testing.expectEqual(@as(u16, 2), large.region.?.bottom);
+    try std.testing.expectEqual(@as(u16, 2), large.region.?.left);
+    try std.testing.expectEqual(@as(u16, 5), large.region.?.right);
+    try std.testing.expectEqual(@as(u16, 4), large.region.?.amount);
 }
 
 test "screen: DECSCA protects cells from selective erase" {

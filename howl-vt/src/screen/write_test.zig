@@ -227,8 +227,8 @@ test "overlapping row edits move long scalar tails with their cells" {
             1 => screen.deleteChars(3),
             2 => screen.insertColumns(3),
             3 => screen.deleteColumns(3),
-            4 => screen.shiftColumnsRight(3),
-            else => screen.shiftColumnsLeft(3),
+            4 => screen.shiftColumns(.right, 3).changed,
+            else => screen.shiftColumns(.left, 3).changed,
         };
         try std.testing.expect(changed);
         for (0..32) |col| {

@@ -2197,18 +2197,33 @@ pub const Screen = struct {
         return self.noteAllRowsChange(changed);
     }
 
-    /// Shift active scroll-region rows left within current horizontal boundaries.
-    /// Returns exact cell, continuation, or pending-wrap mutation.
-    pub fn shiftColumnsLeft(self: *Screen, count: u16) bool {
-        const changed = self.cancelPendingWrap();
-        return self.shiftColumnsLeftInBounds(count, self.leftBoundary(), self.rightBoundary()) or changed;
-    }
+    /// The direction of an entire scroll-region column shift.
+    pub const ColumnShift = enum { left, right };
+    /// Reports the exact rows and columns admitted by one column shift.
+    pub const ColumnShiftResult = struct {
+        changed: bool,
+        region: ?struct { top: u16, bottom: u16, left: u16, right: u16, amount: u16 } = null,
+    };
 
-    /// Shift active scroll-region rows right within current horizontal boundaries.
-    /// Returns exact cell, continuation, or pending-wrap mutation.
-    pub fn shiftColumnsRight(self: *Screen, count: u16) bool {
+    /// Shift active scroll-region columns once and return the admitted region.
+    /// Changes to pending wrap alone do not authorize graphics movement.
+    pub fn shiftColumns(self: *Screen, direction: ColumnShift, count: u16) ColumnShiftResult {
         const changed = self.cancelPendingWrap();
-        return self.shiftColumnsRightInBounds(count, self.leftBoundary(), self.rightBoundary()) or changed;
+        const top = self.scroll_top;
+        const bottom = self.scrollBottom();
+        const left = self.leftBoundary();
+        const right = self.rightBoundary();
+        if (self.rows == 0 or self.cols == 0 or count == 0 or top > bottom or left > right or right >= self.cols)
+            return .{ .changed = changed };
+        const amount: u16 = @intCast(@min(@as(u32, count), @as(u32, right) - left + 1));
+        const shifted = switch (direction) {
+            .left => self.shiftColumnsLeftInBounds(amount, left, right),
+            .right => self.shiftColumnsRightInBounds(amount, left, right),
+        };
+        return .{
+            .changed = shifted or changed,
+            .region = .{ .top = top, .bottom = bottom, .left = left, .right = right, .amount = amount },
+        };
     }
 
     fn shiftColumnsLeftInBounds(self: *Screen, count: u16, left: u16, right: u16) bool {

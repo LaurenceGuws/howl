@@ -1076,6 +1076,61 @@ test "terminal: DECFI and DECBI outside horizontal margins shift matching image 
     }
 }
 
+test "terminal: CSI horizontal row shifts keep image placements with admitted text" {
+    for ([_]struct {
+        sequence: []const u8,
+        source_col: u16,
+        expected_col: u16,
+    }{
+        .{ .sequence = "\x1b[ @", .source_col = 4, .expected_col = 3 },
+        .{ .sequence = "\x1b[ A", .source_col = 2, .expected_col = 3 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HABCDEF\x1b[2;1HABCDEF\x1b[3;1HABCDEF");
+        var position: [20]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&position, "\x1b[2;{d}H", .{case.source_col + 1}));
+        try feed(&terminal, "\x1b_Ga=T,f=32,s=1,v=1,i=71,C=1;AQIDBA==\x1b\\");
+        try feed(&terminal, "\x1b[3;5H\x1b_Ga=T,f=32,s=1,v=1,i=72,C=1;AQIDBA==\x1b\\");
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        try std.testing.expectEqual(case.source_col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(@as(u16, 4), terminal.images(0).placement(1).?.col);
+
+        // The first two rows shift; the fixed bottom row and its placement do not.
+        try feed(&terminal, "\x1b[1;2r");
+        const before = terminal.images(0);
+        try std.testing.expect((try terminal.feed(case.sequence)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(case.expected_col, after.placement(0).?.col);
+        try std.testing.expectEqual(@as(u16, 4), after.placement(1).?.col);
+        try std.testing.expect(after.generation > before.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(@as(u21, if (case.source_col == 4) 'E' else 'C'), terminal.semanticView(0).cellAt(1, 3));
+        try std.testing.expectEqual(@as(u21, 'E'), terminal.semanticView(0).cellAt(2, 4));
+    }
+}
+
+test "terminal: CSI partial-column shift retires only straddling placement, not its image" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    // Two-pixel image covers columns 2-3, crossing the later left margin
+    // (column 3). A whole-placement translation would mutate an outside cell.
+    try feed(&terminal, "\x1b[2;2H\x1b_Ga=T,f=32,s=2,v=1,i=73,C=1;AQIDBAUGBwg=\x1b\\");
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    const image_generation = terminal.images(0).content_generation;
+
+    try feed(&terminal, "\x1b[?69h\x1b[3;6s\x1b[1;2r");
+    try std.testing.expect((try terminal.feed("\x1b[ @")).stateChanged());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expectEqual(image_generation, terminal.images(0).content_generation);
+}
+
 test "terminal: CSI cursor positioning shares parameter, margin, and origin bounds" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 8, 12);

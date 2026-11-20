@@ -3781,8 +3781,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .forward_index => return applyHorizontalIndex(vt, .forward),
         .back_index => return applyHorizontalIndex(vt, .backward),
-        .shift_left_columns => |count| return vt.screen_state.active().shiftColumnsLeft(count),
-        .shift_right_columns => |count| return vt.screen_state.active().shiftColumnsRight(count),
+        .shift_left_columns => |count| return applyColumnShift(vt, .left, count),
+        .shift_right_columns => |count| return applyColumnShift(vt, .right, count),
         .reverse_index => {
             const screen = vt.screen_state.active();
             const scrolls = screen.cursor.row == screen.scroll_top;
@@ -3982,6 +3982,25 @@ fn applyHorizontalIndex(vt: *Terminal, direction: Screen.HorizontalIndex) bool {
         shift.right,
         1,
         direction == .forward,
+    ) or result.changed;
+}
+
+// A CSI column shift applies to every row in Screen's admitted region.
+// Derive graphics motion from the actual result, even when blank text cells
+// have no observable mutation but a placement still needs to move.
+fn applyColumnShift(vt: *Terminal, direction: Screen.ColumnShift, count: u16) bool {
+    const screen = vt.screen_state.active();
+    const result = screen.shiftColumns(direction, count);
+    const region = result.region orelse return result.changed;
+    const origin = graphicsScreenOrigin(vt);
+    return vt.graphics.shiftColumnRows(
+        graphicsBank(vt),
+        origin + region.top,
+        origin + region.bottom,
+        region.left,
+        region.right,
+        region.amount,
+        direction == .left,
     ) or result.changed;
 }
 

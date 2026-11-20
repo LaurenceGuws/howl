@@ -698,3 +698,32 @@ formatting and diff checks passed. No support label, binary or running app
 changed. The approved Screen state transition is the single authority; the
 terminal's graphics adjustment follows the resulting identity rather than
 predicting policy independently.
+
+## CSI row-wide column shifts follow Screen's admitted geometry (20 November 2026)
+
+A focused ownership review kept the CSI SU history/retry path intact: Screen
+reserves history before mutation, and Terminal's service-boundary loop must
+retain exact partially completed rows and OOM continuation. Existing red/
+green allocator-pressure tests prove this split is a necessary transaction
+boundary, not an arbitrary duplicate policy.
+
+The adjacent CSI SP @ (shift-left) and CSI SP A (shift-right) handlers had a
+confirmed text/graphics disagreement. Screen shifted active-region cells,
+while Terminal applied no corresponding image-plane motion. A newly written
+terminal-stream test failed before the change and passed after it.
+
+Screen now owns one `shiftColumns(direction,count)` operation and returns
+the exact admitted row/column rectangle and clamped count, distinct from
+pending-wrap-only mutation. Terminal consumes that fact, without rederiving
+margins, and asks the graphics plane to shift all affected rows in one pass.
+The prior left/right Screen wrappers were retired. A multi-column image
+crossing the edited horizontal boundary loses its placement, not its decoded
+content, because translating it whole would mutate unshifted columns.
+Tests prove right/left movement, fixed rows, admitted horizontal extent,
+zero-count wrap-only semantics, large-count clamping and boundary clipping.
+The graphics code scans retained placements once per command rather than
+once per row, preserving the low-cost presentation path.
+
+VT Debug and ReleaseFast, the full root ReleaseFast check/test/audit graph,
+protocol validation, formatting and diff checks passed. No catalogue status
+promotion, installed binary, application process or GUI session change.
