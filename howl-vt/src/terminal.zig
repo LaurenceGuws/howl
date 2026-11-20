@@ -3640,7 +3640,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 origin + screen.cursor.row,
                 origin + screen.cursor.row,
                 screen.cursor.col,
-                screen.cols - 1,
+                screen.lineRightBoundary(screen.cursor.row),
             );
             if (screen.cursor.row + 1 < screen.rows) graphics_changed =
                 vt.graphics.erase(

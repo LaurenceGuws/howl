@@ -388,6 +388,28 @@ test "terminal: EL graphics follow the accepted DEC logical row width" {
     }
 }
 
+test "terminal: ED below keeps out-of-width graphics on the cursor row" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const graphics = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+    try feed(&terminal, "\x1b[1;4H" ++ graphics ++ "\x1b[1;6H" ++ graphics ++ "\x1b[2;4H" ++ graphics);
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).placementCount());
+    const pixels_before = terminal.images(0).content_generation;
+
+    try feed(&terminal, "\x1b[1;1H\x1b#6\x1b[1;3H");
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+    try std.testing.expect((try terminal.feed("\x1b[0J")).stateChanged());
+    // ED below clips the cursor row to four logical cells, but resets the
+    // whole second row, which must lose its placement.
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
+    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).imageCount());
+    try std.testing.expectEqual(pixels_before, terminal.images(0).content_generation);
+}
+
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 6);
     defer terminal.deinit();

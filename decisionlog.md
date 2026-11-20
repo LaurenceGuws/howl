@@ -766,3 +766,23 @@ ReleaseFast suite, root ReleaseFast check/test, project/zig-audit, protocol
 validation, formatting and diff checks passed. No support statuses,
 installed binary or running session changed. Selective erase and other
 screen-region graphics coupling remain separate unproven review candidates.
+
+## ED 0 cursor-row image erasure uses Screen's logical line edge (20 November 2026)
+
+The preceding EL/ECH audit identified the same physical/logical width split
+on the current row of CSI ED 0. Screen.eraseDisplay(.cursor_to_end) clips
+its cursor-row text mutation at that row's DEC logical width, but Terminal
+formerly erased image placements through the full physical width. The
+second and later rows are fully erased and retain their separate full-row
+graphics action.
+
+A terminal-stream test on a DEC double-width cursor row failed before the
+fix and passed afterward: the image within the logical erase disappears,
+the placement outside it remains, all lower-row graphics are removed, and
+decoded image data is retained. Terminal now uses Screen.lineRightBoundary
+for the current row instead of calculating a physical-grid endpoint. No new
+result type or abstract erasure layer was required. VT Debug and ReleaseFast,
+root ReleaseFast check/test plus Zig/project audit, protocol validation,
+formatting and diff checks passed. No catalogue classification, installed
+binary or live app changed. Selective and rectangular image erasures remain
+independent, unqualified reference-policy questions.
