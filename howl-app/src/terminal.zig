@@ -318,6 +318,8 @@ const State = struct {
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
     selection_structural_edit_generation: u64 = 0,
+    selection_row_generation_floor: u64 = 0,
+    selection_last_checked_row_generation: u64 = 0,
     selection_failure: ?SelectionError = null,
     paint: selection.Paint = .{},
     search: find.Find = .{},
@@ -590,7 +592,10 @@ const State = struct {
             .start => self.selected = try selection.start(view, row_index, intent.point.col),
             .extend => {
                 const range = self.selected orelse return;
-                if (self.selection_structural_edit_generation != self.observe().structuralEditGeneration())
+                const observed = self.observe();
+                if (self.selection_structural_edit_generation != observed.structuralEditGeneration() or
+                    (observed.rowMutationFloor() != self.selection_last_checked_row_generation and
+                        range.rowsModifiedSince(observed, self.selection_row_generation_floor)))
                     return error.SelectionContextChanged;
                 switch (range.validity(current)) {
                     .valid => {},
@@ -603,11 +608,11 @@ const State = struct {
             .row => self.selected = try selection.visualRow(view, @intCast(row_index)),
             .clear => {},
         }
-        if (self.selected != null) self.selection_structural_edit_generation = self.observe().structuralEditGeneration();
+        if (self.selected != null) self.bindSelectionGeneration();
     }
     fn selectMatch(self: *State, range: selection.Range) void {
         self.selected = range;
-        self.selection_structural_edit_generation = self.observe().structuralEditGeneration();
+        self.bindSelectionGeneration();
         self.selection_failure = null;
         const live = self.observe().semanticView(0);
         const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
@@ -615,20 +620,30 @@ const State = struct {
         self.output_gate.pending = true;
     }
 
-    // A structural CSI L/M rearranges rows in place, even when geometry and
-    // history identity do not change. Kitty clears its selection on admission;
-    // an ordinary text write or a history viewport scroll must not do so.
+    fn bindSelectionGeneration(self: *State) void {
+        const observed = self.observe();
+        self.selection_structural_edit_generation = observed.structuralEditGeneration();
+        self.selection_row_generation_floor = observed.rowMutationFloor();
+        self.selection_last_checked_row_generation = self.selection_row_generation_floor;
+    }
+
+    // Row identity is canonical in VT, so selection observes that existing
+    // proof rather than maintaining a second line-erase or cell-damage ledger.
+    // An unaffected selected row survives ordinary output and history scrolls.
     fn reconcileSelection(self: *State, observation: *const vt.Terminal.Observation, live: vt.Terminal.SemanticView) void {
         const range = self.selected orelse return;
-        if (observation.structuralEditGeneration() != self.selection_structural_edit_generation) {
+        const row_floor = observation.rowMutationFloor();
+        if (observation.structuralEditGeneration() != self.selection_structural_edit_generation or
+            (row_floor != self.selection_last_checked_row_generation and
+                range.rowsModifiedSince(observation, self.selection_row_generation_floor)))
+        {
             self.selected = null;
-            // The terminal itself invalidated this selection as a normal
-            // consequence of CSI IL/DL. An error belongs to an explicitly
-            // rejected user selection/copy request, not passive output.
+            // Invalidation caused by normal output is not a user action error.
             self.selection_failure = null;
             self.output_gate.pending = true;
             return;
         }
+        self.selection_last_checked_row_generation = row_floor;
         switch (range.validity(selection.Context.fromView(live))) {
             .valid => {},
             .context_changed => {
@@ -1257,6 +1272,51 @@ test "selected terminal text survives ordinary output but not admitted CSI line 
     state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
     try std.testing.expect(state.selected == null);
     try std.testing.expect(state.selection_failure == null);
+}
+
+test "selected terminal text invalidates only when selected rows are rewritten" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var core: pty_vt.Core = .{
+        .allocator = std.testing.allocator,
+        .transport = undefined,
+        .terminal = undefined,
+    };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 4, 12, 4);
+    defer core.terminal.deinit();
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .io = threaded.io(),
+        .core = &core,
+        .projection = undefined,
+        .history_capacity = 4,
+        .wake_fd = -1,
+        .event_type = 0,
+    };
+    try std.testing.expect((try core.terminal.feed("alpha\x1b[2;1Hbeta")).stateChanged());
+    try state.applySelection(.{
+        .serial = 1,
+        .kind = .word,
+        .context = selection.Context.fromView(core.terminal.semanticView(0)),
+        .point = .{ .row = 0, .col = 2 },
+    });
+    try std.testing.expect(state.selected != null);
+
+    // An ordinary write and erase on another row must not discard the
+    // selected word, even though the terminal content generation changes.
+    try std.testing.expect((try core.terminal.feed("\x1b[2;1Hzeta\x1b[2K")).stateChanged());
+    state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
+    try std.testing.expect(state.selected != null);
+    try std.testing.expect(state.selection_failure == null);
+
+    // Kitty clears a selection on a row intersected by CSI EL, including
+    // DEC private EL. VT row identities already tell us exactly which row
+    // changed, without a second erase-event journal or a GUI owner in VT.
+    try std.testing.expect((try core.terminal.feed("\x1b[1;1H\x1b[?2K")).stateChanged());
+    state.reconcileSelection(core.terminal.observation(), core.terminal.semanticView(0));
+    try std.testing.expect(state.selected == null);
+    try std.testing.expect(state.selection_failure == null);
+    try std.testing.expect(state.output_gate.pending);
 }
 
 test "oversized paste fails at admission and leaves the terminal worker alive" {

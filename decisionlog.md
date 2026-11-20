@@ -907,3 +907,57 @@ belong to the test workload and do not enter the repository.
 No physical graphical environment, installed Howl executable, production
 configuration or unrelated process was touched. Semantic protocol support
 ratings remain separate from this UX and graphics acceptance.
+
+## Selected text observes canonical row mutation, not an app damage journal (20 November 2026)
+
+Pinned Kitty's screen_erase_in_line clears selections intersecting the
+erased row. Howl's earlier selection reconciliation only checked bank,
+geometry, retention and admitted CSI IL/DL; actual EL/ED rewrites could
+leave the old highlighted range pointing to newly erased content. A
+direct-app state test failed before this correction: writing/erasing an
+unselected row preserved a word selection, but erasing the selected row
+did not invalidate it.
+
+VT already assigns monotonic, retained-history-preserving row generations.
+Observation now exposes only the next row-generation watermark, not a
+second log or UI policy. When a manual/search selection is accepted, its
+app owner captures that watermark. On later VT changes, the app checks
+the selected *absolute* row range against existing canonical row
+generations; it invalidates silently when any selected row was rewritten,
+without clearing on unrelated output or viewport/history movement.
+Selected rows that are rewritten and archived in the same feed remain
+detectable, and eviction remains independently invalidating. Repeated
+pointer updates skip scans when VT's row-generation watermark is
+unchanged. Existing CSI IL/DL admission identity remains the separate
+guard for structural edits that can be admitted without a cell rewrite.
+
+Screen row generations are authoritative. VT has no mutable selected
+range, highlight or app damage journal. New direct-app and selection
+tests prove unaffected writes/erases, same-row erasure, multirow middle
+edits, archive admission, eviction, and rewrite-then-archive. The
+pinned Kitty no-op erasure and selection policy may differ when no
+cell identity changes, so this does not establish full Kitty DECSEL/
+DECSED parity. Neither graphics backends nor PTY mechanics changed.
+
+## Private CSI ? K/J is an irreconcilable pinned reference policy difference
+
+Frozen Kitty kitty/screen.c:screen_erase_in_line and
+kitty/line.c:line_clear_text implement the private flag as *clear
+CPU text while preserving GPU formatting*. They do not test a DEC
+protected-cell flag. Frozen libvterm
+src/screen.c:erase_internal skips DEC-protected cells during
+selective erasure and resets the erased cells' attributes to current
+foreground/background without preserving bold/reverse. Pinned iTerm2
+VT100ScreenMutableState.m:selectiveEraseRange similarly skips guarded
+cells when protection is active and uses eraseAttributes:YES for
+DECSEL/DECSED. One fixed interpretation of identical CSI ? K/J
+input cannot simultaneously preserve the protected glyph and erase it,
+or both preserve and reset its formatting.
+
+Howl retains DEC protection as its current canonical contract. A new VT
+test explicitly proves guarded text survives CSI ? 2 K, while an
+unguarded bold red glyph is erased and takes reset noncolor attributes.
+Matching Kitty instead would require a separately selected compatibility
+mode with a deliberate contract and test matrix. No automatic TERM
+guessing, hidden fallback, mode switch, or unsupported full status was
+accepted. Reconsider only if product requirements justify that scope.

@@ -443,6 +443,33 @@ test "terminal: ISO and DEC protection retain distinct erase semantics" {
     try std.testing.expect(!(try terminal.feed("\x1b[0\"q")).stateChanged());
 }
 
+test "terminal: DEC private erasure preserves guarded text and resets erased cell attributes" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 6);
+    defer terminal.deinit();
+    // Two bold red cells; only the first is marked DEC-protected.
+    try feed(&terminal, "\x1b[1\"q\x1b[1;31mP\x1b[0\"qU");
+    const protected_before = terminal.semanticView(0).cellInfoAt(0, 0);
+    const unprotected_before = terminal.semanticView(0).cellInfoAt(0, 1);
+    try std.testing.expect(protected_before.attrs.bold);
+    try std.testing.expect(unprotected_before.attrs.bold);
+    try std.testing.expect(protected_before.attrs.protected == .dec);
+    try std.testing.expect(unprotected_before.attrs.protected == .none);
+
+    // The pinned libvterm model protects the guarded glyph while an erased
+    // cell takes current foreground/background and reset non-color attrs.
+    // Kitty's same private bytes clear text but retain the old formatting.
+    try feed(&terminal, "\x1b[0;32;44m\x1b[1;1H\x1b[?2K");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'P'), view.cellAt(0, 0));
+    try std.testing.expectEqualDeep(protected_before, view.cellInfoAt(0, 0));
+    const erased = view.cellInfoAt(0, 1);
+    try std.testing.expectEqual(@as(u21, 0), erased.codepoint);
+    try std.testing.expect(!erased.attrs.bold);
+    try std.testing.expect(erased.attrs.protected == .none);
+    try std.testing.expect(!std.meta.eql(erased.attrs, unprotected_before.attrs));
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+}
+
 test "terminal: erase mutation owns pending wrap and retained continuation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

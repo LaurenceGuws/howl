@@ -90,6 +90,43 @@ pub const Range = struct {
         }
         return .valid;
     }
+    /// Reports whether canonical rows under the selected absolute range were
+    /// rewritten since a VT row-generation witness was captured. Stable
+    /// history identities allow selections to survive unrelated writes and
+    /// scrolls without keeping a second edit or row-damage ledger.
+    pub fn rowsModifiedSince(self: Range, observation: *const vt.Observation, floor: u64) bool {
+        if (self.empty) return false;
+        const live = observation.semanticView(0);
+        if (self.validity(Context.fromView(live)) != .valid) return true;
+        if (observation.rowMutationFloor() < floor) return true;
+        const selected = self.ordered();
+        const live_start: i64 = if (live.is_alternate_screen)
+            0
+        else
+            @as(i64, live.history_row_base) + live.history_count;
+        var row: i64 = selected.start.row;
+        while (row <= selected.end.row) {
+            const offset: u32 = if (row >= live_start)
+                0
+            else
+                @intCast(live_start - row);
+            const view = observation.semanticView(offset);
+            const first: i64 = if (view.is_alternate_screen)
+                0
+            else
+                @as(i64, view.history_row_base) + view.history_count - view.history_offset;
+            if (row < first or row >= first + view.rows) return true;
+            const remaining = @min(selected.end.row - row + 1, first + view.rows - row);
+            const start_row: u16 = @intCast(row - first);
+            const count: u16 = @intCast(remaining);
+            for (0..count) |index| {
+                const generation = view.rowGeneration(start_row + @as(u16, @intCast(index))) orelse return true;
+                if (generation >= floor) return true;
+            }
+            row += remaining;
+        }
+        return false;
+    }
     /// Orders inclusive extraction endpoints while preserving the drag's anchor identity.
     pub fn ordered(self: Range) vt.TextRange {
         if (self.anchor.row < self.focus.row or (self.anchor.row == self.focus.row and self.anchor.col <= self.focus.col))
@@ -254,6 +291,66 @@ test "stable selection survives viewport movement and vertical growth but reject
     context.history_count = std.math.maxInt(u32);
     context.alternate = false;
     try std.testing.expectError(error.InvalidSelection, context.row(0));
+}
+
+test "selected row mutation witness survives history admission but detects rewrite and eviction" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("alpha\x1b[2;1Hbravo\x1b[3;1Hcharlie")).stateChanged());
+    const selected = (try word(terminal.semanticView(0), 0, 2)).?;
+    const baseline = terminal.observation().rowMutationFloor();
+    try std.testing.expect(!selected.rowsModifiedSince(terminal.observation(), baseline));
+
+    // A different row's rewrite does not invalidate the selected one.
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[2K")).stateChanged());
+    try std.testing.expect(!selected.rowsModifiedSince(terminal.observation(), baseline));
+
+    // Full-screen scrolling preserves the selected row's absolute identity
+    // and its immutable generation when it moves into retained history.
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\n")).stateChanged());
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expect(!selected.rowsModifiedSince(terminal.observation(), baseline));
+
+    // Mutation of another live row is still unrelated after that move.
+    try std.testing.expect((try terminal.feed("\x1b[2;1HZ")).stateChanged());
+    try std.testing.expect(!selected.rowsModifiedSince(terminal.observation(), baseline));
+
+    // Eventually evicting the selected history row must fail closed.
+    for (0..5) |_| try std.testing.expect((try terminal.feed("\x1b[3;1H\n")).stateChanged());
+    try std.testing.expect(selected.rowsModifiedSince(terminal.observation(), baseline));
+}
+
+test "selected span detects edits to middle row and keeps historical projections aligned" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("top\x1b[2;1Hmid\x1b[3;1Htail")).stateChanged());
+    const view = terminal.semanticView(0);
+    const first = try point(view, 0, 0);
+    const last = try point(view, 2, 2);
+    const range: Range = .{
+        .anchor = first,
+        .focus = last,
+        .columns = view.cols,
+        .alternate = view.is_alternate_screen,
+    };
+    const baseline = terminal.observation().rowMutationFloor();
+    try std.testing.expect(!range.rowsModifiedSince(terminal.observation(), baseline));
+    try std.testing.expect((try terminal.feed("\x1b[4;1Hfar")).stateChanged());
+    try std.testing.expect(!range.rowsModifiedSince(terminal.observation(), baseline));
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[2K")).stateChanged());
+    try std.testing.expect(range.rowsModifiedSince(terminal.observation(), baseline));
+}
+
+test "selected row rewritten then archived in one feed still invalidates" {
+    var terminal = try vt.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("alpha\x1b[2;1Hbeta\x1b[3;1Hgamma")).stateChanged());
+    const selected = (try word(terminal.semanticView(0), 0, 2)).?;
+    const baseline = terminal.observation().rowMutationFloor();
+    try std.testing.expect((try terminal.feed("\x1b[1;1HZ\x1b[3;1H\n")).stateChanged());
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expect(selected.rowsModifiedSince(terminal.observation(), baseline));
+    try std.testing.expect(selected.rowsModifiedSince(terminal.observation(), std.math.maxInt(u64)));
 }
 test "canonical word and visual-row selection preserve graphemes soft wraps and text-shaped painting" {
     var terminal = try vt.init(std.testing.allocator, 4, 6);

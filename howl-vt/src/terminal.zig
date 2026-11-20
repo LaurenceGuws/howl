@@ -6321,6 +6321,14 @@ pub const Terminal = struct {
             return self.terminal().structural_edit_generation;
         }
 
+        /// Next canonical row identity. A row rewritten after this witness
+        /// receives an identity at least this large, including after history
+        /// admission. Consumers can observe an existing selected text range
+        /// without adding a second mutation journal to VT.
+        pub fn rowMutationFloor(self: *const Observation) u64 {
+            return self.terminal().screen_state.activeConst().next_row_generation;
+        }
+
         /// Borrows canonical cells and cursor state at one history offset.
         pub fn semanticView(self: *const Observation, history_offset: u32) SemanticView {
             return self.terminal().semanticView(history_offset);
