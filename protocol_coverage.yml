@@ -2276,13 +2276,15 @@ references:
             raw: "CSI ? 41 h|l"
             effect: toggle pending-wrap tab compatibility
             conditions: >-
-              Howl matches pending-wrap HT movement, query, parameterized save/restore, DECSTR, RIS, and
-              alternate-screen lifetime; iTerm2 also dirties its delegate on byte-identical mode assignment.
+              Pinned iTerm2's setMoreFix changes only its boolean and marks the app dirty, even on a repeated
+              assignment. Howl now preserves the pending phantom wrap across both assignments, so a following
+              HT or printable byte sees the correct edge. Query, save/restore, DECSTR, RIS and bank lifetime agree.
+              The extra iTerm2 delegate dirtiness is presentation bookkeeping, not terminal protocol behavior.
             relevance: compatibility
-            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+            howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DEC more-fix owns pending-wrap tab query save and reset lifetime"}}
+              symbol: "iTerm2 MoreFix mode assignments preserve phantom wrap before following tab or text"}}
           iterm2.mode.reverse_wrap: {raw: "CSI ? 45 h|l", effect: toggle reverse wraparound,
             howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.backspace, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,

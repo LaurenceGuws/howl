@@ -7405,7 +7405,10 @@ pub const Terminal = struct {
                 break :result screen_changed or changed;
             },
             40 => replaceBool(&self.modes.allow_column_mode, enabled),
-            41 => replaceBool(&self.modes.more_fix, enabled),
+            // MoreFix is queried by the following HT while a cursor is
+            // still beyond the right edge. Its mode assignment must not
+            // consume that pending wrap (pinned iTerm2 setMoreFix).
+            41 => return replaceBool(&self.modes.more_fix, enabled),
             95 => replaceBool(&self.modes.preserve_screen_on_column_mode, enabled),
             5 => replaceBool(&self.modes.reverse_screen_mode, enabled),
             6 => changed: {

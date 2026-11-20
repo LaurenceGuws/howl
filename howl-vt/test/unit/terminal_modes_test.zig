@@ -2910,6 +2910,46 @@ test "DEC more-fix owns pending-wrap tab query save and reset lifetime" {
     try std.testing.expectEqualStrings("\x1b[?41;2$y", pendingOutput(&terminal));
 }
 
+test "iTerm2 MoreFix mode assignments preserve phantom wrap before following tab or text" {
+    // iTerm2's setMoreFix changes only a boolean and marks its UI dirty.
+    // Its HT path observes cursorX > width, so the mode assignment itself
+    // cannot consume the phantom cursor at the preceding line's edge.
+    for ([_][]const u8{ "\x1b[?41h", "\x1b[?41l" }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 10);
+        defer terminal.deinit();
+        if (command[5] == 'l')
+            try std.testing.expect((try terminal.feed("\x1b[?41h")).stateChanged());
+        try std.testing.expect((try terminal.feed("0123456789")).stateChanged());
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 9), terminal.semanticView(0).cursor_col);
+
+        try std.testing.expect((try terminal.feed(command)).stateChanged());
+        if (command[5] == 'h') {
+            try std.testing.expect((try terminal.feed("\t")).stateChanged());
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+        } else {
+            try std.testing.expect((try terminal.feed("X")).stateChanged());
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
+            try std.testing.expectEqual(@as(u21, '9'), terminal.semanticView(0).cellAt(0, 9));
+            try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 0));
+        }
+    }
+
+    var repeated = try Terminal.init(std.testing.allocator, 3, 10);
+    defer repeated.deinit();
+    try std.testing.expect((try repeated.feed("\x1b[?41h0123456789")).stateChanged());
+    const semantic_before = repeated.semanticSequence();
+    const content_before = repeated.contentSequence();
+    try std.testing.expect(!(try repeated.feed("\x1b[?41h")).stateChanged());
+    try std.testing.expectEqual(semantic_before, repeated.semanticSequence());
+    try std.testing.expectEqual(content_before, repeated.contentSequence());
+    try std.testing.expect((try repeated.feed("\t")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), repeated.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), repeated.semanticView(0).cursor_col);
+}
+
 test "pointer reporting interest includes DEC locator and leaves one-shot consumption canonical" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

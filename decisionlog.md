@@ -1092,3 +1092,45 @@ while pinned iTerm2 executeDECSACE ignores parameters outside 0/1/2.
 Howl currently matches the already-full iTerm2 record. Changing the
 default to claim Kitty full would violate existing verified coverage.
 A compatibility-profile policy is not authorized for this difference.
+
+## iTerm2 MoreFix preserves phantom pending wrap across mode assignments (20 November 2026)
+
+Frozen iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+defines moreFix in VT100Terminal.m. executeDecSetReset case 41 calls
+setMoreFix, which sets a boolean and marks the UI dirty even if the
+value is unchanged. It does not reposition the cursor or consume the
+phantom right-edge state. In VT100ScreenMutableState.m,
+appendTabAtCursor checks moreFix, cursorX > width and wraparound
+to perform linefeed and carriage return before the tab. The live
+query returns 1/2, saved state and resets follow the same mode.
+
+Howl already owned the MoreFix flag, query, parameterized mode
+save/restore, DECSTR, RIS, alternate-screen lifetime and HT behavior,
+but Terminal.setDecMode shared cleanup canceled pending wrap on any
+recognized assignment, including 41. That wrongly prevented the
+following HT from entering the next line and caused disabling MoreFix
+to overwrite the rightmost cell instead of wrapping the next byte.
+
+A red-before/green-after terminal test now proves enabling MoreFix
+while phantom wrap is pending, disabling it in that state, idempotent
+repeat enable, the exact subsequent HT or printable effect, preserved
+content identities on no-op repeats, and normal cursor/grid behavior.
+The existing comprehensive MoreFix test proves query replies,
+save/restore, soft/hard reset and primary/alternate lifetime. Only
+DEC mode 41 returns the Boolean state mutation without the shared
+pending-wrap cancellation; other modes retain existing cleanup.
+No new mode or mutable owner was introduced.
+
+The pinned iTerm2 extra dirty flag on repeated assignments is UI
+presentation bookkeeping, not a terminal-protocol effect; a no-op
+mode assignment properly reports no semantic VT mutation in Howl.
+The scoped reference record iterm2.mode.more_fix is now full instead
+of partial/excluded, supported by the new exact-state proof.
+
+After the separately committed Kitty 7727 no-op promotion, the
+reviewed census is now 293 full / 321 partial / 48 missing / 10
+unassessed (672 reference-specific records unchanged). This checkpoint
+is a real behavior fix and a full promotion. VT Debug/ReleaseFast,
+root ReleaseFast check/test/audit, protocol validator, formatting and
+diff checks all green. No installed binary, host permission or running
+application was modified.
