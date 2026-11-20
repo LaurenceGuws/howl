@@ -1371,6 +1371,45 @@ test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
 }
 
+test "terminal: DEC origin rectangle erasure moves graphics with the accepted Screen rectangle" {
+    for ([_][]const u8{ "\x1b[1;1;1;1$z", "\x1b[1;1;1;1$\x7b" }) |erase| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+
+        // Two independent image placements: one at the absolute origin,
+        // and one at the first cell of the eventual origin-mode rectangle.
+        const image = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+        try feed(&terminal, "\x1b[1;1HO\x1b[1;1H" ++ image ++ "\x1b[2;3HX\x1b[2;3H" ++ image);
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(1).?.row);
+        try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(1).?.col);
+        const content_generation = terminal.images(0).content_generation;
+
+        // A 1x1 rectangle is relative to DEC origin and both active margins:
+        // first row 2, first column 3, not the physical (1,1) position.
+        try feed(&terminal, "\x1b[2;3r\x1b[?69h\x1b[3;6s\x1b[?6h");
+        const stable = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed("\x1b[3;3;2;2$z")).stateChanged());
+        try std.testing.expectEqual(stable, terminal.semanticSequence());
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        const split = erase.len - 2;
+        try std.testing.expect(!(try terminal.feed(erase[0..split])).stateChanged());
+        try std.testing.expect((try terminal.feed(erase[split..])).stateChanged());
+        try std.testing.expectEqual(@as(u21, 'O'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 2));
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        const remaining = terminal.images(0).placement(0).?;
+        try std.testing.expectEqual(@as(u16, 0), remaining.row);
+        try std.testing.expectEqual(@as(u16, 0), remaining.col);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+    }
+}
+
 test "terminal: DECCRA preserves cursor and overlapping source bytes" {
     const allocator = std.testing.allocator;
     {

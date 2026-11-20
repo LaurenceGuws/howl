@@ -4008,17 +4008,14 @@ fn graphicsScreenOrigin(vt: *const Terminal) u64 {
 }
 
 fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool {
-    if (area.top >= screen.rows or area.left >= screen.cols) return false;
-    const bottom = @min(area.bottom orelse screen.rows - 1, screen.rows - 1);
-    const right = @min(area.right orelse screen.cols - 1, screen.cols - 1);
-    if (bottom < area.top or right < area.left) return false;
+    const bounds = screen.rectBounds(area) orelse return false;
     const origin = graphicsScreenOrigin(vt);
     return vt.graphics.erase(
         graphicsBank(vt),
-        origin + area.top,
-        origin + bottom,
-        area.left,
-        right,
+        origin + bounds.top,
+        origin + bounds.bottom,
+        bounds.left,
+        bounds.right,
     );
 }
 

@@ -786,3 +786,28 @@ root ReleaseFast check/test plus Zig/project audit, protocol validation,
 formatting and diff checks passed. No catalogue classification, installed
 binary or live app changed. Selective and rectangular image erasures remain
 independent, unqualified reference-policy questions.
+
+## Rectangle graphics follow Screen's resolved DEC origin/margins (20 November 2026)
+
+For CSI DECERA/DECSERA, Screen.rectBounds already owns both DEC origin-mode
+resolution and vertical/horizontal margin clipping. Terminal's graphics helper
+reconstructed the rectangle directly from raw CSI-relative parameters using
+physical rows and columns. Consequently Screen erased the correct origin-
+relative text cell while the corresponding image placement remained, and
+an unrelated image at the physical origin could be removed.
+
+Terminal now consumes the exact existing Screen.rectBounds result for
+rectangular graphics erasure, rather than maintaining a second rectangle
+resolver. A terminal-stream test places one image at the physical origin
+and another at the later margin-relative rectangle origin, then exercises
+both ordinary and selective rectangular CSI erasure, an inverted rejected
+rectangle, and fragmented input. Original graphics-coordinate code failed
+the corrected test; the new code passed it. The out-of-range image stays
+visible; erased placement data is retired while decoded images remain owned.
+
+VT Debug and ReleaseFast, full root ReleaseFast check/test, Zig/project
+audit, protocol validation, formatting and diff checks passed. No source
+or image policy was expanded to claim full iTerm2 DECERA/DECSERA parity:
+protected-cell/attribute differences, external image lifetimes and host
+selection consequences remain separate pinned-reference questions. No
+catalogue status changed, binary installed, or running session modified.
