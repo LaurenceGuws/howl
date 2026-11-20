@@ -2674,10 +2674,18 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.backspace, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
-          kitty.c0.ht: {raw: "\\x09", effect: next tab stop, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+          kitty.c0.ht: {raw: "\\x09", effect: next tab stop,
+            conditions: "Pinned Kitty screen_tab can preserve a special tab marker in the source cell when
+              intervening cells are blank; Howl changes cursor position without storing that marker.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The tab marker is observable in Kitty's line text and copy behavior, while Howl's
+                retained canonical cells remain blank. Adding reference-specific text provenance would
+                change the current Screen cell model; the cursor-only behavior is otherwise supported.",
+              residual: "Pinned Kitty tab-marker text representation and the phantom-right-edge HT
+                behavior remain unqualified; ordinary cursor movement and tab stops are implemented.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+              symbol: "terminal: forward tabs move the cursor without Kitty preserved tab marker cells"}}}
           kitty.c0.lf: {raw: "\\x0a", effect: line feed, conditions: mLNM also returns carriage,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2749,10 +2757,19 @@ references:
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
-          kitty.esc.hts: {raw: "ESC H", effect: set tab stop, howl: {support: full,
+          kitty.esc.hts: {raw: "ESC H", effect: set tab stop,
+            conditions: "Pinned Kitty ignores HTS when its cursor is at the beyond-right-edge phantom column.
+              Howl stores the physical last-column stop while wrap_pending is set; a subsequent grow
+              reveals the extra stored tab stop. Ordinary HTS and per-bank tab ownership agree.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Kitty checks cursor x < physical columns before setting a stop, while Howl's
+                Screen stores its last physical column plus a separate pending-wrap flag. Aligning this
+                edge with Kitty may conflict with another reference's phantom-cursor convention.",
+              residual: "HTS at pending wrap and later resize does not yet match Kitty; in-bounds and
+                primary/alternate tab-stop ownership remain supported.",
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: HTS at pending wrap retains physical column stop unlike Kitty phantom skip"}}}
           kitty.esc.decsc: {raw: "ESC 7", effect: save cursor,
             conditions: "Howl additionally retains cursor visibility plus cell-domain protection, hyperlink, font, and
               baseline rendition",
@@ -3090,11 +3107,20 @@ references:
           kitty.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
-          kitty.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs, howl: {support: full,
+              symbol: "terminal: Kitty CBT traverses only active-bank stops and clamps exact counts"}}}
+          kitty.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
+            conditions: "Pinned Kitty screen_tabn calls screen_tab repeatedly and can preserve an internal
+              tab marker in the source cell on blank intervals. Howl moves the cursor but never stores
+              that tab marker, affecting later line text and copy behavior.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned Kitty's tab marker represents the traversed blank span as retained
+                source text; Howl's current canonical cell representation has only the cursor movement.
+                This is an observable text-history and selection policy difference.",
+              residual: "Cursor count/default/clamp and bank-local tab-stop movement agree, but Kitty's
+                stored tab-marker representation and derived copy behavior are not implemented.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: forward tabs move the cursor without Kitty preserved tab marker cells"}}}
           kitty.csi.cup: {raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
             conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -3154,7 +3180,7 @@ references:
           kitty.csi.reset_tabs: {raw: "CSI ? 5 W", effect: reset default tab stops, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: tab stops remain bank local and Kitty DECST8C resets only the active bank"}}}
           kitty.csi.ech: {raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: multicell boundary repair, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -3185,10 +3211,19 @@ references:
               source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
-          kitty.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stop, howl: {support: full,
+          kitty.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stop,
+            conditions: "Pinned Kitty accepts 0 to clear current and 3 to clear all, ignores 2,
+              and reports other values such as 5 unsupported. Howl accepts 5 as clear-all,
+              matching pinned libvterm but differing from Kitty's no-op.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The same CSI 5 g has contradictory pinned outcomes: Kitty logs and retains
+                tab stops, libvterm erases all. Howl retains the already implemented libvterm policy
+                rather than introduce an implicit reference-specific mode.",
+              residual: "TBC 0/3 and ignored mode 2 match Kitty, but out-of-range 5 is a
+                pinned incompatibility; exact unsupported-parameter semantics remain partial.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: tab controls share exact stored-stop and clamping behavior"}}}
+              symbol: "terminal: TBC mode 5 selects libvterm all-clear instead of pinned Kitty no-op"}}}
           kitty.csi.sm: {raw: "CSI Pm h", effect: set modes, howl: *howl_ansi_mode_breadth_excluded}
           kitty.csi.rm: {raw: "CSI Pm l", effect: reset modes, howl: *howl_ansi_mode_breadth_excluded}
           kitty.csi.dsr: {raw: "CSI [Ps=0] n", effect: report device status,

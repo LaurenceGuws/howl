@@ -1134,3 +1134,58 @@ is a real behavior fix and a full promotion. VT Debug/ReleaseFast,
 root ReleaseFast check/test/audit, protocol validator, formatting and
 diff checks all green. No installed binary, host permission or running
 application was modified.
+
+## Re-audit Kitty tab controls: exact DECST8C admission, four historical full overclaims (20 November 2026)
+
+A bounded re-audit compared the pinned Kitty revision
+d4106ef2db687579a69fefc949a6dc1b662f3ca8 at
+kitty/screen.c, kitty/vt-parser.c and kitty_tests/screen.py to Howl's
+Screen/tab_stops and terminal-stream evidence. Kitty explicitly retains
+independent main_tabstops and alt_tabstops, including resize prefix
+preservation. Howl's Screen-local stop ownership is therefore correct
+for Kitty; do not relocate tab stops to a terminal-global list merely
+because libvterm retains one shared table.
+
+One actual parser defect was fixed: Kitty admits DECST8C only for
+CSI ? 5 W with exactly one parameter. Howl's decodePrivateCsi
+previously checked only the first parameter and admitted CSI ? 5;1 W,
+wrongly clearing a custom stop. Two tests were red before the change
+and green afterward, one for actual active-alt tab state and one for
+parser rejection. A one-condition decoder correction now rejects
+extra parameters while preserving the standard 8-column reset.
+
+The new end-to-end tests also prove:
+- independent primary and alternate custom stops under CSI 1049,
+  resetting defaults on *only* the active bank, and resize growth
+  preserving old custom stops and adding new 8-column defaults;
+- CBT with zero, two, saturated large counts, C1 CSI, edge clamping
+  and bank-specific stop traversal;
+- CSI 5 g clears all in Howl (and frozen libvterm), while pinned
+  Kitty supports only 0/current, 3/all, 2/no-op and diagnoses 5;
+- on a blank row, Kitty screen_tab stores a special source tab marker
+  that is visible in the pinned screen.py line string and copy path,
+  while Howl's C0 HT and CSI CHT only move the cursor;
+- Kitty HTS at a phantom cursor beyond the right edge is ignored,
+  but Howl's separate wrap_pending representation allows a stop at
+  the last physical column, revealed by a subsequent grid growth.
+
+Two Kitty records were fully re-audited with exact strengthened tests:
+kitty.csi.reset_tabs and kitty.csi.cbt remain full, with new direct
+proof citations. Four old full records had been overclaimed and are
+now partial/excluded with specific source-backed residuals:
+kitty.c0.ht and kitty.csi.cht (special retained tab marker),
+kitty.esc.hts (phantom-edge stop admission), and kitty.csi.tbc
+(unsupported mode 5 conflicting with libvterm). This changes the
+catalogue from 293 full / 321 partial to 289 full / 325 partial
+without minting or dropping IDs. It is an *audit correction*, not four
+new regressions. Both pinned Kitty and libvterm are intentionally
+retained as reference-specific truth; changing CSI 5 g to please
+Kitty would damage already-supported libvterm behavior.
+
+No new tab or image model, generic compatibility profile, running
+application, installed binary or compositor change. VT Debug/
+ReleaseFast, root ReleaseFast check/test and complete Zig/project
+audits, declaration-aware protocol validation and inventory fixtures,
+formatting and diff checks passed. Remaining libvterm/iTerm2 tab
+bank-lifetime differences deserve their own re-audit before any
+broader source or catalogue change.

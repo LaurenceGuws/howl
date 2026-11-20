@@ -1224,7 +1224,7 @@ fn directQuery(final: u8, params: []const i32, intermediates: []const u8) ?Seman
         'K' => return SemanticEvent{
             .selective_erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,
         },
-        'W' => if (paramAtOrDefault0(params, 0) == 5) return SemanticEvent.reset_default_tab_stops,
+        'W' => if (params.len == 1 and params[0] == 5) return SemanticEvent.reset_default_tab_stops,
         else => {},
     }
     return null;
@@ -10160,6 +10160,7 @@ const CsiMappingOwnerTests = struct {
         try std.testing.expect(routeParserEvent(makeStyleChange('g', 3, 0, 1)).? == .tab_clear_all);
         try std.testing.expect(routeParserEvent(makeStyleChange('g', 5, 0, 1)).? == .tab_clear_all);
         try std.testing.expect(routeParserEvent(makePrivateStyleChange('W', &.{5})).? == .reset_default_tab_stops);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('W', &.{ 5, 1 })) == null);
         try std.testing.expect(!routeParserEvent(makeStyleChange('J', 0, 0, 0)).?.erase_display_below);
         try std.testing.expect(!routeParserEvent(makeStyleChange('J', 1, 0, 1)).?.erase_display_above);
         try std.testing.expect(!routeParserEvent(makeStyleChange('J', 2, 0, 1)).?.erase_display_complete);

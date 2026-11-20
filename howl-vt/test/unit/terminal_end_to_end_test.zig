@@ -1034,6 +1034,106 @@ test "terminal: tab controls share exact stored-stop and clamping behavior" {
     try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
 }
 
+test "terminal: tab stops remain bank local and Kitty DECST8C resets only the active bank" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 20);
+    defer terminal.deinit();
+
+    // Custom primary stop at physical column 6, with defaults removed.
+    try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+
+    // Kitty's alternate buffer owns independent default stops. Entering it
+    // does not borrow the primary stop at column 6.
+    try feed(&terminal, "\x1b[?1049h\r\t");
+    try std.testing.expect(terminal.semanticView(0).is_alternate_screen);
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+
+    // Change the alternate's tabs, then reset default spacing on that bank
+    // only. Re-entering the alternate later preserves this reset.
+    try feed(&terminal, "\x1b[3g\x1b[13G\x1bH\r\t");
+    try std.testing.expectEqual(@as(u16, 12), terminal.semanticView(0).cursor_col);
+    // Only private CSI ? 5 W is DECST8C. An ordinary CSI 5 W or an
+    // unknown private option must not reset the custom alternate stops.
+    try feed(&terminal, "\x1b[5W\x1b[?4W\x1b[?5;1W\r\t");
+    try std.testing.expectEqual(@as(u16, 12), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x9b?5W\r\t");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\t");
+    try std.testing.expectEqual(@as(u16, 16), terminal.semanticView(0).cursor_col);
+
+    try feed(&terminal, "\x1b[?1049l\r\t");
+    try std.testing.expect(!terminal.semanticView(0).is_alternate_screen);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?1049h\r\t");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+
+    // Growth retains the existing bank-specific prefix and supplies new
+    // eight-column defaults, including the first added stop at column 25.
+    try terminal.resize(3, 30);
+    try feed(&terminal, "\r\x1b[3I");
+    try std.testing.expectEqual(@as(u16, 24), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?1049l\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: TBC mode 5 selects libvterm all-clear instead of pinned Kitty no-op" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+
+    try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\r\t");
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+    // Pinned libvterm TBC 3 and 5 both clear all; pinned Kitty recognizes
+    // only 0 and 3 and logs the unsupported 5, retaining this stop.
+    try feed(&terminal, "\x1b[5g\r\t");
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?5W\r\t");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: forward tabs move the cursor without Kitty preserved tab marker cells" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[H\x1b[I");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
+    // Pinned Kitty screen_tab, when intervening cells are blank, stores a
+    // composite tab marker at the source. Its line-string test observes
+    // this as '\t'; Howl retains only cursor movement without that marker.
+    try feed(&terminal, "\r\t");
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "terminal: HTS at pending wrap retains physical column stop unlike Kitty phantom skip" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[3gABCDEFGHIJKLMNOPQRST\x1bH");
+    // Howl represents the phantom edge as wrap_pending plus col=19 and
+    // currently sets a stop there; pinned Kitty has cursor->x >= columns
+    // on a phantom edge and refuses to set a stop outside the grid.
+    try terminal.resize(2, 30);
+    try feed(&terminal, "\r\t");
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+}
+
+test "terminal: Kitty CBT traverses only active-bank stops and clamps exact counts" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\x1b[11G\x1bH\x1b[20G");
+    try feed(&terminal, "\x1b[0Z");
+    try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x9b2Z");
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[999999Z");
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+
+    try feed(&terminal, "\x1b[?1049h\x1b[18G\x1b[Z");
+    try std.testing.expectEqual(@as(u16, 16), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?1049l\x1b[20G\x1b[Z");
+    try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
+}
+
 test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
     const allocator = std.testing.allocator;
     const controls = [_]struct {
