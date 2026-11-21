@@ -160,6 +160,35 @@ test "mouse reporting is gated by DECSET mouse modes and SGR protocol" {
     try std.testing.expectEqualStrings("\x1b[<35;2;2M", encodeMouse(&terminal, hover_event));
 }
 
+test "libvterm mouse property callback may veto tracking while Howl owns exact mode" {
+    // Pinned libvterm src/state.c set_dec_mode 1002/1003 changes mouse
+    // flags only through vterm_state_set_termprop(VTERM_PROP_MOUSE).
+    // A registered host callback returning false vetoes all mouse
+    // movement reporting. Howl owns tracking directly and has no veto.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const drag: MouseEvent = .{ .kind = .move, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 };
+    const hover: MouseEvent = .{ .kind = .move, .button = .none, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0 };
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, drag));
+    try std.testing.expect((try terminal.feed("\x1b[?1006h\x1b[?1002h")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[<32;3;2M", encodeMouse(&terminal, drag));
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, hover));
+    try std.testing.expect(!(try terminal.feed("\x1b[?1002h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1003h")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[<35;3;2M", encodeMouse(&terminal, hover));
+    try std.testing.expect(!(try terminal.feed("\x1b[?1003h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1003l")).stateChanged());
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, hover));
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, drag));
+    // Focus 1004 is different: pinned libvterm assigns report_focus
+    // unconditionally AFTER its callback, even on callback veto.
+    // It matches Howl's directly owned focus-report mode.
+    try std.testing.expect((try terminal.feed("\x1b[?1004h")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
+    try std.testing.expect((try terminal.feed("\x1b[?1004l")).stateChanged());
+    try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
+}
+
 test "mouse reporting supports legacy x10 normal utf8 and urxvt encodings" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 5, 10);
@@ -3001,6 +3030,31 @@ test "application keypad modes affect keypad encoding and DECRQM" {
 
     write(&terminal, "\x1b>");
     try std.testing.expectEqualStrings("1", encodeKey(&terminal, .{ .named = .keypad_1 }, .{}));
+}
+
+test "libvterm private DECSGR baseline collides with native modifyOtherKeys query" {
+    // Pinned libvterm src/state.c:on_csi LEADER('?',0x6d) interprets
+    // 4,5,24 as superscript, subscript and baseline reset, updating
+    // src/pen.c SMALL/BASELINE without any reply bytes. Howl reserves
+    // CSI ?4m for xterm modifyOtherKeys query; 5/24 do nothing.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).stateChanged());
+    try std.testing.expect((try terminal.feed("4m")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[>4;0m", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[?5m\x1b[?24m")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed("\x1b[?4;5;24m")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[>4;0m", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    // Ordinary rendition remains independent, with no unsolicited
+    // private baseline state leaking into canonical cell attributes.
+    try std.testing.expect((try terminal.feed("\x1b[1mA")).stateChanged());
+    const cell = terminal.semanticView(0).cellInfoAt(0, 0);
+    try std.testing.expect(cell.attrs.bold);
+    try std.testing.expectEqual(@as(u21, 'A'), cell.codepoint);
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 }
 
 test "modifyOtherKeys set query disable and encoding" {

@@ -2418,6 +2418,32 @@ test "terminal: SGR rapid blink is an exact fragmented no-op" {
     try std.testing.expect(!(try terminal.feed("\x1b[6m")).stateChanged());
 }
 
+test "terminal: pinned libvterm small font attribute is absent from native baseline SGR" {
+    // Pinned libvterm src/pen.c:vterm_state_setpen(73/74/75) sets
+    // both VTERM_ATTR_SMALL and VTERM_ATTR_BASELINE independently.
+    // Howl retains the baseline value, but CellAttrs has no SMALL
+    // semantic or small-font raster control for this SGR family.
+    try std.testing.expect(!@hasField(Terminal.CellAttrs, "small"));
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[73mA\x1b[74mB\x1b[75mC")).stateChanged());
+    const view = terminal.semanticView(0);
+    for ([_]struct { col: u16, baseline: Terminal.Baseline, letter: u21 }{
+        .{ .col = 0, .baseline = .raised, .letter = 'A' },
+        .{ .col = 1, .baseline = .lowered, .letter = 'B' },
+        .{ .col = 2, .baseline = .normal, .letter = 'C' },
+    }) |case| {
+        const cell = view.cellInfoAt(0, case.col);
+        try std.testing.expectEqual(case.letter, cell.codepoint);
+        try std.testing.expectEqual(case.baseline, cell.attrs.baseline);
+        try std.testing.expectEqual(@as(u8, 1), cell.width);
+        try std.testing.expectEqual(@as(u8, 1), cell.height);
+        try std.testing.expectEqual(@as(u4, 0), cell.subscale_n);
+        try std.testing.expectEqual(@as(u4, 0), cell.subscale_d);
+    }
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: SGR font and baseline retain exact cell save resize and bank state" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

@@ -725,8 +725,13 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
-          libvterm.csi.decsgr: {raw: "CSI ? Pm m", effect: DEC baseline rendition, conditions: Ps 4|5|24,
-            howl: {support: missing, disposition: excluded, rationale: *howl_rendition_policy_difference}}
+          libvterm.csi.decsgr: {raw: "CSI ? Pm m", effect: DEC baseline rendition,
+            conditions: "Pinned libvterm src/state.c:on_csi maps private 4/5/24 to SGR 73/74/75, selecting small superscript/subscript/normal baseline without replies. Howl does not implement DEC baseline output. Its CSI ?4m instead triggers an existing xterm modifyOtherKeys query and returns CSI >4;0m; ?5m and ?24m are ignored.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned DEC printer baseline controls conflict with Howl's selected xterm private key-format query, and neither native cell state nor font output exposes the pin's small/baseline attributes.",
+              source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm private DECSGR baseline collides with native modifyOtherKeys query"}}}
           libvterm.csi.dsr: {raw: "CSI [Ps=0] n", effect: device status or cursor report,
             conditions: Ps 5|6; libvterm reports absolute CPR while Howl reports from the active DECOM origin,
             relevance: query,
@@ -868,17 +873,25 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm legacy X10 clamps out-of-range pointer while Howl drops it"}}}
           libvterm.mode.mouse_button: {raw: "CSI ? 1002 h|l", effect: toggle drag tracking,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+            conditions: "Pinned libvterm src/state.c:set_dec_mode(1002) only updates mouse_flags via vterm_state_set_termprop(VTERM_PROP_MOUSE). An optional registered host callback returning false vetoes that change. Howl Terminal.setDecMode owns mouse tracking without a host veto; ordinary admission and repeated modes behave compatibly.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native mouse tracking is a directly owned terminal mode, not a host-negotiated property. A pinned libvterm callback veto can suppress reports that Howl correctly emits.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm mouse property callback may veto tracking while Howl owns exact mode"}}}
           libvterm.mode.mouse_any: {raw: "CSI ? 1003 h|l", effect: toggle motion tracking,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
-          libvterm.mode.focus: {raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+            conditions: "Pinned libvterm src/state.c:set_dec_mode(1003) only updates mouse_flags via vterm_state_set_termprop(VTERM_PROP_MOUSE). An optional registered host callback returning false vetoes that change. Howl Terminal.setDecMode owns mouse tracking without a host veto; ordinary admission and repeated modes behave compatibly.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native mouse tracking is a directly owned terminal mode, not a host-negotiated property. A pinned libvterm callback veto can suppress reports that Howl correctly emits.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm mouse property callback may veto tracking while Howl owns exact mode"}}}
+          libvterm.mode.focus: {raw: "CSI ? 1004 h|l", effect: toggle focus reports,
+            conditions: "Pinned libvterm src/state.c:set_dec_mode(1004) invokes an optional VTERM_PROP_FOCUSREPORT host callback, then unconditionally assigns report_focus regardless of callback result. Howl's directly owned mode matches this effective focus-report selection.",
+            howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm mouse property callback may veto tracking while Howl owns exact mode"}}}
           libvterm.mode.mouse_utf8: {raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
             conditions: "Pinned libvterm src/mouse.c sends mouse row/column fields through src/utf8.h:fill_utf8 without Unicode scalar validation, including surrogate ED A0 80 and codepoints above U+10FFFF. Howl safely rejects the whole invalid report rather than emitting malformed UTF-8. Valid UTF-8 mouse reports and negotiated mode selection agree.",
             howl: {support: partial, disposition: excluded,
@@ -1135,10 +1148,13 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           libvterm.sgr.small_baseline: {raw: "CSI 73|74|75 m",
-            effect: set small superscript subscript or normal baseline, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR font and baseline retain exact cell save resize and bank state"}}}
+            effect: set small superscript subscript or normal baseline,
+            conditions: "Pinned libvterm src/pen.c:vterm_state_setpen sets both VTERM_ATTR_SMALL true/false and VTERM_ATTR_BASELINE raise/lower/normal. Howl retains the baseline in CellAttrs but has no independent small-font attribute or corresponding reduced-font rendering for these three ordinary SGR parameters.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native canonical cells preserve baseline displacement but do not replicate libvterm's separate small-font attribute; positive raised/lowered/normal semantics remain supported.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm small font attribute is absent from native baseline SGR"}}}
           libvterm.sgr.bright: {raw: "CSI 90..97|100..107 m", effect: set bright foreground or background,
             howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
