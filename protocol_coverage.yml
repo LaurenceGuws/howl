@@ -3977,9 +3977,12 @@ references:
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
           kitty.osc.icon: {raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
+            conditions: "Pinned Kitty vt-parser.c:dispatch_osc OSC 1 dispatches screen.c:set_icon, which calls Window.icon_changed; pinned kitty/window.py:icon_changed is an explicit pass and does not retain icon data. Howl oscProcess replaces and reports the completed icon value in native metadata, even on empty reset.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl explicitly retains and reports OSC 1 icon changes as terminal state; the pinned Kitty Window silently ignores icon updates. Keeping the native bounded metadata owner is deliberate.",
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned Kitty OSC 1 icon host no-op differs from native retained icon"}}}
           kitty.osc.title: {raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
             conditions: "Pinned Kitty replaces an empty title with its default and sanitizes whitespace/control/UTF-8 in the Window handler; Howl intentionally retains the completed exact empty or short text up to its bound.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
@@ -4073,20 +4076,27 @@ references:
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.notify_1337:
             raw: OSC 1337 ; Pt (BEL|ST)
-            effect: display notification
-            conditions: VT retains the ordered terminal intent; the app-owned desktop handler applies a deterministic reply,
-              decline, or no-op without making canonical VT wait for an observer. GPU and host UI policy remain embedder-owned.
+            effect: dispatch desktop notification
+            conditions: >-
+              Pinned Kitty vt-parser.c:dispatch_osc routes every OSC 1337 payload to desktop_notify and
+              Window.desktop_notify, including arbitrary unrecognized text. Howl oscProcess first decodes
+              iTerm2 1337 keys and retains a typed notification only for Notification=; other keys can own
+              shell or transfer semantics and arbitrary text is ignored. Howl-app also declines normal
+              message presentation, reserving graphical/permission policy for the host.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-app/src/consequences.zig
-              symbol: drain
+              source: howl-vt/src/terminal.zig
+              symbol: oscProcess
               proof:
-                path: howl-app/src/consequences.zig
-                symbol: terminal consequences only request attention for focus and attention notifications
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: pinned Kitty OSC 1337 notification dispatch differs from Howl named iTerm keys
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
-              residual: Reference-specific client presentation remains outside the current Howl core.
+              rationale: >-
+                The pinned command family delegates every arbitrary OSC 1337 body to product desktop notification;
+                Howl intentionally recognizes a bounded named iTerm2 subset and never executes that graphical
+                policy inside VT.
+              residual: Kitty raw arbitrary-body notification and platform presentation differ from typed native commands.
           kitty.osc.fg: {raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: "Pinned Kitty clears foreground override on invalid color and accepts named/rgbi/LAB forms; Howl leaves the last valid foreground intact on invalid input and uses a bounded deterministic parser.",
             howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
@@ -4299,13 +4309,12 @@ references:
               source: howl-vt/src/properties.zig, symbol: State.popColor, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty indexed color stack exposes default-filled slot and reset extent differences"}}}
-          kitty.osc.metadata: {raw: "OSC 3008 ; Pt (BEL|ST)", effect: update terminal metadata,
-            conditions: Kitty dispatches to an intentionally empty host handler., recognition: recognized_noop,
-            relevance: host metadata, howl: {support: missing, disposition: excluded,
-              rationale: *howl_metadata_policy_difference,
-              residual: Howl streams and discards systemd context bytes without retaining metadata., proof: {
-                path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "unsupported SetMark and Kitty context metadata remain exact no-ops"}}}
+          kitty.osc.metadata: {raw: "OSC 3008 ; Pt (BEL|ST)", effect: ignore systemd context metadata,
+            recognition: recognized_noop, relevance: host metadata,
+            conditions: "Pinned Kitty vt-parser.c:dispatch_osc case 3008 calls screen.c:osc_context and kitty/window.py:osc_context is explicit pass. Howl parser recognizes OSC 3008 and oscProcess intentionally returns no semantic action; it silently discards full 16 KiB context payloads through ST and resumes ordinary input without a consequence.",
+            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "pinned Kitty OSC 3008 is an exact ignored host context across streaming overflow"}}}
       dispatch_osc_ignored:
         source: vt-parser.c
         symbol: dispatch_osc
@@ -4410,12 +4419,16 @@ references:
           kitty.dcs.sync:
             raw: "DCS = Ps s Pt ST"
             effect: synchronized update control
-            conditions: Ps 1 starts and Ps 2 stops; Kitty also expires or stops pending mode on timeout and resize
+            conditions: >-
+              Pinned Kitty vt-parser.c:dispatch_dcs accepts only raw =1s and =2s prefixes (possibly followed
+              by body), starts a 2000ms frozen-screen render transaction and cancels it on timeout or resize.
+              Howl dcsProcess parses numeric parameters 01/02 as aliases and retains one canonical VT
+              synchronized-output flag, with host publication using a separate one-second fail-open policy.
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
-              residual: Howl shares the exact DCS/CSI VT mode; publication coalescing is an embedder/client concern rather than VT semantics. Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
-              source: howl-vt/src/terminal.zig, symbol: Terminal.synchronizedOutput, proof: {
-              path: howl-vt/src/terminal.zig,
-              test: "actions: DEC private synchronized output maps enable disable"}}
+              residual: "Valid 1/2 synchronized toggles and body admission work; zero-padded numeric aliases are more permissive in Howl, and Kitty's 2s frozen-screen capture, timeout and resize cancellation are intentionally not native VT operations.",
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+                path: howl-vt/test/unit/terminal_test.zig,
+                symbol: "pinned Kitty synchronized DCS rejects padded selector unlike Howl numeric mode"}}
       parse_kitty_dcs:
         source: vt-parser.c
         line: 643
@@ -4660,16 +4673,20 @@ references:
         conditions: APC G control keys precede optional payload after semicolon
         records:
           kitty.graphics.transmit_default: {raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action 0 takes the same upload branch as t/T/q, decodes direct bytes or file/shm media and generates reply/placement from final root frame. Howl Plane.command accepts bounded direct RGB/RGBA and PNG, but rejects file/shm and advisory N diverges from pinned parser.",
             relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
               residual: "Howl accepts bounded direct RGB/RGBA and PNG f=100 payloads (optionally zlib-compressed), including anonymous id-zero, explicit image id, or image number with generated stable id; ordinary display placements honor default cursor advance/scroll or C=1 no-move. Howl also accepts bounded N usage hints as advisory no-op metadata, although this pinned Kitty revision rejects the N key. Non-direct file/shared-memory media and other reference-specific placement policy remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: Yazi-style anonymous Kitty preview is quiet stationary and deletable"}}}
           kitty.graphics.transmit: {raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action t uses handle_add_command, tracks multi-chunk source and returns a per-image success/error report. Howl admits bounded direct RGB/RGBA/PNG, but lacks direct file/shm transfers and permits advisory N usage hints absent from this pin.",
             howl: *howl_static_graphics_transmit}
           kitty.graphics.transmit_display: {raw: "APC G a=T,Pm ; Pb ST", effect: transmit and display image,
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action T uses add-command and handle_put_command once the root frame is loaded, honoring cursor advance and quota. Howl supports direct decoded image placement and C=1 no-move but not file/shm formats or all relative-parent rules.",
             relevance: graphics, howl: *howl_static_graphics_transmit}
           kitty.graphics.query: {raw: "APC G a=q,Pm ; Pb ST",
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action q requires a nonzero query image ID, probes handle_add_command and immediately drops probe images without a visible placement. Howl bounds and probes direct image data while omitting file/shm transport and some reference-specific admission fields.",
             effect: probe image transmission support then discard probe, relevance: graphics,
             howl: *howl_static_graphics_transmit}
           kitty.graphics.animate: {raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
@@ -4679,17 +4696,20 @@ references:
               source: howl-vt/src/graphics.zig, symbol: Plane.animate, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy"}}}
           kitty.graphics.frame: {raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action f requires an image ID or active chunk, looks up existing image, streams animation-frame data and returns an action-specific reply. Howl Plane.finishFrame bounds and composes direct raw/zlib animation frames, but not file/shm or all external encoded media.",
             relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
               milestone: advanced_graphics,
               residual: "Howl fully coalesces at most 256 direct raw or o=z zlib-compressed RGB/RGBA animation frames inside existing byte quotas, with partial x/y updates, c=base, r=existing/root edits, timing, Y RGBA backgrounds, X=1 and C=1 overwrite spellings. Bounded N hints are forward-compatible advisory no-ops in Howl, not recognized at this pinned Kitty revision. Non-direct frame media and encoded animation-frame formats remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.finishFrame, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty frame loading preserves edits background bases and action-specific composition"}}}
           kitty.graphics.put: {raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action p requires an image ID or image number and invokes handle_put_command, supporting default placement and parent-relative pixels. Howl supports ordinary image and invisible Unicode placement but has no relative-parent placement or fractional source-crop precision beyond graphics_v2.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
               residual: "Howl supports ordinary placements plus U=1 Unicode-placeholder prototypes. U+10EEEE projection decodes indexed/RGB image ids, underline placement ids, row/column/high-byte diacritics and inheritance across history/reflow; prototypes are invisible and do not move the cursor. Relative parents and fractional source crops beyond integer graphics_v2 remain; visible virtual prototypes use the canonical animation scheduler.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: Kitty Unicode placeholders project invisible virtual placements"}}}
           kitty.graphics.delete: {raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
+            conditions: "Pinned kitty/graphics.c:grman_handle_command action d dispatches handle_delete_command with lowercase placement-only or uppercase image-data deletion, including geometric and identity selectors. Howl Plane.command supports ordinary selectors with bank-shared IDs, but relative-parent placement lifetimes and virtual prototype matching differ.",
             relevance: graphics, howl: &howl_static_graphics_delete {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
               residual: "Howl implements silent lower/uppercase placement/data deletion for all ordinary selectors. Unicode placeholder cell images follow canonical text lifetime automatically; invisible virtual prototypes ignore screen-location/all-visible selectors and obey image-id/number/range selectors. Relative-parent deletion policy remains.",
@@ -4795,6 +4815,7 @@ references:
               source: howl-vt/src/graphics.zig, symbol: Plane.deleteFrame, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy"}}}
           kitty.graphics.delete_default: {raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
+            conditions: "Pinned kitty/graphics.c:handle_delete_command case 0 falls through D(a,A,...clear_filter_func_noncell), deleting non-cell placements while preserving cell and virtual references; Howl Plane.command has analogous ordinary placement deletion but different virtual prototype and shared-bank lifetime.",
             relevance: graphics, howl: *howl_static_graphics_delete}
 
   windows_terminal:

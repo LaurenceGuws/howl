@@ -399,6 +399,24 @@ test "OSC titles and icons remain commit-only against pinned callback and sanita
     try std.testing.expectEqualStrings("", terminal.title().?);
 }
 
+test "pinned Kitty OSC 1 icon host no-op differs from native retained icon" {
+    // Frozen Kitty vt-parser.c::dispatch_osc code 1 calls
+    // screen.c::set_icon, but kitty/window.py::icon_changed is pass.
+    // Native Howl instead retains icon metadata and notifies its caller.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b]1;owl")).stateChanged());
+    const result = try terminal.feed("\x1b\\");
+    try std.testing.expect(result.stateChanged() and result.iconChanged());
+    try std.testing.expect(!result.titleChanged());
+    try std.testing.expectEqualStrings("owl", terminal.icon().?);
+    try std.testing.expect(terminal.title() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b]1;owl\x07")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b]1;\x07")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.icon().?);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
 test "OSC metadata reports only committed replacement and survives split cancellation" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
@@ -1661,6 +1679,55 @@ test "pinned iTerm2 OSC 1337 absent host actions have no native consequences" {
         try std.testing.expectEqualStrings("", terminal.replyBytes());
         try std.testing.expectEqualDeep(presentation, terminal.presentation());
     }
+    try std.testing.expect((try terminal.feed("Q")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "pinned Kitty OSC 1337 notification dispatch differs from Howl named iTerm keys" {
+    // Frozen Kitty vt-parser.c::dispatch_osc treats every OSC 1337
+    // payload as desktop_notify with the whole raw data. Howl parses
+    // only explicitly owned iTerm2 keys and emits a notification
+    // consequence solely for a recognized Notification= command.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const initial = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;arbitrary-host-message\x1b\\")).stateChanged());
+    try std.testing.expectEqual(initial, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expect((try terminal.feed("\x1b]1337;Notification=notice\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    const msg = terminal.consequenceHead().?.notification;
+    try std.testing.expectEqual(Terminal.NotificationKind.message, msg.kind);
+    try std.testing.expectEqual(@as(u16, 1337), msg.command);
+    try std.testing.expectEqualStrings("notice", msg.payload);
+    try terminal.consumeConsequence(msg.generation);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "pinned Kitty OSC 3008 is an exact ignored host context across streaming overflow" {
+    // Pinned Kitty vt-parser.c::dispatch_osc code 3008 calls
+    // screen.c::osc_context, and kitty/window.py::osc_context is pass.
+    // Howl recognizes the same no-op and silently discards an oversized
+    // metadata payload through BEL/ST without a pending consequence or
+    // state error. Parsing resumes normally after the closed OSC.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const before = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b]3008;ignored\x07")).stateChanged());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    const oversized = try std.testing.allocator.alloc(u8, expected_metadata_bytes * 16);
+    defer std.testing.allocator.free(oversized);
+    @memset(oversized, 'a');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(std.testing.allocator);
+    try sequence.appendSlice(std.testing.allocator, "\x1b]3008;");
+    try sequence.appendSlice(std.testing.allocator, oversized);
+    try sequence.appendSlice(std.testing.allocator, "\x1b\\");
+    try std.testing.expect(!(try terminal.feed(sequence.items)).stateChanged());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
     try std.testing.expect((try terminal.feed("Q")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(0, 0));
 }

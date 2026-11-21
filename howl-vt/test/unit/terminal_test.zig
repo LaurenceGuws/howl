@@ -542,6 +542,24 @@ test "stationary cursor movement advances semantic identity" {
     try std.testing.expectEqual(@as(u16, 3), after.cursor_col);
 }
 
+test "pinned Kitty synchronized DCS rejects padded selector unlike Howl numeric mode" {
+    // Pinned kitty/vt-parser.c::dispatch_dcs recognizes only the raw
+    // prefix =1s or =2s. It rejects =01s/=02s, whereas Howl dcsProcess
+    // decodes the numeric DCS parameter and admits leading-zero aliases.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1bP=01signored\x1b\\")).stateChanged());
+    try std.testing.expect(terminal.synchronizedOutput());
+    try std.testing.expect(!(try terminal.feed("\x1bP=001s\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1bP=02signored\x1b\\")).stateChanged());
+    try std.testing.expect(!terminal.synchronizedOutput());
+    try std.testing.expect((try terminal.feed("\x1bP=1svalid\x1b\\")).stateChanged());
+    try std.testing.expect(terminal.synchronizedOutput());
+    try std.testing.expect((try terminal.feed("\x1bP=2svalid\x1b\\")).stateChanged());
+    try std.testing.expect(!terminal.synchronizedOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "synchronized update DCS shares exact bounded mode state" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
