@@ -759,6 +759,41 @@ test "terminal: repeated locking shifts are stable and real selection advances o
     try std.testing.expectEqual(after_gr, terminal.semanticSequence());
 }
 
+test "terminal: libvterm SS2 survives SO and SI until the next graphic" {
+    for ([_]struct { shift: u8, second: u21 }{
+        .{ .shift = 0x0e, .second = 0x23bc },
+        .{ .shift = 0x0f, .second = 'r' },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 16);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b)0\x1b*0\x1b");
+        try feed(&terminal, "N");
+        try feed(&terminal, &.{case.shift});
+        try feed(&terminal, "qr");
+        try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(case.second, terminal.semanticView(0).cellAt(0, 1));
+    }
+}
+
+test "terminal: libvterm string-embedded SO and SI remain a distinct C0 parser policy" {
+    // Frozen libvterm executes C0 SO/SI during OSC payload assembly and
+    // changes GL for following text. Howl deliberately keeps these bytes
+    // out of OSC content and does not execute a charset switch.
+    var shifted = try Terminal.init(std.testing.allocator, 2, 16);
+    defer shifted.deinit();
+    try feed(&shifted, "\x1b)0\x1b]2;x\x0ey\x07q");
+    try std.testing.expectEqual(@as(u21, 'q'), shifted.semanticView(0).cellAt(0, 0));
+    try feed(&shifted, "\x0eq");
+    try std.testing.expectEqual(@as(u21, 0x2500), shifted.semanticView(0).cellAt(0, 1));
+
+    var unshifted = try Terminal.init(std.testing.allocator, 2, 16);
+    defer unshifted.deinit();
+    try feed(&unshifted, "\x1b)0\x0e\x1b]2;x\x0fy\x07q");
+    try std.testing.expectEqual(@as(u21, 0x2500), unshifted.semanticView(0).cellAt(0, 0));
+    try feed(&unshifted, "\x0fq");
+    try std.testing.expectEqual(@as(u21, 'q'), unshifted.semanticView(0).cellAt(0, 1));
+}
+
 test "terminal: four charset slots share locking single-shift save and reset ownership" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 32);
     defer terminal.deinit();

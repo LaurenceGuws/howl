@@ -20,12 +20,13 @@ pub const State = struct {
         return true;
     }
 
-    /// Selects one G0-G3 slot as GL and clears pending single shift.
+    /// Selects one G0-G3 slot as GL without consuming a pending single shift.
+    /// SS2/SS3 override only the next printable GL character, regardless
+    /// of locking shifts that occur in between.
     pub fn selectGl(self: *State, slot: u8) bool {
         if (slot >= self.designations.len) return false;
-        if (self.gl_index == slot and self.single_shift == null) return false;
+        if (self.gl_index == slot) return false;
         self.gl_index = slot;
-        self.single_shift = null;
         return true;
     }
 
@@ -229,6 +230,22 @@ test "charset single shifts select distinct G2 and G3 mappings once" {
     try std.testing.expectEqual(@as(?u8, 2), state.single_shift);
     try std.testing.expectEqual(@as(u21, 0x2500), state.mapCodepoint('q'));
     try std.testing.expectEqual(@as(?u8, null), state.single_shift);
+}
+
+test "charset locking shifts retain pending single shift for first printable" {
+    for ([_]u8{ 0, 1 }) |locking_slot| {
+        var state: State = .{};
+        try std.testing.expect(state.configureCharset(1, '0'));
+        try std.testing.expect(state.configureCharset(2, '0'));
+        try std.testing.expect(state.selectSingleShift(2));
+        try std.testing.expectEqual(@as(?u8, 2), state.single_shift);
+        try std.testing.expectEqual(locking_slot == 1, state.selectGl(locking_slot));
+        try std.testing.expectEqual(@as(?u8, 2), state.single_shift);
+        try std.testing.expectEqual(@as(u21, 0x2500), state.mapCodepoint('q'));
+        try std.testing.expectEqual(@as(?u8, null), state.single_shift);
+        const next = if (locking_slot == 0) @as(u21, 'r') else @as(u21, 0x23bc);
+        try std.testing.expectEqual(next, state.mapCodepoint('r'));
+    }
 }
 
 test "charset selection invalid slots and repeated defaults are unchanged" {

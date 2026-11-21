@@ -1390,3 +1390,37 @@ a regression from ebca049. Changing the shared raw-C1 policy requires
 cross-reference consideration and cannot follow from this one row.
 Root ReleaseFast check/test/audits, protocol validator and diff gates
 remained green.
+
+## Locking shifts do not consume pending SS2/SS3 (21 November 2026)
+
+The 10x10 control worker's libvterm SO/SI finding was independently
+verified against frozen libvterm
+934bc2fbf21800ac3458a499df8820ca5fb45fd3:
+src/state.c:on_control changes only gl_set for SO/SI; on_text
+prioritizes gsingle_set over gl_set and clears it only after a graphic.
+Howl charset.State.selectGl had instead erased the pending single
+shift. ESC * 0; ESC N; SO/SI; q was then rendered as the current GL
+glyph rather than U+2500 from the still-pending DEC G2 designation.
+
+A pure charset test and fragmented terminal-stream test were red before
+the fix, green afterward. Locking shifts now change only GL; pending
+SS2/SS3 lasts until the first printable GL glyph. Later text then
+uses the correctly selected locking slot; existing GR, save/reset,
+and G0-G3 tests stay green. No second mutable charset owner exists.
+
+The same pinned libvterm parser.c also routes SO/SI through on_control
+while an OSC or DCS string is being assembled. Howl's explicit
+string-control grammar ignores those embedded bytes rather than
+changing GL. A separate terminal test proves this remaining
+source-backed divergence. Consequently the historical
+libvterm.c0.so and libvterm.c0.si catalogue claims were each corrected
+from full to partial/excluded with precise string-policy residuals,
+rather than unconditionally weakening OSC/DCS parsing across
+reference families. These are historical truth corrections, not
+regressions introduced by the charset fix.
+
+VT Debug/ReleaseFast, root ReleaseFast check/test, seven-package
+Zig and project audits, Nu protocol/inventory validation, Zig format
+and diff gates all passed. No installed binary or running process
+changed. After the two corrections the catalogue has 277 full,
+338 partial, 48 missing and nine unassessed records (672 total).
