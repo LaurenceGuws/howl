@@ -1002,6 +1002,34 @@ test "terminal: four charset slots share locking single-shift save and reset own
     try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(0, 0));
 }
 
+test "terminal: pinned libvterm UTF8 GR locking shifts differ from Howl Unicode mapping" {
+    // Pinned libvterm src/state.c:on_text sends high-bit input to
+    // encoding_utf8 when vt->mode.utf8 is enabled, before choosing GR.
+    // Thus ESC ~, }, | change GR selection but cannot remap UTF-8 ñ.
+    // Howl's charset mapCodepoint still applies configured GR G1-G3
+    // to decoded U+00F1, mapping its 0x71 low byte to DEC line 'q'.
+    for ([_]struct { designation: []const u8, shift: []const u8 }{
+        .{ .designation = "\x1b)0", .shift = "\x1b~" },
+        .{ .designation = "\x1b*0", .shift = "\x1b}" },
+        .{ .designation = "\x1b+0", .shift = "\x1b|" },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b%G");
+        try std.testing.expect((try terminal.feed(case.designation)).stateChanged());
+        if (!std.mem.eql(u8, case.shift, "\x1b~"))
+            try std.testing.expect((try terminal.feed(case.shift)).stateChanged())
+        else
+            try std.testing.expect(!(try terminal.feed(case.shift)).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\xc3")).stateChanged());
+        try std.testing.expect((try terminal.feed("\xb1")).stateChanged());
+        try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
+        // ASCII GL text remains unaffected by GR selection.
+        try feed(&terminal, "q");
+        try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 1));
+    }
+}
+
 test "terminal: Kitty CP437 and VAX42 share existing charset lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 32);
     defer terminal.deinit();
@@ -1030,6 +1058,75 @@ test "terminal: Kitty CP437 and VAX42 share existing charset lifetime" {
     try std.testing.expect(!(try terminal.feed("\x1b(X")).stateChanged());
     try std.testing.expect((try terminal.feed("\x1bc!")).stateChanged());
     try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "terminal: pinned libvterm DECSWL requires a line-info callback unlike Howl" {
+    // Pinned libvterm src/state.c::set_lineinfo commits NO_FORCE changes
+    // only when a registered setlineinfo callback returns true. ESC # 5
+    // is NO_FORCE and may therefore leave lineinfo unchanged; Howl's
+    // Screen.applyLineGeometry directly owns the transition.
+    for ([_]struct { command: []const u8, geometry: Terminal.LineGeometry }{
+        .{ .command = "\x1b#3", .geometry = .double_height_top },
+        .{ .command = "\x1b#4", .geometry = .double_height_bottom },
+        .{ .command = "\x1b#6", .geometry = .double_width },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed("\x1b#5")).stateChanged());
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        try std.testing.expectEqual(case.geometry, terminal.semanticView(0).lineGeometry(0));
+        try std.testing.expect((try terminal.feed("\x1b#5")).stateChanged());
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(0));
+        try std.testing.expect(!(try terminal.feed("\x1b#5")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?69h")).stateChanged());
+        // Both implementations ignore DEC line geometry while DECLRMM
+        // is enabled, including all four ESC # 3..6 commands.
+        for ([_][]const u8{ "\x1b#3", "\x1b#4", "\x1b#5", "\x1b#6" }) |command|
+            try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(0));
+    }
+}
+
+test "terminal: libvterm ICH and DCH require vertical scroll-region admission" {
+    // Pinned libvterm src/state.c:on_csi calls is_cursor_in_scrollregion
+    // for both ICH and DCH. Howl Screen.insertChars/deleteChars check
+    // the horizontal edit region but permit ordinary row edits outside
+    // the current vertical scroll region.
+    for ([_]struct { command: []const u8, expected: []const u8 }{
+        .{ .command = "\x1b[2@", .expected = "AB  CD" },
+        .{ .command = "\x1b[2P", .expected = "ABEF  " },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 6);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HABCDEF\x1b[2;1HGHIJKL\x1b[2;3r\x1b[1;3H");
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+        for (case.expected, 0..) |byte, col|
+            try std.testing.expectEqual(if (byte == ' ') @as(u21, 0) else @as(u21, byte), view.cellAt(0, @intCast(col)));
+        for ("GHIJKL", 0..) |byte, col|
+            try std.testing.expectEqual(@as(u21, byte), view.cellAt(1, @intCast(col)));
+    }
+}
+
+test "terminal: libvterm ED3 callback gate differs from native scrollback clearing" {
+    // Pinned libvterm src/state.c:on_csi handles ordinary and selective
+    // ED mode 3 through optional state->callbacks->sb_clear. With no
+    // callback or an unaccepted result it does not erase scrollback.
+    // Howl Screen.eraseDisplay(.scrollback) directly clears its history.
+    for ([_][]const u8{ "\x1b[3J", "\x1b[?3J" }) |sequence| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 6, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "one\r\ntwo\r\nthree");
+        try std.testing.expect(terminal.semanticView(0).history_count > 0);
+        const before = terminal.semanticView(0).cellAt(0, 0);
+        try std.testing.expect((try terminal.feed(sequence)).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u32, 0), after.history_count);
+        try std.testing.expectEqual(before, after.cellAt(0, 0));
+        try std.testing.expect(!(try terminal.feed(sequence)).stateChanged());
+    }
 }
 
 test "terminal: DEC line geometry owns width movement scroll resize reset and visual observation" {

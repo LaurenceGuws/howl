@@ -403,7 +403,7 @@ references:
             raw: "ESC # 3"
             effect: double-height top line
             conditions: >-
-              ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
+              ignored under DECLRMM; pinned libvterm also needs an accepting optional setlineinfo callback; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
               Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
             relevance: presentation
             howl: *howl_libvterm_line_geometry_excluded
@@ -411,20 +411,23 @@ references:
             raw: "ESC # 4"
             effect: double-height bottom line
             conditions: >-
-              ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
+              ignored under DECLRMM; pinned libvterm also needs an accepting optional setlineinfo callback; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
               Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
             relevance: presentation
             howl: *howl_libvterm_line_geometry_excluded
-          libvterm.esc.decswl: {raw: "ESC # 5", effect: single-width line, conditions: ignored under DECLRMM,
-            relevance: presentation, howl: {support: full, source: howl-vt/src/screen.zig,
-              symbol: Screen.applyLineGeometry,
+          libvterm.esc.decswl: {raw: "ESC # 5", effect: single-width line,
+            conditions: "Pinned libvterm src/state.c::set_lineinfo applies this NO_FORCE line change only if an optional setlineinfo callback accepts it; no callback or a veto leaves the row's old geometry unchanged. Howl changes the row directly. Both ignore DEC geometry while DECLRMM is active.",
+            relevance: presentation,
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native Screen owns its DEC row geometry directly rather than requiring a reference host callback to approve each line-info transition.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applyLineGeometry,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: DEC line geometry owns width movement scroll resize reset and visual observation"}}}
+                symbol: "terminal: pinned libvterm DECSWL requires a line-info callback unlike Howl"}}}
           libvterm.esc.decdwl:
             raw: "ESC # 6"
             effect: double-width line
             conditions: >-
-              ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
+              ignored under DECLRMM; pinned libvterm also needs an accepting optional setlineinfo callback; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
               Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
             howl: *howl_libvterm_line_geometry_excluded
           libvterm.esc.decaln:
@@ -488,17 +491,26 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           libvterm.esc.ls1r: {raw: "ESC ~", effect: select G1 into GR, relevance: charset,
-            howl: {support: full, source: howl-vt/src/charset.zig, symbol: State.selectGr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: "Pinned libvterm src/state.c:on_text routes high-bit bytes through encoding_utf8 before GR if vt->mode.utf8 is active. ESC ~ sets gr_set but does not remap decoded Unicode. Howl src/charset.zig:State.mapCodepoint applies G1 to decoded U+00A0..U+00FE; with DEC G1 designation, UTF-8 ñ becomes U+2500.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl GR mapping also supports Kitty UTF-8 charset extensions. Pinned libvterm bypasses GR entirely for decoded high-bit UTF-8 input; the raw GR selection command itself is supported.",
+              source: howl-vt/src/charset.zig, symbol: State.selectGr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm UTF8 GR locking shifts differ from Howl Unicode mapping"}}}
           libvterm.esc.ls2r: {raw: "ESC }", effect: select G2 into GR, relevance: charset,
-            howl: {support: full, source: howl-vt/src/charset.zig, symbol: State.selectGr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: "Pinned libvterm src/state.c:on_text routes high-bit bytes through encoding_utf8 before GR if vt->mode.utf8 is active. ESC } sets gr_set but does not remap decoded Unicode. Howl src/charset.zig:State.mapCodepoint applies G2 to decoded U+00A0..U+00FE; with DEC G2 designation, UTF-8 ñ becomes U+2500.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl GR mapping also supports Kitty UTF-8 charset extensions. Pinned libvterm bypasses GR entirely for decoded high-bit UTF-8 input; the raw GR selection command itself is supported.",
+              source: howl-vt/src/charset.zig, symbol: State.selectGr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm UTF8 GR locking shifts differ from Howl Unicode mapping"}}}
           libvterm.esc.ls3r: {raw: "ESC |", effect: select G3 into GR, relevance: charset,
-            howl: {support: full, source: howl-vt/src/charset.zig, symbol: State.selectGr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: "Pinned libvterm src/state.c:on_text routes high-bit bytes through encoding_utf8 before GR if vt->mode.utf8 is active. ESC | sets gr_set but does not remap decoded Unicode. Howl src/charset.zig:State.mapCodepoint applies G3 to decoded U+00A0..U+00FE; with DEC G3 designation, UTF-8 ñ becomes U+2500.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl GR mapping also supports Kitty UTF-8 charset extensions. Pinned libvterm bypasses GR entirely for decoded high-bit UTF-8 input; the raw GR selection command itself is supported.",
+              source: howl-vt/src/charset.zig, symbol: State.selectGr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm UTF8 GR locking shifts differ from Howl Unicode mapping"}}}
       on_csi:
         source: state.c
         line: 954
@@ -507,10 +519,12 @@ references:
         bounds: one leader and one intermediate byte
         records:
           libvterm.csi.ich: {raw: "CSI [Ps=1] @", effect: insert characters,
-            conditions: logical row width and wide-row state, howl: {support: full,
+            conditions: "Pinned libvterm src/state.c:on_csi rejects ICH when is_cursor_in_scrollregion is false, including rows outside vertical DEC scroll margins. Howl Screen.insertChars admits a horizontal in-row shift there.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps ordinary in-row edits independent of vertical scroll-margin admission; both bound writes when admitted.",
               source: howl-vt/src/screen.zig, symbol: Screen.insertChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
+                symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"}}}
           libvterm.csi.cuu: {raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -566,15 +580,20 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
-          libvterm.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display, conditions: Ps 0|1|2|3,
-            howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
-          libvterm.csi.decsel_display: {raw: "CSI ? [Ps=0] J", effect: selective erase display,
-            conditions: protected cells and Ps 0|1|2|3, howl: {support: full,
+          libvterm.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display,
+            conditions: "For Ps 3 pinned libvterm src/state.c:on_csi optionally invokes sb_clear and otherwise leaves scrollback unchanged. Howl Screen.eraseDisplay(.scrollback) clears owned history. Ordinary Ps 0/1/2 ranges remain supported.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl retains and clears its own bounded history without requiring an optional libvterm host callback for ED3.",
               source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+                symbol: "terminal: libvterm ED3 callback gate differs from native scrollback clearing"}}}
+          libvterm.csi.decsel_display: {raw: "CSI ? [Ps=0] J", effect: selective erase display,
+            conditions: "Pinned libvterm uses the optional sb_clear gate for selective CSI ?3J just as ordinary CSI 3J, leaving history unchanged unless callback succeeds. Howl always clears owned history; selective 0/1/2 honor protection.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native scrollback is owned directly by Screen, not by an optional libvterm host callback. Selective 0/1/2 remain supported.",
+              source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: libvterm ED3 callback gate differs from native scrollback clearing"}}}
           libvterm.csi.el: {raw: "CSI [Ps=0] K", effect: erase line, conditions: Ps 0|1|2,
             howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.eraseLine, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -595,10 +614,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
           libvterm.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: logical row width and wide-row state, howl: {support: full,
+            conditions: "Pinned libvterm src/state.c:on_csi rejects DCH when is_cursor_in_scrollregion is false, including rows outside vertical DEC scroll margins. Howl Screen.deleteChars admits a horizontal in-row shift there.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps ordinary in-row edits independent of vertical scroll-margin admission; both bound writes when admitted.",
               source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
+                symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"}}}
           libvterm.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: wide-row line information and callback consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
