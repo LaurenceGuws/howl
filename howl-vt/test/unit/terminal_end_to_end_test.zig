@@ -470,6 +470,57 @@ test "terminal: DEC private erasure preserves guarded text and resets erased cel
     try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
 }
 
+test "terminal: erase commands use current attrs rather than iTerm2 default or old attrs" {
+    const cases = [_][]const u8{
+        "\x1b[2K", // EL clears the full active row.
+        "\x1b[X", // ECH clears one logical cell.
+        "\x1b[1;1;1;1$z", // DECERA clears one addressed cell.
+        "\x1b[1;1;1;1${", // DECSERA clears an unprotected addressed cell.
+    };
+    for (cases) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 6);
+        defer terminal.deinit();
+
+        try feed(&terminal, "\x1b[1;31;4mA");
+        const original = terminal.semanticView(0).cellInfoAt(0, 0);
+        try std.testing.expect(original.attrs.bold);
+        try std.testing.expect(original.attrs.underline);
+        try std.testing.expectEqual(Terminal.Color.indexed(1), original.attrs.fg);
+
+        try feed(&terminal, "\x1b[22;24;2;32;44m\x1b[1;1H");
+        try std.testing.expect((try terminal.feed(command)).stateChanged());
+        const erased = terminal.semanticView(0).cellInfoAt(0, 0);
+        try std.testing.expectEqual(@as(u21, 0), erased.codepoint);
+        try std.testing.expect(!erased.attrs.bold);
+        try std.testing.expect(!erased.attrs.underline);
+        try std.testing.expect(erased.attrs.dim);
+        try std.testing.expectEqual(Terminal.Color.indexed(2), erased.attrs.fg);
+        try std.testing.expectEqual(Terminal.Color.indexed(4), erased.attrs.bg);
+        try std.testing.expect(erased.attrs.protected == .none);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+        try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+    }
+}
+
+test "terminal: DECFRA uses raw fill code instead of iTerm2 charset mapping" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 5);
+    defer terminal.deinit();
+
+    // Ordinary writes use the selected DEC special-graphics charset.
+    try feed(&terminal, "\x1b(0q");
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
+
+    // DECFRA uses the supplied raw Pc. Pinned iTerm2 instead maps its Pc
+    // through the active line-drawing designation before filling.
+    try std.testing.expect((try terminal.feed("\x1b[113;1;3;1;3$x")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "q");
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 2));
+}
+
 test "terminal: erase mutation owns pending wrap and retained continuation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

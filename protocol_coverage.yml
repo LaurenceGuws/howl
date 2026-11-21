@@ -1287,7 +1287,7 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           iterm2.csi.rep: {raw: "CSI [Ps=1] b", effect: repeat preceding character,
-            conditions: iTerm2 includes double-width and external-attribute behavior absent from Howl,
+            conditions: "Pinned iTerm2 may disable REP by supportREPCode and replays its last screen character with DWC and external attributes; Howl always accepts a bounded previously written grapheme.",
             howl: *howl_repeat_excluded}
           iterm2.csi.cud: {raw: "CSI [Ps=1] B", effect: cursor down,
             conditions: clamps from above the vertical region into its bottom, howl: {support: full,
@@ -1350,11 +1350,14 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           iterm2.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display,
-            conditions: iTerm2 treats unsupported Ps as 0 while Howl rejects it,
+            conditions: "Pinned iTerm2 maps invalid Ps (for example 9) to ED 0 and can archive visible lines on ED 2; Howl rejects invalid Ps and erases visible cells without that history insertion.",
             howl: *howl_erase_display_excluded}
           iterm2.csi.el: {raw: "CSI [Ps=0] K", effect: erase line,
-            conditions: iTerm2 delegate owns double-width and multiline character repair,
-            howl: *howl_erase_line_excluded}
+            conditions: "Pinned iTerm2 writes defaultChar with reset noncolor SGR and repairs its DWC/EOL representation; Howl writes current erase attrs with logical-width and multicell ownership.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_erase_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.eraseLine, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: erase commands use current attrs rather than iTerm2 default or old attrs"}}}
           iterm2.csi.hvp: {raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
             conditions: double-width target-line column addressing, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -1386,8 +1389,8 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           iterm2.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: double-width and multicell boundary repair, howl: {support: partial,
-              disposition: excluded, rationale: *howl_structural_policy_difference,
+            conditions: "Pinned iTerm2 deletes physical cells, repairs split DWC/EOL and relocates external attributes; Howl shifts bounded logical DEC row columns and clears its own multicell intersections. Edge parity remains unproved.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
@@ -1491,11 +1494,11 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           iterm2.csi.ech: {raw: "CSI [Ps=1] X", effect: erase characters,
-            conditions: double-width rows and ISO protected-mode erase, howl: {support: partial,
-              disposition: excluded, rationale: *howl_structural_policy_difference,
+            conditions: "Pinned iTerm2 erases defaultChar, scales counts to physical columns on double-width rows and respects ISO protection; Howl erases logical columns with current styling and its own protection rules.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+                symbol: "terminal: erase commands use current attrs rather than iTerm2 default or old attrs"}}}
           iterm2.csi.media_copy:
             raw: "CSI [Ps=0] i"
             effect: media copy request
@@ -1579,23 +1582,23 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECCRA preserves cursor and overlapping source bytes"}}}
           iterm2.csi.decfra: {raw: "CSI Pc ; Pt ; Pl ; Pb ; Pr $ x", effect: fill rectangle,
-            conditions: iTerm2 maps Pc through active line drawing and applies only current colors,
+            conditions: "Howl now retires only image placements overwritten by accepted DECFRA geometry, matching pinned iTerm2 cell-image reset; iTerm2 maps Pc through active DEC line drawing and copies selected colors, while Howl fills raw Pc with current attrs.",
             howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.fillRect, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: DECFRA replaces only graphics in the accepted origin rectangle"}}}
           iterm2.csi.decera: {raw: "CSI Pt ; Pl ; Pb ; Pr $ z", effect: erase rectangle,
-            conditions: iTerm2 erases with its grid default cell while Howl uses current erase attributes,
+            conditions: "Pinned iTerm2 creates a literal space with defaultChar attrs while Howl writes canonical blank 0 with current attrs; DWC repair and emulation-level gating also differ.",
             howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.eraseRect, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
+                symbol: "terminal: erase commands use current attrs rather than iTerm2 default or old attrs"}}}
           iterm2.csi.decsera: {raw: "CSI Pt ; Pl ; Pb ; Pr $ {", effect: selective erase rectangle,
-            conditions: iTerm2 preserves cell attributes while Howl applies current erase attributes,
+            conditions: "Pinned iTerm2 preserves previous cell attributes during DECSERA and skips guarded cells only in DEC mode; Howl replaces current erase attrs and retains independent ISO/DEC provenance.",
             howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.eraseRect, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: erase commands use current attrs rather than iTerm2 default or old attrs"}}}
           iterm2.csi.decsed: {raw: "CSI ? [Ps=0] J", effect: selective erase display,
             conditions: iTerm2 delegate owns protected-cell attribute and multiline consequences,
             howl: *howl_erase_display_excluded}
@@ -1603,17 +1606,17 @@ references:
             conditions: iTerm2 delegate owns protected-cell attribute and multiline consequences,
             howl: *howl_erase_line_excluded}
           iterm2.csi.decic: {raw: "CSI [Ps=1] ' }", effect: insert columns,
-            conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
+            conditions: "Both shift rows within cursor regions; iTerm2 repairs physical DWC/EOL and relocates external attrs behind a VT-level gate, while Howl uses logical DEC widths and current erase attrs. Wide-edge parity remains unproved.",
             howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.insertColumns, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
           iterm2.csi.decdc: {raw: "CSI [Ps=1] ' ~", effect: delete columns,
-            conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
+            conditions: "Both shift bounded margin rows; pinned iTerm2 repairs physical DWC/EOL and external-attribute spans while Howl uses logical row widths and current erase attrs. Last-column wide-edge parity remains unproved.",
             howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.deleteColumns, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
           iterm2.csi.xtpushcolors:
             raw: "CSI [Ps=0] # P"
             effect: push color stack
