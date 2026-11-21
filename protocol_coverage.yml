@@ -237,10 +237,21 @@ references:
         census: {semantic_branches: 15}
         recognition: implemented
         records:
-          libvterm.c0.bel: {raw: BEL, effect: ring bell, relevance: core, howl: {support: full,
+          libvterm.c0.bel: {raw: BEL, effect: ring bell, relevance: core,
+            conditions: "Frozen libvterm parser.c treats BEL as a string terminator for OSC/DCS/APC/PM/SOS
+              without dispatching an on_control bell callback. Howl retains BEL as string payload
+              inside DCS/APC/PM/SOS and terminates only OSC. Ground BEL is equivalent in both.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The pinned libvterm string-state parser terminates DCS/APC/PM/SOS on BEL
+                where Howl's explicit string owner waits for ST; that same input has different
+                following-text and payload boundaries. Both deliberately avoid a bell consequence
+                for the embedded byte, and ordinary BEL remains a correctly ordered consequence.",
+              residual: "DCS/APC/PM/SOS BEL terminator and following-text recovery differ from pinned
+                libvterm; choosing that permissive framing globally would change the established
+                string-control contract. Audible/visual bell effects remain host-owned.",
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+              path: howl-vt/test/unit/parser/string_control_test.zig,
+              symbol: "parser string controls: BEL terminates only OSC"}}}
           libvterm.c0.bs: {raw: "\\x08", effect: cursor left, relevance: core,
             conditions: Howl additionally follows iTerm2 reverse-wrap and soft-wrapped-row policy,
             howl: {support: partial, disposition: excluded,

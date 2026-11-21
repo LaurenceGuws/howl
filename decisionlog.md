@@ -1578,3 +1578,33 @@ protocol inventory validator, formatting and diff checks passed.
 The accepted corpus remains 672 reference-specific records:
 273 full / 342 partial / 48 missing / 9 unassessed.
 No installed binary, user desktop or running process was changed.
+
+## BEL terminator policy differs across libvterm string states (21 November 2026)
+
+The 10x10 control intake 01 independently identified an overbroad
+historical full claim for libvterm.c0.bel. Pinned libvterm
+934bc2fbf21800ac3458a499df8820ca5fb45fd3,
+src/state.c:on_control, invokes an optional bell callback for
+ground-state BEL. Howl correctly retains one ordered VT bell
+consequence for that case and leaves audible or visual treatment
+to its host. There is no bell-host implementation defect.
+
+However pinned libvterm src/parser.c:vterm_input_write uses BEL to
+terminate OSC, DCS, APC, PM and SOS without dispatching an actual
+bell callback. Howl's parser only accepts BEL as an OSC terminator;
+inside DCS/APC/PM/SOS it retains BEL as payload and waits for ST.
+The existing parser/string_control_test.zig named negative test
+proves that explicit Howl policy, while the existing terminal C0
+test proves correct ground-state BEL consequences. Pinned source
+shows a different string boundary and following-text parse for
+identical input bytes. A blanket parser change would affect
+multiple terminal reference families and was not authorized.
+
+The single libvterm.c0.bel record was corrected full to
+partial/excluded with exact conditions, rationale, residual and
+a named test citation. There is no runtime or installed-binary
+change, and this classification correction introduces no new
+regression. VT Debug/ReleaseFast, full root ReleaseFast check/test,
+Zig/project audits and Nu protocol validation/diff checks passed.
+The accepted support census is now 272 full / 343 partial /
+48 missing / 9 unassessed, all 672 original records retained.
