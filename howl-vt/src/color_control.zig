@@ -13,7 +13,7 @@ const KittyColorState = properties.ColorState;
 
 /// Borrows one terminal color-control command until synchronous application.
 pub const Command = union(enum) {
-    osc: struct { command: u16, payload: []const u8 },
+    osc: struct { command: u16, payload: []const u8, reply_bel: bool = false },
     linux_palette: []const u8,
 };
 
@@ -46,8 +46,8 @@ pub fn apply(
     }
     switch (osc.command) {
         21 => try handleKittyControl(colors, output, osc.payload, defaults),
-        4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, osc.payload),
-        5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, osc.payload),
+        4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, osc.payload, osc.reply_bel),
+        5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, osc.payload, osc.reply_bel),
         10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
             allocator,
             colors,
@@ -55,6 +55,7 @@ pub fn apply(
             encode_buf,
             osc.command,
             osc.payload,
+            osc.reply_bel,
         ),
         110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
             colors,
@@ -149,7 +150,7 @@ fn handleKittyControl(
                 try output.append(";");
                 try output.append(key);
                 try output.append("=");
-                if (colorForKey(colors.*, key)) |color| {
+                if (colorForKey(colors, key)) |color| {
                     try appendKittyColorOsc(output, color);
                 } else if (!isKnownColorKey(key)) {
                     try output.append("?");
@@ -202,6 +203,7 @@ fn handleXtermPaletteControl(
     output: *replies.Buffer,
     encode_buf: []u8,
     payload: []const u8,
+    reply_bel: bool,
 ) replies.AppendError!void {
     // A dangling index has no color/query operand. Reject the complete
     // malformed command before modifying palette or emitting any reply.
@@ -221,8 +223,8 @@ fn handleXtermPaletteControl(
             errdefer output.truncate(start);
             try output.appendControl(.terminal, .osc);
             try output.append(text);
-            if (paletteTargetColor(colors.*, idx)) |color| try appendColorOsc(allocator, output, color);
-            try output.appendControl(.terminal, .st);
+            if (paletteTargetColor(colors, idx)) |color| try appendColorOsc(allocator, output, color);
+            try appendColorReplyTerminator(output, reply_bel);
         } else if (parseColor(value)) |color| {
             setPaletteTarget(colors, idx, color);
         }
@@ -236,6 +238,7 @@ fn handleXtermSpecialPaletteControl(
     output: *replies.Buffer,
     encode_buf: []u8,
     payload: []const u8,
+    reply_bel: bool,
 ) replies.AppendError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
@@ -250,7 +253,7 @@ fn handleXtermSpecialPaletteControl(
             try output.appendControl(.terminal, .osc);
             try output.append(text);
             if (colors.special_palette[idx]) |color| try appendColorOsc(allocator, output, color);
-            try output.appendControl(.terminal, .st);
+            try appendColorReplyTerminator(output, reply_bel);
         } else if (parseColor(value)) |color| {
             colors.special_palette[idx] = color;
         }
@@ -265,12 +268,13 @@ fn handleXtermDynamicColor(
     encode_buf: []u8,
     command: u16,
     payload: []const u8,
+    reply_bel: bool,
 ) replies.AppendError!void {
     var key = dynamicKeyForCommand(command) orelse return;
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |value| {
         if (std.mem.eql(u8, value, "?")) {
-            try appendXtermDynamicColorReply(allocator, output, encode_buf, colors.*, key);
+            try appendXtermDynamicColorReply(allocator, output, encode_buf, colors, key, reply_bel);
         } else if (parseColor(value)) |color| {
             setDynamicColor(colors, key, color);
         }
@@ -441,7 +445,7 @@ fn isKnownColorKey(key: []const u8) bool {
 }
 
 // Returns the current color for a recognized Kitty key.
-fn colorForKey(colors: TerminalColorState, key: []const u8) ?Rgb {
+fn colorForKey(colors: *const TerminalColorState, key: []const u8) ?Rgb {
     if (std.fmt.parseUnsigned(u8, key, 10)) |idx| return colors.palette[idx] else |_| {}
     if (specialColorKey(key)) |special| return switch (special) {
         .foreground => colors.foreground,
@@ -454,7 +458,7 @@ fn colorForKey(colors: TerminalColorState, key: []const u8) ?Rgb {
     return null;
 }
 
-fn paletteTargetColor(colors: TerminalColorState, idx: u16) ?Rgb {
+fn paletteTargetColor(colors: *const TerminalColorState, idx: u16) ?Rgb {
     if (idx < 256) return colors.palette[@intCast(idx)];
     const special_idx = idx - 256;
     if (special_idx >= colors.special_palette.len) return null;
@@ -537,7 +541,7 @@ fn dynamicCommandForKey(key: DynamicKey) u16 {
     };
 }
 
-fn dynamicColor(colors: TerminalColorState, key: DynamicKey) ?Rgb {
+fn dynamicColor(colors: *const TerminalColorState, key: DynamicKey) ?Rgb {
     return switch (key) {
         .foreground => colors.foreground,
         .background => colors.background,
@@ -582,6 +586,16 @@ fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey, defaults: *co
     }
 }
 
+// xterm's OSC color query replies preserve the requesting BEL or ST final.
+// Framing policy stays with the reply owner; the parser only records the byte.
+fn appendColorReplyTerminator(output: *replies.Buffer, reply_bel: bool) replies.AppendError!void {
+    if (reply_bel) {
+        try output.append("\x07");
+    } else {
+        try output.appendControl(.terminal, .st);
+    }
+}
+
 // Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
 fn appendColorOsc(_: std.mem.Allocator, output: *replies.Buffer, color: Rgb) replies.AppendError!void {
     var buf: [32]u8 = undefined;
@@ -622,8 +636,9 @@ fn appendXtermDynamicColorReply(
     allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
-    colors: TerminalColorState,
+    colors: *const TerminalColorState,
     key: DynamicKey,
+    reply_bel: bool,
 ) replies.AppendError!void {
     // zig-audit: acknowledge catch_unreachable
     // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
@@ -633,7 +648,7 @@ fn appendXtermDynamicColorReply(
     try output.appendControl(.terminal, .osc);
     try output.append(text);
     if (dynamicColor(colors, key)) |color| try appendColorOsc(allocator, output, color);
-    try output.appendControl(.terminal, .st);
+    try appendColorReplyTerminator(output, reply_bel);
 }
 
 fn setSpecialColor(colors: *TerminalColorState, key: SpecialKey, color: Rgb) void {

@@ -1892,7 +1892,8 @@ test "OSC colors distinguish mutation query and malformed no-op" {
 
     const query = try terminal.feed("\x1b]4;1;?\x07");
     try std.testing.expect(query.stateChanged());
-    try std.testing.expectEqualStrings("\x1b]4;1;rgb:0101/0202/0303\x1b\\", terminal.replyBytes());
+    // xterm mirrors the BEL request terminator in OSC color replies.
+    try std.testing.expectEqualStrings("\x1b]4;1;rgb:0101/0202/0303\x07", terminal.replyBytes());
 
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
     const iterm_malformed = try terminal.feed("\x1b]1337;SetColors=fg=bogus,missing,p3=x\x07");
@@ -2032,6 +2033,115 @@ test "Kitty invalid dynamic color clears override but Howl preserves last valid 
         const expected = try std.fmt.bufPrint(&buf, "\x1b]{d};\x1b\\", .{command});
         try std.testing.expectEqualStrings(expected, terminal.replyBytes());
     }
+}
+
+test "xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty" {
+    // Originating xterm misc.c:ChangeColorsRequest uses AllocateTermColor;
+    // failed XParseColor leaves previously configured colors untouched.
+    // Pinned Kitty window.py:set_dynamic_color instead removes the
+    // current override for the same invalid bytes. iTerm2 rejects too.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    for ([_]u16{ 10, 11, 12, 17, 19 }) |command| {
+        var set_buf: [64]u8 = undefined;
+        const set = try std.fmt.bufPrint(&set_buf, "\x1b]{d};#345678\x1b\\", .{command});
+        try std.testing.expect((try terminal.feed(set)).stateChanged());
+    }
+    const retained = terminal.presentation();
+
+    // Mix both framing forms and preserve all five independent overrides.
+    for ([_]u16{ 10, 11, 12, 17, 19 }, 0..) |command, index| {
+        var bad_buf: [64]u8 = undefined;
+        const end = if (index % 2 == 0) "\x07" else "\x1b\\";
+        const invalid = try std.fmt.bufPrint(&bad_buf, "\x1b]{d};not-a-color{s}", .{ command, end });
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqualDeep(retained, terminal.presentation());
+    }
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+
+    // The selected xterm values remain queryable and match BEL exactly.
+    for ([_]u16{ 10, 11, 12, 17, 19 }) |command| {
+        var query_buf: [32]u8 = undefined;
+        const query = try std.fmt.bufPrint(&query_buf, "\x1b]{d};?\x07", .{command});
+        try feed(&terminal, query);
+        var expected_buf: [72]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&expected_buf, "\x1b]{d};rgb:3434/5656/7878\x07", .{command});
+        try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+        try consumeReplies(&terminal);
+    }
+    try std.testing.expectEqualDeep(retained, terminal.presentation());
+}
+
+test "BEL-terminated color query overflow rolls back the exact reply packet" {
+    // The last BEL byte is part of the xterm color reply transaction.
+    // If it exceeds the 64-KiB queue bound, no incomplete reply, color
+    // mutation or cursor side effect may escape the failed feed.
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]10;#112233\x1b\\");
+    const before = terminal.presentation();
+    const response = "\x1b]10;rgb:1111/2222/3333\x07";
+    const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - response.len + 1, false);
+    defer allocator.free(fill);
+
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b]10;?\x07"));
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "xterm color query replies preserve BEL or ST request termination" {
+    // xterm charproc.c passes the OSC terminator to misc.c:do_osc,
+    // then ChangeColorsRequest/ChangeAnsiColorRequest report with that
+    // exact final byte. The color owner must not invent an ST reply for
+    // a BEL-terminated request.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try feed(&terminal, "\x1b]4;1;#010203\x1b\\" ++
+        "\x1b]10;#112233\x1b\\" ++
+        "\x1b]12;#445566\x1b\\" ++
+        "\x1b]17;#778899\x1b\\");
+    const before = terminal.presentation();
+
+    // Query and answer both terminated by BEL, including mixed palette
+    // and cursor/selection dynamic colors, in exact admission order.
+    try feed(&terminal, "\x1b]4;1;?\x07" ++
+        "\x1b]10;?\x07" ++
+        "\x1b]12;?\x07" ++
+        "\x1b]17;?\x07");
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:0101/0202/0303\x07" ++
+            "\x1b]10;rgb:1111/2222/3333\x07" ++
+            "\x1b]12;rgb:4444/5555/6666\x07" ++
+            "\x1b]17;rgb:7777/8888/9999\x07",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try consumeReplies(&terminal);
+
+    // ST-terminated queries must keep existing exact ST reply behavior.
+    try feed(&terminal, "\x1b]4;1;?\x1b\\\x1b]11;?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:0101/0202/0303\x1b\\" ++
+            "\x1b]11;rgb:1818/1919/2121\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+    try consumeReplies(&terminal);
+
+    // OSC 5 is another xterm color query using the same exact final-byte
+    // rule. Preserve both its special index and the BEL terminator.
+    try feed(&terminal, "\x1b]5;0;#abcdef\x1b\\");
+    try feed(&terminal, "\x1b]5;0;?\x07");
+    try std.testing.expectEqualStrings(
+        "\x1b]5;0;rgb:abab/cdcd/efef\x07",
+        terminal.replyBytes(),
+    );
 }
 
 test "xterm OSC colors set query and reset palette and dynamic colors" {

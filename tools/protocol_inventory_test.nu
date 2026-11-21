@@ -68,13 +68,62 @@ if ($ruling.id != "libvterm.csi.decsgr"
 }
 let indexed_rulings = (protocol decisions)
 let expected_rulings = [
+  iterm2.osc.bg
+  iterm2.osc.cursor
+  iterm2.osc.fg
+  iterm2.osc.highlight_bg
+  iterm2.osc.highlight_fg
+  iterm2.osc.palette
   iterm2.osc.palette_reset
+  kitty.osc.bg
+  kitty.osc.cursor
+  kitty.osc.fg
+  kitty.osc.highlight_bg
+  kitty.osc.highlight_fg
+  kitty.osc.palette
   kitty.osc.palette_reset
   libvterm.csi.decsgr
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
 }
+# Dynamic invalid-color and BEL reply conflicts each have a real winner
+# and a separate exact named source-level Zig regression.
+for reference in [kitty iterm2] {
+  for family in [fg bg cursor highlight_bg highlight_fg] {
+    let id = ($reference + ".osc." + $family)
+    let ruling = (protocol decision $id)
+    if ($ruling.id != $id
+        or $ruling.disposition != adjudicated
+        or $ruling.adjudication.kind != wire_collision
+        or $ruling.adjudication.winner.owner != xterm
+        or $ruling.adjudication.loser.owner != $reference
+        or ($ruling.adjudication.reason | str trim | is-empty)) {
+      error make {msg: $"source owner or evidence missing from dynamic-color ruling ($id)"}
+    }
+    let expected_test = if $reference == kitty {
+      "xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty"
+    } else {
+      "xterm color query replies preserve BEL or ST request termination"
+    }
+    if $ruling.adjudication.proof.symbol != $expected_test {
+      error make {msg: $"wrong dynamic-color proof linked to ($id)"}
+    }
+  }
+  let palette_id = ($reference + ".osc.palette")
+  let palette = (protocol decision $palette_id)
+  if ($palette.disposition != adjudicated
+      or $palette.adjudication.winner.owner != xterm
+      or $palette.adjudication.loser.owner != $reference
+      or $palette.adjudication.proof.symbol != "xterm color query replies preserve BEL or ST request termination") {
+    error make {msg: $"indexed OSC 4 request-final mismatch not proven for ($palette_id)"}
+  }
+}
+let color_rulings = (protocol query --text "BEL-terminated color query")
+if ($color_rulings | where disposition == adjudicated | length) < 5 {
+  error make {msg: "indexed color reply policy is not query-searchable"}
+}
+
 for id in [iterm2.osc.palette_reset kitty.osc.palette_reset] {
   let palette_ruling = (protocol decision $id)
   if ($palette_ruling.disposition != adjudicated
