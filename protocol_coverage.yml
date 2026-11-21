@@ -3714,15 +3714,17 @@ references:
             conditions: >-
               Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB states. Mixed-key
               cursor changes now project from one committed canonical color parse into both screen banks;
-              pinned Kitty queries combine keys into one OSC reply using 8-bit RGB while Howl emits separate
-              16-bit replies. Transparent backgrounds, visual-bell color, opacity and host refresh remain outside.
+              Howl now also groups queried keys into one OSC 21 reply with Kitty's 8-bit RGB spelling and
+              exact positive, negative and capacity rollback proofs. Pinned Kitty's transparent backgrounds,
+              visual-bell color, duplicate-key coalescing, payload sanitization, opacity and host refresh
+              remain outside the qualified subset.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Pinned Kitty's combined query reply, eight-bit RGB spelling, transparent alpha,
-                visual bell and host refresh behavior remain unqualified. The former duplicate cursor-action
-                parse was deleted after red/green mixed-key projection proof.",
+              residual: "The ordinary multi-key query reply and 8-bit RGB format now match pinned Kitty.
+                Transparent alpha, visual bell, duplicate-key coalescing, host sanitization and colour
+                refresh policy remain unqualified; no new host colour state was introduced.",
               source: howl-vt/src/color_control.zig, symbol: handleKittyControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors"}}
+              symbol: "kitty OSC 21 groups ordered queries with eight bit RGB and one reply"}}
           kitty.osc.clipboard:
             raw: OSC 52 ; Pc ; Pd (BEL|ST)
             effect: clipboard transfer

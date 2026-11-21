@@ -1463,3 +1463,41 @@ and does not own transparent-alpha, visual-bell and host opacity
 or refresh state. The sole record's conditions and test evidence
 were updated without changing the support count or pin. This fixes
 a real colour projection bug without claiming full Kitty parity.
+
+## Kitty OSC 21 queries share one ordered short-RGB reply (21 November 2026)
+
+The 10x10 colour worker 07 reported a pinned wire mismatch in the
+OSC 21 query path. Frozen Kitty revision
+d4106ef2db687579a69fefc949a6dc1b662f3ca8,
+kitty/window.py:color_control, collects every query key in one
+insertion-ordered response map and serializes one OSC 21 reply with
+eight-bit rgb:rr/gg/bb components. Howl's existing
+color_control.handleKittyControl instead emitted one OSC reply per
+query key, reusing xterm's sixteen-bit rgb:rrrr/gggg/bbbb format.
+The previous test explicitly baked in that incompatible framing.
+
+The single color_control owner now accumulates ordered query fields
+into one OSC response, appending the terminator only once, and emits
+the exact short RGB components with a fixed local byte buffer (no
+intermediate allocations). This does not alter OSC 4/5/10-19 xterm
+reply formatting, which retains its sixteen-bit components.
+The outer color_control.apply transaction still restores both
+canonical colours and the entire previous reply queue on any
+allocation or reply-capacity failure.
+
+Two terminal-stream tests were red before the correction, green
+afterward. They cover grouped mixed known/unknown/undefined keys,
+ordered set/query interleaving, fragmented OSC delivery, BEL versus
+ST input and exact one-response output. A bounded near-capacity
+test independently confirms rollback of a preceding color mutation
+and partial output if the combined reply cannot fit. All relevant VT
+Debug/ReleaseFast, root ReleaseFast check/test, project/Zig audits,
+Nu protocol validation, formatting and diff checks passed.
+
+The reference-specific kitty.osc.kitty_color record remains
+partial/deferred: the pinned implementation also coalesces repeated
+query keys, sanitizes echoed payloads, and supports transparent
+alpha, visual-bell and host colour refresh/opacity presentation not
+fully represented by Howl. Its proven ordinary response subset,
+source and test citation were updated without a support-score change.
+No terminal profile, new parser or GUI process was added.

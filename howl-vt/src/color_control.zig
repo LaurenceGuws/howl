@@ -38,7 +38,7 @@ pub fn apply(
         output.truncate(output_before);
     }
     switch (command.command) {
-        21 => try handleKittyControl(allocator, colors, output, command.payload, defaults),
+        21 => try handleKittyControl(colors, output, command.payload, defaults),
         4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, command.payload),
         5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, command.payload),
         10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
@@ -70,12 +70,14 @@ pub fn applyItermSetColors(colors: *properties.ColorState, defaults: *const prop
 
 // Applies one Kitty color control or appends its bounded query reply.
 fn handleKittyControl(
-    allocator: std.mem.Allocator,
     colors: *KittyColorState,
     output: *replies.Buffer,
     payload: []const u8,
     defaults: *const properties.ColorState,
 ) replies.AppendError!void {
+    // Kitty collects every queried key into one OSC 21 response, in input
+    // order. The outer apply transaction owns both colour and reply rollback.
+    var replying = false;
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |raw_part| {
         const part = std.mem.trim(u8, raw_part, " \t\r\n");
@@ -85,7 +87,19 @@ fn handleKittyControl(
             const key = std.mem.trim(u8, part[0..pos], " \t");
             const value = std.mem.trim(u8, part[pos + 1 ..], " \t");
             if (std.mem.eql(u8, value, "?")) {
-                try appendKittyQueryReply(allocator, output, key, colors.*);
+                if (!replying) {
+                    try output.appendControl(.kitty, .osc);
+                    try output.append("21");
+                    replying = true;
+                }
+                try output.append(";");
+                try output.append(key);
+                try output.append("=");
+                if (colorForKey(colors.*, key)) |color| {
+                    try appendKittyColorOsc(output, color);
+                } else if (!isKnownColorKey(key)) {
+                    try output.append("?");
+                }
             } else {
                 setColorKey(colors, key, value);
             }
@@ -93,27 +107,21 @@ fn handleKittyControl(
             resetColorKey(colors, std.mem.trim(u8, part, " \t"), defaults);
         }
     }
+    if (replying) try output.appendControl(.kitty, .st);
 }
-fn appendKittyQueryReply(
-    allocator: std.mem.Allocator,
-    output: *replies.Buffer,
-    key: []const u8,
-    colors: KittyColorState,
-) replies.AppendError!void {
-    const start = byteCount(output.bytes());
-    errdefer output.truncate(start);
-    try output.appendControl(.kitty, .osc);
-    try output.append("21;");
-    try output.append(key);
-    try output.append("=");
-    if (colorForKey(colors, key)) |color| {
-        try appendColorOsc(allocator, output, color);
-    } else if (isKnownColorKey(key)) {
-        // Empty value means dynamic/undefined for Kitty color control.
-    } else {
-        try output.append("?");
-    }
-    try output.appendControl(.kitty, .st);
+
+// Kitty OSC 21 uses two hex digits per RGB component. Other OSC color
+// replies intentionally retain their distinct four-digit xterm spelling.
+fn appendKittyColorOsc(output: *replies.Buffer, color: Rgb) replies.AppendError!void {
+    const digits = "0123456789abcdef";
+    var text = "rgb:00/00/00".*;
+    text[4] = digits[color.r >> 4];
+    text[5] = digits[color.r & 0x0f];
+    text[7] = digits[color.g >> 4];
+    text[8] = digits[color.g & 0x0f];
+    text[10] = digits[color.b >> 4];
+    text[11] = digits[color.b & 0x0f];
+    try output.append(&text);
 }
 
 const color_osc_max_bytes = 18;
@@ -687,6 +695,32 @@ test "color control set query and transaction rollback are exact" {
     );
     try std.testing.expectEqual(before, colors);
     try std.testing.expectEqual(@as(u32, replies.max_bytes - 1), output.len());
+}
+
+test "Kitty OSC 21 multi-query reply capacity failure rolls back colors and all replies" {
+    var colors: properties.ColorState = .{};
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    var scratch: [64]u8 = undefined;
+
+    const retained = try std.testing.allocator.alloc(u8, replies.max_bytes - 22);
+    defer std.testing.allocator.free(retained);
+    @memset(retained, 'k');
+    try output.append(retained);
+    const before = colors;
+    try std.testing.expectError(
+        error.ReplyLimit,
+        apply(
+            std.testing.allocator,
+            &colors,
+            &.{},
+            &output,
+            &scratch,
+            .{ .command = 21, .payload = "foreground=#123456;foreground=?;background=?;cursor=?" },
+        ),
+    );
+    try std.testing.expectEqual(before, colors);
+    try std.testing.expectEqualSlices(u8, retained, output.bytes());
 }
 
 test "iTerm SetColors remains presentation-state only" {

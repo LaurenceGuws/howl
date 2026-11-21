@@ -1491,16 +1491,38 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
     try std.testing.expectEqualStrings(
-        "\x1b]21;foreground=rgb:1111/2222/3333\x1b\\" ++
-            "\x1b]21;background=rgb:4444/5555/6666\x1b\\" ++
-            "\x1b]21;cursor=\x1b\\" ++
-            "\x1b]21;no_such=?\x1b\\",
+        "\x1b]21;foreground=rgb:11/22/33;background=rgb:44/55/66;cursor=;no_such=?\x1b\\",
         terminal.replyBytes(),
     );
 
     try feed(&terminal, "\x1b]21;foreground;background\x1b\\");
     try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
+}
+
+test "kitty OSC 21 groups ordered queries with eight bit RGB and one reply" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+    defer terminal.deinit();
+
+    // Preserve wire order while mixing updates and queries. Only a fully
+    // terminated OSC may expose a response, regardless of feed boundaries.
+    try std.testing.expect(!(try terminal.feed("\x1b]21;foreground=#123456;foreground=?;background=#abcdef;")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try feed(&terminal, "background=?;cursor=?;unsupported=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;foreground=rgb:12/34/56;background=rgb:ab/cd/ef;cursor=;unsupported=?\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqual(Rgb{ .r = 0x12, .g = 0x34, .b = 0x56 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 0xab, .g = 0xcd, .b = 0xef }, terminal.presentation().background);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    // Queries alone never commit new color state.
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=?;background=?\x07")).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1b]21;foreground=rgb:12/34/56;background=rgb:ab/cd/ef\x1b\\",
+        terminal.replyBytes(),
+    );
 }
 
 test "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors" {
