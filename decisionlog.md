@@ -1340,3 +1340,33 @@ passed. The libvterm.c1.ind record remains partial pending the
 independently observed raw C1 byte/UTF-8 parsing differences and
 phantom-cursor policies from the pinned source. This is a real
 compatibility improvement, not a full-branch promotion.
+
+## Newer Kitty transient image usage hint is an admitted advisory no-op (21 November 2026)
+
+The 10x10 new-reference intake 10 examined the independently pinned
+Kitty delta f7a16a93191a1103665905398d807ca79dab74a2.
+Its docs/graphics-protocol.rst usage_hints section explicitly permits
+a terminal to *ignore* the transient N=1 caching/eviction hint.
+The pinned parser accepts the unsigned N bitmask, while the Kitty
+implementation optionally prioritizes transient frames under memory
+pressure. That storage policy is permitted, not required by the wire
+contract; it does not mandate copying Kitty's GPU/disk cache behavior.
+
+Howl's existing graphics.parseCommand already accepts N=1 and
+bounded u32 future bits, rejects overflow/duplicate fields, and
+applies the same decoded pixels on valid transmission. The named
+Kitty usage hints are bounded advisory no-op metadata test proves
+N=1 root-image and frame admission, image bytes, placement and frame
+identity, alongside negative parsing/boundary cases. No runtime,
+eviction, cache or presentation code was changed.
+
+Exactly one new-reference ID,
+kitty_delta.graphics.usage_hint_transient, is now full rather than
+unassessed, with an actual semantic owner and positive/negative
+named proof. Other nine unassessed Windows Terminal, Ghostty and
+Kitty-delta records retain their current review obligations. The
+support census moves from 279 full / 335 partial / 48 missing /
+10 unassessed to 280 full / 335 partial / 48 missing / 9 unassessed.
+Full root ReleaseFast tests/audits, Nu protocol validation and diff
+checks passed. This is a narrowly qualified advisory capability,
+not a claim of Kitty-equivalent storage-pressure performance.

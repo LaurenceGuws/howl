@@ -4486,14 +4486,13 @@ references:
               Frozen Kitty rejected the N key; Howl already accepts it as
               bounded advisory no-op metadata.
             howl:
-              support: unassessed
-              disposition: active
+              support: full
               owner: howl-vt
-              residual: >-
-                Decide whether tested bounded no-op admission already satisfies
-                the advisory protocol or whether different resource-pressure
-                behavior merits an optional performance change. No change to
-                canonical image eviction is automatically required.
+              source: howl-vt/src/graphics.zig
+              symbol: parseCommand
+              proof:
+                path: howl-vt/src/graphics.zig
+                symbol: "Kitty usage hints are bounded advisory no-op metadata"
 
 selective_overlaps:
   - id: overlap.csi_s
