@@ -1516,6 +1516,92 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
 }
 
+test "terminal: Kitty cursor excess parameters retain shared permissive CSI policy" {
+    const cases = [_]struct {
+        sequence: []const u8,
+        row: u16,
+        col: u16,
+    }{
+        .{ .sequence = "\x1b[1;9A", .row = 2, .col = 3 },
+        .{ .sequence = "\x1b[1;9B", .row = 4, .col = 3 },
+        .{ .sequence = "\x1b[1;9C", .row = 3, .col = 4 },
+        .{ .sequence = "\x1b[1;9D", .row = 3, .col = 2 },
+        .{ .sequence = "\x1b[1;9E", .row = 4, .col = 0 },
+        .{ .sequence = "\x1b[1;9F", .row = 2, .col = 0 },
+        .{ .sequence = "\x1b[1;9G", .row = 3, .col = 0 },
+        .{ .sequence = "\x1b[1;9`", .row = 3, .col = 0 },
+        .{ .sequence = "\x1b[2;3;9H", .row = 1, .col = 2 },
+        .{ .sequence = "\x1b[2;3;9f", .row = 1, .col = 2 },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 8, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[4;4H");
+        const before = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 3), before.cursor_row);
+        try std.testing.expectEqual(@as(u16, 3), before.cursor_col);
+        // All ten match the shared Howl/libvterm ignore-trailing-args policy;
+        // pinned Kitty's bounded CSI handlers reject the entire cursor action.
+        const prefix = case.sequence[0 .. case.sequence.len - 1];
+        try std.testing.expect(!(try terminal.feed(prefix)).stateChanged());
+        try std.testing.expectEqual(before.cursor_row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(before.cursor_col, terminal.semanticView(0).cursor_col);
+        try std.testing.expect((try terminal.feed(case.sequence[case.sequence.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(case.row, after.cursor_row);
+        try std.testing.expectEqual(case.col, after.cursor_col);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+}
+
+test "terminal: directional cursor margins use target-side clipping from outside region" {
+    const cases = [_]struct {
+        command: []const u8,
+        initial: []const u8,
+        row: u16,
+        col: u16,
+    }{
+        .{ .command = "\x1b[99A", .initial = "\x1b[8;3H", .row = 2, .col = 2 },
+        .{ .command = "\x1b[99F", .initial = "\x1b[8;3H", .row = 2, .col = 0 },
+        .{ .command = "\x1b[99B", .initial = "\x1b[1;3H", .row = 4, .col = 2 },
+        .{ .command = "\x1b[99E", .initial = "\x1b[1;3H", .row = 4, .col = 0 },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 8, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[3;5r");
+        try feed(&terminal, case.initial);
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(case.row, view.cursor_row);
+        try std.testing.expectEqual(case.col, view.cursor_col);
+    }
+}
+
+test "terminal: exact-fill cursor movement resolves canonical pending wrap" {
+    // Pinned Kitty stores an internal one-past-right column after exact fill.
+    // Howl instead stores last-column plus pending wrap; its CSI D, G and `
+    // cancel that pending wrap before moving, not after phantom arithmetic.
+    for ([_]struct { command: []const u8, expected: []const u8, column: u16 }{
+        .{ .command = "\x1b[D", .expected = "abcXe", .column = 4 },
+        .{ .command = "\x1b[6G", .expected = "abcdX", .column = 4 },
+        .{ .command = "\x1b[6`", .expected = "abcdX", .column = 4 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 5);
+        defer terminal.deinit();
+        try feed(&terminal, "abcde");
+        try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        try feed(&terminal, "X");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+        try std.testing.expectEqual(case.column, view.cursor_col);
+        for (case.expected, 0..) |letter, col|
+            try std.testing.expectEqual(@as(u21, letter), view.cellAt(0, @intCast(col)));
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
+    }
+}
+
 test "terminal: cursor origin margins own exact aliases geometry wrap and resize" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 6, 12);

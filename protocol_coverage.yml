@@ -3156,29 +3156,29 @@ references:
             conditions: Kitty repeats its last codepoint while Howl retains its bounded combining cluster,
             howl: *howl_repeat_excluded}
           kitty.csi.cuu: {raw: "CSI [Ps=1] A", effect: cursor up,
-            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands and uses the physical top from outside a vertical scroll region; Howl accepts the first operand and clamps toward the scroll top, preserving its iTerm2-derived directional rule.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: directional cursor margins use target-side clipping from outside region"}}}
           kitty.csi.cud: {raw: "CSI [Ps=1] B", effect: cursor down,
-            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands and uses the physical bottom from above a vertical scroll region; Howl accepts the first operand and clamps toward the scroll bottom.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: directional cursor margins use target-side clipping from outside region"}}}
           kitty.csi.vpr: {raw: "CSI [Ps=1] e", effect: cursor down,
-            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
+            conditions: Kitty uses only initial vertical scroll-region membership for its margin clamp, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           kitty.csi.cuf: {raw: "CSI [Ps=1] C", effect: cursor forward,
-            conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands and has no DECLRMM/DECSLRM horizontal margins; Howl accepts trailing operands and clips cursor motion at its enabled right margin.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: Kitty cursor excess parameters retain shared permissive CSI policy"}}}
           kitty.csi.hpr: {raw: "CSI [Ps=1] a", effect: cursor forward,
             conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -3186,35 +3186,35 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           kitty.csi.cub: {raw: "CSI [Ps=1] D", effect: cursor backward,
-            conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands and subtracts from a one-past-edge exact-fill cursor; Howl accepts trailing operands and cancels last-column pending wrap before subtracting.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: exact-fill cursor movement resolves canonical pending wrap"}}}
           kitty.csi.cnl: {raw: "CSI [Ps=1] E", effect: cursor next line,
-            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands, homes to physical column zero, and moves to physical bottom when initially above the scroll region; Howl accepts trailing operands, uses directional scroll-bottom clamp and homes to an enabled left margin.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: directional cursor margins use target-side clipping from outside region"}}}
           kitty.csi.cpl: {raw: "CSI [Ps=1] F", effect: cursor previous line,
-            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands, homes to physical column zero, and moves to physical top when initially below the scroll region; Howl accepts trailing operands, uses directional scroll-top clamp and homes to an enabled left margin.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: directional cursor margins use target-side clipping from outside region"}}}
           kitty.csi.cha: {raw: "CSI [Ps=1] G", effect: absolute column,
-            conditions: Kitty ignores horizontal margins under DECOM, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Kitty refuses excess operands and a target matching its one-past-edge exact-fill cursor does not cancel the pending wrap; Howl accepts trailing operands, clamps to its last column and clears pending wrap; Kitty has no DECSLRM.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: exact-fill cursor movement resolves canonical pending wrap"}}}
           kitty.csi.hpa: {raw: "CSI [Ps=1] `", effect: absolute column,
-            conditions: Kitty ignores horizontal margins under DECOM, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Pinned Kitty HPA is an exact alias of CHA, with one-operand admission and one-past-edge phantom matching; Howl accepts surplus operands and clears its pending wrap after clamping to the last column.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: exact-fill cursor movement resolves canonical pending wrap"}}}
           kitty.csi.vpa: {raw: "CSI [Ps=1] d", effect: absolute row,
             conditions: DECOM resolves against vertical margins and preserves column, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
@@ -3238,17 +3238,17 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: forward tabs move the cursor without Kitty preserved tab marker cells"}}}
           kitty.csi.cup: {raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
-            conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
+            conditions: "Kitty rejects more than two operands and applies DECOM only to vertical positioning because it has no horizontal margins; Howl accepts extra operands through its direct CUP path and uses a left-relative column when DECOM and DECSLRM are enabled.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.moveCursorPosition, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: Kitty cursor excess parameters retain shared permissive CSI policy"}}}
           kitty.csi.hvp: {raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
-            conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
+            conditions: "Pinned Kitty HVP aliases CUP and rejects more than two operands; Howl accepts extra operands through the shared fast path and supports DECOM with horizontal-margin column origin.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.moveCursorPosition, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: Kitty cursor excess parameters retain shared permissive CSI policy"}}}
           kitty.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display,
             conditions: Kitty additionally accepts Ps 22 and owns multicell and selection consequences,
             howl: *howl_kitty_erase_display_graphics}
