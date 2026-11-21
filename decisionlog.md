@@ -1539,3 +1539,42 @@ Zig/package audits, Nu protocol validation, Zig formatting and
 diff checks passed. Catalogue remains 672 original IDs at 275 full,
 340 partial, 48 missing and nine unassessed. No installed binaries,
 GUI sessions or running processes changed.
+
+## OSC 104 accepts shared signed padded indexes while pinned malformed policies differ (21 November 2026)
+
+The 10x10 Kitty colour worker 07 identified an OSC 104 grammar gap.
+Frozen Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8,
+kitty/window.py:set_color_table_color, resets all colours for an
+entirely whitespace-only payload (not value.strip()) and otherwise
+parses each semicolon-separated integer with Python int. Pinned
+iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6,
+sources/VT100/VT100Terminal.m:resetColors and
+sources/Categories/NSStringITerm.m:integerNumber, instead applies
+only successfully scanned indices, rejecting whitespace-only input
+but accepting numeric prefixes that have trailing junk. Thus identical
+OSC 104;[space] and OSC 104;1junk bytes cannot match both terminals
+without an explicitly selected policy.
+
+The singular Howl color_control.resetXtermPalette previously accepted
+only unsigned, unpadded u8 index fields. A new terminal stream test
+was red before and green after accepting valid signed or ASCII
+space-padded indices through bounded i64 numeric parsing, then
+checking the 0..255 index range and resetting individually. Empty
+OSC 104 still resets the entire palette, and invalid, out-of-range
+and malformed suffix fields remain ignored. The negative test records
+Howl's existing iTerm2-compatible whitespace-only no-op and
+Kitty-compatible trailing-junk rejection without changing parser
+ownership or introducing a reference-specific profile.
+
+The two historical full records kitty.osc.palette_reset and
+iterm2.osc.palette_reset are now partial/excluded with precise,
+opposing pinned malformed-input residuals. All other catalogue
+IDs and reference pins are unchanged. This is one genuine common
+compatibility improvement and two classification truth repairs,
+not new runtime regressions. VT Debug/ReleaseFast, full root
+ReleaseFast check/test and seven active Zig/project audits, Nu
+protocol inventory validator, formatting and diff checks passed.
+
+The accepted corpus remains 672 reference-specific records:
+273 full / 342 partial / 48 missing / 9 unassessed.
+No installed binary, user desktop or running process was changed.

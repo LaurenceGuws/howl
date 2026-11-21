@@ -1709,6 +1709,39 @@ test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
     try std.testing.expect(!(try terminal.feed("\x1b]104\x07")).stateChanged());
 }
 
+test "OSC 104 accepts shared signed padded indexes and preserves unsupported spellings" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try feed(&terminal, "\x1b]4;0;#112233;1;#445566;2;#778899\x1b\\");
+    const customized = terminal.presentation();
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, customized.palette[0]);
+    try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, customized.palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 0x77, .g = 0x88, .b = 0x99 }, customized.palette[2]);
+
+    // Kitty's Python int and iTerm2's NSString scanner both accept
+    // padded, explicitly positive indexes; the old Howl u8 parser did not.
+    try std.testing.expect((try terminal.feed("\x1b]104; +1 ; 2 ;bad;256;-1\x07")).stateChanged());
+    const reset_two = terminal.presentation();
+    try std.testing.expectEqual(customized.palette[0], reset_two.palette[0]);
+    try std.testing.expectEqual(Terminal.default_presentation.palette[1], reset_two.palette[1]);
+    try std.testing.expectEqual(Terminal.default_presentation.palette[2], reset_two.palette[2]);
+
+    // Signed negative zero also names the first palette index.
+    try std.testing.expect((try terminal.feed("\x1b]104; -0 \x1b\\")).stateChanged());
+    try std.testing.expectEqual(Terminal.default_presentation.palette[0], terminal.presentation().palette[0]);
+
+    // Cross-reference conflicts remain explicit: pinned Kitty strips an
+    // entirely blank OSC 104 payload and resets all; pinned iTerm2 ignores
+    // that spelling. iTerm2's scanner accepts a numeric prefix followed
+    // by junk, whereas pinned Kitty int rejects the entire field.
+    try feed(&terminal, "\x1b]4;1;#010203\x1b\\");
+    const before_conflicts = terminal.presentation();
+    try std.testing.expect(!(try terminal.feed("\x1b]104;   \x07")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b]104;1junk\x1b\\")).stateChanged());
+    try std.testing.expectEqual(before_conflicts, terminal.presentation());
+}
+
 test "OSC color set and query failure rolls back the complete command" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 4);

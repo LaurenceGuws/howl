@@ -226,8 +226,14 @@ fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8, defaults:
     }
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
-        const idx = std.fmt.parseUnsigned(u8, idx_text, 10) catch continue;
-        resetPaletteTarget(colors, idx, defaults);
+        // Both pinned Kitty's int() and iTerm2's numeric scanner accept
+        // ASCII whitespace and an explicit sign on valid palette indexes.
+        // Preserve the bounded full-field check; their handling of empty
+        // or trailing-junk fields conflicts and is not guessed here.
+        const trimmed = std.mem.trim(u8, idx_text, " \t\r\n");
+        const index = std.fmt.parseInt(i64, trimmed, 10) catch continue;
+        if (index < 0 or index > 255) continue;
+        resetPaletteTarget(colors, @intCast(index), defaults);
     }
 }
 

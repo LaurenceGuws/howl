@@ -1789,10 +1789,20 @@ references:
           iterm2.osc.palette_reset:
             raw: "OSC 104 ; Pm (BEL|ST)"
             effect: reset palette entries
-            conditions: empty resets all 256; valid indexes reset independently; invalid indexes are ignored
-            howl: {support: full, source: howl-vt/src/color_control.zig, symbol: resetXtermPalette, proof: {
+            conditions: >-
+              Pinned iTerm2 resetColors uses NSString integerNumber, whose NSScanner accepts a valid
+              decimal prefix even when other characters follow. Howl requires a complete index token
+              to match pinned Kitty's Python int rejection; ordinary empty/all and numeric indices agree.
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned iTerm2 permits a numeric prefix such as 1junk and resets colour 1,
+                while Kitty's int rejects that entire token and Howl retains the existing colour.
+                The references conflict for identical bytes, so no implicit terminal profile is selected.",
+              residual: "Whitespace and signed valid numeric fields, empty reset-all, bounded valid
+                indices and invalid ranges agree. Numeric-prefix acceptance remains an exact
+                iTerm2-only incompatibility; configured palette defaults are host-owned.",
+              source: howl-vt/src/color_control.zig, symbol: resetXtermPalette, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC palette and dynamic resets own exact bounds mutation and lifetime"}}
+              symbol: "OSC 104 accepts shared signed padded indexes and preserves unsupported spellings"}}
           iterm2.osc.reset_fg:
             raw: "OSC 110 (BEL|ST)"
             effect: reset foreground
@@ -3565,10 +3575,20 @@ references:
           kitty.osc.palette_reset:
             raw: "OSC 104 ; Pm (BEL|ST)"
             effect: reset palette
-            conditions: empty resets all 256; valid indexes reset independently; invalid indexes are ignored
-            howl: {support: full, source: howl-vt/src/color_control.zig, symbol: resetXtermPalette, proof: {
+            conditions: >-
+              Pinned Kitty window.py:set_color_table_color treats a whitespace-only payload as
+              reset-all, whereas pinned iTerm2 rejects that argument and Howl leaves the palette
+              unchanged. Both accept ordinary numeric indices and signed/space-padded fields.
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned Kitty strips the entire OSC 104 payload before deciding reset-all.
+                Howl reserves reset-all for a genuinely empty payload, matching iTerm2's no-valid-index
+                rejection for whitespace-only fields; a single wire input cannot satisfy both policies.",
+              residual: "Empty reset-all, valid bounded and signed/space-padded index reset are implemented.
+                Whitespace-only reset-all and Python's extended integer grammar remain pinned-specific;
+                Kitty's host refresh and configured defaults are not VT-owned.",
+              source: howl-vt/src/color_control.zig, symbol: resetXtermPalette, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC palette and dynamic resets own exact bounds mutation and lifetime"}}
+              symbol: "OSC 104 accepts shared signed padded indexes and preserves unsupported spellings"}}
           kitty.osc.cwd: {raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
             conditions: "Kitty retains parser-sized raw bytes while Howl rejects reports above its fixed 1 KiB
               metadata bound",
