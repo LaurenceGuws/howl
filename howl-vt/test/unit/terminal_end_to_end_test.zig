@@ -1250,6 +1250,26 @@ test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
     }
 }
 
+test "terminal: IND ignores ANSI newline mode while LF and NEL retain their own column rules" {
+    for ([_][]const u8{ "\x1bD", "\x84" }) |ind| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[20h\x1b[1;5H");
+        try feed(&terminal, ind[0 .. ind.len - 1]);
+        try feed(&terminal, ind[ind.len - 1 ..]);
+        try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+
+        try feed(&terminal, "\x1b[1;5H\n");
+        try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+
+        try feed(&terminal, "\x1b[1;5H\x1bE");
+        try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    }
+}
+
 test "terminal: parameterless CSI s remains a savepoint under DECLRMM" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

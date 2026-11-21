@@ -270,6 +270,7 @@ const SemanticEvent = union(enum) {
     repeat_preceding: u16,
     bell,
     line_feed,
+    index,
     next_line,
     reverse_index,
     forward_index,
@@ -1465,7 +1466,7 @@ test "dcs legacy payload protocols classify caller-neutral payloads" {
 }
 
 const EscAction = union(enum) {
-    line_feed,
+    index,
     next_line,
     reverse_index,
     forward_index,
@@ -1481,7 +1482,7 @@ const EscAction = union(enum) {
 
 fn escAction(final: u8) ?EscAction {
     return switch (final) {
-        'D' => .line_feed,
+        'D' => .index,
         'E' => .next_line,
         'M' => .reverse_index,
         '9' => .forward_index,
@@ -1510,7 +1511,7 @@ fn escProcess(final: u8) ?SemanticEvent {
     }
     const mapped = escAction(final) orelse return null;
     return switch (mapped) {
-        .line_feed => SemanticEvent.line_feed,
+        .index => SemanticEvent.index,
         .next_line => SemanticEvent.next_line,
         .reverse_index => SemanticEvent.reverse_index,
         .forward_index => SemanticEvent.forward_index,
@@ -1526,7 +1527,7 @@ fn escProcess(final: u8) ?SemanticEvent {
 }
 
 test "esc maps C1 7-bit aliases and cursor save restore" {
-    try std.testing.expect(escProcess('D').? == .line_feed);
+    try std.testing.expect(escProcess('D').? == .index);
     try std.testing.expect(escProcess('E').? == .next_line);
     try std.testing.expect(escProcess('M').? == .reverse_index);
     try std.testing.expect(escProcess('7').? == .save_cursor);
@@ -3136,6 +3137,7 @@ fn suppressOwnerFallback(event: SemanticEvent) bool {
         .cursor_vertical_absolute,
         .cursor_position,
         .line_feed,
+        .index,
         .next_line,
         .carriage_return,
         .backspace,
@@ -3185,6 +3187,7 @@ fn semanticMutationSet(
         // Cursor and pending-wrap consequences are derived from the accepted
         // screen state below; event names do not own cursor publication.
         .line_feed,
+        .index,
         .next_line,
         .carriage_return,
         .backspace,
@@ -3385,7 +3388,7 @@ fn applyParserEvent(
         title_changed,
         icon_changed,
     );
-    if (changed and (semantic == .line_feed or semantic == .next_line)) {
+    if (changed and (semantic == .line_feed or semantic == .index or semantic == .next_line)) {
         const active = vt.screen_state.activeConst();
         if (active.cursor.row == active.scrollBottom()) mutations.text = true;
     }
@@ -3619,8 +3622,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .legacy_control,
         => return applySemanticEvent(vt, event),
 
-        .line_feed, .next_line => {
-            const next_line = event == .next_line or vt.modes.newline_mode;
+        .line_feed, .index, .next_line => {
+            const next_line = event == .next_line or
+                (event == .line_feed and vt.modes.newline_mode);
             applyInputLineFeed(vt, next_line) catch |failure| {
                 std.debug.assert(vt.stream_state.pending_input == null);
                 vt.stream_state.pending_input = .{ .work = .{ .line_feed = next_line }, .failure = failure };

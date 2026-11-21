@@ -1316,3 +1316,27 @@ This is one real runtime correctness improvement, not a blanket
 claim that Kitty's entire SGR branch is fully compatible; other
 underlines, blink/presentation and malformed-color differences
 remain subject to separate pinned review.
+
+## IND remains independent of ANSI newline mode (21 November 2026)
+
+The 10x10 control intake 01 identified that frozen libvterm at
+934bc2fb21800ac3458a499df8820ca5fb45fd3, src/state.c:on_control,
+applies IND (0x84, or ESC D) as linefeed without checking ANSI LNM.
+LF/VT/FF use the LNM policy, and NEL always performs a carriage return.
+Howl had mapped ESC D/C1 IND to the ordinary line_feed event, applying
+LNM and incorrectly resetting the column when ANSI mode 20 was active.
+
+One new semantic event, index, distinguishes IND from C0 LF. The
+existing singular applyInputLineFeed history, scroll and graphics
+owner is still used; no separate flow engine or copy of geometry
+policy was introduced. Only IND selects next_line=false regardless
+of LNM. The terminal-stream test failed before this change and
+passed afterward for fragmented ESC D and C1 IND, an origin at
+nonzero column under ANSI LNM and contrasting LF and NEL behavior.
+
+VT Debug/ReleaseFast, full root ReleaseFast check/test and
+Zig/project audits, protocol validation, formatting and diff gates
+passed. The libvterm.c1.ind record remains partial pending the
+independently observed raw C1 byte/UTF-8 parsing differences and
+phantom-cursor policies from the pinned source. This is a real
+compatibility improvement, not a full-branch promotion.
