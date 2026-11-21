@@ -1,14 +1,26 @@
-schema: 3
+schema: 4
 
 howl_schema:
   support: [full, partial, missing, unassessed]
-  disposition: [none, active, delegated, deferred, excluded]
+  disposition: [none, active, delegated, deferred, excluded, adjudicated]
   owner: [howl-vt, howl-pty, howl-app]
   defaults: {full_disposition: none, incomplete_disposition: active, owner: howl-vt}
   meaning:
     support: implemented behavior relative to the pinned reference
     disposition: treatment of the remaining residual obligation
     owner: concrete Howl module responsible for that residual
+    adjudication: pinned wire collision resolved by the accepted protocol policy; not a full compatibility claim
+
+collision_policy:
+  default: implement_full
+  criteria: [protocol_origin, exact_effects, current_usage, implementation_preference, protocol_recency]
+  implementation_preference: [kitty, xterm, iterm2, ghostty]
+  unresolved: refer_to_captain
+  meaning: >-
+    Prove a same-byte incompatible effect before declaring full parity impossible.
+    Determine true protocol origin, compare effects and current consumers, use Captain's terminal
+    priority order when relevant, and then prefer the newer protocol. A resolved collision remains
+    indexed and test-protected; it never silently changes unrelated terminal semantics.
 
 classifications:
   lifecycle_difference: &howl_lifecycle_difference >-
@@ -725,13 +737,52 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
-          libvterm.csi.decsgr: {raw: "CSI ? Pm m", effect: DEC baseline rendition,
-            conditions: "Pinned libvterm src/state.c:on_csi maps private 4/5/24 to SGR 73/74/75, selecting small superscript/subscript/normal baseline without replies. Howl does not implement DEC baseline output. Its CSI ?4m instead triggers an existing xterm modifyOtherKeys query and returns CSI >4;0m; ?5m and ?24m are ignored.",
-            howl: {support: missing, disposition: excluded,
-              rationale: "Pinned DEC printer baseline controls conflict with Howl's selected xterm private key-format query, and neither native cell state nor font output exposes the pin's small/baseline attributes.",
-              source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
-                path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "libvterm private DECSGR baseline collides with native modifyOtherKeys query"}}}
+          libvterm.csi.decsgr:
+            raw: "CSI ? Pm m"
+            effect: DEC baseline rendition
+            conditions: >-
+              Pinned libvterm state.c:on_csi implements printer DECSGR 4/5/24 as superscript,
+              subscript and baseline reset with no replies. Howl chooses xterm XTQMODKEYS for
+              identical CSI ?4m bytes, returning the active modifyOtherKeys level instead.
+            howl:
+              support: missing
+              disposition: adjudicated
+              rationale: >-
+                Exact wire collision resolved in favor of the originating xterm keyboard query
+                used by modern terminal applications; the pinned DEC printer baseline behavior
+                cannot simultaneously hold for CSI ?4m in one deterministic unprofiled parser.
+              source: howl-vt/src/terminal.zig
+              symbol: decodePrivateCsi
+              proof:
+                path: howl-vt/test/unit/terminal_modes_test.zig
+                symbol: libvterm private DECSGR baseline collides with native modifyOtherKeys query
+              adjudication:
+                kind: wire_collision
+                wire: "CSI ? 4 m"
+                winner:
+                  owner: xterm
+                  protocol: XTQMODKEYS
+                  behavior: "Query modifyOtherKeys; return CSI > 4 ; level m; do not mutate DEC baseline."
+                  evidence: "dev_references/terminals/xterm_snapshots/ctlseqs.txt:1355-1381"
+                loser:
+                  owner: DEC printers
+                  protocol: DECSGR
+                  behavior: "Enable superscript/small baseline; emit no reply."
+                  evidence: "pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:1378-1399"
+                current_usage: >-
+                  xterm modifier-key negotiation is documented in current terminal ecosystems,
+                  including WezTerm key-encoding documentation; no contemporary DEC printer
+                  superscript consumer was established. Do not claim quantitative popularity.
+                recency: >-
+                  The DEC printer rendition controls precede xterm's modern modifier-key protocol.
+                reason: >-
+                  xterm originated XTQMODKEYS and current application keyboard negotiation needs
+                  its deterministic response. The older DEC printer interpretation requires
+                  the opposite effect for the same bytes. Captain's protocol-owner, actual-effects,
+                  present-day-usage, implementation-weight and newer-protocol rules select xterm.
+                proof:
+                  path: howl-vt/test/unit/terminal_modes_test.zig
+                  symbol: xterm XTQMODKEYS wins the DEC printer CSI question-mark 4 m collision
           libvterm.csi.dsr: {raw: "CSI [Ps=0] n", effect: device status or cursor report,
             conditions: Ps 5|6; libvterm reports absolute CPR while Howl reports from the active DECOM origin,
             relevance: query,

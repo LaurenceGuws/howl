@@ -55,6 +55,48 @@ if ($catalogue.references.iterm2.groups.executeXtermSetKvp.records
   error make {msg: "pinned iTerm2 OSC1337 ExecFailed branch missing from approved catalogue"}
 }
 
+# Decision metadata is part of the indexed protocol contract, not a note.
+let ruling = (protocol decision libvterm.csi.decsgr)
+if ($ruling.id != "libvterm.csi.decsgr"
+    or $ruling.disposition != adjudicated
+    or $ruling.adjudication.wire != "CSI ? 4 m"
+    or $ruling.adjudication.winner.protocol != XTQMODKEYS
+    or $ruling.adjudication.loser.protocol != DECSGR
+    or $ruling.policy.criteria != [protocol_origin exact_effects current_usage implementation_preference protocol_recency]
+    or $ruling.policy.implementation_preference != [kitty xterm iterm2 ghostty]) {
+  error make {msg: "indexed XTQMODKEYS/DECSGR decision is not machine-discoverable"}
+}
+let indexed_rulings = (protocol decisions)
+if ($indexed_rulings | length) != 1 {
+  error make {msg: "indexed collision decisions differ from the accepted single ruling"}
+}
+let search_rulings = (protocol query --text XTQMODKEYS)
+if "libvterm.csi.decsgr" not-in ($search_rulings | get id) {
+  error make {msg: "adjudicated winner is not query-searchable"}
+}
+let losing_owner = (protocol query --text "DEC printers")
+if "libvterm.csi.decsgr" not-in ($losing_owner | get id) {
+  error make {msg: "adjudicated losing protocol owner is not query-searchable"}
+}
+let malformed_policy = ($catalogue | update collision_policy.implementation_preference [ghostty xterm iterm2 kitty])
+require-rule (protocol collision diagnostics $malformed_policy) collision_policy
+
+let target = ($catalogue.references.libvterm.groups.on_csi.records | get "libvterm.csi.decsgr")
+let altered = ($target | update howl.adjudication.winner.behavior "")
+let broken_index = ($catalogue | update references.libvterm.groups.on_csi.records
+  ($catalogue.references.libvterm.groups.on_csi.records | update "libvterm.csi.decsgr" $altered))
+require-rule (protocol collision diagnostics $broken_index) collision_shape
+
+let dropped = ($target | reject howl.adjudication)
+let lost_ruling = ($catalogue | update references.libvterm.groups.on_csi.records
+  ($catalogue.references.libvterm.groups.on_csi.records | update "libvterm.csi.decsgr" $dropped))
+require-rule (protocol collision diagnostics $lost_ruling) collision_missing
+
+let wrong_proof = ($target | update howl.adjudication.proof.symbol "a nonexistent test")
+let invalid_proof = ($catalogue | update references.libvterm.groups.on_csi.records
+  ($catalogue.references.libvterm.groups.on_csi.records | update "libvterm.csi.decsgr" $wrong_proof))
+require-rule (protocol collision diagnostics $invalid_proof) collision_proof
+
 let bad_total = ($inventory | update total_records ($inventory.total_records + 1))
 require-rule (protocol inventory diagnostics $catalogue $bad_total) inventory_total
 

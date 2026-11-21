@@ -1241,6 +1241,10 @@ fn decodePrivateEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEve
 }
 
 fn modeReport(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
+    // Policy: protocol_coverage.yml libvterm.csi.decsgr adjudication.
+    // CSI ?4m is xterm XTQMODKEYS, not old DEC printer DECSGR superscript:
+    // the same bytes cannot both report keyboard mode and change baseline.
+    // Modern key negotiation wins; do not introduce an implicit VT profile.
     if (final == 'm' and paramAtOrDefault0(params, 0) == 4) return SemanticEvent.modify_other_keys_query;
     if (final == 'p' and intermediates.len == 1 and intermediates[0] == '$') {
         const mode = queryParam(params) orelse return null;

@@ -3191,6 +3191,37 @@ test "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported" {
     try std.testing.expectEqual(Terminal.Color.indexed(1), cell.attrs.fg);
 }
 
+test "xterm XTQMODKEYS wins the DEC printer CSI question-mark 4 m collision" {
+    // Indexed ruling: protocol_coverage.yml, libvterm.csi.decsgr.
+    // xterm owns XTQMODKEYS (CSI ?4m -> CSI >4;level m). Pinned
+    // libvterm/DEC printer DECSGR instead changes small/superscript
+    // baseline without a reply. One deterministic parser chooses xterm.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Set xterm modifyOtherKeys to 2 and query across fragmented input.
+    try std.testing.expect((try terminal.feed("\x1b[>4;2m")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).stateChanged());
+    try std.testing.expect((try terminal.feed("4m")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[>4;2m", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // The C1-CSI alias must take the same singular owner, exactly once.
+    try std.testing.expect((try terminal.feed("\x9b?4m")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[>4;2m", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // Historical printer subscript/baseline requests do not create a
+    // second retained rendering model or emit unsolicited replies.
+    try std.testing.expect(!(try terminal.feed("\x1b[?5m\x1b[?24m")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed("\x1b[1mQ")).stateChanged());
+    const cell = terminal.semanticView(0).cellInfoAt(0, 0);
+    try std.testing.expectEqual(@as(u21, 'Q'), cell.codepoint);
+    try std.testing.expect(cell.attrs.bold);
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+}
+
 test "libvterm private DECSGR baseline collides with native modifyOtherKeys query" {
     // Pinned libvterm src/state.c:on_csi LEADER('?',0x6d) interprets
     // 4,5,24 as superscript, subscript and baseline reset, updating

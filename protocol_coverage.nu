@@ -5,9 +5,9 @@ const catalogue_path = ($protocol_root | path join protocol_coverage.yml)
 const inventory_path = ($protocol_root | path join protocol_coverage_inventory.yml)
 const evidence_path = ($protocol_root | path join tools protocol_evidence.py)
 export const protocol_support = [full partial missing unassessed]
-export const protocol_disposition = ["none" active delegated deferred excluded]
+export const protocol_disposition = ["none" active delegated deferred excluded adjudicated]
 export const protocol_owner = [howl-vt howl-pty howl-app]
-const howl_record_fields = [support disposition owner residual rationale milestone source symbol proof]
+const howl_record_fields = [support disposition owner residual rationale milestone source symbol proof adjudication]
 const reference_fields = [revision root groups kind base_reference base_revision scope]
 const group_fields = [source line census recognition records bounds symbol conditions]
 const record_fields = [raw effect relevance howl conditions recognition bounds source symbol line]
@@ -16,11 +16,14 @@ export const protocol_cheatsheet = [
   "protocol gaps                    active partial/missing/unassessed records"
   "protocol list                    compact filtered human table; shows 25 rows by default"
   "protocol list --limit 50         override the human row bound; --all shows every row"
-  "protocol query ...               normalized structured records"
+  "protocol query ...               normalized structured records, including adjudicated decisions"
   "protocol records                 every normalized structured record"
+  "protocol decisions               all resolved wire conflicts and their reasons"
+  "protocol decision RECORD_ID      one conflict decision with precedence policy"
   "protocol validate                structured diagnostics"
   "protocol validate --fail         fail on diagnostics (build gate)"
   "protocol json                    deterministic normalized JSON"
+  "disposition adjudicated marks an impossible same-wire conflict settled by Captain policy"
   "disposition describes the remaining residual obligation, not implemented support"
   "full records normalize to disposition none; incomplete omissions normalize active"
 ]
@@ -47,9 +50,10 @@ def normalize-record [reference: string, revision: string, root: string, group_k
     recognition: ($record.recognition? | default ($group.recognition? | default ""))
     support: $support
     disposition: $disposition
-    owner: (if $disposition == excluded { null } else { $howl.owner? | default howl-vt })
+    owner: (if $disposition in [excluded adjudicated] { null } else { $howl.owner? | default howl-vt })
     residual: ($howl.residual? | default ($record.conditions? | default ""))
     rationale: ($howl.rationale? | default "")
+    adjudication: ($howl.adjudication? | default null)
     milestone: ($howl.milestone? | default "")
     reference_source: ($record.source? | default ($group.source? | default ""))
     reference_symbol: ($record.symbol? | default ($group.symbol? | default $group_key))
@@ -95,8 +99,42 @@ export def "protocol query" [
   | where {|row| $reference == null or $row.reference == $reference }
   | where {|row| $relevance == null or $row.relevance == $relevance }
   | where {|row|
-      $text == null or ([$row.id $row.raw $row.effect $row.residual] | str join " " | str contains -i $text)
+      let decision = ($row.adjudication | default {})
+      $text == null or ([
+        $row.id $row.raw $row.effect $row.residual $row.rationale
+        ($decision.wire? | default "")
+        ($decision.reason? | default "")
+        ($decision.winner?.protocol? | default "")
+        ($decision.winner?.owner? | default "")
+        ($decision.winner?.behavior? | default "")
+        ($decision.loser?.protocol? | default "")
+        ($decision.loser?.owner? | default "")
+        ($decision.loser?.behavior? | default "")
+        ($decision.current_usage? | default "")
+        ($decision.recency? | default "")
+      ] | str join " " | str contains -i $text)
     }
+}
+
+export def "protocol decisions" [] {
+  protocol records
+  | where adjudication != null
+  | select id reference disposition adjudication
+}
+
+export def "protocol decision" [id: string@id-complete] {
+  let rows = (protocol query | where id == $id)
+  if ($rows | is-empty) { error make {msg: $"unknown protocol record: ($id)"} }
+  let row = ($rows | first)
+  if $row.adjudication == null {
+    error make {msg: $"protocol record has no adjudicated wire collision: ($id)"}
+  }
+  {
+    id: $row.id
+    disposition: $row.disposition
+    policy: ((load-catalogue).collision_policy)
+    adjudication: $row.adjudication
+  }
 }
 
 export def "protocol gaps" [] {
@@ -219,12 +257,79 @@ export def "protocol inventory diagnostics" [catalogue: record, inventory: recor
   $findings
 }
 
+# Schema-4 wire-collision decisions are first-class index data, not free text.
+# This diagnostic is pure so corrupted policy/rulings can be exercised in fixtures.
+export def "protocol collision diagnostics" [catalogue: record] {
+  mut findings = []
+  let policy = ($catalogue.collision_policy? | default {})
+  let required_order = [protocol_origin exact_effects current_usage implementation_preference protocol_recency]
+  if (($policy.default? | default "") != "implement_full"
+      or ($policy.criteria? | default []) != $required_order
+      or ($policy.implementation_preference? | default []) != [kitty xterm iterm2 ghostty]
+      or ($policy.unresolved? | default "") != "refer_to_captain"
+      or ($policy.meaning? | default "" | str trim | is-empty)) {
+    $findings = ($findings | append (diagnostic catalogue collision_policy
+      "collision policy must prioritize origin, exact effects, current use, implementation order, newer protocol and Captain escalation"))
+  }
+  for reference in ($catalogue.references | transpose name facts) {
+    for group in ($reference.facts.groups | transpose name facts) {
+      for record in ($group.facts.records | transpose id value) {
+        let howl = ($record.value.howl? | default {})
+        let disposition = ($howl.disposition? | default "")
+        let adjudication = ($howl.adjudication? | default null)
+        if $adjudication == null {
+          if $disposition == adjudicated {
+            $findings = ($findings | append (diagnostic $record.id collision_missing
+              "adjudicated disposition requires a complete structured conflict decision"))
+          }
+          continue
+        }
+        if $disposition != adjudicated or ($howl.support? | default "") == full {
+          $findings = ($findings | append (diagnostic $record.id collision_disposition
+            "adjudicated wire conflict must remain incomplete against its pinned losing reference"))
+        }
+        let winner = ($adjudication.winner? | default {})
+        let loser = ($adjudication.loser? | default {})
+        let evidence = ($adjudication.proof? | default {})
+        let fields = [
+          ($adjudication.kind? | default "") ($adjudication.wire? | default "")
+          ($winner.owner? | default "") ($winner.protocol? | default "")
+          ($winner.behavior? | default "") ($winner.evidence? | default "")
+          ($loser.owner? | default "") ($loser.protocol? | default "")
+          ($loser.behavior? | default "") ($loser.evidence? | default "")
+          ($adjudication.current_usage? | default "") ($adjudication.recency? | default "")
+          ($adjudication.reason? | default "")
+          ($evidence.path? | default "") ($evidence.symbol? | default "")
+        ]
+        if (($adjudication.kind? | default "") != wire_collision
+            or ($fields | any {|field| ($field | str trim | is-empty)})
+            or ($winner.protocol? | default "") == ($loser.protocol? | default "")
+            or ($winner.owner? | default "") == ($loser.owner? | default "")) {
+          $findings = ($findings | append (diagnostic $record.id collision_shape
+            "wire collision requires distinct owners, incompatible effects, source evidence, usage, recency, reason and named proof"))
+        }
+        let path = ($evidence.path? | default "")
+        let symbol = ($evidence.symbol? | default "")
+        if $path != "" and $symbol != "" {
+          let proof_path = ($protocol_root | path join $path)
+          let test_decl = (['test "' $symbol '"'] | str join "")
+          if not ($proof_path | path exists) or not ((open --raw $proof_path) | str contains $test_decl) {
+            $findings = ($findings | append (diagnostic $record.id collision_proof
+              "adjudicated collision must point to a real named Zig regression test"))
+          }
+        }
+      }
+    }
+  }
+  $findings
+}
+
 export def "protocol validate" [--fail] {
   let catalogue = (load-catalogue)
   let inventory = (open $inventory_path)
   mut findings = []
-  if $catalogue.schema != 3 {
-    $findings = ($findings | append (diagnostic catalogue schema "schema must be 3"))
+  if $catalogue.schema != 4 {
+    $findings = ($findings | append (diagnostic catalogue schema "schema must be 4"))
   }
   if ($catalogue.howl_schema.support != $protocol_support
       or $catalogue.howl_schema.disposition != $protocol_disposition
@@ -236,6 +341,7 @@ export def "protocol validate" [--fail] {
       "catalogue enums and query completions differ"))
   }
   $findings = ($findings | append (protocol inventory diagnostics $catalogue $inventory))
+  $findings = ($findings | append (protocol collision diagnostics $catalogue))
   for reference in ($catalogue.references | transpose reference facts) {
     for field in ($reference.facts | columns | where {|field| $field not-in $reference_fields }) {
       $findings = ($findings | append (diagnostic $reference.reference unknown_reference_field $"unknown reference field: ($field)"))

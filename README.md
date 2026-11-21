@@ -64,26 +64,40 @@ GUI scheduling or client ownership into the core.
 
 ## VT protocol coverage
 
-`protocol_coverage.yml` is the pinned behavior census, not a loose TODO list. Each
-reference behavior records Howl support (`full`, `partial`, `missing`, or
-`unassessed`), disposition (`active`, `delegated`, `deferred`, `excluded`, or
-`none`), ownership, source symbol, proof, and a residual/rationale when behavior is
-intentionally incomplete or divergent.
+`protocol_coverage.yml` (schema 4) is the pinned behavior and decision index,
+not a loose TODO list. Each reference records Howl support (`full`, `partial`,
+`missing`, or `unassessed`), disposition (`none`, `active`, `delegated`, `deferred`,
+`excluded`, or `adjudicated`), source owners, proofs, and exact residuals.
 
-The companion Nushell query surface keeps the 4k-line catalogue inspectable:
+**Full compatibility is the default Round 2 target.** A historical exclusion is
+not proof that a feature is impossible. When two protocols demand incompatible
+effects for the **same wire input**, the record owns a structured `adjudication`
+with both protocol owners, both effects, their source evidence, current usage,
+relative age, the selected winner, and a named native test. The root
+`collision_policy` records Captain's comparison order: true protocol origin,
+exact behavior, contemporary use, Kitty > xterm > iTerm2 > Ghostty when relevant,
+then newer protocol. A genuine unresolved collision goes to Captain rather than
+being silently excluded. `adjudicated` means that decision is made and proven,
+**not** that Howl satisfies the losing pinned reference.
+
+The companion Nushell query surface makes the index discoverable:
 
 ```sh
 nu --no-config-file -c 'source protocol_coverage.nu; protocol summary'
 nu --no-config-file -c 'source protocol_coverage.nu; protocol gaps'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol query --disposition deferred'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol show REFERENCE_ID'
+nu --no-config-file -c 'source protocol_coverage.nu; protocol query --disposition adjudicated'
+nu --no-config-file -c 'source protocol_coverage.nu; protocol query --text XTQMODKEYS'
+nu --no-config-file -c 'source protocol_coverage.nu; protocol show libvterm.csi.decsgr'
+nu --no-config-file -c 'source protocol_coverage.nu; protocol decision libvterm.csi.decsgr | to json -r'
 ```
 
-`protocol gaps` is the actionable view: a classified partial/missing record is not a
-gap when it is deliberately delegated, deferred, or excluded with an owned reason.
-`zig build protocol` validates the catalogue. It is deliberately separate from the
-portable core `zig build check` gate so a core builder does not need Nushell merely to
-compile and audit Howl.
+`protocol gaps` is the **active** remediation view, not the complete Round 2
+partial/missing queue. Existing deferred/excluded records still require the
+full-by-default review; only an explicit indexed collision decision records a
+resolved impossibility. The validator checks the priority policy, the ruling's
+required evidence and the existence of its named Zig test. `zig build protocol`
+runs that validation and corrupt-policy fixtures independently of the portable
+core `zig build check` gate.
 
 ## Build
 
