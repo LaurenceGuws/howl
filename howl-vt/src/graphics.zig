@@ -1068,6 +1068,10 @@ pub const Plane = struct {
         else
             null;
 
+        // Uppercase deletion may reclaim only images whose matching
+        // placements this command actually removed. An unplaced retained
+        // image is not a match for a geometric or global placement selector.
+        var matched_images: [max_images]bool = @splat(false);
         var changed = false;
         var placement_index: usize = 0;
         while (placement_index < self.placement_count) {
@@ -1095,6 +1099,8 @@ pub const Plane = struct {
                 placement_index += 1;
                 continue;
             }
+            if (self.imageIndex(placement_value.image_id)) |image_index|
+                matched_images[image_index] = true;
             self.removePlacement(placement_index);
             changed = true;
         }
@@ -1105,19 +1111,23 @@ pub const Plane = struct {
             while (image_index < self.image_count) {
                 const image_id = self.images[image_index].id;
                 const kitty_id = self.images[image_index].kitty_id;
-                const selected = switch (normalized) {
-                    'a' => kitty_id != null and !self.hasPlacement(image_id),
+                // Kitty explicitly permits uppercase identity/range
+                // deletion of already-unreferenced data without a
+                // placement restriction. Other selectors require a match.
+                const unplaced_identity = command_value.placement_id == 0 and switch (normalized) {
                     'i' => kitty_id == command_value.id,
                     'n' => image_id == numbered_image_id,
                     'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
-                    else => !self.hasPlacement(image_id),
+                    else => false,
                 };
-                if (!selected) {
+                if ((!matched_images[image_index] and !unplaced_identity) or self.hasPlacement(image_id)) {
                     image_index += 1;
                     continue;
                 }
-                if (normalized == 'i' or normalized == 'r') self.removePlacements(image_id);
                 self.removeImage(image_index);
+                // removeImage compacts storage by moving the last image
+                // into this slot. Keep match identities aligned with it.
+                matched_images[image_index] = matched_images[self.image_count];
                 content_changed = true;
                 changed = true;
             }
@@ -2110,12 +2120,15 @@ pub const Plane = struct {
     }
 
     fn kittyImageNumberIndex(self: *const Plane, number: u32) ?usize {
-        var index: usize = self.image_count;
-        while (index != 0) {
-            index -= 1;
-            if (self.images[index].kitty_number == number) return index;
+        // Kitty resolves duplicate client numbers by the newest internal
+        // image identity. Dense slot compaction does not preserve that order.
+        var newest: ?usize = null;
+        for (self.images[0..self.image_count], 0..) |retained, index| {
+            if (retained.kitty_number != number) continue;
+            if (newest == null or retained.id > self.images[newest.?].id)
+                newest = index;
         }
-        return null;
+        return newest;
     }
 
     fn kittyIdForImage(self: *const Plane, id: u32) ?u32 {
@@ -2423,6 +2436,12 @@ test "static plane admission is transactional across chunks replacement put and 
     try std.testing.expectEqual(generation, plane.generation());
     try std.testing.expect((try plane.command("a=p,i=7", .alternate, 0, 1, 3, 1, 1)).changed);
     try std.testing.expect((try plane.command("a=d,d=I,i=7", .primary, 0, 0, 0, 1, 1)).changed);
+    // Uppercase I is scoped to the active bank's references. It must not
+    // destroy decoded data still retained by a placement in another bank.
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expect(plane.placement(0).?.bank == .alternate);
+    try std.testing.expect((try plane.command("a=d,d=I,i=7", .alternate, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
 }
@@ -2912,7 +2931,13 @@ test "static delete selectors preserve placement and image ownership distinction
     try std.testing.expect((try plane.command("a=d", .primary, 10, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 2), plane.image_count);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
-    try std.testing.expect((try plane.command("a=d,d=A", .primary, 10, 0, 0, 1, 1)).changed);
+    // Pinned Kitty A only frees images whose placements this same command
+    // matched. Once lowercase a already removed the refs, uppercase A
+    // cannot sweep the independently retained image bytes.
+    try std.testing.expect(!(try plane.command("a=d,d=A", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expect((try plane.command("a=d,d=I,i=5", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=I,i=6", .primary, 10, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
 }
 
@@ -2995,6 +3020,87 @@ test "Kitty placement identity replaces and deletes only the exact retained plac
     try std.testing.expect((try plane.command("a=d,d=i,i=9,p=4", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(usize, 0), plane.placement_count);
     try std.testing.expectEqual(@as(usize, 1), plane.image_count);
+}
+
+test "Kitty uppercase identity deletion honors placement id before reclaiming image data" {
+    inline for (.{ "i=9", "I=44" }) |identity| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        const transmit = if (comptime std.mem.eql(u8, identity, "i=9"))
+            "a=t,f=32,s=1,v=1,i=9;AQIDBA=="
+        else
+            "a=t,f=32,s=1,v=1,I=44;AQIDBA==";
+        try std.testing.expect((try plane.command(transmit, .primary, 0, 0, 0, 1, 1)).changed);
+        const put = if (comptime std.mem.eql(u8, identity, "i=9"))
+            "a=p,i=9"
+        else
+            "a=p,I=44";
+        const delete = if (comptime std.mem.eql(u8, identity, "i=9"))
+            "a=d,d=I,i=9"
+        else
+            "a=d,d=N,I=44";
+        try std.testing.expect((try plane.command(put ++ ",p=4", .primary, 0, 1, 2, 1, 1)).changed);
+        try std.testing.expect((try plane.command(put ++ ",p=5", .primary, 0, 2, 3, 1, 1)).changed);
+        const image_id = plane.image(0).?.id;
+        const stored = plane.storage_bytes;
+        const generation = plane.generation();
+        try std.testing.expect(!(try plane.command(delete ++ ",p=3", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+        try std.testing.expectEqual(stored, plane.storage_bytes);
+        try std.testing.expect((try plane.command(delete ++ ",p=4", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqual(image_id, plane.placement(0).?.image_id);
+        try std.testing.expectEqual(@as(u32, 5), plane.placement(0).?.kitty_id);
+        try std.testing.expect((try plane.command(delete ++ ",p=5", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+        try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+    }
+}
+
+test "Kitty uppercase all deletion preserves unrelated initially unplaced images" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=t,f=32,s=1,v=1,i=5;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=6;BQYHCA==", .primary, 0, 1, 1, 1, 1)).changed);
+    const unplaced_id = plane.image(0).?.id;
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=A", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(unplaced_id, plane.image(0).?.id);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    // An uppercase all command with no matched placements cannot evict
+    // retained data never referenced by the affected active bank.
+    const generation = plane.generation();
+    try std.testing.expect(!(try plane.command("a=d,d=A", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+}
+
+test "Kitty image-number lookup selects newest identity after dense image compaction" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    for ([_][]const u8{
+        "a=t,f=32,s=1,v=1,i=1;AQIDBA==",
+        "a=t,f=32,s=1,v=1,I=44;AQIDBA==",
+        "a=t,f=32,s=1,v=1,i=3;AQIDBA==",
+        "a=t,f=32,s=1,v=1,I=44;AQIDBA==",
+    }) |transmit|
+        try std.testing.expect((try plane.command(transmit, .primary, 0, 0, 0, 1, 1)).changed);
+    const newest_id = plane.image(3).?.id;
+    try std.testing.expect((try plane.command("a=d,d=I,i=1", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
+    // removeImage uses swap-with-last, not insertion-preserving order.
+    try std.testing.expectEqual(newest_id, plane.image(0).?.id);
+    try std.testing.expect((try plane.command("a=p,I=44,p=7", .primary, 0, 1, 1, 1, 1)).changed);
+    try std.testing.expectEqual(newest_id, plane.placement(0).?.image_id);
+    try std.testing.expect((try plane.command("a=d,d=N,I=44,p=7", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
 }
 
 test "Kitty crop destination offsets and layer preflight before placement mutation" {

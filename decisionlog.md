@@ -1242,3 +1242,48 @@ tab-stop state remains stable and matches pinned Kitty. VT
 Debug/ReleaseFast, full root ReleaseFast check/test/audits,
 protocol validator/inventory fixtures, format and diff checks green.
 No installed binary, user session or compositor altered.
+
+## Kitty uppercase graphics deletion preserves live references (21 November 2026)
+
+The ten-ID 10x10 graphics audit (wave 09) identified a concrete
+decoded-image lifetime bug in Plane.delete, independently verified
+against frozen Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8
+graphics.c:filter_refs, handle_delete_command, and newest-number image
+lookup. Previously uppercase I/N freed decoded image/frame storage
+even with an unmatched placement restriction, and could leave a live
+placement referencing a freed image. Uppercase A and geometric
+selectors swept *every* unplaced retained image, including data this
+delete operation never matched. Dense image slot compaction also
+invalidated the assumption that the newest client-number image had
+the largest backing array index.
+
+The one owning Plane.delete lane now tracks a bounded matched-image
+bit per retained image slot, frees bytes only for matched images after
+their final reference is removed, and respects the pinned special case
+for already-unplaced uppercase I/N/R identity deletion with no p
+restriction. The compacted slot keeps the corresponding match bit.
+No uppercase deletion removes data while any placement in either
+Screen bank still references it. General uppercase placement selectors
+no longer reclaim unrelated initially unplaced images. Old tests
+that assumed cross-bank data deletion and a blanket all-unplaced
+sweep were corrected to match Kitty's reference semantics.
+
+Image-number lookup now selects the largest *internal image id* for
+duplicate client numbers, as pinned Kitty does, rather than the last
+dense slot after swap-with-last compaction. The same correction applies
+to number-based put, delete and other number queries through the
+existing singular identity resolver.
+
+Focused tests were red before the implementation and green afterward:
+one-of-two I/N placement ids, missed selectors preserving generation,
+cross-bank live references, initially unplaced data surviving A, exact
+bytes/frames lifetime, and duplicate number lookup after compaction.
+All direct VT Debug/ReleaseFast, full root ReleaseFast graph and
+seven-package Zig audits, Nu protocol inventory, formatting and
+diff checks passed. No GUI session or installed binary changed.
+
+This corrects concrete behavior but does NOT establish full Kitty
+graphics deletion parity. Other ten-record wave 09 findings on
+virtual prototypes, bank-global image storage, per-selector filters,
+relative placement and animation remain independently open. The
+reference-specific graphics rows stay partial pending further proofs.
