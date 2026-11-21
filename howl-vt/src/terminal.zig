@@ -1562,17 +1562,18 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
         // A commandless OSC is the parser's legacy title form, not OSC 0.
         .raw_title => |v| SemanticEvent{ .title_set = v.payload },
+        .linux_palette => |v| SemanticEvent{ .color_control = .{ .linux_palette = v.payload } },
         .title => |v| switch (v.command) {
             0 => SemanticEvent{ .title_and_icon_set = v.payload },
             2 => SemanticEvent{ .title_set = v.payload },
             else => null,
         },
         .icon => |v| SemanticEvent{ .icon_set = v.payload },
-        .palette_control => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
-        .palette_reset => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
-        .dynamic_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
-        .dynamic_reset => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
-        .kitty_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
+        .palette_control => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload } } },
+        .palette_reset => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload } } },
+        .dynamic_color => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload } } },
+        .dynamic_reset => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload } } },
+        .kitty_color => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload } } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (iterm_control.parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
         .notification => |v| if (v.command == 9 and
@@ -1824,12 +1825,12 @@ test "OSC clipboard and color controls preserve payloads" {
     );
 
     const kitty_color = oscProcess(.{ .kitty_color = .{ .command = 21, .payload = "foreground=?", .term = .st } }).?;
-    try std.testing.expectEqual(@as(u16, 21), kitty_color.color_control.command);
-    try std.testing.expectEqualStrings("foreground=?", kitty_color.color_control.payload);
+    try std.testing.expectEqual(@as(u16, 21), kitty_color.color_control.osc.command);
+    try std.testing.expectEqualStrings("foreground=?", kitty_color.color_control.osc.payload);
 
     const xterm_palette = oscProcess(.{ .palette_control = .{ .command = 4, .payload = "1;#ff0000", .term = .st } }).?;
-    try std.testing.expectEqual(@as(u16, 4), xterm_palette.color_control.command);
-    try std.testing.expectEqualStrings("1;#ff0000", xterm_palette.color_control.payload);
+    try std.testing.expectEqual(@as(u16, 4), xterm_palette.color_control.osc.command);
+    try std.testing.expectEqualStrings("1;#ff0000", xterm_palette.color_control.osc.payload);
 }
 
 test "OSC shell mark maps to neutral semantic metadata" {
@@ -5701,6 +5702,7 @@ pub const Terminal = struct {
         palette: [256]Terminal.Rgb,
         foreground: Terminal.Rgb,
         background: Terminal.Rgb,
+        bold: ?Terminal.Rgb,
         cursor: ?Terminal.Rgb,
         cursor_text: ?Terminal.Rgb,
         selection_background: ?Terminal.Rgb,
@@ -5714,6 +5716,7 @@ pub const Terminal = struct {
             .palette = colors.palette,
             .foreground = colors.foreground,
             .background = colors.background,
+            .bold = colors.bold,
             .cursor = null,
             .cursor_text = null,
             .selection_background = null,
@@ -7601,6 +7604,7 @@ pub const Terminal = struct {
             .palette = colors.palette,
             .foreground = colors.foreground,
             .background = colors.background,
+            .bold = colors.bold,
             .cursor = active.cursor.cursor_color orelse colors.cursor,
             .cursor_text = active.cursor.cursor_text_color orelse colors.cursor_text,
             .selection_background = colors.selection_background,

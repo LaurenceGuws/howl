@@ -627,6 +627,7 @@ fn cloneOscAction(osc: parser_mod.OscAction, payload: []u8) parser_mod.OscAction
     return switch (osc) {
         .raw_title => .{ .raw_title = .{ .payload = payload, .term = osc.term() } },
         .raw_other => .{ .raw_other = .{ .payload = payload, .term = osc.term() } },
+        .linux_palette => .{ .linux_palette = .{ .payload = payload, .term = osc.term() } },
         .title => |v| .{ .title = .{ .command = v.command, .payload = payload, .term = v.term } },
         .icon => .{ .icon = .{ .payload = payload, .term = osc.term() } },
         .palette_control => |v| .{ .palette_control = .{ .command = v.command, .payload = payload, .term = v.term } },

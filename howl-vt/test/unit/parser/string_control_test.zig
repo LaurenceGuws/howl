@@ -56,6 +56,57 @@ test "parser string controls: OSC with BEL terminator" {
     try std.testing.expectEqualSlices(u8, "title", output.actions.items[0].osc_dispatch.payload());
 }
 
+test "parser Linux OSC P finishes after seven bytes without a string terminator" {
+    const allocator = std.testing.allocator;
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+    var output = try Output.init(allocator);
+    defer output.deinit(allocator);
+
+    for ("\x1b]P11223") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 0);
+    for ("34") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    const fixed = output.actions.items[0].osc_dispatch;
+    try std.testing.expect(fixed == .linux_palette);
+    try std.testing.expectEqual(OscTerminator.fixed, fixed.term());
+    try std.testing.expectEqualStrings("1122334", fixed.payload());
+    try std.testing.expectEqual(@as(?u16, null), fixed.command());
+
+    // The following BEL occurs in ground state: it is a bell, not a
+    // retroactive terminator and not part of the palette transaction.
+    output.appendPhases(parser.next(0x07));
+    try expectActionCount(output.actions.items, 2);
+    try std.testing.expect(output.actions.items[1] == .execute);
+    try std.testing.expectEqual(@as(u8, 0x07), output.actions.items[1].execute);
+    output.appendPhases(parser.next('Q'));
+    try expectActionCount(output.actions.items, 3);
+    try std.testing.expectEqual(@as(u21, 'Q'), output.actions.items[2].print);
+}
+
+test "parser Linux OSC P consumes exactly seven raw bytes and resets incomplete input" {
+    const allocator = std.testing.allocator;
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+    var output = try Output.init(allocator);
+    defer output.deinit(allocator);
+
+    // Pinned parsePFromContext consumes seven bytes without interpreting
+    // embedded BEL as an ordinary OSC terminator.
+    for ("\x1b]P1\x07ABCDE") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .osc_dispatch);
+    try std.testing.expectEqualStrings("1\x07ABCDE", output.actions.items[0].osc_dispatch.payload());
+    try std.testing.expectEqual(OscTerminator.fixed, output.actions.items[0].osc_dispatch.term());
+
+    for ("\x1b]P1ab") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    parser.reset();
+    output.appendPhases(parser.next('R'));
+    try expectActionCount(output.actions.items, 2);
+    try std.testing.expectEqual(@as(u21, 'R'), output.actions.items[1].print);
+}
+
 test "parser string controls: OSC with ST terminator" {
     const gpa = std.testing.allocator;
     var parser = try Parser.init(gpa);

@@ -16,6 +16,7 @@ pub const default_background = Rgb{ .r = 24, .g = 25, .b = 33 };
 pub const ColorState = struct {
     foreground: Rgb = default_foreground,
     background: Rgb = default_background,
+    bold: ?Rgb = null,
     cursor: ?Rgb = null,
     pointer_foreground: ?Rgb = null,
     pointer_background: ?Rgb = null,

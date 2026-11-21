@@ -71,6 +71,7 @@ pub const max_chunk_control_bytes = chunk_control_max_bytes;
 pub const OscTerminator = enum {
     bel,
     st,
+    fixed, // Linux OSC P completes after exactly seven payload bytes.
 };
 
 /// Borrows one completed ESC final byte and bounded intermediates.
@@ -95,6 +96,7 @@ const OscCommandText = struct {
 pub const OscAction = union(enum) {
     raw_title: OscText,
     raw_other: OscText,
+    linux_palette: OscText,
     title: OscCommandText,
     icon: OscText,
     palette_control: OscCommandText,
@@ -126,7 +128,7 @@ pub const OscAction = union(enum) {
     /// Returns the numeric OSC command when the variant has one.
     pub fn command(self: OscAction) ?u16 {
         return switch (self) {
-            .raw_title, .raw_other => null,
+            .raw_title, .raw_other, .linux_palette => null,
             .title => |v| v.command,
             .icon => 1,
             .palette_control => |v| v.command,
@@ -161,6 +163,7 @@ pub const OscAction = union(enum) {
         return switch (self) {
             .raw_title,
             .raw_other,
+            .linux_palette,
             .icon,
             .report_pwd,
             .hyperlink,
@@ -487,6 +490,21 @@ pub const Parser = struct {
     fn nextActive(self: *Parser, byte: u8, transition: Transition) PhaseActions {
         const current_state = self.state;
         if (current_state == .screen_title_string) return self.nextScreenTitle(byte);
+        if (current_state == .osc_string and self.osc.policy.class == .linux_palette) {
+            // The fixed-length iTerm2 Linux OSC P consumes seven raw bytes,
+            // including control bytes, before returning to ground. It has
+            // no BEL/ST delimiter and cannot use the ordinary OSC table.
+            const result = self.osc.feed(byte) orelse return .{ null, null, null };
+            return switch (result) {
+                .put => .{ null, null, null },
+                .finish => |finished| completed: {
+                    std.debug.assert(finished == .fixed);
+                    self.state = .ground;
+                    std.debug.assert(self.osc.payload().len == 7);
+                    break :completed .{ .{ .osc_dispatch = self.osc.snapshot(.fixed) }, null, null };
+                },
+            };
+        }
         const sos_kind = if (current_state == .sos_pm_apc_string) self.sosPmApcKind() else null;
         const finishing_escape = byte == '\\' and switch (current_state) {
             .osc_string => self.osc.escaping(),
@@ -1688,6 +1706,7 @@ const ByteLimit = u32;
 pub const Finish = enum {
     bel,
     st,
+    fixed,
     cr,
     lf,
 };
@@ -1717,6 +1736,7 @@ pub const OscControl = struct {
     const OscClass = enum {
         raw_title,
         raw_other,
+        linux_palette,
         title,
         icon,
         palette_control,
@@ -1764,6 +1784,7 @@ pub const OscControl = struct {
         payload_esc,
         raw,
         raw_esc,
+        linux_palette,
         screen_title,
         screen_title_esc,
     };
@@ -1906,6 +1927,7 @@ pub const OscControl = struct {
         return switch (self.policy.class) {
             .raw_title => .{ .raw_title = .{ .payload = self.buffer.items, .term = term } },
             .raw_other => .{ .raw_other = .{ .payload = self.buffer.items, .term = term } },
+            .linux_palette => .{ .linux_palette = .{ .payload = self.buffer.items, .term = term } },
             .title => .{ .title = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
             .icon => .{ .icon = .{ .payload = self.buffer.items, .term = term } },
             .palette_control => .{ .palette_control = .{
@@ -1990,6 +2012,7 @@ pub const OscControl = struct {
             .prefix_esc => self.feedPrefixEsc(byte),
             .payload, .payload_esc => self.feedPayload(byte),
             .raw, .raw_esc => self.feedRaw(byte),
+            .linux_palette => self.feedLinuxPalette(byte),
             // zig-audit: acknowledge unreachable
             // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             .screen_title, .screen_title_esc => unreachable,
@@ -2055,6 +2078,15 @@ pub const OscControl = struct {
             if (!self.enterPayloadFromPrefix()) return .{ .put = byte };
             return .{ .put = byte };
         }
+        if (self.prefix == .start and byte == 'P') {
+            // Pinned iTerm2's Linux OSC P reads exactly seven characters
+            // after P; it does not wait for BEL or ST like ordinary OSC.
+            self.policy = .{ .command = null, .class = .linux_palette, .max_len = 7 };
+            self.state = .linux_palette;
+            self.prefix = .start;
+            self.buffer.clearRetainingCapacity();
+            return .{ .put = byte };
+        }
         if (self.advancePrefix(byte)) |next| {
             self.append(byte);
             self.prefix = next;
@@ -2071,6 +2103,15 @@ pub const OscControl = struct {
         }
         self.state = .prefix;
         return self.feedPrefix(byte);
+    }
+
+    fn feedLinuxPalette(self: *OscControl, byte: u8) FeedResult {
+        self.append(byte);
+        if (self.buffer.items.len == 7) {
+            self.state = .idle;
+            return .{ .finish = .fixed };
+        }
+        return .{ .put = byte };
     }
 
     fn feedPayload(self: *OscControl, byte: u8) ?FeedResult {
@@ -2717,6 +2758,7 @@ fn appendOwnedAction(
             try actions.append(allocator, .{ .osc_dispatch = switch (osc) {
                 .raw_title => .{ .raw_title = .{ .payload = owned, .term = osc.term() } },
                 .raw_other => .{ .raw_other = .{ .payload = owned, .term = osc.term() } },
+                .linux_palette => .{ .linux_palette = .{ .payload = owned, .term = osc.term() } },
                 .title => |v| .{ .title = .{ .command = v.command, .payload = owned, .term = v.term } },
                 .icon => .{ .icon = .{ .payload = owned, .term = osc.term() } },
                 .palette_control => |v| .{ .palette_control = .{

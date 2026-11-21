@@ -1890,14 +1890,26 @@ references:
         census: {semantic_branches: 26}
         recognition: implemented
         records:
-          iterm2.osc.linux_palette: {raw: "OSC P nrrggbb (BEL|ST)", effect: set Linux-console palette index,
-            recognition: implemented, relevance: compatibility,
-            conditions: "Pinned iTerm2 VT100XtermParser.m:parseModeFromContext recognizes nonnumeric P plus seven palette digits and tokenTypeForMode maps kLinuxSetPaletteMode to XTERMCC_SET_PALETTE; VT100Terminal.m:executeXtermSetPalette sets indexed color. Howl OscControl.enterRawFromPrefix instead treats the bytes as a legacy commandless title, changing the title while leaving palette unchanged.",
-            howl: {support: missing, disposition: excluded,
-              rationale: "Native Linux OSC P palette command is absent, and the raw-title fallback currently changes the title for identical bytes; addressing that side effect belongs to a separate runtime round.",
-              source: howl-vt/src/parser.zig, symbol: OscControl.enterRawFromPrefix, proof: {
-                path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "pinned iTerm2 Linux OSC P palette dispatch collides with Howl raw title"}}}
+          iterm2.osc.linux_palette:
+            raw: "OSC P nrrggbb (seven bytes after P, no terminator)"
+            effect: set Linux-console palette index or special dynamic color
+            recognition: implemented
+            relevance: compatibility
+            conditions: >-
+              Pinned iTerm2 VT100XtermParser.m:parseModeFromContext accepts a nonnumeric P,
+              parsePFromContext consumes exactly seven raw bytes and completes without BEL/ST,
+              and VT100Terminal.m:executeXtermSetPalette maps 0..f to the ordinary palette and
+              g..m to foreground, background, bold, selection, selected text, cursor, cursor text.
+              Howl now recognizes that fixed-length form without changing the title, retains all
+              23 indexed and special colors through one canonical ColorState owner, projects
+              bold text color through direct output, and rejects malformed values without mutation.
+            howl:
+              support: full
+              source: howl-vt/src/color_control.zig
+              symbol: applyLinuxPalette
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: pinned iTerm2 Linux OSC P uses special colors and rejects malformed values
           iterm2.osc.title_icon: {raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
             conditions: "Pinned iTerm2 splits title/icon from subtitle at CR/LF and caret-escapes controls; Howl ignores embedded OSC C0 bytes and concatenates surrounding text in the bounded retained title/icon, with no subtitle.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,

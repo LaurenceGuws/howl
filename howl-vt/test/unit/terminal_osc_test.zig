@@ -1486,23 +1486,81 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     );
 }
 
-test "pinned iTerm2 Linux OSC P palette dispatch collides with Howl raw title" {
-    // Pinned VT100XtermParser.m::parseModeFromContext recognizes OSC P
-    // followed by one palette index and six RGB hex digits; it dispatches
-    // XTERMCC_SET_PALETTE via VT100Terminal.m. Howl's OSC prefix parser
-    // treats a nonnumeric P as the legacy raw title, not a color update.
+test "pinned iTerm2 Linux OSC P commits seven bytes without title mutation" {
+    // Pinned iTerm2 VT100XtermParser.m:parsePFromContext consumes seven
+    // bytes after P and finishes immediately, without requiring BEL/ST.
     var terminal = try Terminal.init(std.testing.allocator, 2, 12);
     defer terminal.deinit();
     const original = terminal.presentation().palette[1];
     try std.testing.expect(!(try terminal.feed("\x1b]P11223")).stateChanged());
-    try std.testing.expect((try terminal.feed("34\x07")).stateChanged());
     try std.testing.expectEqual(original, terminal.presentation().palette[1]);
-    try std.testing.expectEqualStrings("P1122334", terminal.title().?);
+    try std.testing.expect(terminal.title() == null);
+    try std.testing.expect((try terminal.feed("34")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0x12, .g = 0x23, .b = 0x34 }, terminal.presentation().palette[1]);
+    try std.testing.expect(terminal.title() == null);
     try std.testing.expectEqualStrings("", terminal.replyBytes());
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
-    try std.testing.expect((try terminal.feed("\x1b]4;1;#122334\x1b\\")).stateChanged());
-    try std.testing.expectEqual(Rgb{ .r = 0x12, .g = 0x23, .b = 0x34 }, terminal.presentation().palette[1]);
-    try std.testing.expectEqualStrings("P1122334", terminal.title().?);
+
+    // A trailing BEL is a *new* ground-state bell, not the P terminator.
+    try std.testing.expect((try terminal.feed("\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    const bell = terminal.consequenceHead().?;
+    try std.testing.expect(bell == .bell);
+    try terminal.consumeConsequence(bell.id());
+
+    // Repeated values are idempotent; the next byte after seven is text.
+    try std.testing.expect(!(try terminal.feed("\x1b]P1122334")).stateChanged());
+    try std.testing.expect((try terminal.feed("Z")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expect(terminal.title() == null);
+
+    // Ordinary OSC 4 shares the actual palette owner and remains functional.
+    try std.testing.expect((try terminal.feed("\x1b]4;1;#010203\x1b\\")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().palette[1]);
+}
+
+test "pinned iTerm2 Linux OSC P uses special colors and rejects malformed values" {
+    // Pinned VT100Terminal.m maps g-m to color indices 16-22:
+    // foreground, background, bold, selection, selection text, cursor,
+    // cursor text. Ordinary 0-f uses the canonical indexed palette.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]Pg102030")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0x10, .g = 0x20, .b = 0x30 }, terminal.presentation().foreground);
+    try std.testing.expect((try terminal.feed("\x1b]Ph112233")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, terminal.presentation().background);
+    try std.testing.expect((try terminal.feed("\x1b]Pi445566")).stateChanged());
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x44, .g = 0x55, .b = 0x66 }), terminal.presentation().bold);
+    try std.testing.expect((try terminal.feed("\x1b]Pj778899")).stateChanged());
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x77, .g = 0x88, .b = 0x99 }), terminal.presentation().selection_background);
+    try std.testing.expect((try terminal.feed("\x1b]PkA1B2C3")).stateChanged());
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0xa1, .g = 0xb2, .b = 0xc3 }), terminal.presentation().selection_foreground);
+    try std.testing.expect((try terminal.feed("\x1b]Pl102030")).stateChanged());
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x10, .g = 0x20, .b = 0x30 }), terminal.presentation().cursor);
+    try std.testing.expect((try terminal.feed("\x1b]Pm112233")).stateChanged());
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x11, .g = 0x22, .b = 0x33 }), terminal.presentation().cursor_text);
+    try std.testing.expect(terminal.title() == null);
+
+    const original = terminal.presentation();
+    for ([_][]const u8{
+        "\x1b]Pz112233", // invalid palette selector
+        "\x1b]P1GGGGGG", // invalid color
+        "\x1b]P1\x07AAAAA", // BEL is an invalid raw payload byte
+    }) |packet| {
+        try std.testing.expect(!(try terminal.feed(packet)).stateChanged());
+    }
+    try std.testing.expectEqual(original.palette[1], terminal.presentation().palette[1]);
+    try std.testing.expectEqual(original.background, terminal.presentation().background);
+    try std.testing.expectEqual(original.bold, terminal.presentation().bold);
+    try std.testing.expectEqual(original.selection_background, terminal.presentation().selection_background);
+    try std.testing.expectEqual(original.selection_foreground, terminal.presentation().selection_foreground);
+    // An uppercase index and uppercase RGB digits must also be accepted.
+    try std.testing.expect((try terminal.feed("\x1b]PAABCDEF")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0xab, .g = 0xcd, .b = 0xef }, terminal.presentation().palette[10]);
+    try std.testing.expectEqual(original.foreground, terminal.presentation().foreground);
+    try std.testing.expect(terminal.title() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }
 
 test "pinned iTerm2 OSC 9 notification retains a bounded host-neutral consequence" {

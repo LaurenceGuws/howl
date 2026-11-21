@@ -12,9 +12,9 @@ const Rgb = properties.Rgb;
 const KittyColorState = properties.ColorState;
 
 /// Borrows one terminal color-control command until synchronous application.
-pub const Command = struct {
-    command: u16,
-    payload: []const u8,
+pub const Command = union(enum) {
+    osc: struct { command: u16, payload: []const u8 },
+    linux_palette: []const u8,
 };
 
 fn byteCount(bytes: []const u8) u32 {
@@ -31,34 +31,86 @@ pub fn apply(
     encode_buf: []u8,
     command: Command,
 ) replies.AppendError!bool {
+    const osc = switch (command) {
+        .linux_palette => |bytes| return applyLinuxPalette(colors, bytes),
+        .osc => |value| value,
+    };
     const before = colors.*;
     const output_before = output.len();
     errdefer {
         colors.* = before;
         output.truncate(output_before);
     }
-    switch (command.command) {
-        21 => try handleKittyControl(colors, output, command.payload, defaults),
-        4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, command.payload),
-        5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, command.payload),
+    switch (osc.command) {
+        21 => try handleKittyControl(colors, output, osc.payload, defaults),
+        4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, osc.payload),
+        5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, osc.payload),
         10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
             allocator,
             colors,
             output,
             encode_buf,
-            command.command,
-            command.payload,
+            osc.command,
+            osc.payload,
         ),
-        104 => resetXtermPalette(colors, command.payload, defaults),
+        104 => resetXtermPalette(colors, osc.payload, defaults),
         110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
             colors,
-            command.command,
-            command.payload,
+            osc.command,
+            osc.payload,
             defaults,
         ),
         else => {},
     }
     return !std.meta.eql(before, colors.*) or output_before != output.len();
+}
+
+// iTerm2's Linux OSC P is exactly seven bytes after P (one selector and
+// three hex RGB pairs). It mutates the same canonical ColorState as OSC 4/10.
+fn applyLinuxPalette(colors: *properties.ColorState, bytes: []const u8) bool {
+    if (bytes.len != 7) return false;
+    const index: u8 = switch (bytes[0]) {
+        '0'...'9' => bytes[0] - '0',
+        'a'...'f' => bytes[0] - 'a' + 10,
+        'A'...'F' => bytes[0] - 'A' + 10,
+        'g'...'m' => bytes[0] - 'g' + 16,
+        else => return false,
+    };
+    const color: Rgb = .{
+        .r = std.fmt.parseUnsigned(u8, bytes[1..3], 16) catch return false,
+        .g = std.fmt.parseUnsigned(u8, bytes[3..5], 16) catch return false,
+        .b = std.fmt.parseUnsigned(u8, bytes[5..7], 16) catch return false,
+    };
+    // Map each selector to exactly one canonical color slot. Optional
+    // presentation colors remain nullable; palette and defaults do not.
+    const Target = union(enum) { required: *Rgb, optional: *?Rgb };
+    const target: Target = switch (index) {
+        0...15 => .{ .required = &colors.palette[index] },
+        16 => .{ .required = &colors.foreground },
+        17 => .{ .required = &colors.background },
+        18 => .{ .optional = &colors.bold },
+        19 => .{ .optional = &colors.selection_background },
+        20 => .{ .optional = &colors.selection_foreground },
+        21 => .{ .optional = &colors.cursor },
+        22 => .{ .optional = &colors.cursor_text },
+        else => return false,
+    };
+    // One seven-byte update can only mutate this slot and cannot fail.
+    // Avoid copying all 256 colors just to detect a repeated value.
+    return switch (target) {
+        .required => |slot| result: {
+            if (std.meta.eql(slot.*, color)) break :result false;
+            slot.* = color;
+            break :result true;
+        },
+        .optional => |slot| result: {
+            if (slot.*) |previous| {
+                if (std.meta.eql(previous, color)) break :result false;
+            }
+            slot.* = color;
+            break :result true;
+        },
+    };
 }
 
 /// Applies the accepted iTerm SetColors subset and reports retained mutation.
@@ -680,7 +732,7 @@ test "color control set query and transaction rollback are exact" {
         &.{},
         &output,
         &scratch,
-        .{ .command = 4, .payload = "1;#123;1;?" },
+        .{ .osc = .{ .command = 4, .payload = "1;#123;1;?" } },
     ));
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[1]);
     try std.testing.expectEqualStrings("\x1b]4;1;rgb:1111/2222/3333\x1b\\", output.bytes());
@@ -699,7 +751,7 @@ test "color control set query and transaction rollback are exact" {
             &.{},
             &output,
             &scratch,
-            .{ .command = 4, .payload = "2;#010203;3;?" },
+            .{ .osc = .{ .command = 4, .payload = "2;#010203;3;?" } },
         ),
     );
     try std.testing.expectEqual(before, colors);
@@ -725,7 +777,7 @@ test "Kitty OSC 21 multi-query reply capacity failure rolls back colors and all 
             &.{},
             &output,
             &scratch,
-            .{ .command = 21, .payload = "foreground=#123456;foreground=?;background=?;cursor=?" },
+            .{ .osc = .{ .command = 21, .payload = "foreground=#123456;foreground=?;background=?;cursor=?" } },
         ),
     );
     try std.testing.expectEqual(before, colors);

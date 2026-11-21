@@ -59,6 +59,11 @@ pub fn Emitter(comptime instrumented: bool) type {
         // reason: Only canonical VT presentation values or borrowed pointers reach this private helper.
         fn colors(cell: VT.Cell, p: anytype) !Colors {
             var fg = try resolve(cell.attrs.fg, p, true);
+            // OSC P index i is the host-selected bold foreground; explicit
+            // indexed/RGB foreground stays authoritative for modern TUIs.
+            if (cell.attrs.bold and cell.attrs.fg.kind == .default) {
+                if (p.bold) |bold_color| fg = rgba(bold_color);
+            }
             var bg = try resolve(cell.attrs.bg, p, false);
             if (cell.attrs.reverse != p.reverse_screen) std.mem.swap(frame.Color, &fg, &bg);
             if (cell.attrs.dim) fg.a = @intCast((@as(u16, fg.a) * 55 + 50) / 100);
@@ -771,4 +776,26 @@ pub fn Emitter(comptime instrumented: bool) type {
             return .{ .command = .{ .solid = .{ .rect = rect, .color = color } }, .cell = cell_rect, .text_color = ink, .shape = cursor.effective_shape };
         }
     };
+}
+
+test "direct output uses Linux OSC P bold foreground only for default-color bold text" {
+    const T = Emitter(false);
+    var p = VT.default_presentation;
+    p.bold = .{ .r = 0x11, .g = 0x22, .b = 0x33 };
+    var cell: VT.Cell = .{ .codepoint = 'X', .attrs = VT.default_cell_attrs };
+
+    const normal = try T.colors(cell, &p);
+    try std.testing.expectEqual(p.foreground.r, normal.fg.r);
+    try std.testing.expectEqual(p.foreground.g, normal.fg.g);
+    try std.testing.expectEqual(p.foreground.b, normal.fg.b);
+
+    cell.attrs.bold = true;
+    const bold = try T.colors(cell, &p);
+    try std.testing.expectEqual(frame.Color{ .r = 0x11, .g = 0x22, .b = 0x33, .a = 255 }, bold.fg);
+
+    cell.attrs.fg = VT.Color.indexed(2);
+    const explicit = try T.colors(cell, &p);
+    try std.testing.expectEqual(p.palette[2].r, explicit.fg.r);
+    try std.testing.expectEqual(p.palette[2].g, explicit.fg.g);
+    try std.testing.expectEqual(p.palette[2].b, explicit.fg.b);
 }
