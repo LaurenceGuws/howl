@@ -35,6 +35,9 @@ pub fn apply(
         .linux_palette => |bytes| return applyLinuxPalette(colors, bytes),
         .osc => |value| value,
     };
+    // OSC 104 only resets individual ColorState slots. It never allocates
+    // or emits replies, so it needs no snapshot/rollback transaction.
+    if (osc.command == 104) return resetXtermPalette(colors, osc.payload, defaults);
     const before = colors.*;
     const output_before = output.len();
     errdefer {
@@ -53,7 +56,6 @@ pub fn apply(
             osc.command,
             osc.payload,
         ),
-        104 => resetXtermPalette(colors, osc.payload, defaults),
         110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
             colors,
             osc.command,
@@ -208,6 +210,9 @@ fn handleXtermPaletteControl(
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u16, idx_text, 10) catch continue;
+        // Queries outside both the ordinary and supported xterm special
+        // palettes must be ignored, not answered with an empty color.
+        if (@as(usize, idx) >= colors.palette.len + colors.special_palette.len) continue;
         if (std.mem.eql(u8, value, "?")) {
             // zig-audit: acknowledge catch_unreachable
             // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
@@ -273,23 +278,34 @@ fn handleXtermDynamicColor(
     }
 }
 
-// Resets selected OSC 104 palette entries or the complete palette.
-fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8, defaults: *const TerminalColorState) void {
+// OSC 104 resets only canonical palette entries. Return actual mutation
+// without a redundant complete ColorState copy or any reply transaction.
+fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8, defaults: *const TerminalColorState) bool {
+    var changed = false;
     if (payload.len == 0) {
-        colors.palette = defaults.palette;
-        return;
+        for (0..colors.palette.len) |index| {
+            if (!std.meta.eql(colors.palette[index], defaults.palette[index])) {
+                colors.palette[index] = defaults.palette[index];
+                changed = true;
+            }
+        }
+        return changed;
     }
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
-        // Both pinned Kitty's int() and iTerm2's numeric scanner accept
-        // ASCII whitespace and an explicit sign on valid palette indexes.
-        // Preserve the bounded full-field check; their handling of empty
-        // or trailing-junk fields conflicts and is not guessed here.
+        // The originating xterm OSC104, Kitty, and iTerm2 disagree on
+        // whitespace-only and numeric-prefix-junk spellings. The index
+        // adjudicates the conflicting exact bytes; do not parse prefixes.
         const trimmed = std.mem.trim(u8, idx_text, " \t\r\n");
         const index = std.fmt.parseInt(i64, trimmed, 10) catch continue;
         if (index < 0 or index > 255) continue;
-        resetPaletteTarget(colors, @intCast(index), defaults);
+        const slot: usize = @intCast(index);
+        if (!std.meta.eql(colors.palette[slot], defaults.palette[slot])) {
+            colors.palette[slot] = defaults.palette[slot];
+            changed = true;
+        }
     }
+    return changed;
 }
 
 // Resets one dynamic color selected by its OSC command.
@@ -756,6 +772,56 @@ test "color control set query and transaction rollback are exact" {
     );
     try std.testing.expectEqual(before, colors);
     try std.testing.expectEqual(@as(u32, replies.max_bytes - 1), output.len());
+}
+
+test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
+    var colors: properties.ColorState = .{};
+    const defaults: properties.ColorState = .{};
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    var scratch: [64]u8 = undefined;
+    colors.palette[1] = .{ .r = 1, .g = 2, .b = 3 };
+    colors.palette[2] = .{ .r = 4, .g = 5, .b = 6 };
+    try output.append("retained reply");
+
+    try std.testing.expect(try apply(
+        std.testing.allocator,
+        &colors,
+        &defaults,
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 104, .payload = "1" } },
+    ));
+    try std.testing.expectEqual(defaults.palette[1], colors.palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, colors.palette[2]);
+    try std.testing.expectEqualStrings("retained reply", output.bytes());
+
+    try std.testing.expect(!(try apply(
+        std.testing.allocator,
+        &colors,
+        &defaults,
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 104, .payload = "1junk" } },
+    )));
+    try std.testing.expect(try apply(
+        std.testing.allocator,
+        &colors,
+        &defaults,
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 104, .payload = "" } },
+    ));
+    try std.testing.expectEqualDeep(defaults.palette, colors.palette);
+    try std.testing.expect(!(try apply(
+        std.testing.allocator,
+        &colors,
+        &defaults,
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 104, .payload = "" } },
+    )));
+    try std.testing.expectEqualStrings("retained reply", output.bytes());
 }
 
 test "Kitty OSC 21 multi-query reply capacity failure rolls back colors and all replies" {

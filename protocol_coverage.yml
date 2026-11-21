@@ -1932,8 +1932,13 @@ references:
             raw: "OSC 4 ; Pt (BEL|ST)"
             effect: set or query palette
             conditions: >-
-              Howl owns indexes 0..255 plus xterm special indexes 256..260 and fixed 16-bit rgb replies, but omits
-              iTerm2 selectable 8-bit replies, preferred-color-space, and tmux report policy.
+              Howl owns indexes 0..255 and xterm special 256..260 with fixed 16-bit RGB
+              replies, and now rejects requests outside the entire represented palette
+              without fabricating an empty query reply. Pinned iTerm2 VT100Terminal.m
+              executeXtermSetRgb uses a delegate for color reads and can choose different
+              reply width, preferred color space, tmux-aware report admission and other
+              host policies. Exact out-of-range delegate behavior and those policy domains
+              remain separately unproven for full iTerm2 compatibility.
             howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
               source: howl-vt/src/color_control.zig, symbol: handleXtermPaletteControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -2018,19 +2023,70 @@ references:
             raw: "OSC 104 ; Pm (BEL|ST)"
             effect: reset palette entries
             conditions: >-
-              Pinned iTerm2 resetColors uses NSString integerNumber, whose NSScanner accepts a valid
-              decimal prefix even when other characters follow. Howl requires a complete index token
-              to match pinned Kitty's Python int rejection; ordinary empty/all and numeric indices agree.
-            howl: {support: partial, disposition: excluded,
-              rationale: "Pinned iTerm2 permits a numeric prefix such as 1junk and resets colour 1,
-                while Kitty's int rejects that entire token and Howl retains the existing colour.
-                The references conflict for identical bytes, so no implicit terminal profile is selected.",
-              residual: "Whitespace and signed valid numeric fields, empty reset-all, bounded valid
-                indices and invalid ranges agree. Numeric-prefix acceptance remains an exact
-                iTerm2-only incompatibility; configured palette defaults are host-owned.",
-              source: howl-vt/src/color_control.zig, symbol: resetXtermPalette, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC 104 accepts shared signed padded indexes and preserves unsupported spellings"}}
+              Pinned iTerm2 VT100Terminal.m:resetColors uses NSStringITerm.m:integerNumber
+              backed by NSScanner scanInteger without requiring end-of-string, so
+              OSC 104;1junk resets color 1. Originating xterm misc.c:ResetAnsiColorRequest
+              rejects nonsemicolon characters after the number before modifying the slot.
+              Howl keeps that strict spelling, while supporting ordinary empty reset-all,
+              signed/space-padded valid indexes and configured defaults.
+            howl:
+              support: partial
+              disposition: adjudicated
+              source: howl-vt/src/color_control.zig
+              symbol: resetXtermPalette
+              rationale: >-
+                The source-proven iTerm2 scanner accepts a numeric prefix followed by
+                junk that the originating xterm OSC 104 and Howl reject. A single
+                parser cannot both reset and retain the same palette entry for that
+                identical input. Further nonconflicting iTerm2 palette color/report
+                behavior remains separately reviewable.
+              residual: >-
+                The pinned iTerm2 numeric-prefix-junk reset cannot coexist with the
+                originating xterm strict reset grammar; valid reset and configured
+                defaults remain supported. Host-only reset notification policy and
+                other fixable color semantics are separate obligations.
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: xterm OSC 104 rejects numeric-prefix junk unlike pinned iTerm2 scanner
+              adjudication:
+                kind: wire_collision
+                wire: "OSC 104 ; 1junk (BEL|ST)"
+                winner:
+                  owner: xterm
+                  protocol: OSC104 strict indexed reset
+                  behavior: >-
+                    Reject numeric-prefix junk; do not reset palette entry 1
+                    and do not emit a reply.
+                  evidence: >-
+                    dev_references/terminals/xterm_snapshots@5afc76e
+                    misc.c:3051-3085; ptyx.h:321-326
+                loser:
+                  owner: iTerm2
+                  protocol: iTerm2 OSC104 NSScanner reset
+                  behavior: >-
+                    Accept the leading integer 1 and reset palette entry 1,
+                    ignoring the trailing junk.
+                  evidence: >-
+                    pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+                    sources/VT100/VT100Terminal.m:4020-4045 and
+                    sources/Categories/NSStringITerm.m:2606-2613
+                current_usage: >-
+                  Ordinary OSC 104 empty and valid-index resets are common shared
+                  protocol paths. No contemporary application requiring the
+                  numeric-prefix-junk spelling has been established; do not infer
+                  popularity from permissive parser acceptance.
+                recency: >-
+                  iTerm2 implements the older xterm-origin OSC 104 protocol;
+                  this permissive parser spelling is not a separately newer protocol.
+                reason: >-
+                  Protocol ownership favors originating xterm. On exact bytes
+                  iTerm2 resets color 1 while xterm and Howl must not. The shared
+                  modern valid-index path remains implemented; Captain's origin,
+                  actual-effect, current-use, terminal-weight, then recency rule
+                  selects xterm's strict interpretation without an implicit profile.
+                proof:
+                  path: howl-vt/test/unit/terminal_osc_test.zig
+                  symbol: xterm OSC 104 rejects numeric-prefix junk unlike pinned iTerm2 scanner
           iterm2.osc.reset_fg:
             raw: "OSC 110 (BEL|ST)"
             effect: reset foreground
@@ -4052,29 +4108,103 @@ references:
               source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
-          kitty.osc.palette: {raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette,
-            conditions: "Pinned Kitty rejects odd-field OSC 4 without partial palette mutation or query; Howl now does likewise. Valid 0..255 and xterm RGB replies work, but Howl additionally accepts xterm special indexes 256..260 and has narrower color grammar.",
-            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
-              source: howl-vt/src/color_control.zig, symbol: handleXtermPaletteControl, proof: {
-                path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 4 rejects dangling palette pairs without partial mutation or reply"}}}
+          kitty.osc.palette:
+            raw: "OSC 4 ; Pt (BEL|ST)"
+            effect: set or query palette
+            conditions: >-
+              Pinned Kitty kitty/window.py:set_color_table_color rejects odd-field OSC 4
+              atomically and drops index fields outside 0..255 without emitting a query
+              response. Howl now matches both dangling-pair atomic rejection and omission
+              of out-of-domain queries (including 999 and 65535); ordinary palette queries
+              emit exact four-hex-digit RGB replies. Howl still additionally admits
+              originating xterm special-color indexes 256..260 and has narrower color
+              name and platform reply-policy grammar, so whole-command full parity is
+              not yet proven.
+            howl:
+              support: partial
+              disposition: excluded
+              rationale: *howl_color_policy_difference
+              residual: >-
+                Kitty ordinary 0..255 palette and invalid out-of-domain queries now
+                behave as pinned. Xterm special 256..260 remains intentionally admitted;
+                color name/opacity and host presentation policy still differ.
+              source: howl-vt/src/color_control.zig
+              symbol: handleXtermPaletteControl
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: OSC 4 omits replies for out-of-domain palette indexes
           kitty.osc.palette_reset:
             raw: "OSC 104 ; Pm (BEL|ST)"
-            effect: reset palette
+            effect: reset palette entries
             conditions: >-
-              Pinned Kitty window.py:set_color_table_color treats a whitespace-only payload as
-              reset-all, whereas pinned iTerm2 rejects that argument and Howl leaves the palette
-              unchanged. Both accept ordinary numeric indices and signed/space-padded fields.
-            howl: {support: partial, disposition: excluded,
-              rationale: "Pinned Kitty strips the entire OSC 104 payload before deciding reset-all.
-                Howl reserves reset-all for a genuinely empty payload, matching iTerm2's no-valid-index
-                rejection for whitespace-only fields; a single wire input cannot satisfy both policies.",
-              residual: "Empty reset-all, valid bounded and signed/space-padded index reset are implemented.
-                Whitespace-only reset-all and Python's extended integer grammar remain pinned-specific;
-                Kitty's host refresh and configured defaults are not VT-owned.",
-              source: howl-vt/src/color_control.zig, symbol: resetXtermPalette, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC 104 accepts shared signed padded indexes and preserves unsupported spellings"}}
+              Pinned Kitty window.py:set_color_table_color strips the complete OSC 104
+              payload before checking reset-all, so whitespace-only payload resets
+              the entire palette. Originating xterm misc.c:ResetAnsiColorRequest
+              resets all only if the untrimmed body is empty; whitespace fails its
+              leading-digit test without mutating colors. Pinned iTerm2 also ignores
+              whitespace-only input. Howl preserves the xterm no-op and ordinary
+              empty/all and numeric-index resets.
+            howl:
+              support: partial
+              disposition: adjudicated
+              source: howl-vt/src/color_control.zig
+              symbol: resetXtermPalette
+              rationale: >-
+                The originating xterm protocol and pinned Kitty require
+                contradictory effects for the same whitespace-only OSC 104
+                input. A deterministic parser cannot simultaneously reset
+                all palette entries and leave every entry unchanged. Other
+                Kitty-specific extended integer syntax, color grammar and
+                host refresh policy remain independent review obligations.
+              residual: >-
+                Kitty whitespace-only reset-all intentionally differs;
+                ordinary empty reset-all and signed/space-padded explicit index
+                resets remain implemented. Other compatible color grammar is
+                not implicitly waived by this one adjudicated collision.
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: xterm OSC 104 ignores whitespace-only reset where pinned Kitty resets all
+              adjudication:
+                kind: wire_collision
+                wire: "OSC 104 ; whitespace-only (BEL|ST)"
+                winner:
+                  owner: xterm
+                  protocol: OSC104 empty-only reset-all
+                  behavior: >-
+                    Preserve the entire palette on whitespace-only payload;
+                    reset all entries only for a genuinely empty OSC 104 body.
+                  evidence: >-
+                    dev_references/terminals/xterm_snapshots@5afc76e
+                    misc.c:3051-3085; ptyx.h:318-326
+                loser:
+                  owner: kitty
+                  protocol: Kitty OSC104 trimmed reset-all
+                  behavior: >-
+                    Strip whitespace then reset every palette entry, making
+                    a whitespace-only payload equivalent to an empty command.
+                  evidence: >-
+                    pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8
+                    kitty/window.py:1571-1573,1606-1617
+                current_usage: >-
+                  Empty reset-all and numeric indexed reset are supported across
+                  xterm, Kitty and iTerm2. No specific contemporary application
+                  requiring whitespace-only reset-all was established; avoid
+                  inventing terminal use-share measurements.
+                recency: >-
+                  Kitty implements the existing xterm-origin OSC 104 protocol;
+                  whitespace stripping is an implementation difference,
+                  not a separately introduced newer protocol.
+                reason: >-
+                  Originating xterm owns OSC 104, with a clear distinction
+                  between empty and whitespace-only bodies. Kitty and xterm
+                  demand opposite effects for the latter; iTerm2 also agrees
+                  with xterm's no-op. Under Captain's origin, effects,
+                  contemporary-use, implementation-preference, then recency
+                  policy, preserve the originating xterm semantics and a
+                  single canonical palette state rather than an emulator mode.
+                proof:
+                  path: howl-vt/test/unit/terminal_osc_test.zig
+                  symbol: xterm OSC 104 ignores whitespace-only reset where pinned Kitty resets all
           kitty.osc.cwd: {raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
             conditions: "Kitty retains parser-sized raw bytes while Howl rejects reports above its fixed 1 KiB
               metadata bound",

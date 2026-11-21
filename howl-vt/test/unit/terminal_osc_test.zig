@@ -60,6 +60,27 @@ test "OSC 4 rejects dangling palette pairs without partial mutation or reply" {
     try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, terminal.presentation().palette[2]);
 }
 
+test "OSC 4 omits replies for out-of-domain palette indexes" {
+    // Pinned Kitty window.py:set_color_table_color admits only 0..255
+    // and emits no reply for out-of-range query indexes. Howl also
+    // supports xterm's 256..260 special slots, but indexes above its
+    // entire supported domain must not fabricate an empty OSC 4 reply.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]4;999;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expect(!(try terminal.feed("\x1b]4;65535;?\x07")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    // Valid neighboring requests still commit, reply, and retain order.
+    try std.testing.expect((try terminal.feed("\x1b]4;1;#112233;999;?;1;?;2;#445566\x1b\\")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, terminal.presentation().palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, terminal.presentation().palette[2]);
+    try std.testing.expectEqualStrings("\x1b]4;1;rgb:1111/2222/3333\x1b\\", terminal.replyBytes());
+    try std.testing.expect(terminal.title() == null);
+}
+
 test "OSC 4 accepts one complete Kitty-style 256-color palette transaction" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
@@ -2189,6 +2210,55 @@ test "OSC 104 accepts shared signed padded indexes and preserves unsupported spe
     try std.testing.expect(!(try terminal.feed("\x1b]104;   \x07")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b]104;1junk\x1b\\")).stateChanged());
     try std.testing.expectEqual(before_conflicts, terminal.presentation());
+}
+
+test "xterm OSC 104 ignores whitespace-only reset where pinned Kitty resets all" {
+    // xterm misc.c:ResetAnsiColorRequest performs reset-all only for
+    // an empty payload. With whitespace it takes the selective branch,
+    // then fails PartS2L before touching any index. Pinned Kitty
+    // window.py:set_color_table_color instead tests not value.strip().
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed(
+        "\x1b]4;1;#010203;2;#040506\x1b\\",
+    )).stateChanged());
+    const changed = terminal.presentation();
+    try std.testing.expect(!(try terminal.feed("\x1b]104;  \t \x07")).stateChanged());
+    try std.testing.expectEqualDeep(changed, terminal.presentation());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expect(terminal.title() == null);
+    // The same protocol's genuinely empty body resets all 256 slots.
+    try std.testing.expect((try terminal.feed("\x1b]104\x07")).stateChanged());
+    try std.testing.expectEqualDeep(
+        Terminal.default_presentation.palette,
+        terminal.presentation().palette,
+    );
+    try std.testing.expect(!(try terminal.feed("\x1b]104\x1b\\")).stateChanged());
+}
+
+test "xterm OSC 104 rejects numeric-prefix junk unlike pinned iTerm2 scanner" {
+    // xterm misc.c:ResetAnsiColorRequest checks the complete decimal
+    // token delimiter before mutating. Pinned iTerm2 resetColors and
+    // NSStringITerm.integerNumber accept a numeric prefix and ignore
+    // the remaining text. Kitty's Python int rejects the whole token.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed(
+        "\x1b]4;1;#010203;2;#040506\x1b\\",
+    )).stateChanged());
+    const changed = terminal.presentation();
+    try std.testing.expect(!(try terminal.feed("\x1b]104;1junk\x1b\\")).stateChanged());
+    try std.testing.expectEqualDeep(changed, terminal.presentation());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    // A complete numeric field is admitted, even when fragmented.
+    try std.testing.expect(!(try terminal.feed("\x1b]104;")).stateChanged());
+    try std.testing.expect((try terminal.feed("1\x1b\\")).stateChanged());
+    try std.testing.expectEqual(
+        Terminal.default_presentation.palette[1],
+        terminal.presentation().palette[1],
+    );
+    try std.testing.expectEqual(changed.palette[2], terminal.presentation().palette[2]);
+    try std.testing.expect(terminal.title() == null);
 }
 
 test "OSC color set and query failure rolls back the complete command" {

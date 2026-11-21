@@ -67,8 +67,30 @@ if ($ruling.id != "libvterm.csi.decsgr"
   error make {msg: "indexed XTQMODKEYS/DECSGR decision is not machine-discoverable"}
 }
 let indexed_rulings = (protocol decisions)
-if ($indexed_rulings | length) != 1 {
-  error make {msg: "indexed collision decisions differ from the accepted single ruling"}
+let expected_rulings = [
+  iterm2.osc.palette_reset
+  kitty.osc.palette_reset
+  libvterm.csi.decsgr
+]
+if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
+  error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+for id in [iterm2.osc.palette_reset kitty.osc.palette_reset] {
+  let palette_ruling = (protocol decision $id)
+  if ($palette_ruling.disposition != adjudicated
+      or $palette_ruling.adjudication.kind != wire_collision
+      or $palette_ruling.adjudication.winner.owner != xterm
+      or ($palette_ruling.adjudication.reason | str trim | is-empty)) {
+    error make {msg: $"missing or invalid OSC104 origin arbitration on ($id)"}
+  }
+}
+let whitespace_case = (protocol query --text "whitespace-only reset")
+if "kitty.osc.palette_reset" not-in ($whitespace_case | get id) {
+  error make {msg: "Kitty whitespace-only loser is not index-queryable"}
+}
+let junk_case = (protocol query --text "numeric-prefix junk")
+if "iterm2.osc.palette_reset" not-in ($junk_case | get id) {
+  error make {msg: "iTerm2 trailing-junk loser is not index-queryable"}
 }
 let search_rulings = (protocol query --text XTQMODKEYS)
 if "libvterm.csi.decsgr" not-in ($search_rulings | get id) {
