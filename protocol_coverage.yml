@@ -253,12 +253,12 @@ references:
               path: howl-vt/test/unit/parser/string_control_test.zig,
               symbol: "parser string controls: BEL terminates only OSC"}}}
           libvterm.c0.bs: {raw: "\\x08", effect: cursor left, relevance: core,
-            conditions: Howl additionally follows iTerm2 reverse-wrap and soft-wrapped-row policy,
+            conditions: "Pinned libvterm BS never reverse-wraps and retains unchanged-position phantom; Howl can reverse through a soft-wrapped row and cancels explicit pending wrap before motion.",
             howl: {support: partial, disposition: excluded,
-              rationale: *howl_cursor_compatibility_policy_difference,
+              rationale: "Pinned libvterm parser and/or phantom-cursor policy differs from Howl's bounded string and explicit wrap owner.",
               source: howl-vt/src/screen.zig, symbol: Screen.backspace, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: libvterm ground C0 phantom and raw NEL retain Howl's distinct admission"}}}
           libvterm.c0.ht: {raw: "\\x09", effect: next tab stop, relevance: core,
             conditions: "libvterm HT uses the same tabstop array on both screen banks; Howl HT uses
               the active bank's independent set, so primary custom stops are absent on alt.",
@@ -269,22 +269,34 @@ references:
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
-          libvterm.c0.lf: {raw: "\\x0a", effect: line feed, conditions: LNM also returns carriage,
-            relevance: core, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
-          libvterm.c0.vt: {raw: "\\x0b", effect: line feed, conditions: LNM also returns carriage,
-            relevance: compatibility, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applySemantic,
-            proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
-          libvterm.c0.ff: {raw: "\\x0c", effect: line feed, conditions: LNM also returns carriage,
-            relevance: compatibility, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applySemantic,
-            proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
-          libvterm.c0.cr: {raw: "\\x0d", effect: carriage return, relevance: core, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+          libvterm.c0.lf: {raw: "\\x0a", effect: line feed, relevance: core,
+            conditions: "Ordinary LF and LNM work; pinned libvterm executes LF inside OSC/DCS and may retain unchanged-position phantom, while Howl maintains string boundaries and cancels pending wrap.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned libvterm parser and/or phantom-cursor policy differs from Howl's bounded string and explicit wrap owner.",
+              source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm string C0 policy remains independent of Howl OSC grammar"}}}
+          libvterm.c0.vt: {raw: "\\x0b", effect: line feed, relevance: compatibility,
+            conditions: "Pinned libvterm treats VT as LF, including inside OSC/DCS and with unchanged-position phantom; Howl shares its LF implementation but does not execute C0 while assembling strings.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned libvterm parser and/or phantom-cursor policy differs from Howl's bounded string and explicit wrap owner.",
+              source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm string C0 policy remains independent of Howl OSC grammar"}}}
+          libvterm.c0.ff: {raw: "\\x0c", effect: line feed, relevance: compatibility,
+            conditions: "Pinned libvterm treats FF as LF even inside OSC/DCS and retains unchanged-position phantom; Howl correctly maps ground FF to LF but holds string controls atomically.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned libvterm parser and/or phantom-cursor policy differs from Howl's bounded string and explicit wrap owner.",
+              source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm string C0 policy remains independent of Howl OSC grammar"}}}
+          libvterm.c0.cr: {raw: "\\x0d", effect: carriage return, relevance: core,
+            conditions: "Pinned libvterm executes CR in OSC/DCS and does not clear phantom when column zero is unchanged; Howl holds string boundaries and clears explicit pending wrap on CR.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned libvterm parser and/or phantom-cursor policy differs from Howl's bounded string and explicit wrap owner.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: libvterm ground C0 phantom and raw NEL retain Howl's distinct admission"}}}
           libvterm.c0.so: {raw: "\\x0e", effect: select G1 into GL, relevance: charset,
             conditions: "Frozen libvterm updates GL without consuming pending SS2/SS3, and executes SO
               even during OSC/DCS payload assembly. Howl now retains pending single shift correctly,
@@ -325,10 +337,13 @@ references:
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: IND ignores ANSI newline mode while LF and NEL retain their own column rules"}}}
-          libvterm.c1.nel: {raw: "\\x85", effect: next line, relevance: core, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
+          libvterm.c1.nel: {raw: "\\x85", effect: next line, relevance: core,
+            conditions: "Pinned libvterm ignores raw C1 NEL under UTF-8 and may retain phantom at an unchanged bottom coordinate; Howl admits raw C1 under UTF-8 and resets pending wrap.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned libvterm parser and/or phantom-cursor policy differs from Howl's bounded string and explicit wrap owner.",
+              source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: libvterm ground C0 phantom and raw NEL retain Howl's distinct admission"}}}
           libvterm.c1.hts: {raw: "\\x88", effect: set tab stop, relevance: core,
             conditions: "libvterm C1 HTS updates terminal-global tabstops; Howl C1 HTS updates only
               the active Screen tab-stop storage.",
@@ -617,17 +632,17 @@ references:
             conditions: libvterm clamps complete glyph repetition to the logical row while Howl wraps through the grid,
             howl: *howl_repeat_excluded}
           libvterm.csi.da1: {raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
-            conditions: libvterm identifies VT100 level with 22 and OSC 52 while Howl identifies VT220 level with 22,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
-              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+            conditions: "Pinned libvterm emits ?1;2c on bare DA1; Howl emits ?62;22c from fixed VT220-class identity. Both ignore nonzero ordinary DA1.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/fixed_report.zig, symbol: appendPrimaryDeviceAttributes, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
+                symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
           libvterm.csi.da2: {raw: "CSI > [Ps=0] c", effect: report secondary device attributes, relevance: query,
-            conditions: libvterm reports 0;100;0 while Howl reports its own bounded identity,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
-              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+            conditions: "Pinned libvterm emits >0;100;0c and answers nonzero CSI >7c; Howl emits >1;10;0c and applies a stricter zero-only query gate.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/fixed_report.zig, symbol: appendSecondaryDeviceAttributes, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
+                symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
           libvterm.csi.vpa: {raw: "CSI [Ps=1] d", effect: absolute row,
             conditions: DECOM resolves against vertical margins, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
@@ -710,11 +725,11 @@ references:
               source: howl-vt/src/mode_report.zig, symbol: decState, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig, symbol: "DEC mode queries append DECRPM replies"}}}
           libvterm.csi.xtversion: {raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
-              residual: Howl reports its own terminal identity rather than libvterm identity.,
+            conditions: "Pinned libvterm returns its own DCS terminal version even for CSI >7q; Howl emits its own bounded identity only for the zero-argument query.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
+                symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
           libvterm.csi.decscusr: {raw: "CSI [Ps=0] SP q", effect: set cursor shape and blink,
             conditions: parameter 0 selects a blinking block while Howl restores the configured host default,
             howl: {support: partial, disposition: excluded,
@@ -757,13 +772,17 @@ references:
         recognition: implemented
         records:
           libvterm.mode.irm: {raw: "CSI 4 h|l", effect: toggle insert mode,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
+            conditions: "Howl processes every ANSI SM/RM argument but pinned libvterm considers only the first; grouped 4;20 and 20;4 affect different mode sets.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm ANSI SM RM first argument differs from Howl grouped mode admission"}}}
           libvterm.mode.lnm: {raw: "CSI 20 h|l", effect: toggle newline mode,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
+            conditions: "Pinned libvterm processes only the first ANSI SM/RM argument while Howl handles both 4 and 20; ordinary LNM carriage-return behavior remains supported.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm ANSI SM RM first argument differs from Howl grouped mode admission"}}}
       set_dec_mode:
         source: state.c
         line: 777
@@ -771,45 +790,53 @@ references:
         recognition: implemented
         records:
           libvterm.mode.decckm: {raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode,
-              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                test: application cursor mode changes arrow key encoding}}}
+            conditions: "Pinned libvterm preserves unchanged-position phantom when setting private mode 1; Howl cancels pending wrap before the next glyph, although ordinary mode/query and arrow encoding agree.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm DEC setter phantom retention differs from Howl transition policy"}}}
           libvterm.mode.decscnm: {raw: "CSI ? 5 h|l", effect: toggle reverse screen,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+            conditions: "Pinned libvterm cursor phantom survives private mode 5 transitions without cursor movement; Howl cancels pending wrap, while reverse-screen presentation is otherwise supported.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm DEC setter phantom retention differs from Howl transition policy"}}}
           libvterm.mode.decom: {raw: "CSI ? 6 h|l", effect: toggle origin mode,
-            conditions: homes to the active vertical and horizontal origin, howl: {support: full,
+            conditions: "Pinned libvterm stores one global origin mode across primary and alternate; Howl stores per-bank origin and reports the other bank default on switch, with ordinary homing supported.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+                symbol: "libvterm global DEC modes retain bank-local differences in Howl"}}}
           libvterm.mode.decawm: {raw: "CSI ? 7 h|l", effect: toggle autowrap,
-            conditions: CSI also cancels a pending wrap, howl: {support: full,
+            conditions: "Pinned libvterm stores one global autowrap mode across banks and may retain phantom on unchanged-position toggle; Howl uses bank-local autowrap and cancels pending wrap.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+                symbol: "libvterm global DEC modes retain bank-local differences in Howl"}}}
           libvterm.mode.cursor_blink: {raw: "CSI ? 12 h|l", effect: toggle cursor blink,
-            conditions: Howl retains blink with each screen cursor while libvterm owns one terminal mode across banks,
-            howl: {support: partial, disposition: excluded,
-              residual: libvterm owns one cross-bank mode while Howl retains per-screen cursor intent without animated Host presentation.,
-              rationale: Howl preserves the VT semantic state but presents a static cursor.,
+            conditions: "Pinned libvterm uses one cross-bank cursor blink property; Howl stores per-screen blink intent and its app provides opt-in blink animation (off by default), not a permanently static cursor.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_cursor_test.zig,
-              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm global DEC modes retain bank-local differences in Howl"}}}
           libvterm.mode.dectcem: {raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_cursor_test.zig,
-              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
-          libvterm.mode.declrmm: {raw: "CSI ? 69 h|l", effect: toggle left-right margins,
-            conditions: libvterm retains stored margins on reset while Howl restores full-width defaults,
-            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+            conditions: "Pinned libvterm retains unchanged-position phantom through private mode 25; Howl cancels wrap, while global cursor visibility is reflected across both Screen banks.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm DEC setter phantom retention differs from Howl transition policy"}}}
+          libvterm.mode.declrmm: {raw: "CSI ? 69 h|l", effect: toggle left-right margins,
+            conditions: "Pinned libvterm retains DECSLRM values while disabled, applies them on reenable and accepts off-mode setting; Howl resets margins to full width and ignores off-mode settings.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm hidden DECSLRM lifetime differs from Howl active-only margin retention"}}}
           libvterm.mode.mouse_normal: {raw: "CSI ? 1000 h|l", effect: toggle button tracking,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+            conditions: "Pinned libvterm clips out-of-range X10 mouse coordinates to 0xff; Howl drops unencodable legacy reports and cancels pending wrap on enable while preserving normal tracking.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm legacy X10 clamps out-of-range pointer while Howl drops it"}}}
           libvterm.mode.mouse_button: {raw: "CSI ? 1002 h|l", effect: toggle drag tracking,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -859,15 +886,24 @@ references:
         census: {semantic_branches: 4}
         recognition: implemented
         records:
-          libvterm.osc.title_icon: {raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-            symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
-          libvterm.osc.icon: {raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-            symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
-          libvterm.osc.title: {raw: "OSC 2 ; Pt (BEL|ST)", effect: set title, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-            symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
+          libvterm.osc.title_icon: {raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
+            conditions: "Pinned libvterm emits icon callback then title callback for each string fragment even before termination; Howl holds a bounded single title-and-icon replacement until completion and deduplicates identical text.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
+          libvterm.osc.icon: {raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
+            conditions: "Pinned libvterm forwards icon string fragments immediately with no retained property limit; Howl commits an exact bounded icon only at BEL/ST and preserves prior value on cancellation.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
+          libvterm.osc.title: {raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
+            conditions: "Pinned libvterm forwards title string fragments as host callbacks before terminator; Howl holds exact bounded value until commit and deduplicates repeated title updates.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
           libvterm.osc.clipboard:
             raw: OSC 52 ; Pc ; Pd ST
             effect: clipboard set or query
@@ -891,45 +927,42 @@ references:
         census: {semantic_branches: 6}
         recognition: implemented
         records:
-          libvterm.dcs.decrqss_sgr:
-            raw: "DCS $ q m ST"
-            effect: report current graphic rendition
-            conditions: >-
-              Howl reports retained dim, additional underline styles, and underline color that pinned libvterm ignores
-            relevance: query
-            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: appendSgrAttrs, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DECRQSS replies for owned state and invalid requests"}}
-          libvterm.dcs.decrqss_decstbm: {raw: "DCS $ q r ST", effect: report vertical margins,
-            relevance: query, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
-            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests"}}}
-          libvterm.dcs.decrqss_decslrm: {raw: "DCS $ q s ST", effect: report horizontal margins,
-            relevance: query, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
-            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests"}}}
-          libvterm.dcs.decrqss_decscusr: {raw: "DCS $ q SP q ST", effect: report cursor style,
-            conditions: Howl's host-configurable hidden cursor has no distinct libvterm DECSCUSR report value,
-            relevance: query, howl: {support: partial, disposition: excluded,
-            rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
-            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests"}}}
-          libvterm.dcs.decrqss_decsca: {raw: 'DCS $ q " q ST', effect: report character protection,
-            relevance: query, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
-            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests"}}}
-          libvterm.dcs.decrqss_unsupported:
-            raw: "DCS $ q Pt ST"
-            effect: report invalid status request
-            conditions: >-
-              Pt is not recognized; libvterm retains three request bytes while Howl bounds and compares the full payload
-            recognition: rejected_known
-            relevance: query
+          libvterm.dcs.decrqss_sgr: {raw: "DCS $ q m ST", effect: report current graphic rendition, relevance: query,
+            conditions: "Pinned libvterm replies DCS 1$rm ST with no SGR parameters on default pen; Howl reports explicit 0m, plus its retained dim, underline variants and underline colour.",
             howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DECRQSS replies for owned state and invalid requests"}}
+              source: howl-vt/src/terminal.zig, symbol: appendSgrAttrs, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DECRQSS replies for owned state and invalid requests"}}}
+          libvterm.dcs.decrqss_decstbm: {raw: "DCS $ q r ST", effect: report vertical margins, relevance: query,
+            conditions: "Pinned libvterm invalid CSI 4;2r resets the scroll region to full height; Howl rejects it without mutation, so a subsequent DECRQSS r reports different saved margins.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: decrqssPayload, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm DECRQSS status reports retain different invalid margins and bank protection"}}}
+          libvterm.dcs.decrqss_decslrm: {raw: "DCS $ q s ST", effect: report horizontal margins, relevance: query,
+            conditions: "Pinned libvterm stores CSI 2;5s even while DECLRMM is off and reports those stored margins after reenabling; Howl ignores off-mode coordinates and reports full width.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: decrqssPayload, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm hidden DECSLRM lifetime differs from Howl active-only margin retention"}}}
+          libvterm.dcs.decrqss_decscusr: {raw: "DCS $ q SP q ST", effect: report cursor style, relevance: query,
+            conditions: "For explicit styles 1 through 6 Howl reports matching values; pinned libvterm owns global blink and shape, while Howl can expose configured shape and bank-local blink intent.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: decrqssPayload, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DECRQSS replies for owned state and invalid requests"}}}
+          libvterm.dcs.decrqss_decsca: {raw: 'DCS $ q " q ST', effect: report character protection, relevance: query,
+            conditions: "Pinned libvterm DECSCA protection remains global through alternate-screen entry; Howl owns it per active bank and reports default alternate protection after switching.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: decrqssPayload, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm DECRQSS status reports retain different invalid margins and bank protection"}}}
+          libvterm.dcs.decrqss_unsupported: {raw: "DCS $ q Pt ST", effect: report invalid status request, relevance: query, recognition: rejected_known,
+            conditions: "Pinned libvterm only buffers three DECRQSS request bytes and returns failure for keys such as DECSCL; Howl supports additional DECSCL and extent requests and accepts bounded complete payloads.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: decrqssPayload, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "libvterm DECRQSS status reports retain different invalid margins and bank protection"}}}
       on_apc:
         source: state.c
         line: 1941
@@ -1712,23 +1745,23 @@ references:
         recognition: implemented
         records:
           iterm2.osc.title_icon: {raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
-            conditions: "iTerm2 truncates at newline, sanitizes controls, and may derive a subtitle from the icon title",
+            conditions: "Pinned iTerm2 splits title/icon from subtitle at CR/LF and caret-escapes controls; Howl ignores embedded OSC C0 bytes and concatenates surrounding text in the bounded retained title/icon, with no subtitle.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
           iterm2.osc.icon: {raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
-            conditions: "iTerm2 truncates at newline, sanitizes controls, and may derive a subtitle",
+            conditions: "Pinned iTerm2 can derive icon subtitle from CR/LF and sanitize presentation with host gates; Howl retains one completed icon, drops embedded OSC C0, and has no subtitle or host trust gate in VT.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
           iterm2.osc.title: {raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
-            conditions: iTerm2 truncates at newline and sanitizes control characters,
+            conditions: "Pinned iTerm2 strips after first CR/LF and limits the sanitized title to 256 UTF-16 units; Howl ignores embedded C0 while collecting retained text and accepts bounded titles up to 1024 bytes.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
           iterm2.osc.palette:
             raw: "OSC 4 ; Pt (BEL|ST)"
             effect: set or query palette
@@ -1741,20 +1774,18 @@ references:
               symbol: "OSC color grammar scales short components and rejects trailing components"}}
           iterm2.osc.eterm: {raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
             howl: *howl_missing_excluded_iterm}
-          iterm2.osc.cwd: {raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
-            conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral URI
-              up to 1 KiB",
-            relevance: host metadata, howl: {support: partial, disposition: excluded,
-              rationale: *howl_metadata_policy_difference, source: howl-vt/src/properties.zig,
-              symbol: State.replaceWorkingDirectory, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+          iterm2.osc.cwd: {raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory, relevance: host metadata,
+            conditions: "Pinned iTerm2 can reject untrusted OSC7 and parse host/user/path into host prompt effects; Howl retains a raw bounded URI-kind directory in VT and delegates policy to the host.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/properties.zig, symbol: State.replaceWorkingDirectory, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation"}}}
           iterm2.osc.hyperlink: {raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
-            conditions: "iTerm2 validates a 2 MiB URL and retains target= while Howl bounds the packet to 2 KiB
-              and retains id=",
+            conditions: "Pinned iTerm2 preserves target= and URL metadata, subject to one-MiB OSC parser and later URL validation; Howl keeps only id=, bounds the packet at 2 KiB and retains interned URI identities.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           iterm2.osc.fg: {raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &iterm2_dynamic_color_condition "Howl retains host-neutral RGB state and emits fixed 16-bit
               replies but omits iTerm2 selectable 8-bit replies and its broader platform color parser.",
@@ -3323,13 +3354,12 @@ references:
             recognition: recognized_noop, howl: {support: full, source: howl-vt/src/terminal.zig,
               symbol: report, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
-          kitty.csi.da3: {raw: "CSI = [Ps=0] c", effect: no reply,
-            recognition: recognized_noop, howl: {support: partial, disposition: excluded,
-              rationale: *howl_report_identity_difference,
-              residual: Howl emits its own tertiary device attributes instead of Kitty no-reply policy.,
-              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+          kitty.csi.da3: {raw: "CSI = [Ps=0] c", effect: no reply, recognition: recognized_noop,
+            conditions: "Pinned Kitty recognizes CSI =c as a no-op; Howl deliberately emits its fixed DCS tertiary identity. Nonzero =1c is ignored by Howl and never answered by Kitty.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/fixed_report.zig, symbol: appendTertiaryDeviceAttributes, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
+                symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
           kitty.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stop,
             conditions: "Pinned Kitty accepts 0 to clear current and 3 to clear all, ignores 2,
               and reports other values such as 5 unsupported. Howl accepts 5 as clear-all,
@@ -3565,27 +3595,27 @@ references:
         recognition: implemented
         records:
           kitty.osc.title_icon: {raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
+            conditions: "Pinned Kitty invokes title then icon callbacks but Window ignores icon updates and sanitizes/fallbacks title; pinned libvterm invokes icon then title; Howl atomically retains raw bounded title and icon.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
           kitty.osc.icon: {raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
           kitty.osc.title: {raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
-          kitty.osc.palette:
-            raw: "OSC 4 ; Pt (BEL|ST)"
-            effect: set or query palette
-            conditions: >-
-              Shared indexes 0..255 and 16-bit replies agree; Howl additionally owns xterm special indexes and
-              accepts a narrower deterministic color grammar than Kitty's color parser.
+            conditions: "Pinned Kitty replaces an empty title with its default and sanitizes whitespace/control/UTF-8 in the Window handler; Howl intentionally retains the completed exact empty or short text up to its bound.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC titles and icons remain commit-only against pinned callback and sanitation policies"}}}
+          kitty.osc.palette: {raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette,
+            conditions: "Pinned Kitty rejects odd-field OSC 4 without partial palette mutation or query; Howl now does likewise. Valid 0..255 and xterm RGB replies work, but Howl additionally accepts xterm special indexes 256..260 and has narrower color grammar.",
             howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
               source: howl-vt/src/color_control.zig, symbol: handleXtermPaletteControl, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC color grammar scales short components and rejects trailing components"}}
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 4 rejects dangling palette pairs without partial mutation or reply"}}}
           kitty.osc.palette_reset:
             raw: "OSC 104 ; Pm (BEL|ST)"
             effect: reset palette
@@ -3682,21 +3712,35 @@ references:
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.fg: {raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
-            conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB state and exact reply but
-              omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
-            howl: &kitty_dynamic_color_howl {support: partial, disposition: excluded,
-              residual: Howl accepts a narrower deterministic color grammar and omits Kitty host refresh policy.,
-              rationale: *howl_color_policy_difference, source: howl-vt/src/color_control.zig,
-              symbol: apply, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
+            conditions: "Pinned Kitty clears foreground override on invalid color and accepts named/rgbi/LAB forms; Howl leaves the last valid foreground intact on invalid input and uses a bounded deterministic parser.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/color_control.zig, symbol: handleXtermDynamicColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty invalid dynamic color clears override but Howl preserves last valid color"}}}
           kitty.osc.bg: {raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
-            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
+            conditions: "Pinned Kitty clears background override after invalid color and notifies host background-scheme observers; Howl leaves prior background intact and delegates presentation decisions.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/color_control.zig, symbol: handleXtermDynamicColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty invalid dynamic color clears override but Howl preserves last valid color"}}}
           kitty.osc.cursor: {raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
-            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
+            conditions: "Pinned Kitty clears invalid cursor override and replies black for an absent effective cursor color; Howl preserves invalid input unchanged and emits an empty nullable query field.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/color_control.zig, symbol: handleXtermDynamicColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty invalid dynamic color clears override but Howl preserves last valid color"}}}
           kitty.osc.highlight_bg: {raw: "OSC 17 ; color (BEL|ST)", effect: set or query highlight background,
-            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
+            conditions: "Pinned Kitty clears invalid selection background overrides and reports black for null; Howl retains the prior valid value and emits an empty query field for unset selection color.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/color_control.zig, symbol: handleXtermDynamicColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty invalid dynamic color clears override but Howl preserves last valid color"}}}
           kitty.osc.highlight_fg: {raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
-            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
+            conditions: "Pinned Kitty clears invalid selection foreground overrides and reports black for null; Howl retains valid values on invalid input and uses an empty nullable query field.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/color_control.zig, symbol: handleXtermDynamicColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty invalid dynamic color clears override but Howl preserves last valid color"}}}
           kitty.osc.pointer: {raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
             conditions: "Howl VT retains the complete portable shape vocabulary as ordered caller-neutral requests
               and serializes typed caller replies; presentation policy remains deferred.",
@@ -4413,13 +4457,15 @@ references:
               malformed and extra fields; the output dispatch calls SetClipboard
               only for non-query data. Parsed text can include Unicode.
             howl:
-              support: unassessed
-              disposition: active
-              owner: howl-app
-              residual: >-
-                Evaluate the direct application's existing OSC 52 set policy
-                against this pinned reference and prove the permission and
-                base64 boundaries. A new clipboard behavior is not authorized.
+              support: partial
+              disposition: excluded
+              rationale: "Pinned Windows Terminal accepts arbitrary Pc and decodes set data into its clipboard dispatch; Howl limits selectors, has strict base64 validation, and hands one bounded decoded value to the direct app."
+              residual: "Howl validates bounded selectors and RFC4648 base64 before admitting a caller-owned OSC 52 set; pinned WT ignores Pc and has a different Base64 decoder. Host clipboard write policy remains application-owned."
+              source: howl-vt/src/clipboard_grammar.zig
+              symbol: parse
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: "Windows Terminal OSC 52 selectors and queries differ from bounded Howl clipboard policy"
           windows_terminal.osc52.query_ignored:
             raw: "OSC 52 ; Pc ; ? (BEL|ST)"
             effect: recognize a clipboard query without reading or replying
@@ -4432,13 +4478,15 @@ references:
               suppresses SetClipboard for queries and emits no read reply.
               Howl's existing explicit empty response is a separate policy.
             howl:
-              support: unassessed
-              disposition: active
-              owner: howl-app
-              residual: >-
-                Assess the reference's no-reply policy against Howl's current
-                deterministic OSC 52 query response, with negative host tests
-                before deciding any compatibility change.
+              support: partial
+              disposition: excluded
+              rationale: "The no-reply WT query contract conflicts with Howl’s explicit empty response; neither grants clipboard read permission."
+              residual: "Pinned WT recognizes OSC 52 query but remains silent; Howl queues the query and its direct app responds with an explicitly empty OSC 52 payload, without reading clipboard data."
+              source: howl-app/src/consequences.zig
+              symbol: drain
+              proof:
+                path: howl-app/src/consequences.zig
+                symbol: "terminal consequences own latest clipboard, attention and typed reply FIFO"
       da1_clipboard_write:
         source: terminal/adapter/adaptDispatch.cpp
         symbol: AdaptDispatch::DeviceAttributes
@@ -4457,13 +4505,15 @@ references:
               DeviceAttributes includes 52 only when the reference's
               OptionalFeature::ClipboardWrite bit is enabled.
             howl:
-              support: unassessed
-              disposition: active
-              owner: howl-vt
-              residual: >-
-                Assess whether the static Howl DA1 contract intentionally
-                differs, and whether host clipboard policy should affect its
-                advertisement. Preserve caller-neutral VT ownership.
+              support: partial
+              disposition: excluded
+              rationale: "Howl fixed DA1 is caller-neutral and cannot assert host clipboard write permission; the WT conditional capability report is intentionally not reproduced."
+              residual: "Pinned WT conditionally adds 52 to DA1 when ClipboardWrite is enabled; Howl advertises fixed VT220-class ?62;22c regardless of app clipboard policy."
+              source: howl-vt/src/fixed_report.zig
+              symbol: appendPrimaryDeviceAttributes
+              proof:
+                path: howl-vt/test/unit/terminal_modes_test.zig
+                symbol: "Windows Terminal conditional DA1 clipboard advertisement differs from fixed Howl identity"
       osc9_progress:
         source: terminal/adapter/adaptDispatch.cpp
         symbol: AdaptDispatch::DoConEmuAction
@@ -4483,14 +4533,15 @@ references:
               greater than 100, and invokes the host taskbar API; Howl currently
               rejects percentages over 100 in its terminal progress state.
             howl:
-              support: unassessed
-              disposition: active
-              owner: howl-vt
-              residual: >-
-                Assess strict-versus-clamped progress policy and prove malformed
-                and fragmented input. Host taskbar display is an independent
-                app concern, not automatic VT behavior.
-
+              support: partial
+              disposition: excluded
+              rationale: "Strict reject-versus-clamp is a same-input difference; platform taskbar integration remains an optional host responsibility, not VT."
+              residual: "Pinned WT accepts states 0..4, clamps percent 101+ to 100 and triggers host taskbar progress; Howl retains bounded terminal progress but rejects percent over 100 and has no taskbar effect."
+              source: howl-vt/src/progress.zig
+              symbol: parse
+              proof:
+                path: howl-vt/test/unit/terminal_modes_test.zig
+                symbol: "Windows Terminal OSC 9 progress clamps while Howl retains a strict percentage"
   ghostty:
     revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
     root: src
@@ -4520,13 +4571,17 @@ references:
               preserving the query's BEL or ST terminator and never echoing
               status contents.
             howl:
-              support: unassessed
-              disposition: active
+              support: missing
+              disposition: deferred
+              milestone: program_status
               owner: howl-vt
-              residual: >-
-                Assess bounded terminal-owned OSC 7501 capability framing and
-                optional app reply policy. Merely recognizing this command
-                would not authorize a program-status UI or callback.
+              rationale: "A shared, bounded OSC 7501 parser and opt-in consumer must be designed before advertising status support; silent unknown command is intentional today."
+              residual: "Pinned Ghostty optionally reports supported OSC 7501 states/kinds when a callback exists; Howl neither parses this family nor advertises support and has no caller status callback."
+              source: howl-vt/src/terminal.zig
+              symbol: oscProcess
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
           ghostty.osc7501.status_report:
             raw: "OSC 7501 ; state=...[:id=...][:msg=...] (BEL|ST)"
             effect: parse bounded program status and deliver it to an optional host effect
@@ -4540,14 +4595,17 @@ references:
               fragmented reports; otherwise reports are ignored. Hard reset
               delivers a clear-status event through the same callback.
             howl:
-              support: unassessed
-              disposition: active
+              support: missing
+              disposition: deferred
+              milestone: program_status
               owner: howl-vt
-              residual: >-
-                Assess status parsing, cancellation, resource limits and
-                immutable VT-to-host handoff. No app presentation, new tab
-                state or notification policy has been accepted.
-
+              rationale: "Missing structured OSC 7501 state, bounded IDs, UTF-8 payload validation, status generations and optional caller handoff; no app UI is implicitly approved."
+              residual: "Pinned Ghostty parses validated per-program statuses and emits clear on hard reset to an optional host effect; Howl does not recognize/retain these state records."
+              source: howl-vt/src/terminal.zig
+              symbol: oscProcess
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
   kitty_delta:
     revision: f7a16a93191a1103665905398d807ca79dab74a2
     root: kitty
@@ -4582,13 +4640,17 @@ references:
               program_status.py implementation defines update and clear
               lifetime; the frozen earlier revision has no OSC 7501 dispatch.
             howl:
-              support: unassessed
-              disposition: active
+              support: missing
+              disposition: deferred
+              milestone: program_status
               owner: howl-vt
-              residual: >-
-                Assess this shared OSC 7501 family with Ghostty's query/report
-                semantics and a separately owned optional app consumer.
-                An application status surface is not yet authorized.
+              rationale: "Shared OSC 7501 obligation overlaps Ghostty; implementation needs a separately designed optional consumer and should not duplicate parser/record stores."
+              residual: "Pinned newer Kitty adds OSC 7501 query/update/clear with per-window lifetime; Howl ignores it as an unknown command without reply or status mutation."
+              source: howl-vt/src/terminal.zig
+              symbol: oscProcess
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
       indexed_graphics_formats:
         source: graphics.c
         symbol: initialize_load_data
@@ -4610,13 +4672,17 @@ references:
               zlib-compressed payloads but rejects this format in animation
               and composition paths.
             howl:
-              support: unassessed
-              disposition: active
+              support: missing
+              disposition: deferred
+              milestone: graphics
               owner: howl-vt
-              residual: >-
-                Howl currently admits 24/32/100 formats but not f=8. Assess
-                palette-coupled resource identity, native presentation and
-                capacity failure before selecting any implementation.
+              rationale: "Palette-index ownership and generation-aware image projection, direct and compressed resource bounds and renderer invalidation must precede f=8 admission."
+              residual: "Pinned newer Kitty f=8 stores one palette index per pixel and tracks live palette changes; Howl rejects f=8 before allocating/placing image data while accepting 24/32/100."
+              source: howl-vt/src/graphics.zig
+              symbol: Plane.transmit
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: newer Kitty indexed formats remain explicit rejected admissions"
           kitty_delta.graphics.format_indexed16:
             raw: "APC G a=t|T|q,f=16,Pm ; Pb ST"
             effect: transmit or query palette-indexed pixels with alpha
@@ -4626,13 +4692,17 @@ references:
               follows palette changes while alpha remains per-pixel. The
               reference excludes indexed animation and composition.
             howl:
-              support: unassessed
-              disposition: active
+              support: missing
+              disposition: deferred
+              milestone: graphics
               owner: howl-vt
-              residual: >-
-                Howl currently admits 24/32/100 formats but not f=16.
-                Assess alpha layering and palette generations with bounded
-                upload/rollback proof before admitting this feature.
+              rationale: "Per-pixel alpha with palette-coupled frame/placement resources and compression/rollback proofs are missing; admitting f=16 as RGBA would be incorrect."
+              residual: "Pinned newer Kitty f=16 stores palette index plus alpha and tracks live palette updates; Howl rejects f=16 before admitting data."
+              source: howl-vt/src/graphics.zig
+              symbol: Plane.transmit
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: newer Kitty indexed formats remain explicit rejected admissions"
       transient_usage_hint:
         source: parse-graphics-command.h
         symbol: parse_graphics_code

@@ -149,6 +149,9 @@ fn handleXtermPaletteControl(
     encode_buf: []u8,
     payload: []const u8,
 ) replies.AppendError!void {
+    // A dangling index has no color/query operand. Reject the complete
+    // malformed command before modifying palette or emitting any reply.
+    if (std.mem.count(u8, payload, ";") % 2 == 0) return;
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;

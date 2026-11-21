@@ -40,6 +40,26 @@ test "OSC title updates terminal title under stream path" {
     try std.testing.expectEqualStrings("My Title", terminal.title().?);
 }
 
+test "OSC 4 rejects dangling palette pairs without partial mutation or reply" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const original = terminal.presentation().palette[1];
+    try std.testing.expect(!(try terminal.feed("\x1b]4;1;#112233;")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("dangling\x07")).stateChanged());
+    try std.testing.expectEqualDeep(original, terminal.presentation().palette[1]);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    // A query preceding a dangling field may not leave a partial response.
+    try std.testing.expect(!(try terminal.feed("\x1b]4;1;?;dangling\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqualDeep(original, terminal.presentation().palette[1]);
+
+    // A subsequent complete two-pair command must still commit and query.
+    try std.testing.expect((try terminal.feed("\x1b]4;1;#112233;2;#445566\x07")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, terminal.presentation().palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, terminal.presentation().palette[2]);
+}
+
 test "OSC 4 accepts one complete Kitty-style 256-color palette transaction" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
@@ -338,6 +358,47 @@ test "OSC 0 1 and 2 match libvterm title and icon properties" {
     try std.testing.expectEqualStrings("Icon", terminal.icon().?);
 }
 
+test "OSC titles and icons remain commit-only against pinned callback and sanitation policies" {
+    for ([_]struct { code: u8, changes_title: bool, changes_icon: bool }{
+        .{ .code = 0, .changes_title = true, .changes_icon = true },
+        .{ .code = 1, .changes_title = false, .changes_icon = true },
+        .{ .code = 2, .changes_title = true, .changes_icon = false },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b]0;old\x07");
+        var buf: [48]u8 = undefined;
+        const prefix = try std.fmt.bufPrint(&buf, "\x1b]{d};new", .{case.code});
+        try std.testing.expect(!(try terminal.feed(prefix)).stateChanged());
+        try std.testing.expectEqualStrings("old", terminal.title().?);
+        try std.testing.expectEqualStrings("old", terminal.icon().?);
+        const completed = try terminal.feed("\x1b\\");
+        try std.testing.expect(completed.stateChanged());
+        try std.testing.expectEqual(case.changes_title, completed.titleChanged());
+        try std.testing.expectEqual(case.changes_icon, completed.iconChanged());
+        try std.testing.expectEqualStrings(if (case.changes_title) "new" else "old", terminal.title().?);
+        try std.testing.expectEqualStrings(if (case.changes_icon) "new" else "old", terminal.icon().?);
+    }
+
+    // Pinned iTerm2 splits 0/1 into title plus subtitle at a newline and
+    // truncates 2 at the first newline; Howl drops embedded OSC C0 bytes.
+    // The C0 is neither a live cursor motion nor a retained title byte.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]0;first\nlast\x07");
+    try std.testing.expectEqualStrings("firstlast", terminal.title().?);
+    try std.testing.expectEqualStrings("firstlast", terminal.icon().?);
+    try feed(&terminal, "\x1b]1;icon\nsubtitle\x07");
+    try std.testing.expectEqualStrings("iconsubtitle", terminal.icon().?);
+    try feed(&terminal, "\x1b]2;title\nsubtitle\x07");
+    try std.testing.expectEqualStrings("titlesubtitle", terminal.title().?);
+
+    // Kitty's host substitutes its default title on empty OSC 2, while
+    // Howl preserves the exact empty title as canonical terminal metadata.
+    try std.testing.expect((try terminal.feed("\x1b]2;\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.title().?);
+}
+
 test "OSC metadata reports only committed replacement and survives split cancellation" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
@@ -545,6 +606,53 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
     try std.testing.expectEqual(@as(u64, 1), terminal.shellMark().generation);
     try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).cellInfoAt(0, 0).attrs.link_id);
     try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(link_id).?);
+}
+
+test "Windows Terminal OSC 52 selectors and queries differ from bounded Howl clipboard policy" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    // WT ignores arbitrary selector text; Howl validates and bounds it.
+    try std.testing.expect(!(try terminal.feed("\x1b]52;anything;Zm9v\x07")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b]52;c;Zm9v===\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+
+    // Accepted queries are retained for explicit caller policy; the direct
+    // app chooses an empty reply. Pinned WT remains silent instead.
+    try std.testing.expect((try terminal.feed("\x1b]52;c;?\x1b\\")).stateChanged());
+    const query = terminal.consequenceHead().?.clipboard;
+    try std.testing.expect(query.kind == .query);
+    try std.testing.expectEqualStrings("c", query.selection);
+    try std.testing.expect(try terminal.replyClipboard(query.generation, ""));
+    try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+
+    // Ordinary WT-compatible replacement remains bounded and caller-owned.
+    try std.testing.expect((try terminal.feed("\x1b]52;c;Zm9v\x07")).stateChanged());
+    const request = terminal.consequenceHead().?.clipboard;
+    try std.testing.expect(request.kind == .set);
+    const copied = (try terminal.takeClipboard(request.generation, std.testing.allocator)).?;
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("foo", copied);
+}
+
+test "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "A");
+    const original = terminal.semanticSequence();
+    // No opt-in status capability callback, status index, or status lifecycle.
+    // The parser still consumes an unknown OSC control without printing it.
+    for ([_][]const u8{
+        "\x1b]7501;?\x1b\\",
+        "\x1b]7501;state=working:id=sync:progress=40\x07",
+        "\x1b]7501;state=clear:id=sync\x1b\\",
+    }) |sequence| {
+        try std.testing.expect(!(try terminal.feed(sequence)).stateChanged());
+        try std.testing.expectEqual(original, terminal.semanticSequence());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
 }
 
 test "OSC 52 produces pending clipboard request" {
@@ -1562,6 +1670,42 @@ test "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors
     try std.testing.expectEqual(@as(?Rgb, .{ .r = 10, .g = 11, .b = 12 }), terminal.presentation().cursor);
     try feed(&terminal, "\x1b]112\x1b\\");
     try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
+}
+
+test "Kitty invalid dynamic color clears override but Howl preserves last valid color" {
+    for ([_]u16{ 10, 11, 12, 17, 19 }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        var buf: [72]u8 = undefined;
+        const set = try std.fmt.bufPrint(&buf, "\x1b]{d};#112233\x1b\\", .{command});
+        try std.testing.expect((try terminal.feed(set)).stateChanged());
+        const before = terminal.presentation();
+        const expected: ?Rgb = .{ .r = 0x11, .g = 0x22, .b = 0x33 };
+        const selected: ?Rgb = switch (command) {
+            10 => before.foreground,
+            11 => before.background,
+            12 => before.cursor,
+            17 => before.selection_background,
+            19 => before.selection_foreground,
+            else => return error.UnexpectedColorCommand,
+        };
+        try std.testing.expectEqual(expected, selected);
+        const invalid = try std.fmt.bufPrint(&buf, "\x1b]{d};not-a-color\x07", .{command});
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqualDeep(before, terminal.presentation());
+    }
+
+    // Pinned Kitty sends rgb:0000/0000/0000 when a nullable override
+    // has no value. Howl replies with an empty color field instead.
+    for ([_]u16{ 12, 17, 19 }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        var buf: [48]u8 = undefined;
+        const query = try std.fmt.bufPrint(&buf, "\x1b]{d};?\x1b\\", .{command});
+        try std.testing.expect((try terminal.feed(query)).stateChanged());
+        const expected = try std.fmt.bufPrint(&buf, "\x1b]{d};\x1b\\", .{command});
+        try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+    }
 }
 
 test "xterm OSC colors set query and reset palette and dynamic colors" {

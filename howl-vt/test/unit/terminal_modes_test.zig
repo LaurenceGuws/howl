@@ -186,6 +186,25 @@ test "mouse reporting supports legacy x10 normal utf8 and urxvt encodings" {
     try std.testing.expectEqualStrings("\x1b[32;241;241M", encodeMouse(&terminal, far_press));
 }
 
+test "libvterm legacy X10 clamps out-of-range pointer while Howl drops it" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    write(&terminal, "\x1b[?1000h");
+    for ([_]struct { row: u16, expected: []const u8 }{
+        .{ .row = 222, .expected = "" },
+        .{ .row = 223, .expected = "" },
+        .{ .row = 240, .expected = "" },
+    }) |case| {
+        const report = encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = case.row, .col = 0, .mod = .{}, .buttons_down = 1 });
+        if (case.row == 222) {
+            try std.testing.expectEqual(@as(usize, 6), report.len);
+            try std.testing.expectEqual(@as(u8, 0xff), report[5]);
+        } else {
+            try std.testing.expectEqualStrings(case.expected, report);
+        }
+    }
+}
+
 test "legacy X10 mouse mode owns exact input query save and reset lifetime" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 5, 10);
@@ -297,6 +316,69 @@ test "mouse and focus modes own exact protocol selection mutation and pixel repo
     try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
     try std.testing.expect((try terminal.feed("\x1b[?1004l")).stateChanged());
     try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
+}
+
+test "libvterm ANSI SM RM first argument differs from Howl grouped mode admission" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const cases = [_]struct { control: []const u8, state: u8 }{
+        .{ .control = "\x1b[4;20h", .state = 1 },
+        .{ .control = "\x1b[20;4l", .state = 2 },
+        .{ .control = "\x1b[20;4h", .state = 1 },
+        .{ .control = "\x1b[4;20l", .state = 2 },
+    };
+    for (cases) |case| {
+        write(&terminal, case.control);
+        write(&terminal, "\x1b[4$p\x1b[20$p");
+        const expected = if (case.state == 1) "\x1b[4;1$y\x1b[20;1$y" else "\x1b[4;2$y\x1b[20;2$y";
+        try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+        try consumeReplies(&terminal);
+    }
+}
+
+test "libvterm global DEC modes retain bank-local differences in Howl" {
+    const cases = [_]struct { initial: []const u8, query: []const u8, primary: []const u8, alternate: []const u8 }{
+        .{ .initial = "\x1b[?6h", .query = "\x1b[?6$p", .primary = "\x1b[?6;1$y", .alternate = "\x1b[?6;2$y" },
+        .{ .initial = "\x1b[?7l", .query = "\x1b[?7$p", .primary = "\x1b[?7;2$y", .alternate = "\x1b[?7;1$y" },
+        .{ .initial = "\x1b[?12l", .query = "\x1b[?12$p", .primary = "\x1b[?12;2$y", .alternate = "\x1b[?12;1$y" },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        write(&terminal, case.initial);
+        write(&terminal, case.query);
+        try std.testing.expectEqualStrings(case.primary, terminal.replyBytes());
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[?47h");
+        write(&terminal, case.query);
+        try std.testing.expectEqualStrings(case.alternate, terminal.replyBytes());
+        try consumeReplies(&terminal);
+    }
+}
+
+test "libvterm DEC setter phantom retention differs from Howl transition policy" {
+    for ([_][]const u8{ "\x1b[?1h", "\x1b[?5h", "\x1b[?25l", "\x1b[?1000h" }) |mode| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 2);
+        defer terminal.deinit();
+        write(&terminal, "AB");
+        write(&terminal, mode);
+        write(&terminal, "C");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
+    }
+}
+
+test "libvterm hidden DECSLRM lifetime differs from Howl active-only margin retention" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    write(&terminal, "\x1b[3;6s\x1b[?69h\x1bP$qs\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r1;8s\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    write(&terminal, "\x1b[3;6s\x1b[?69l\x1b[?69h\x1bP$qs\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r1;8s\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
 }
 
 test "application cursor mode changes arrow key encoding" {
@@ -2006,6 +2088,83 @@ test "iTerm2 pinned DECRQM 1048 and 10016 report existing cursor and SGR pixel s
 
     write(&terminal, "\x1b[?1016l\x9b?10016$p\x9b?1016$p");
     try std.testing.expectEqualStrings("\x9b?10016;2$y\x9b?1016;2$y", pendingOutput(&terminal));
+}
+
+test "Windows Terminal conditional DA1 clipboard advertisement differs from fixed Howl identity" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    write(&terminal, "\x1b[c");
+    try std.testing.expectEqualStrings("\x1b[?62;22c", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    // Clipboard set is implemented behind a caller-owned consequence, but
+    // the fixed DA1 identity does not invent a conditional capability 52.
+    write(&terminal, "\x1b]52;c;Zm9v\x07\x1b[c");
+    try std.testing.expectEqualStrings("\x1b[?62;22c", pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+}
+
+test "Windows Terminal OSC 9 progress clamps while Howl retains a strict percentage" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    write(&terminal, "\x1b]9;4;1;40\x07");
+    try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .normal, .value = 40 }, terminal.taskProgress());
+    try std.testing.expect(!(try terminal.feed("\x1b]9;4;1;101\x07")).stateChanged());
+    try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .normal, .value = 40 }, terminal.taskProgress());
+    try std.testing.expect(!(try terminal.feed("\x1b]9;4;1\x1b\\")).stateChanged());
+    try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .normal, .value = 40 }, terminal.taskProgress());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    write(&terminal, "\x1b]9;4;1;100\x1b\\");
+    try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .normal, .value = 100 }, terminal.taskProgress());
+}
+
+test "libvterm device identity and status query grammar is deliberately nonparity" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    // Pinned libvterm DA1 replies ?1;2c and DA2 >0;100;0c. Howl
+    // replies its own host-neutral identity, including a DA3 which Kitty
+    // intentionally accepts without any reply.
+    write(&terminal, "\x1b[c\x1b[>0c\x1b[=c");
+    try std.testing.expectEqualStrings(
+        "\x1b[?62;22c\x1b[>1;10;0c\x1bP!|00000000\x1b\\",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+    // Howl gates nonzero DA2 and XTVERSION where libvterm's pinned
+    // handler returns an identity even with nonzero arguments.
+    try std.testing.expect(!(try terminal.feed("\x1b[>7c\x1b[>7q\x1b[=1c")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    write(&terminal, "\x1b[>q");
+    try std.testing.expectEqualStrings("\x1bP>|howl-vt dev\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+}
+
+test "libvterm DECRQSS status reports retain different invalid margins and bank protection" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    write(&terminal, "\x1bP$qm\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r0m\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // Pinned libvterm resets scroll region to full height for invalid
+    // 4;2r, while Howl ignores it and keeps 2;3r.
+    write(&terminal, "\x1b[2;3r\x1b[4;2r\x1bP$qr\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r2;3r\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // Pinned libvterm stores DEC protected state globally across banks;
+    // Howl projects the active Screen's character protection instead.
+    write(&terminal, "\x1b[1\"q\x1bP$q\"q\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r1\"q\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    write(&terminal, "\x1b[?47h\x1bP$q\"q\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r2\"q\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // The rejected family differs: Howl supports DECSCL and DECSACE
+    // style replies where pinned libvterm returns 0$r for those keys.
+    write(&terminal, "\x1bP$qbad\x1b\\\x1bP$q\"p\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP0$r\x1b\\\x1bP1$r62\"p\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
 }
 
 test "DECRQSS replies for owned state and invalid requests" {

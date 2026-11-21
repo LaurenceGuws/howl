@@ -706,6 +706,50 @@ test "terminal: XTPUSHSGR stack spans resize screen switches and reset" {
     try std.testing.expect(!std.meta.eql(Terminal.default_cell_attrs.fg, reset_restored.fg));
 }
 
+test "terminal: pinned libvterm string C0 policy remains independent of Howl OSC grammar" {
+    // Pinned libvterm executes C0 LF, VT, FF, and CR inside OSC strings.
+    // Howl holds the string boundary and does not move the cursor.
+    for ([_]u8{ 0x0a, 0x0b, 0x0c, 0x0d }) |control| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;3H\x1b]2;head");
+        try feed(&terminal, &.{control});
+        const held = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 1), held.cursor_row);
+        try std.testing.expectEqual(@as(u16, 2), held.cursor_col);
+        try feed(&terminal, "tail\x07Z");
+        const result = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 1), result.cursor_row);
+        try std.testing.expectEqual(@as(u16, 3), result.cursor_col);
+        try std.testing.expectEqual(@as(u21, 'Z'), result.cellAt(1, 2));
+    }
+}
+
+test "terminal: libvterm ground C0 phantom and raw NEL retain Howl's distinct admission" {
+    // Pinned libvterm can keep its one-past-column phantom after unchanged
+    // coordinate C0 BS/CR. Howl stores an explicit pending-wrap flag which
+    // these commands cancel, so the next cell overwrites rather than wraps.
+    for ([_]u8{ 0x08, 0x0d }) |control| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 1);
+        defer terminal.deinit();
+        try feed(&terminal, "A");
+        try feed(&terminal, &.{control});
+        try feed(&terminal, "B");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
+    }
+    // Raw C1 NEL is dispatched by Howl even when UTF-8 is selected, while
+    // libvterm's pinned UTF-8 parser does not dispatch a standalone 0x85.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1;4H\x85X");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_col);
+}
+
 test "terminal: C0 controls retain exact stream effects" {
     const allocator = std.testing.allocator;
 
@@ -2416,6 +2460,26 @@ test "terminal: canceled Kitty continuation releases transfer without retained m
         (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,i=8;AQIDBA==\x1b\\")).stateChanged(),
     );
     try std.testing.expectEqual(@as(u32, 1), terminal.images(0).image(0).?.id);
+}
+
+test "terminal: newer Kitty indexed formats remain explicit rejected admissions" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    for ([_]u8{ 8, 16 }) |format| {
+        var buf: [96]u8 = undefined;
+        const command = try std.fmt.bufPrint(&buf, "\x1b_Ga=t,f={d},s=1,v=1,i=74;AQIDBA==\x1b\\", .{format});
+        try std.testing.expect((try terminal.feed(command)).stateChanged());
+        try std.testing.expectEqualStrings("\x1b_Gi=74;EINVAL\x1b\\", terminal.replyBytes());
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+    // Unsupported indexed formats cannot suppress later recognized RGBA.
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=75,q=2;AQIDBA==\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
 }
 
 test "terminal: Kitty image number gets stable identity for put reply and deletion" {
