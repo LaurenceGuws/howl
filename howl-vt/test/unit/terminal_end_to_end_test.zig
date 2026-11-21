@@ -2196,6 +2196,175 @@ test "terminal: CSI T scroll down preserves bounded margins, cursor and exact mu
     try std.testing.expectEqual(@as(u16, 1), narrow.cursor_col);
 }
 
+test "terminal: physical cell shifts preserve intact downstream wide graphemes" {
+    // Pinned iTerm2 moves an intact DWC pair and repairs only the cells
+    // actually split by a deletion/insertion boundary. The cursor-origin
+    // operations here do not cut through the glyph itself.
+    for ([_]struct {
+        edit: []const u8,
+        lead: u16,
+        first: u21,
+        trailing: u21,
+    }{
+        .{ .edit = "\x1b[P", .lead = 0, .first = '界', .trailing = 'B' },
+        .{ .edit = "\x1b[@", .lead = 2, .first = 0, .trailing = 'B' },
+        .{ .edit = "\x1b[1'~", .lead = 0, .first = '界', .trailing = 'B' },
+        .{ .edit = "\x1b[1'}", .lead = 2, .first = 0, .trailing = 'B' },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HA界BC\x1b[2;1HP界QR\x1b[1;1H");
+        try std.testing.expect((try terminal.feed(case.edit)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(case.first, view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, '界'), view.cellAt(0, case.lead));
+        try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(0, case.lead).width);
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, case.lead + 1).x);
+        try std.testing.expectEqual(case.trailing, view.cellAt(0, case.lead + 2));
+        if (case.edit[case.edit.len - 1] == '}' or case.edit[case.edit.len - 1] == '~') {
+            try std.testing.expectEqual(@as(u21, '界'), view.cellAt(1, case.lead));
+            try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(1, case.lead).width);
+            try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, case.lead + 1).x);
+        }
+    }
+}
+
+test "terminal: editing through either half of wide glyph clears only its cluster" {
+    for ([_]struct { col: u8, edit: []const u8, expected_c: u8, expected_d: u8 }{
+        .{ .col = 3, .edit = "\x1b[P", .expected_c = 3, .expected_d = 4 },
+        .{ .col = 2, .edit = "\x1b[P", .expected_c = 3, .expected_d = 4 },
+        .{ .col = 3, .edit = "\x1b[@", .expected_c = 5, .expected_d = 6 },
+        .{ .col = 3, .edit = "\x1b[1'~", .expected_c = 3, .expected_d = 4 },
+        .{ .col = 3, .edit = "\x1b[1'}", .expected_c = 5, .expected_d = 6 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        var cursor: [16]u8 = undefined;
+        const move = try std.fmt.bufPrint(&cursor, "\x1b[1;{d}H", .{case.col + 1});
+        try feed(&terminal, "AB界CD\x1b[2;1HPQ界RS");
+        try feed(&terminal, move);
+        try std.testing.expect((try terminal.feed(case.edit)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, 2).width);
+        try std.testing.expectEqual(@as(u8, 0), view.cellInfoAt(0, 2).x);
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, case.expected_c));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(0, case.expected_d));
+        if (case.edit[case.edit.len - 1] == '}' or case.edit[case.edit.len - 1] == '~') {
+            try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 2));
+            try std.testing.expectEqual(@as(u21, 'R'), view.cellAt(1, case.expected_c));
+            try std.testing.expectEqual(@as(u21, 'S'), view.cellAt(1, case.expected_d));
+        }
+    }
+
+    // The final half of a wide glyph may be truncated by insertion.
+    // Its lead must also be removed before source cells are shifted.
+    var clipped = try Terminal.init(std.testing.allocator, 1, 8);
+    defer clipped.deinit();
+    try feed(&clipped, "ABCDEF界\x1b[1;1H\x1b[@");
+    const view = clipped.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'F'), view.cellAt(0, 6));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 7));
+}
+
+test "terminal: one-row character deletion clears intersecting multiline cluster on both rows" {
+    for ([_][]const u8{ "\x1b[P", "\x1b[@" }) |edit| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;3H\x1b]66;s=2;X\x07");
+        const before = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'X'), before.cellAt(1, 2));
+        try std.testing.expectEqual(@as(u8, 2), before.cellInfoAt(1, 2).height);
+        try std.testing.expectEqual(@as(u8, 1), before.cellInfoAt(2, 3).y);
+
+        // This structural edit only shifts one row, so retaining the other
+        // half of a two-row owned cluster would create an orphan fragment.
+        try feed(&terminal, "\x1b[2;1H");
+        try std.testing.expect((try terminal.feed(edit)).stateChanged());
+        const after = terminal.semanticView(0);
+        for (1..3) |row| for (2..4) |col| {
+            const cell = after.cellInfoAt(@intCast(row), @intCast(col));
+            try std.testing.expectEqual(@as(u8, 1), cell.width);
+            try std.testing.expectEqual(@as(u8, 1), cell.height);
+            try std.testing.expectEqual(@as(u8, 0), cell.x);
+            try std.testing.expectEqual(@as(u8, 0), cell.y);
+            try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
+        };
+    }
+}
+
+test "terminal: wide edit moves retained combining scalars rather than erasing source" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 9);
+    defer terminal.deinit();
+    try feed(&terminal, "A界e\u{301}\u{327}\u{308}\u{350}\u{360}\u{302}Z");
+    const before = terminal.semanticView(0).cellInfoAt(0, 3);
+    try std.testing.expectEqual(@as(u21, 'e'), before.codepoint);
+    try std.testing.expect(before.combining_len > 3);
+    try feed(&terminal, "\x1b[1;1H\x1b[P");
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, '界'), after.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'e'), after.cellAt(0, 2));
+    const moved = after.cellInfoAt(0, 2);
+    try std.testing.expectEqual(before.combining_len, moved.combining_len);
+    try std.testing.expectEqualDeep(before.combining, moved.combining);
+    try std.testing.expectEqual(@as(u21, 'Z'), after.cellAt(0, 3));
+    // Replacing the moved cell releases its original extended scalar tail.
+    try feed(&terminal, "\x1b[1;3HQ");
+    try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(0, 2));
+}
+
+test "terminal: iTerm2 structural erase attrs differ from Howl current SGR" {
+    // Pinned iTerm2 copies grid defaultChar (no bold or dim flags) into
+    // inserted/tail cells. Howl deliberately uses current erase attrs.
+    for ([_]struct { edit: []const u8, blank_col: u16 }{
+        .{ .edit = "\x1b[P", .blank_col = 7 },
+        .{ .edit = "\x1b[1'}", .blank_col = 1 },
+        .{ .edit = "\x1b[1'~", .blank_col = 7 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HABCDEFGH\x1b[2;1HIJKLMNOP\x1b[1;2H\x1b[1;2;31m");
+        try std.testing.expect((try terminal.feed(case.edit)).stateChanged());
+        const cell = terminal.semanticView(0).cellInfoAt(0, case.blank_col);
+        try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
+        try std.testing.expect(cell.attrs.bold);
+        try std.testing.expect(cell.attrs.dim);
+        try std.testing.expectEqual(Terminal.Color.indexed(1), cell.attrs.fg);
+        try std.testing.expect(cell.attrs.protected == .none);
+        if (case.edit[case.edit.len - 1] != 'P') {
+            const second = terminal.semanticView(0).cellInfoAt(1, case.blank_col);
+            try std.testing.expectEqual(@as(u21, 0), second.codepoint);
+            try std.testing.expect(second.attrs.bold);
+            try std.testing.expect(second.attrs.dim);
+        }
+    }
+}
+
+test "terminal: DEC horizontal region shifts move intact wide glyphs in both directions" {
+    for ([_]struct { command: []const u8, lead: u16, expected_suffix: u16 }{
+        .{ .command = "\x1b[1 @", .lead = 0, .expected_suffix = 2 },
+        .{ .command = "\x1b[1 A", .lead = 2, .expected_suffix = 4 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HA界BC\x1b[2;1HP界QR\x1b[1;1H");
+        const before = terminal.semanticView(0);
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        const view = terminal.semanticView(0);
+        for (0..2) |row| {
+            try std.testing.expectEqual(@as(u21, '界'), view.cellAt(@intCast(row), case.lead));
+            try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(@intCast(row), case.lead).width);
+            try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(@intCast(row), case.lead + 1).x);
+        }
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, case.expected_suffix));
+        try std.testing.expectEqual(@as(u21, 'Q'), view.cellAt(1, case.expected_suffix));
+        try std.testing.expectEqual(before.cursor_row, view.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, view.cursor_col);
+    }
+}
+
 test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     const allocator = std.testing.allocator;
 

@@ -1422,11 +1422,11 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           iterm2.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: "Pinned iTerm2 deletes physical cells, repairs split DWC/EOL and relocates external attributes; Howl shifts bounded logical DEC row columns and clears its own multicell intersections. Edge parity remains unproved.",
+            conditions: "Howl now preserves intact wide/combining graphemes during DCH and clears only split or multiline clusters; pinned iTerm2 repairs DWC/EOL and relocates external attributes, but also fills erased cells with defaultChar rather than Howl's current SGR attrs.",
             howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: iTerm2 structural erase attrs differ from Howl current SGR"}}}
           iterm2.csi.dl: {raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: multiline character and selection consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -1639,17 +1639,17 @@ references:
             conditions: iTerm2 delegate owns protected-cell attribute and multiline consequences,
             howl: *howl_erase_line_excluded}
           iterm2.csi.decic: {raw: "CSI [Ps=1] ' }", effect: insert columns,
-            conditions: "Both shift rows within cursor regions; iTerm2 repairs physical DWC/EOL and relocates external attrs behind a VT-level gate, while Howl uses logical DEC widths and current erase attrs. Wide-edge parity remains unproved.",
+            conditions: "Howl now shifts intact wide graphemes across admitted DEC column rows, clearing split/multiline ownership; pinned iTerm2 additionally relocates per-cell external attrs, fills with defaultChar instead of current SGR and applies a VT-level gate.",
             howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.insertColumns, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
+                symbol: "terminal: iTerm2 structural erase attrs differ from Howl current SGR"}}}
           iterm2.csi.decdc: {raw: "CSI [Ps=1] ' ~", effect: delete columns,
-            conditions: "Both shift bounded margin rows; pinned iTerm2 repairs physical DWC/EOL and external-attribute spans while Howl uses logical row widths and current erase attrs. Last-column wide-edge parity remains unproved.",
+            conditions: "Howl now moves intact wide/combining glyphs and removes boundary-split clusters during DEC column deletion; pinned iTerm2 additionally relocates external attributes and uses defaultChar instead of Howl current erase SGR with a distinct VT-level gate.",
             howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.deleteColumns, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
+                symbol: "terminal: iTerm2 structural erase attrs differ from Howl current SGR"}}}
           iterm2.csi.xtpushcolors:
             raw: "CSI [Ps=0] # P"
             effect: push color stack

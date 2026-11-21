@@ -2271,12 +2271,7 @@ pub const Screen = struct {
         if (self.cursor.col > right) return changed;
 
         const amount = @min(@max(count, 1), right - self.cursor.col + 1);
-        changed = self.clearClustersIntersecting(
-            self.cursor.row,
-            self.cursor.row + 1,
-            self.cursor.col,
-            right + 1,
-        ) or changed;
+        changed = self.prepareCellShift(self.cursor.row, self.cursor.col, right, amount, false) or changed;
         const row = self.rowCells(self.cursor.row) orelse return changed;
         const src_col = screenColCount(self.cursor.col);
         const dst_col = src_col + screenColCount(amount);
@@ -2326,12 +2321,7 @@ pub const Screen = struct {
         if (self.cursor.col > right) return changed;
 
         const amount = @min(@max(count, 1), right - self.cursor.col + 1);
-        changed = self.clearClustersIntersecting(
-            self.cursor.row,
-            self.cursor.row + 1,
-            self.cursor.col,
-            right + 1,
-        ) or changed;
+        changed = self.prepareCellShift(self.cursor.row, self.cursor.col, right, amount, true) or changed;
         const row = self.rowCells(self.cursor.row) orelse return changed;
         const dst_col = screenColCount(self.cursor.col);
         const src_col = @min(dst_col + screenColCount(amount), screenColCount(right + 1));
@@ -2373,7 +2363,7 @@ pub const Screen = struct {
         const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
         if (self.cursor.col > right) return false;
         const amount = @min(@max(count, 1), right - self.cursor.col + 1);
-        var changed = self.clearClustersIntersecting(row, row + 1, self.cursor.col, right + 1);
+        var changed = self.prepareCellShift(row, self.cursor.col, right, amount, false);
         const amount_cols = screenColCount(amount);
         const cells = self.rowCells(row) orelse return false;
         const cursor_col = screenColCount(self.cursor.col);
@@ -2418,7 +2408,7 @@ pub const Screen = struct {
         const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
         if (self.cursor.col > right) return false;
         const amount = @min(@max(count, 1), right - self.cursor.col + 1);
-        var changed = self.clearClustersIntersecting(row, row + 1, self.cursor.col, right + 1);
+        var changed = self.prepareCellShift(row, self.cursor.col, right, amount, true);
         const amount_cols = screenColCount(amount);
         const cells = self.rowCells(row) orelse return false;
         const cursor_col = screenColCount(self.cursor.col);
@@ -2463,9 +2453,9 @@ pub const Screen = struct {
     fn shiftRowLeft(self: *Screen, row: u16, count: u16, left: u16, right: u16) bool {
         if (left > right or right >= self.cols) return false;
 
-        var changed = self.clearClustersIntersecting(row, row + 1, left, right + 1);
         const width = right - left + 1;
         const amount = @min(@max(count, 1), width);
+        var changed = self.prepareCellShift(row, left, right, amount, true);
         const cells = self.rowCells(row) orelse return false;
         const left_idx = screenColCount(left);
         const move_len = screenColCount(width - amount);
@@ -2509,9 +2499,9 @@ pub const Screen = struct {
     fn shiftRowRight(self: *Screen, row: u16, count: u16, left: u16, right: u16) bool {
         if (left > right or right >= self.cols) return false;
 
-        var changed = self.clearClustersIntersecting(row, row + 1, left, right + 1);
         const width = right - left + 1;
         const amount = @min(@max(count, 1), width);
+        var changed = self.prepareCellShift(row, left, right, amount, false);
         const cells = self.rowCells(row) orelse return false;
         const left_idx = screenColCount(left);
         const move_len = screenColCount(width - amount);
@@ -4994,6 +4984,39 @@ pub const Screen = struct {
         clearAcceptedTail(&self.scalars.?, index, observed.combining_len);
         cells[@intCast(index)] = self.eraseCell();
         return self.noteRowChange(row, !std.meta.eql(observed, cells[@intCast(index)]));
+    }
+
+    // A one-row horizontal shift moves complete single-row glyphs. Only
+    // clusters bisected at the edited edges must be erased; multiline
+    // clusters cannot move on one row without corrupting their other rows.
+    // Unlike a general rectangular overwrite, do not erase whole downstream
+    // wide glyphs before the cells are moved.
+    fn prepareCellShift(
+        self: *Screen,
+        row: u16,
+        left: u16,
+        right: u16,
+        amount: u16,
+        toward_left: bool,
+    ) bool {
+        std.debug.assert(left <= right and right < self.cols);
+        std.debug.assert(amount > 0 and amount <= right - left + 1);
+        var changed = self.clearNonSemanticClustersIntersecting(row, row + 1, left, right + 1, true);
+        changed = self.clearClusterCrossingColumn(row, left) or changed;
+        const cut = if (toward_left) left + amount else right - (amount - 1);
+        changed = self.clearClusterCrossingColumn(row, cut) or changed;
+        changed = self.clearClusterCrossingColumn(row, right + 1) or changed;
+        return changed;
+    }
+
+    // An x>0 continuation means the glyph began before this boundary.
+    // A lead starting at the boundary is wholly on its own side and survives.
+    fn clearClusterCrossingColumn(self: *Screen, row: u16, boundary: u16) bool {
+        if (boundary == 0 or boundary >= self.cols) return false;
+        const cells = self.cells orelse return false;
+        const observed = cells[@intCast(self.rowStart(row) + boundary)];
+        if (observed.x == 0) return false;
+        return self.clearClusterAt(row, boundary, false);
     }
 
     // Removes every multicell intersecting one bounded mutation rectangle.
