@@ -7397,7 +7397,9 @@ pub const Terminal = struct {
 
     fn setDecMode(self: *Terminal, mode_number: u16, enabled: bool) bool {
         const active = self.screen_state.active();
-        // Some mode actions consume pending wrap before the shared cleanup.
+        // Cursor and geometry owners decide whether a mode consumes pending
+        // autowrap. Passive toggles must not discard exact-fill state, and
+        // cursor restoration must not be undone after it commits.
         const wrap_pending_before = active.wrap_pending;
         const mode_changed = switch (mode_number) {
             // Recognized unsupported modes leave even pending-wrap state untouched.
@@ -7414,6 +7416,7 @@ pub const Terminal = struct {
                     if (active.origin_mode) active.scroll_top else 0,
                     0,
                 );
+                screen_changed = active.cancelPendingWrap() or screen_changed;
                 screen_changed = !std.meta.eql(cursor_before, active.cursor) or screen_changed;
                 break :result screen_changed or changed;
             },
@@ -7442,6 +7445,7 @@ pub const Terminal = struct {
                 else
                     &self.screen_state.alternate;
                 var changed = active.setLeftRightMarginMode(enabled);
+                changed = active.cancelPendingWrap() or changed;
                 changed = replaceBool(&inactive.left_right_margin_mode, enabled) or changed;
                 if (!enabled) {
                     changed = inactive.left_margin != 0 or
@@ -7484,7 +7488,7 @@ pub const Terminal = struct {
             19997 => replaceBool(&self.modes.termios_signals, enabled),
             else => return false,
         };
-        return active.cancelPendingWrap() or wrap_pending_before or mode_changed;
+        return mode_changed or wrap_pending_before != active.wrap_pending;
     }
 
     fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
@@ -7503,8 +7507,7 @@ pub const Terminal = struct {
     }
 
     fn setMouseTracking(self: *Terminal, value: input.MouseTrackingMode) bool {
-        const pending_changed = self.screen_state.active().cancelPendingWrap();
-        if (self.modes.mouse_tracking == value) return pending_changed;
+        if (self.modes.mouse_tracking == value) return false;
         self.modes.mouse_tracking = value;
         return true;
     }

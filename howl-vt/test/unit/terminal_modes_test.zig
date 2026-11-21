@@ -281,7 +281,7 @@ test "mouse and focus modes own exact protocol selection mutation and pixel repo
 
     try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
     try std.testing.expect((try terminal.feed("12345678")).stateChanged());
-    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
     try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?1016")).stateChanged());
     try std.testing.expect((try terminal.feed("h")).stateChanged());
@@ -356,7 +356,7 @@ test "libvterm global DEC modes retain bank-local differences in Howl" {
     }
 }
 
-test "libvterm DEC setter phantom retention differs from Howl transition policy" {
+test "libvterm DEC passive mode setters preserve pending wrap and complete line" {
     for ([_][]const u8{ "\x1b[?1h", "\x1b[?5h", "\x1b[?25l", "\x1b[?1000h" }) |mode| {
         var terminal = try Terminal.init(std.testing.allocator, 2, 2);
         defer terminal.deinit();
@@ -365,8 +365,8 @@ test "libvterm DEC setter phantom retention differs from Howl transition policy"
         write(&terminal, "C");
         const view = terminal.semanticView(0);
         try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 1));
-        try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(1, 0));
     }
 }
 
@@ -2714,7 +2714,9 @@ test "DEC screen origin and autowrap modes own exact repeated command effects" {
 
     try std.testing.expect((try terminal.feed("\x1b[1;8HX")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b[?7")).stateChanged());
-    try std.testing.expect((try terminal.feed("h")).stateChanged());
+    // Repeating the already-enabled autowrap mode must not erase a pending
+    // exact-fill wrap. Nothing in the cursor owner changed.
+    try std.testing.expect(!(try terminal.feed("h")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b[?7h")).stateChanged());
 
     try std.testing.expect((try terminal.feed("\x1b[?5h")).stateChanged());
@@ -2751,6 +2753,156 @@ test "DEC screen origin and autowrap modes own exact repeated command effects" {
     try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 7));
     try std.testing.expect((try terminal.feed("\x1b[?7h")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b[?7h")).stateChanged());
+}
+
+test "Kitty DECSCNM toggles global reverse screen without consuming pending wrap" {
+    // Pinned kitty/screen.c:set_mode_from_const marks presentation dirty
+    // on a transition, but it neither moves the cursor nor changes its
+    // phantom column. The same screen mode applies to either text bank.
+    for ([_]struct { enable: bool, command: []const u8, reply: []const u8 }{
+        .{ .enable = true, .command = "\x1b[?5h", .reply = "\x1b[?5;1$y" },
+        .{ .enable = false, .command = "\x1b[?5l", .reply = "\x1b[?5;2$y" },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+        defer terminal.deinit();
+        if (!case.enable) write(&terminal, "\x1b[?5h");
+        write(&terminal, "ABC");
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        try std.testing.expectEqual(case.enable, terminal.presentation().reverse_screen);
+        try std.testing.expect(!(try terminal.feed(case.command)).stateChanged());
+        write(&terminal, "\x1b[?5$p");
+        try std.testing.expectEqualStrings(case.reply, pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[?47h");
+        try std.testing.expectEqual(case.enable, terminal.presentation().reverse_screen);
+        write(&terminal, "\x1b[?5$p");
+        try std.testing.expectEqualStrings(case.reply, pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[?47l");
+        try std.testing.expectEqual(case.enable, terminal.presentation().reverse_screen);
+        write(&terminal, "D");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(1, 0));
+        try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    }
+}
+
+test "libvterm DECCKM keeps global key mode and exact phantom across both banks" {
+    // Pinned libvterm src/state.c:set_dec_mode(1) only assigns mode.cursor.
+    // There is no host property callback, cursor motion or bank-local copy.
+    for ([_]struct { toggle: []const u8, key: []const u8, report: []const u8 }{
+        .{ .toggle = "\x1b[?1h", .key = "\x1bOA", .report = "\x1b[?1;1$y" },
+        .{ .toggle = "\x1b[?1l", .key = "\x1b[A", .report = "\x1b[?1;2$y" },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 3);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("ABC")).stateChanged());
+        const split = case.toggle.len - 1;
+        try std.testing.expect(!(try terminal.feed(case.toggle[0..split])).stateChanged());
+        const transitioned = try terminal.feed(case.toggle[split..]);
+        try std.testing.expectEqual(case.toggle[case.toggle.len - 1] == 'h', transitioned.stateChanged());
+        try std.testing.expectEqualStrings(case.key, encodeKey(&terminal, .{ .named = .up }, .{}));
+        write(&terminal, "\x1b[?1$p");
+        try std.testing.expectEqualStrings(case.report, pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        // The same global cursor-key setting survives a screen switch.
+        write(&terminal, "\x1b[?47h");
+        try std.testing.expectEqualStrings(case.key, encodeKey(&terminal, .{ .named = .up }, .{}));
+        write(&terminal, "\x1b[?1$p");
+        try std.testing.expectEqualStrings(case.report, pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[?47l");
+        try std.testing.expectEqualStrings(case.key, encodeKey(&terminal, .{ .named = .up }, .{}));
+        // Passive repeated assignment remains a no-op, not an implicit
+        // cursor motion that discharges the exact-fill pending autowrap.
+        try std.testing.expect(!(try terminal.feed(case.toggle)).stateChanged());
+        try std.testing.expect((try terminal.feed("D")).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(1, 0));
+    }
+}
+
+test "libvterm screen and cursor property changes have no host veto in native mode policy" {
+    // Pinned libvterm src/state.c:vterm_state_set_termprop calls a
+    // registered settermprop callback and rejects the property if it vetoes
+    // it. Howl deliberately owns its host-neutral state without such a
+    // per-mode external permission callback. Both keep the cursor phantom.
+    for ([_]struct {
+        command: []const u8,
+        query: []const u8,
+        expected: []const u8,
+        visibility: bool,
+        reverse: bool,
+    }{
+        .{ .command = "\x1b[?5h", .query = "\x1b[?5$p", .expected = "\x1b[?5;1$y", .visibility = true, .reverse = true },
+        .{ .command = "\x1b[?25l", .query = "\x1b[?25$p", .expected = "\x1b[?25;2$y", .visibility = false, .reverse = false },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+        defer terminal.deinit();
+        write(&terminal, "ABC");
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        try std.testing.expectEqual(case.reverse, terminal.presentation().reverse_screen);
+        try std.testing.expectEqual(case.visibility, terminal.semanticView(0).cursor_visible);
+        write(&terminal, case.query);
+        try std.testing.expectEqualStrings(case.expected, pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        try std.testing.expect(!(try terminal.feed(case.command)).stateChanged());
+        write(&terminal, "D");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(1, 0));
+    }
+}
+
+test "DEC 1048 restores saved pending autowrap through the screen owner" {
+    // The cursor savepoint captures wrap_pending. A mode dispatcher must
+    // not immediately erase the state restored by that same owner.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("ABC")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1048h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[1;1H")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1048l")).stateChanged());
+    try std.testing.expect((try terminal.feed("D")).stateChanged());
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_col);
+}
+
+test "noncursor DEC mode assignments do not destroy pending autowrap" {
+    // Pinned Kitty screen.c:set_mode_from_const changes these mode flags
+    // without moving the cursor. The exact-fill phantom survives such a
+    // control transition and causes the next printable to wrap normally.
+    for ([_][]const u8{
+        "\x1b[?1000h", "\x1b[?1000l",
+        "\x1b[?1004h", "\x1b[?1004l",
+        "\x1b[?1006h", "\x1b[?1006l",
+        "\x1b[?2004h", "\x1b[?2004l",
+    }) |mode_command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("ABC")).stateChanged());
+        const split = mode_command.len - 1;
+        try std.testing.expect(!(try terminal.feed(mode_command[0..split])).stateChanged());
+        const toggled = try terminal.feed(mode_command[split..]);
+        try std.testing.expectEqual(mode_command[mode_command.len - 1] == 'h', toggled.stateChanged());
+        try std.testing.expect((try terminal.feed("D")).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_col);
+    }
 }
 
 test "ignored and unknown DEC modes preserve pending wrap and grid state" {

@@ -790,17 +790,17 @@ references:
         recognition: implemented
         records:
           libvterm.mode.decckm: {raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
-            conditions: "Pinned libvterm preserves unchanged-position phantom when setting private mode 1; Howl cancels pending wrap before the next glyph, although ordinary mode/query and arrow encoding agree.",
-            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+            conditions: "Pinned libvterm stores one global mode.cursor flag and does not move the cursor or consume pending wrap on set/reset. Howl now matches exact repeated, fragmented, bank-global and input encoding behavior with a dedicated named proof.",
+            howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "libvterm DEC setter phantom retention differs from Howl transition policy"}}}
+                symbol: "libvterm DECCKM keeps global key mode and exact phantom across both banks"}}}
           libvterm.mode.decscnm: {raw: "CSI ? 5 h|l", effect: toggle reverse screen,
-            conditions: "Pinned libvterm cursor phantom survives private mode 5 transitions without cursor movement; Howl cancels pending wrap, while reverse-screen presentation is otherwise supported.",
+            conditions: "Pinned libvterm set_dec_mode uses VTERM_PROP_REVERSE through a registered settermprop callback, which can veto the change. Howl correctly preserves phantom and changes reverse-screen presentation but has no external callback to reject it.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "libvterm DEC setter phantom retention differs from Howl transition policy"}}}
+                symbol: "libvterm screen and cursor property changes have no host veto in native mode policy"}}}
           libvterm.mode.decom: {raw: "CSI ? 6 h|l", effect: toggle origin mode,
             conditions: "Pinned libvterm stores one global origin mode across primary and alternate; Howl stores per-bank origin and reports the other bank default on switch, with ordinary homing supported.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
@@ -808,7 +808,7 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm global DEC modes retain bank-local differences in Howl"}}}
           libvterm.mode.decawm: {raw: "CSI ? 7 h|l", effect: toggle autowrap,
-            conditions: "Pinned libvterm stores one global autowrap mode across banks and may retain phantom on unchanged-position toggle; Howl uses bank-local autowrap and cancels pending wrap.",
+            conditions: "Pinned libvterm autowrap is global across screens; Howl is bank-local. Howl now preserves pending wrap for redundant ?7h while disabling autowrap still clears its pending-wrap state within the owning Screen.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -820,11 +820,11 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm global DEC modes retain bank-local differences in Howl"}}}
           libvterm.mode.dectcem: {raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
-            conditions: "Pinned libvterm retains unchanged-position phantom through private mode 25; Howl cancels wrap, while global cursor visibility is reflected across both Screen banks.",
+            conditions: "Pinned libvterm set_dec_mode sends VTERM_PROP_CURSORVISIBLE through a host callback which can refuse the assignment; Howl now retains pending wrap and applies global visibility with no external veto.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "libvterm DEC setter phantom retention differs from Howl transition policy"}}}
+                symbol: "libvterm screen and cursor property changes have no host veto in native mode policy"}}}
           libvterm.mode.declrmm: {raw: "CSI ? 69 h|l", effect: toggle left-right margins,
             conditions: "Pinned libvterm retains DECSLRM values while disabled, applies them on reenable and accepts off-mode setting; Howl resets margins to full width and ignores off-mode settings.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
@@ -832,7 +832,7 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm hidden DECSLRM lifetime differs from Howl active-only margin retention"}}}
           libvterm.mode.mouse_normal: {raw: "CSI ? 1000 h|l", effect: toggle button tracking,
-            conditions: "Pinned libvterm clips out-of-range X10 mouse coordinates to 0xff; Howl drops unencodable legacy reports and cancels pending wrap on enable while preserving normal tracking.",
+            conditions: "Pinned libvterm clips out-of-range X10 mouse coordinates to 0xff; Howl drops unencodable legacy reports, while now preserving pending wrap on passive mouse-mode assignment.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -3018,17 +3018,17 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           kitty.mode.decscnm: {raw: "CSI ? 5 h|l", effect: toggle reverse screen,
-            conditions: Kitty retains its beyond-edge cursor while Howl cancels pending wrap at the CSI boundary,
-            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+            conditions: "Pinned Kitty changes its one screen-wide reverse-presentation flag only on transitions and preserves the cursor's beyond-edge phantom. Howl now matches transition-only reports, global screen-bank lifetime and pending-wrap preservation.",
+            howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+              symbol: "Kitty DECSCNM toggles global reverse screen without consuming pending wrap"}}}
           kitty.mode.decom: {raw: "CSI ? 6 h|l", effect: toggle origin mode and home the cursor,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           kitty.mode.decawm: {raw: "CSI ? 7 h|l", effect: toggle autowrap,
-            conditions: Kitty retains its beyond-edge cursor while Howl cancels pending wrap at the CSI boundary,
+            conditions: "Pinned Kitty writes a simple autowrap mode flag and retains a beyond-edge cursor position even when disabled; Howl now preserves pending wrap on repeated ?7h, but the owning Screen clears pending wrap on ?7l. The state representation differs on disable and all cursor-report edge semantics have not been certified.",
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
