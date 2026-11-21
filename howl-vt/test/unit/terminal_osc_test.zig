@@ -1845,6 +1845,30 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
     try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 }
 
+test "kitty indexed color stack exposes default-filled slot and reset extent differences" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Pinned Kitty zero-fills a popped sequential slot but leaves its
+    // allocation extent addressable through indexed CSI Ps#Q. Howl restores
+    // a complete initialized ColorState rather than zeroed slot bytes.
+    try feed(&terminal, "\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b]30001\x1b\\");
+    try feed(&terminal, "\x1b]21;foreground=#111213;1=#141516\x1b\\\x1b]30101\x1b\\");
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
+
+    try std.testing.expect((try terminal.feed("\x1b[1#Q")).stateChanged());
+    try std.testing.expectEqual(Terminal.default_presentation.foreground, terminal.presentation().foreground);
+    try std.testing.expectEqual(Terminal.default_presentation.palette[1], terminal.presentation().palette[1]);
+
+    // Frozen Kitty retains the allocated slot extent through RIS and clears
+    // its contents. Howl intentionally drops its slot_count on hard reset.
+    try feed(&terminal, "\x1b]21;1=#010203\x1b\\\x1b]30001\x1b\\\x1bc");
+    const after_reset = terminal.presentation();
+    try std.testing.expect(!(try terminal.feed("\x1b[1#Q")).stateChanged());
+    try std.testing.expectEqual(after_reset, terminal.presentation());
+}
+
 test "OSC 72 parses fragmented ordered commands with exact rejection and consumption" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

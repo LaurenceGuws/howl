@@ -3820,13 +3820,31 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}
           kitty.osc.color_push: {raw: "OSC 30001 (BEL|ST)", effect: sequential color-stack push,
-            conditions: ten slots, howl: {support: full, source: howl-vt/src/properties.zig, symbol: State.pushColor, proof: {
+            conditions: "Pinned Kitty snapshots its dynamic override colours, full palette, and
+              transparent alpha state in a bounded ten-slot stack. Howl's ten-slot stack snapshots
+              only its represented ColorState and default-initializes empty slots.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Frozen Kitty records transparent-alpha colours and raw palette slot bytes,
+                whereas Howl represents neither transparent overrides nor zero-filled raw slot state.
+                The ordinary sequential push order/depth and represented RGB snapshots do match.",
+              residual: "Transparent-alpha snapshot retention and pinned zero-initialized stack-slot
+                representation remain absent; no new host opacity state or cache owner is authorized.",
+              source: howl-vt/src/properties.zig, symbol: State.pushColor, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
+              symbol: "kitty indexed color stack exposes default-filled slot and reset extent differences"}}}
           kitty.osc.color_pop: {raw: "OSC 30101 (BEL|ST)", effect: sequential color-stack pop,
-            conditions: ten slots, howl: {support: full, source: howl-vt/src/properties.zig, symbol: State.popColor, proof: {
+            conditions: "Frozen Kitty zeroes popped slots but retains their allocated indexed extent
+              even through reset; Howl fills popped slots with configured/default ColorState values
+              and clears the indexed slot extent on hard reset.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "A sequential pop followed by indexed CSI 1#Q restores zeroed raw palette data
+                in pinned Kitty but initialized palette defaults in Howl. After RIS, pinned Kitty still
+                admits indexed access to cleared slots while Howl's stack count becomes zero.",
+              residual: "Sequential LIFO restoration is implemented; indexed reuse of a popped slot,
+                reset lifetime of allocated slots, and transparent-alpha restoration still differ.",
+              source: howl-vt/src/properties.zig, symbol: State.popColor, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
+              symbol: "kitty indexed color stack exposes default-filled slot and reset extent differences"}}}
           kitty.osc.metadata: {raw: "OSC 3008 ; Pt (BEL|ST)", effect: update terminal metadata,
             conditions: Kitty dispatches to an intentionally empty host handler., recognition: recognized_noop,
             relevance: host metadata, howl: {support: missing, disposition: excluded,

@@ -1501,3 +1501,41 @@ alpha, visual-bell and host colour refresh/opacity presentation not
 fully represented by Howl. Its proven ordinary response subset,
 source and test citation were updated without a support-score change.
 No terminal profile, new parser or GUI process was added.
+
+## Pinned Kitty colour-stack slots are zero-filled and survive reset (21 November 2026)
+
+The 10x10 Kitty colours review (intake 07) found a narrow observable
+difference in the existing full OSC 30001 and OSC 30101 records.
+Frozen Kitty revision d4106ef2db687579a69fefc949a6dc1b662f3ca8,
+kitty/colors.c:colorprofile_push_colors, pop_colors and reset, stores
+the raw dynamic overrides, transparent colours and palette in ten
+slots. A sequential pop zeroes its freed slot but does not retract
+the allocated indexed extent. Hard reset likewise clears entries
+without shrinking the allocated indexed slots.
+
+Howl properties.State.pushColor/popColor keeps the correct bounded,
+allocator-free sequential LIFO and represented ColorState snapshots,
+but zeroed slots are replaced with fully initialized ColorState
+defaults, including a nonzero default 256-entry palette. Hard reset
+sets the ColorStack to .{} and drops its indexed slot_count. A terminal
+test now records an ordinary push/mutate/pop then indexed CSI 1#Q,
+which restores defaults in Howl versus frozen Kitty's zero-filled raw
+palette, and confirms that indexed pop becomes a no-op after Howl RIS
+where Kitty retains the cleared indexed slot. Pinned Kitty also
+stores transparent-alpha overrides, which Howl does not represent.
+These differences are protocol-visible; no UI-only or callback-only
+justification for historic full classification survives.
+
+Exactly kitty.osc.color_push and kitty.osc.color_pop were corrected
+from full to partial/excluded, with explicit conditions, rationales,
+residuals and named test evidence. No runtime implementation was
+changed, since copying raw Kitty slot bytes directly into Howl's
+configured/default ColorState would require a deliberate state
+representation and host presentation design. Existing safe stack
+ownership and image/colour transaction boundaries remain unchanged.
+
+VT Debug/ReleaseFast, full root ReleaseFast check/test, seven active
+Zig/package audits, Nu protocol validation, Zig formatting and
+diff checks passed. Catalogue remains 672 original IDs at 275 full,
+340 partial, 48 missing and nine unassessed. No installed binaries,
+GUI sessions or running processes changed.
