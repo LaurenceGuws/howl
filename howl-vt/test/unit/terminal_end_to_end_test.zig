@@ -3414,6 +3414,38 @@ test "terminal: top-anchored LF and NEL keep scrolling and fixed graphics aligne
     }
 }
 
+test "terminal: Kitty margin scroll clips image source and geometric deletion coordinates" {
+    const pixels = "\x1b_Ga=T,f=32,s=1,v=2,i=72,C=1,q=2;AQIDBAUGBwg=\x1b\\";
+    for ([_]struct { scroll: []const u8, row: u16, source_y: u32, miss: []const u8, hit: []const u8 }{
+        .{ .scroll = "\x1b[T", .row = 2, .source_y = 0, .miss = "\x1b_Ga=d,d=y,y=4\x1b\\", .hit = "\x1b_Ga=d,d=y,y=3\x1b\\" },
+        .{ .scroll = "\x1b[S", .row = 1, .source_y = 1, .miss = "\x1b_Ga=d,d=y,y=1\x1b\\", .hit = "\x1b_Ga=d,d=y,y=2\x1b\\" },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[2;1H");
+        try feed(&terminal, pixels);
+        try consumeReplies(&terminal);
+        try feed(&terminal, "\x1b[2;3r");
+        const content_before = terminal.images(0).content_generation;
+        try std.testing.expect((try terminal.feed(case.scroll)).stateChanged());
+        const image = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), image.placementCount());
+        const placement = image.placement(0).?;
+        try std.testing.expectEqual(case.row, placement.row);
+        try std.testing.expectEqual(@as(u32, 1), placement.pixel_height);
+        try std.testing.expectEqual(@as(u32, 1), placement.source_height);
+        try std.testing.expectEqual(case.source_y, placement.source_y);
+        try std.testing.expectEqual(content_before, image.content_generation);
+        try std.testing.expect(!(try terminal.feed(case.miss)).stateChanged());
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expect((try terminal.feed(case.hit)).stateChanged());
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
 test "terminal: non-top margin scroll moves only images inside the region" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
     defer terminal.deinit();

@@ -76,6 +76,8 @@ const Placement = struct {
     cell_x: u32,
     /// Offsets the destination within its anchor cell vertically.
     cell_y: u32,
+    /// Cell height at placement admission, needed for exact scroll clipping.
+    cell_height: u32,
     /// Counts destination pixels horizontally.
     pixel_width: u32,
     /// Counts destination pixels vertically.
@@ -1382,7 +1384,8 @@ pub const Plane = struct {
         return changed;
     }
 
-    /// Moves or clips placement anchors with one terminal row scroll.
+    /// Moves full-screen placements while maintaining existing scrollback
+    /// lifetime. Partial-margin clipping is a separate admitted operation.
     pub fn scroll(
         self: *Plane,
         bank: Bank,
@@ -1391,13 +1394,25 @@ pub const Plane = struct {
         count: u16,
         upward: bool,
     ) bool {
-        return self.scrollColumns(bank, top, bottom, 0, std.math.maxInt(u32), count, upward);
+        return self.scrollColumnRows(bank, top, bottom, 0, std.math.maxInt(u32), count, upward, false);
     }
 
-    /// Scroll only the cells admitted by a horizontal region. Keep placements
-    /// completely outside it stationary; a placement straddling its boundary
-    /// cannot be translated as one image and loses only its placement, not
-    /// its retained decoded image data.
+    /// Scrolls within vertical margins, trimming image content at the new
+    /// top/bottom edge rather than retaining invisible out-of-region rows.
+    pub fn scrollWithinMargins(
+        self: *Plane,
+        bank: Bank,
+        top: u64,
+        bottom: u64,
+        count: u16,
+        upward: bool,
+    ) bool {
+        return self.scrollColumnRows(bank, top, bottom, 0, std.math.maxInt(u32), count, upward, true);
+    }
+
+    /// Scrolls the accepted horizontal region with vertical-margin clipping.
+    /// A placement straddling a horizontal boundary cannot move atomically;
+    /// its decoded image bytes remain independently retained.
     pub fn scrollColumns(
         self: *Plane,
         bank: Bank,
@@ -1408,7 +1423,21 @@ pub const Plane = struct {
         count: u16,
         upward: bool,
     ) bool {
-        if (count == 0) return false;
+        return self.scrollColumnRows(bank, top, bottom, left, right, count, upward, true);
+    }
+
+    fn scrollColumnRows(
+        self: *Plane,
+        bank: Bank,
+        top: u64,
+        bottom: u64,
+        left: u32,
+        right: u32,
+        count: u16,
+        upward: bool,
+        clip_margins: bool,
+    ) bool {
+        if (count == 0 or top > bottom) return false;
         var changed = false;
         var index: usize = 0;
         while (index < self.placement_count) {
@@ -1427,26 +1456,81 @@ pub const Plane = struct {
                 changed = true;
                 continue;
             }
+            // Pinned Kitty's margin filter moves only references wholly
+            // inside the original region. A crossing placement is stationary.
+            if (clip_margins and retained.rows - 1 > bottom - retained.row) {
+                index += 1;
+                continue;
+            }
             if (upward) {
-                if (retained.row < top + count) {
-                    self.removePlacement(index);
-                    changed = true;
-                    continue;
+                const prior_offset = retained.row - top;
+                if (prior_offset < count) {
+                    const clipped = @as(u64, count) - prior_offset;
+                    if (!clip_margins or clipped >= retained.rows or !trimScrolledPlacement(retained, clipped, true)) {
+                        self.removePlacement(index);
+                        changed = true;
+                        continue;
+                    }
+                    retained.row = top;
+                } else {
+                    retained.row -= count;
                 }
-                retained.row -= count;
             } else {
-                if (retained.row + count > bottom) {
+                if (count > bottom - retained.row) {
                     self.removePlacement(index);
                     changed = true;
                     continue;
                 }
                 retained.row += count;
+                if (clip_margins) {
+                    const available_rows = bottom - retained.row + 1;
+                    if (available_rows < retained.rows and
+                        !trimScrolledPlacement(retained, retained.rows - available_rows, false))
+                    {
+                        self.removePlacement(index);
+                        changed = true;
+                        continue;
+                    }
+                }
             }
             changed = true;
             index += 1;
         }
         if (changed) self.advance();
         return changed;
+    }
+
+    // Clip the destination pixel rectangle first, then project the same
+    // fraction into its existing decoded image source rectangle. Leave image
+    // allocations and their content generation alone. This remains bounded
+    // even for scaled/cropped placements and large cell pixel sizes.
+    fn trimScrolledPlacement(target: *Placement, clipped_rows: u64, from_top: bool) bool {
+        std.debug.assert(clipped_rows > 0 and target.cell_height > 0);
+        const requested_pixels = clipped_rows * target.cell_height;
+        const trim_pixels = if (from_top)
+            requested_pixels - target.cell_y
+        else blk: {
+            const available_rows = @as(u64, target.rows) - clipped_rows;
+            const allowed_pixels = available_rows * target.cell_height - target.cell_y;
+            break :blk @as(u64, target.pixel_height) -| allowed_pixels;
+        };
+        if (trim_pixels >= target.pixel_height) return false;
+        if (trim_pixels == 0) return true;
+        const old_height = target.pixel_height;
+        const source_trim = @min(
+            @as(u64, target.source_height - 1),
+            @as(u64, target.source_height) * trim_pixels / old_height,
+        );
+        if (from_top) {
+            target.source_y += @intCast(source_trim);
+            target.cell_y = 0;
+        }
+        target.source_height -= @intCast(source_trim);
+        target.pixel_height -= @intCast(trim_pixels);
+        const revised_rows = (@as(u64, target.cell_y) + target.pixel_height + target.cell_height - 1) / target.cell_height;
+        std.debug.assert(revised_rows >= 1 and revised_rows <= target.rows);
+        target.rows = @intCast(revised_rows);
+        return true;
     }
 
     /// Moves or clips placement anchors with one terminal column shift.
@@ -1865,6 +1949,7 @@ pub const Plane = struct {
             .source_height = source_height,
             .cell_x = cell_x,
             .cell_y = cell_y,
+            .cell_height = cell_height,
             .pixel_width = destination_width,
             .pixel_height = destination_height,
             .z = z,
@@ -3156,6 +3241,193 @@ test "Kitty unplaced uppercase ID and number deletions respect admitting screen 
         try std.testing.expect((try plane.command(case.delete, .alternate, 0, 0, 0, 1, 1)).changed);
         try std.testing.expectEqual(@as(u16, 0), plane.image_count);
         try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+    }
+}
+
+test "Kitty margin scroll clips image geometry before row deletion" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=2,i=70,C=1,q=2;AQIDBAUGBwg=",
+        .primary,
+        0,
+        1,
+        2,
+        1,
+        1,
+    )).changed);
+    const before = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u16, 2), before.rows);
+    try std.testing.expectEqual(@as(u32, 2), before.pixel_height);
+    const content_before = plane.content_generation;
+    try std.testing.expect(plane.scrollColumns(.primary, 1, 2, 0, 7, 1, false));
+    const clipped = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u64, 2), clipped.row);
+    try std.testing.expectEqual(@as(u16, 1), clipped.rows);
+    try std.testing.expectEqual(@as(u32, 1), clipped.pixel_height);
+    try std.testing.expectEqual(@as(u32, 1), clipped.source_height);
+    try std.testing.expectEqual(content_before, plane.content_generation);
+    // A clipped-off row is not still eligible for geometric deletion.
+    try std.testing.expect(!(try plane.command(
+        "a=d,d=y,y=4",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=d,d=y,y=3",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+}
+
+test "Kitty margin scroll up clips image top and preserves decoded data" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=2,i=73,C=1,q=2;AQIDBAUGBwg=",
+        .primary,
+        0,
+        1,
+        0,
+        1,
+        1,
+    )).changed);
+    const image_id = plane.image(0).?.id;
+    const before_content = plane.content_generation;
+    const before_storage = plane.storage_bytes;
+    try std.testing.expect(plane.scrollColumns(.primary, 1, 2, 0, 7, 1, true));
+    const clipped = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u64, 1), clipped.row);
+    try std.testing.expectEqual(@as(u16, 1), clipped.rows);
+    try std.testing.expectEqual(@as(u32, 1), clipped.source_y);
+    try std.testing.expectEqual(@as(u32, 1), clipped.source_height);
+    try std.testing.expectEqual(@as(u32, 1), clipped.pixel_height);
+    try std.testing.expectEqual(before_content, plane.content_generation);
+    try std.testing.expectEqual(before_storage, plane.storage_bytes);
+    try std.testing.expectEqual(image_id, plane.image(0).?.id);
+    try std.testing.expect(!(try plane.command("a=d,d=p,x=1,y=1", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=p,x=1,y=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(usize, 0), plane.placement_count);
+    try std.testing.expectEqual(before_storage, plane.storage_bytes);
+    try std.testing.expectEqual(@as(usize, 1), plane.image_count);
+}
+
+test "Kitty margin scroll leaves initially boundary-crossing placements stationary" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=2,i=74,C=1,q=2;AQIDBAUGBwg=",
+        .primary,
+        0,
+        2,
+        0,
+        1,
+        1,
+    )).changed);
+    const before = plane.placement(0).?;
+    const generation = plane.generation();
+    // Pinned Kitty moves only fully contained references inside margins.
+    try std.testing.expect(!plane.scrollColumns(.primary, 1, 2, 0, 7, 1, true));
+    try std.testing.expectEqualDeep(before, plane.placement(0).?);
+    try std.testing.expectEqual(generation, plane.generation());
+    // Full-screen scrolling retains its separate historic behavior.
+    try std.testing.expect(plane.scroll(.primary, 1, 2, 1, true));
+    try std.testing.expectEqual(@as(u64, 1), plane.placement(0).?.row);
+}
+
+test "Kitty margin scroll scales clipping without changing image allocation" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    // Four source pixels displayed across four destination pixels, one
+    // physical cell consumes two pixels. Remove a full lower cell.
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=4,i=75,r=2,C=1,q=2;AQIDBAUGBwgJCgsMDQ4PEA==",
+        .primary,
+        0,
+        1,
+        0,
+        1,
+        2,
+    )).changed);
+    const before = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u16, 2), before.rows);
+    try std.testing.expectEqual(@as(u32, 4), before.pixel_height);
+    const storage_before = plane.storage_bytes;
+    try std.testing.expect(plane.scrollColumns(.primary, 1, 2, 0, 7, 1, false));
+    const after = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u64, 2), after.row);
+    try std.testing.expectEqual(@as(u16, 1), after.rows);
+    try std.testing.expectEqual(@as(u32, 2), after.pixel_height);
+    try std.testing.expectEqual(@as(u32, 2), after.source_height);
+    try std.testing.expectEqual(storage_before, plane.storage_bytes);
+    try std.testing.expectEqual(@as(u32, 4), plane.image(0).?.height);
+}
+
+test "Kitty clipped margin geometry respects all six matched-only deletion selectors" {
+    const cases = [_]struct {
+        miss: []const u8,
+        hit: []const u8,
+        miss_row: u64 = 0,
+        hit_row: u64 = 0,
+        miss_col: u16 = 0,
+        hit_col: u16 = 0,
+    }{
+        .{ .miss = "a=d,d=P,x=2,y=4", .hit = "a=d,d=P,x=2,y=3" },
+        .{ .miss = "a=d,d=Q,x=2,y=4,z=-4", .hit = "a=d,d=Q,x=2,y=3,z=-4" },
+        .{ .miss = "a=d,d=X,x=3", .hit = "a=d,d=X,x=2" },
+        .{ .miss = "a=d,d=Y,y=4", .hit = "a=d,d=Y,y=3" },
+        .{ .miss = "a=d,d=Z,z=5", .hit = "a=d,d=Z,z=-4" },
+        .{ .miss = "a=d,d=C", .hit = "a=d,d=C", .miss_row = 3, .hit_row = 2, .miss_col = 1, .hit_col = 1 },
+    };
+    for (cases) |case| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        // Initially unplaced decoded data is never a geometric hit.
+        try std.testing.expect((try plane.command(
+            "a=t,f=32,s=1,v=1,i=77,q=2;AQIDBA==",
+            .primary,
+            0,
+            0,
+            0,
+            1,
+            1,
+        )).changed);
+        try std.testing.expect((try plane.command(
+            "a=T,f=32,s=1,v=2,i=76,z=-4,C=1,q=2;AQIDBAUGBwg=",
+            .primary,
+            0,
+            1,
+            1,
+            1,
+            1,
+        )).changed);
+        try std.testing.expect(plane.scrollColumns(.primary, 1, 2, 0, 7, 1, false));
+        try std.testing.expectEqual(@as(u64, 2), plane.placement(0).?.row);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement(0).?.rows);
+        const generation = plane.generation();
+        const content = plane.content_generation;
+        const storage = plane.storage_bytes;
+        const miss = try plane.command(case.miss, .primary, 0, case.miss_row, case.miss_col, 1, 1);
+        try std.testing.expect(!miss.changed);
+        try std.testing.expectEqual(@as(u2, 2), miss.quiet);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqual(content, plane.content_generation);
+        try std.testing.expectEqual(storage, plane.storage_bytes);
+        const hit = try plane.command(case.hit, .primary, 0, case.hit_row, case.hit_col, 1, 1);
+        try std.testing.expect(hit.changed);
+        try std.testing.expectEqual(@as(u2, 2), hit.quiet);
+        try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(usize, 4), plane.storage_bytes);
+        try std.testing.expectEqual(@as(?u32, 77), plane.images[0].kitty_id);
     }
 }
 

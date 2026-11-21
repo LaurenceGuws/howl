@@ -3976,6 +3976,8 @@ fn scrollGraphicsRegion(
             count,
             upward,
         );
+    if (top != 0 or bottom != screen.rows -| 1)
+        return vt.graphics.scrollWithinMargins(graphicsBank(vt), origin + top, origin + bottom, count, upward);
     return vt.graphics.scroll(graphicsBank(vt), origin + top, origin + bottom, count, upward);
 }
 
