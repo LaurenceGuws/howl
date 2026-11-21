@@ -1442,6 +1442,74 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     );
 }
 
+test "pinned iTerm2 Linux OSC P palette dispatch collides with Howl raw title" {
+    // Pinned VT100XtermParser.m::parseModeFromContext recognizes OSC P
+    // followed by one palette index and six RGB hex digits; it dispatches
+    // XTERMCC_SET_PALETTE via VT100Terminal.m. Howl's OSC prefix parser
+    // treats a nonnumeric P as the legacy raw title, not a color update.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+    defer terminal.deinit();
+    const original = terminal.presentation().palette[1];
+    try std.testing.expect(!(try terminal.feed("\x1b]P11223")).stateChanged());
+    try std.testing.expect((try terminal.feed("34\x07")).stateChanged());
+    try std.testing.expectEqual(original, terminal.presentation().palette[1]);
+    try std.testing.expectEqualStrings("P1122334", terminal.title().?);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expect((try terminal.feed("\x1b]4;1;#122334\x1b\\")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 0x12, .g = 0x23, .b = 0x34 }, terminal.presentation().palette[1]);
+    try std.testing.expectEqualStrings("P1122334", terminal.title().?);
+}
+
+test "pinned iTerm2 OSC 9 notification retains a bounded host-neutral consequence" {
+    // Pinned VT100XtermParser.m::tokenTypeForMode maps OSC 9 to
+    // ITERM_USER_NOTIFICATION, then VT100Terminal.m calls its macOS
+    // terminalPostUserNotification delegate. Howl retains an ordinary
+    // notification request, but the app deliberately declines visual UI.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b]9;notice")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b\\")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    const msg = terminal.consequenceHead().?.notification;
+    try std.testing.expectEqual(Terminal.NotificationKind.message, msg.kind);
+    try std.testing.expectEqual(@as(u16, 9), msg.command);
+    try std.testing.expectEqualStrings("notice", msg.payload);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "pinned iTerm2 OSC 6 134 and 21337 host controls are absent from Howl" {
+    // Pinned iTerm2 VT100XtermParser.m tokenTypeForMode dispatches 6
+    // to executeXtermProprietaryEtermExtension (proxy icon and tab color),
+    // 134 to XTERMCC_FRAMER_WRAPPER (SSH recovery), and 21337 to
+    // executeSetTabStatus (per-tab key/value metadata). Howl's OSC
+    // decoder supports none of these product-owned consequences.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 12);
+    defer terminal.deinit();
+    const baseline = terminal.semanticSequence();
+    for ([_][]const u8{
+        "\x1b]6;1;bg;red;brightness;255\x07",
+        "\x1b]6;1;bg;*;default\x1b\\",
+        "\x1b]134;framer-payload\x07",
+        "\x1b]21337;status=working;progress=1\x1b\\",
+    }) |control| {
+        for (control[0 .. control.len - 1]) |byte| {
+            const one = [_]u8{byte};
+            try std.testing.expect(!(try terminal.feed(&one)).stateChanged());
+        }
+        try std.testing.expect(!(try terminal.feed(control[control.len - 1 ..])).stateChanged());
+        try std.testing.expectEqual(baseline, terminal.semanticSequence());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+    // The unsupported controls leave subsequent text and supported OSC
+    // cursor-shape subset functional, with no uncommitted state.
+    try std.testing.expect((try terminal.feed("Q")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expect((try terminal.feed("\x1b]50;CursorShape=1\x07")).stateChanged());
+    try std.testing.expectEqual(Terminal.CursorShape.bar, terminal.semanticView(0).cursor_shape);
+}
+
 test "OSC 50 accepts only cursor shape without 1337 consequences" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
@@ -1483,6 +1551,92 @@ test "cell pixel reports reject zero and preserve configured dimensions" {
     const cell = terminal.cellPixelSize().?;
     try std.testing.expectEqual(@as(u32, 9), cell.width);
     try std.testing.expectEqual(@as(u32, 18), cell.height);
+}
+
+test "pinned iTerm2 deprecated BeginFile and EndFile are deliberate no-ops" {
+    // Pinned VT100Terminal.m::executeXtermSetKvp logs unsupported for
+    // BeginFile/EndFile and calls no delegate. Howl ignores both, so
+    // 'missing' was false for these intentionally retired semantics.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const begin = "\x1b]1337;BeginFile=canary\x07";
+    const end = "\x1b]1337;EndFile=canary\x1b\\";
+    const baseline = terminal.semanticSequence();
+    for ([_][]const u8{ begin, end }) |sequence| {
+        try std.testing.expect(!(try terminal.feed(sequence[0 .. sequence.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(sequence[sequence.len - 1 ..])).stateChanged());
+        try std.testing.expectEqual(baseline, terminal.semanticSequence());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+    try std.testing.expect((try terminal.feed("ok")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'o'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'k'), terminal.semanticView(0).cellAt(0, 1));
+}
+
+test "pinned iTerm2 OSC 1337 absent host actions have no native consequences" {
+    // Pinned VT100Terminal.m::executeXtermSetKvp owns the external
+    // session, UI, SSH and debug consequences listed below. Howl
+    // iterm_control.parse1337 intentionally has no matching actions.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 12);
+    defer terminal.deinit();
+    const before = terminal.semanticSequence();
+    const presentation = terminal.presentation();
+    const samples = [_][]const u8{
+        "SetBadgeFormat=YQ==", // set_badge
+        "SetMark=checkpoint", // set_mark
+        "SetProfile=canary", // set_profile
+        "AddNote=hello", // add_note
+        "AddAnnotation=hello", // add_annotation
+        "AddHiddenNote=hello", // add_hidden_note
+        "AddHiddenAnnotation=hello", // add_hidden_annotation
+        "HighlightCursorLine=1", // highlight_cursor_line
+        "ClearCapturedOutput=1", // clear_captured_output
+        "Copy=1", // copy
+        "EndCopy", // end_copy
+        "CopyToClipboard=clipboard", // copy_to_clipboard
+        "Block=id=canary;attr=start;type=command", // block
+        "UpdateBlock=id=canary;action=fold", // update_block_fold
+        "UpdateBlock=id=canary;action=unfold", // update_block_unfold
+        "Button=type=copy;block=canary", // button_copy
+        "Button=type=custom;code=1;icon=foo", // button_custom
+        "RequestUpload=file", // request_upload
+        "SetBackgroundImageFile=test", // background_image
+        "SetProfileProperty=foo=YmFy", // profile_property
+        "SetUserVar=foo=YmFy", // user_var
+        "UnicodeVersion=9", // unicode_set
+        "UnicodeVersion=push=9", // unicode_push
+        "UnicodeVersion=pop", // unicode_pop
+        "SetKeyLabel=foo=bar", // set_key_label
+        "PushKeyLabels=foo", // push_key_labels
+        "PopKeyLabels=foo", // pop_key_labels
+        "Disinter=1", // disinter
+        "ReportVariable=Zm9v", // report_variable
+        "Custom=foo:bar", // custom
+        "Capabilities=1", // capabilities
+        "Env=FOO=bar", // env
+        "it2ssh=host", // it2ssh
+        "SendConductor=data", // send_conductor
+        "EndSSH=done", // end_ssh
+        "OpenURL=1:aHR0cHM6Ly9leGFtcGxlLmNvbQ==", // open_url
+        "wrap=a=start;cmd=YQ==;uid=0123456789abcdef", // wrap_start
+        "Debug=QueryFnState", // debug
+        "ExecFailed=1", // exec_failed
+    };
+    for (samples, 0..) |sample, index| {
+        var encoded: [256]u8 = undefined;
+        const terminator = if (index % 2 == 0) "\x07" else "\x1b\\";
+        const sequence = try std.fmt.bufPrint(&encoded, "\x1b]1337;{s}{s}", .{ sample, terminator });
+        const split = sequence.len - terminator.len;
+        try std.testing.expect(!(try terminal.feed(sequence[0..split])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(sequence[split..])).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqualDeep(presentation, terminal.presentation());
+    }
+    try std.testing.expect((try terminal.feed("Q")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(0, 0));
 }
 
 test "unsupported SetMark and Kitty context metadata remain exact no-ops" {

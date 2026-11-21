@@ -1836,9 +1836,17 @@ references:
       tokenTypeForMode:
         source: VT100XtermParser.m
         line: 263
-        census: {semantic_branches: 24}
+        census: {semantic_branches: 26}
         recognition: implemented
         records:
+          iterm2.osc.linux_palette: {raw: "OSC P nrrggbb (BEL|ST)", effect: set Linux-console palette index,
+            recognition: implemented, relevance: compatibility,
+            conditions: "Pinned iTerm2 VT100XtermParser.m:parseModeFromContext recognizes nonnumeric P plus seven palette digits and tokenTypeForMode maps kLinuxSetPaletteMode to XTERMCC_SET_PALETTE; VT100Terminal.m:executeXtermSetPalette sets indexed color. Howl OscControl.enterRawFromPrefix instead treats the bytes as a legacy commandless title, changing the title while leaving palette unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Native Linux OSC P palette command is absent, and the raw-title fallback currently changes the title for identical bytes; addressing that side effect belongs to a separate runtime round.",
+              source: howl-vt/src/parser.zig, symbol: OscControl.enterRawFromPrefix, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 Linux OSC P palette dispatch collides with Howl raw title"}}}
           iterm2.osc.title_icon: {raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
             conditions: "Pinned iTerm2 splits title/icon from subtitle at CR/LF and caret-escapes controls; Howl ignores embedded OSC C0 bytes and concatenates surrounding text in the bounded retained title/icon, with no subtitle.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
@@ -1868,7 +1876,12 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC color grammar scales short components and rejects trailing components"}}
           iterm2.osc.eterm: {raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
-            howl: *howl_missing_excluded_iterm}
+            conditions: "Pinned VT100XtermParser.m maps OSC 6 to XTERMCC_PROPRIETARY_ETERM_EXT. VT100Terminal.m:executeXtermProprietaryEtermExtension sends trusted proxy icon, tab color brightness and reset changes to host delegates; Howl has no OSC 6 product host consequence.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned iTerm2 has a product host consequence that Howl does not own; raw OSC input is bounded and ignored without side effects.",
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 6 134 and 21337 host controls are absent from Howl"}}}
           iterm2.osc.cwd: {raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory, relevance: host metadata,
             conditions: "Pinned iTerm2 can reject untrusted OSC7 and parse host/user/path into host prompt effects; Howl retains a raw bounded URI-kind directory in VT and delegates policy to the host.",
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
@@ -1881,6 +1894,14 @@ references:
               source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
+          iterm2.osc.user_notification: {raw: "OSC 9 ; Pt (BEL|ST)", effect: post user notification,
+            recognition: implemented, relevance: host consequence,
+            conditions: "Pinned iTerm2 VT100XtermParser.m:tokenTypeForMode maps 9 to ITERM_USER_NOTIFICATION and VT100Terminal.m calls terminalPostUserNotification. Howl queues a typed bounded notification, but howl-app declines ordinary visual notification UI and keeps canonical VT progress independent.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The terminal request and typed host-neutral consequence work, but reference-specific notification presentation is deliberately not owned by Howl VT.",
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 9 notification retains a bounded host-neutral consequence"}}}
           iterm2.osc.fg: {raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &iterm2_dynamic_color_condition "Howl retains host-neutral RGB state and emits fixed 16-bit
               replies but omits iTerm2 selectable 8-bit replies and its broader platform color parser.",
@@ -1908,8 +1929,12 @@ references:
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 22 retains ordered bounded caller-neutral requests"}}}
           iterm2.osc.kvp_50: {raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
-            howl: {support: missing, disposition: excluded,
-              rationale: This iTerm product integration is outside the complete Howl family.}}
+            conditions: "Pinned iTerm2 VT100XtermParser.m:tokenTypeForMode maps both 50 and 1337 to XTERMCC_SET_KVP; VT100Terminal.m:executeXtermSetKvp handles CursorShape=0/1/2 and many product host keys. Howl iterm_control.parse(50) supports exactly CursorShape=0/1/2 while other keys are ignored.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl already implements and tests OSC 50 CursorShape. Classifying the complete family as missing concealed that real subset; other iTerm2 key=value host actions remain unsupported.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 50 accepts only cursor shape without 1337 consequences"}}}
           iterm2.osc.clipboard:
             raw: OSC 52 ; Pc ; Pd (BEL|ST)
             effect: clipboard or base64 paste
@@ -1988,14 +2013,24 @@ references:
               source: howl-vt/src/iterm_control.zig, symbol: parseShellMark, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 133 retains exact metadata and finds positional exit status"}}
-          iterm2.osc.framer: {raw: "OSC 134 ; Pt (BEL|ST)", effect: frame wrapped terminal data,
-            relevance: transport, howl: *howl_missing_excluded_iterm}
-          iterm2.osc.tab_status: {raw: "OSC 21337 ; Pt (BEL|ST)", effect: set tab status metadata,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
+          iterm2.osc.framer: {raw: "OSC 134 ; Pt (BEL|ST)", effect: frame wrapped terminal data, relevance: transport,
+            conditions: "Pinned VT100XtermParser.m maps OSC 134 to XTERMCC_FRAMER_WRAPPER. VT100Terminal.m drives SSH framer recovery and host delegates, which Howl intentionally does not implement.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned iTerm2 has a product host consequence that Howl does not own; raw OSC input is bounded and ignored without side effects.",
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 6 134 and 21337 host controls are absent from Howl"}}}
+          iterm2.osc.tab_status: {raw: "OSC 21337 ; Pt (BEL|ST)", effect: set tab status metadata, relevance: host metadata,
+            conditions: "Pinned VT100XtermParser.m maps OSC 21337 to XTERMCC_SET_TAB_STATUS. VT100Terminal.m:executeSetTabStatus parses escaped key-value tab state and delegates to product UI; Howl has no tab metadata protocol state.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned iTerm2 has a product host consequence that Howl does not own; raw OSC input is bounded and ignored without side effects.",
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 6 134 and 21337 host controls are absent from Howl"}}}
       executeXtermSetKvp:
         source: VT100Terminal.m
         line: 4144
-        census: {semantic_branches: 54}
+        census: {semantic_branches: 55}
         recognition: implemented
         conditions: trusted-session checks guard host-sensitive effects
         records:
@@ -2016,14 +2051,20 @@ references:
           iterm2.osc1337.file_end: {raw: "OSC 1337 ; FileEnd=Pt (BEL|ST)",
             effect: complete multipart file transfer, conditions: *iterm_file_transfer_condition,
             relevance: host consequence, howl: *iterm_file_transfer_howl}
-          iterm2.osc1337.set_badge: {raw: "OSC 1337 ; SetBadgeFormat=base64 (BEL|ST)", effect: set session badge,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.set_mark: {raw: "OSC 1337 ; SetMark[=Pt] (BEL|ST)", effect: create scrollback mark,
-            relevance: host metadata, howl: {support: missing, disposition: excluded,
-              rationale: *howl_shell_mark_policy_difference,
-              residual: iTerm2 scroll-position marks are outside Howl's bounded A/B/C/D shell-state model., proof: {
+          iterm2.osc1337.set_badge: {raw: "OSC 1337 ; SetBadgeFormat=base64 (BEL|ST)", effect: "set session badge", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches set_badge to terminalSetBadgeFormat. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned set_badge is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "unsupported SetMark and Kitty context metadata remain exact no-ops"}}}
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.set_mark: {raw: "OSC 1337 ; SetMark[=Pt] (BEL|ST)", effect: "create scrollback mark", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches set_mark to terminalSaveScrollPositionWithArgument. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned set_mark is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
           iterm2.osc1337.steal_focus:
             raw: OSC 1337 ; StealFocus[=Pt] (BEL|ST)
             effect: request application focus
@@ -2068,43 +2109,130 @@ references:
               source: howl-vt/src/properties.zig, symbol: State.replaceRemoteHost, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"}}
-          iterm2.osc1337.set_profile: {raw: "OSC 1337 ; SetProfile=Pt (BEL|ST)", effect: switch profile,
-            relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.add_note: {raw: "OSC 1337 ; AddNote=Pt (BEL|ST)", effect: add visible note,
-            recognition: implemented, relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.add_annotation: {raw: "OSC 1337 ; AddAnnotation=Pt (BEL|ST)",
-            effect: add visible annotation, relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.add_hidden_note: {raw: "OSC 1337 ; AddHiddenNote=Pt (BEL|ST)", effect: add hidden note,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.add_hidden_annotation: {raw: "OSC 1337 ; AddHiddenAnnotation=Pt (BEL|ST)",
-            effect: add hidden annotation, relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.highlight_cursor_line: {raw: "OSC 1337 ; HighlightCursorLine=[bool] (BEL|ST)",
-            effect: toggle cursor-line highlight, relevance: presentation, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.clear_captured_output: {raw: "OSC 1337 ; ClearCapturedOutput=Pt (BEL|ST)",
-            effect: clear captured command output, relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.copy: {raw: "OSC 1337 ; Copy[=name] (BEL|ST)", effect: begin clipboard capture,
-            relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.end_copy: {raw: "OSC 1337 ; EndCopy (BEL|ST)", effect: finish clipboard capture,
-            relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.copy_to_clipboard: {raw: "OSC 1337 ; CopyToClipboard=target (BEL|ST)",
-            effect: select clipboard target, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.block: {raw: "OSC 1337 ; Block=id=Pt;attr=start|end[;type=Pt;render=bool] (BEL|ST)",
-            effect: delimit semantic block, relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.update_block_fold: {raw: "OSC 1337 ; UpdateBlock=id=Pt;action=fold (BEL|ST)",
-            effect: fold semantic block, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.update_block_unfold: {raw: "OSC 1337 ; UpdateBlock=id=Pt;action=unfold (BEL|ST)",
-            effect: unfold semantic block, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.button_copy: {raw: "OSC 1337 ; Button=type=copy;block=Pt (BEL|ST)",
-            effect: insert block copy button, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.button_custom: {raw: "OSC 1337 ; Button=type=custom[;code=Ps;icon=Pt] (BEL|ST)",
-            effect: insert or invalidate custom buttons, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.request_upload: {raw: "OSC 1337 ; RequestUpload=Pt (BEL|ST)",
-            effect: request host file upload, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.begin_file: {raw: "OSC 1337 ; BeginFile=Pt (BEL|ST)",
-            effect: reject deprecated file command, recognition: rejected_known, relevance: compatibility,
-            howl: *howl_missing_excluded_iterm}
+          iterm2.osc1337.set_profile: {raw: "OSC 1337 ; SetProfile=Pt (BEL|ST)", effect: "switch profile", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches set_profile to terminalIsTrusted then terminalProfileShouldChangeTo. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned set_profile is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.add_note: {raw: "OSC 1337 ; AddNote=Pt (BEL|ST)", effect: "add visible note", recognition: "implemented", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches add_note to terminalAddNote(show:YES). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned add_note is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.add_annotation: {raw: "OSC 1337 ; AddAnnotation=Pt (BEL|ST)", effect: "add visible annotation", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches add_annotation to terminalAddNote(show:YES). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned add_annotation is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.add_hidden_note: {raw: "OSC 1337 ; AddHiddenNote=Pt (BEL|ST)", effect: "add hidden note", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches add_hidden_note to terminalAddNote(show:NO). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned add_hidden_note is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.add_hidden_annotation: {raw: "OSC 1337 ; AddHiddenAnnotation=Pt (BEL|ST)", effect: "add hidden annotation", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches add_hidden_annotation to terminalAddNote(show:NO). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned add_hidden_annotation is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.highlight_cursor_line: {raw: "OSC 1337 ; HighlightCursorLine=[bool] (BEL|ST)", effect: "toggle cursor-line highlight", relevance: "presentation",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches highlight_cursor_line to terminalSetHighlightCursorLine. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned highlight_cursor_line is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.clear_captured_output: {raw: "OSC 1337 ; ClearCapturedOutput=Pt (BEL|ST)", effect: "clear captured command output", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches clear_captured_output to terminalClearCapturedOutput. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned clear_captured_output is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.copy: {raw: "OSC 1337 ; Copy[=name] (BEL|ST)", effect: "begin clipboard capture", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches copy to trusted copy-mode state with terminalBeginCopyToPasteboard or terminalDidFinishReceivingPasteboard. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned copy is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.end_copy: {raw: "OSC 1337 ; EndCopy (BEL|ST)", effect: "finish clipboard capture", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches end_copy to terminalIsTrusted then terminalCopyBufferToPasteboard. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned end_copy is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.copy_to_clipboard: {raw: "OSC 1337 ; CopyToClipboard=target (BEL|ST)", effect: "select clipboard target", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches copy_to_clipboard to terminalIsTrusted then terminalSetPasteboard. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned copy_to_clipboard is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.block: {raw: "OSC 1337 ; Block=id=Pt;attr=start|end[;type=Pt;render=bool] (BEL|ST)", effect: "delimit semantic block", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches block to terminalBlock(start/end, type and render). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned block is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.update_block_fold: {raw: "OSC 1337 ; UpdateBlock=id=Pt;action=fold (BEL|ST)", effect: "fold semantic block", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches update_block_fold to terminalUpdateBlock(action:fold). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned update_block_fold is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.update_block_unfold: {raw: "OSC 1337 ; UpdateBlock=id=Pt;action=unfold (BEL|ST)", effect: "unfold semantic block", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches update_block_unfold to terminalUpdateBlock(action:unfold). Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned update_block_unfold is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.button_copy: {raw: "OSC 1337 ; Button=type=copy;block=Pt (BEL|ST)", effect: "insert block copy button", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches button_copy to terminalInsertCopyButtonForBlock. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned button_copy is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.button_custom: {raw: "OSC 1337 ; Button=type=custom[;code=Ps;icon=Pt] (BEL|ST)", effect: "insert or invalidate custom buttons", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches button_custom to terminalInsertCustomButtonWithCode or terminalInvalidateCustomButtons. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned button_custom is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.request_upload: {raw: "OSC 1337 ; RequestUpload=Pt (BEL|ST)", effect: "request host file upload", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches request_upload to terminalIsTrusted then terminalRequestUpload. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned request_upload is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.begin_file: {raw: "OSC 1337 ; BeginFile=Pt (BEL|ST)", effect: reject deprecated file command,
+            recognition: rejected_known, relevance: compatibility,
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp logs that begin_file is deprecated and unsupported; it executes no delegate and does not create file state. Howl likewise ignores this complete OSC 1337 key without any semantic mutation or consequence.",
+            howl: {support: full, source: howl-vt/src/iterm_control.zig, symbol: parse, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "pinned iTerm2 deprecated BeginFile and EndFile are deliberate no-ops"}}}
           iterm2.osc1337.end_file: {raw: "OSC 1337 ; EndFile=Pt (BEL|ST)", effect: reject deprecated file command,
-            recognition: rejected_known, relevance: compatibility, howl: *howl_missing_excluded_iterm}
+            recognition: rejected_known, relevance: compatibility,
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp logs that end_file is deprecated and unsupported; it executes no delegate and does not create file state. Howl likewise ignores this complete OSC 1337 key without any semantic mutation or consequence.",
+            howl: {support: full, source: howl-vt/src/iterm_control.zig, symbol: parse, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "pinned iTerm2 deprecated BeginFile and EndFile are deliberate no-ops"}}}
           iterm2.osc1337.report_cell_size: {raw: "OSC 1337 ; ReportCellSize (BEL|ST)",
             effect: report cell dimensions, relevance: query,
             conditions: iTerm2 gates the reply and reports host point size plus scale while Howl reports admitted
@@ -2154,37 +2282,90 @@ references:
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
-          iterm2.osc1337.background_image:
-            raw: OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)
-            effect: set background image
-            relevance: host consequence
-            howl:
-              support: missing
-              disposition: excluded
-              rationale: The canonical instance owns terminal work, not graphical client presentation.
-            conditions: Background-image presentation is client-local and outside the current terminal/session core.
-          iterm2.osc1337.profile_property: {raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)",
-            effect: set profile property, relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.user_var: {raw: "OSC 1337 ; SetUserVar=name=base64 (BEL|ST)", effect: set user variable,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.unicode_set: {raw: "OSC 1337 ; UnicodeVersion=Ps (BEL|ST)", effect: set Unicode version,
-            relevance: presentation, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.unicode_push: {raw: "OSC 1337 ; UnicodeVersion=push[=Ps] (BEL|ST)",
-            effect: push Unicode version, relevance: presentation, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.unicode_pop: {raw: "OSC 1337 ; UnicodeVersion=pop (BEL|ST)", effect: pop Unicode version,
-            relevance: presentation, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.set_key_label: {raw: "OSC 1337 ; SetKeyLabel=key=label (BEL|ST)", effect: set key label,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.push_key_labels: {raw: "OSC 1337 ; PushKeyLabels=Pt (BEL|ST)",
-            effect: push key-label state, relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.pop_key_labels: {raw: "OSC 1337 ; PopKeyLabels=Pt (BEL|ST)", effect: pop key-label state,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.disinter: {raw: "OSC 1337 ; Disinter=Pt (BEL|ST)", effect: detach session from burial,
-            relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.report_variable: {raw: "OSC 1337 ; ReportVariable=base64-name (BEL|ST)",
-            effect: report variable value, relevance: query, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.custom: {raw: "OSC 1337 ; Custom=Pm:payload (BEL|ST)",
-            effect: dispatch custom host message, relevance: extension, howl: *howl_missing_excluded_iterm}
+          iterm2.osc1337.background_image: {raw: "OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)", effect: "set background image", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches background_image to terminalIsTrusted then terminalSetBackgroundImageFile. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged. Background-image presentation is client-local and outside the current terminal/session core.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned background_image is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.profile_property: {raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)", effect: "set profile property", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches profile_property to terminalIsTrusted then terminalSetProfileProperty. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned profile_property is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.user_var: {raw: "OSC 1337 ; SetUserVar=name=base64 (BEL|ST)", effect: "set user variable", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches user_var to terminalSetUserVar. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned user_var is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.unicode_set: {raw: "OSC 1337 ; UnicodeVersion=Ps (BEL|ST)", effect: "set Unicode version", relevance: "presentation",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches unicode_set to terminalSetUnicodeVersion for numeric value. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned unicode_set is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.unicode_push: {raw: "OSC 1337 ; UnicodeVersion=push[=Ps] (BEL|ST)", effect: "push Unicode version", relevance: "presentation",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches unicode_push to pushUnicodeVersion helper for push value. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned unicode_push is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.unicode_pop: {raw: "OSC 1337 ; UnicodeVersion=pop (BEL|ST)", effect: "pop Unicode version", relevance: "presentation",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches unicode_pop to popUnicodeVersion helper for pop value. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned unicode_pop is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.set_key_label: {raw: "OSC 1337 ; SetKeyLabel=key=label (BEL|ST)", effect: "set key label", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches set_key_label to terminalSetLabel:forKey:. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned set_key_label is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.push_key_labels: {raw: "OSC 1337 ; PushKeyLabels=Pt (BEL|ST)", effect: "push key-label state", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches push_key_labels to terminalPushKeyLabels. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned push_key_labels is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.pop_key_labels: {raw: "OSC 1337 ; PopKeyLabels=Pt (BEL|ST)", effect: "pop key-label state", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches pop_key_labels to terminalPopKeyLabels. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned pop_key_labels is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.disinter: {raw: "OSC 1337 ; Disinter=Pt (BEL|ST)", effect: "detach session from burial", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches disinter to terminalDisinterSession. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned disinter is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.report_variable: {raw: "OSC 1337 ; ReportVariable=base64-name (BEL|ST)", effect: "report variable value", relevance: "query",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches report_variable to terminalIsTrusted and terminalShouldSendReport then terminalReportVariableNamed. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned report_variable is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.custom: {raw: "OSC 1337 ; Custom=Pm:payload (BEL|ST)", effect: "dispatch custom host message", relevance: "extension",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches custom to terminalIsTrusted then terminalCustomEscapeSequenceWithParameters. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned custom is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
           iterm2.osc1337.notification:
             raw: OSC 1337 ; Notification=Pt (BEL|ST)
             effect: post rich notification
@@ -2201,22 +2382,70 @@ references:
               disposition: excluded
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
-          iterm2.osc1337.capabilities: {raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
-            effect: report host capabilities, relevance: query, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.env: {raw: "OSC 1337 ; Env=Pt (BEL|ST)", effect: update environment metadata,
-            relevance: host metadata, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.it2ssh: {raw: "OSC 1337 ; it2ssh=Pt (BEL|ST)", effect: begin SSH integration,
-            relevance: transport, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.send_conductor: {raw: "OSC 1337 ; SendConductor=Pt (BEL|ST)",
-            effect: send Conductor message, relevance: transport, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.end_ssh: {raw: "OSC 1337 ; EndSSH=Pt (BEL|ST)", effect: end SSH integration,
-            relevance: transport, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.open_url: {raw: "OSC 1337 ; OpenURL=Pm:base64-url (BEL|ST)", effect: open host URL,
-            relevance: host consequence, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.wrap_start: {raw: "OSC 1337 ; wrap=a=start;cmd=base64;uid=hex (BEL|ST)",
-            effect: start wrapped command channel, relevance: transport, howl: *howl_missing_excluded_iterm}
-          iterm2.osc1337.debug: {raw: "OSC 1337 ; Debug=Pt (BEL|ST)", effect: mutate or report debug input state,
-            conditions: DEBUG build, relevance: diagnostic, howl: *howl_missing_excluded_iterm}
+          iterm2.osc1337.capabilities: {raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)", effect: "report host capabilities", relevance: "query",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches capabilities to terminalIsTrusted and terminalShouldSendReport then terminalSendCapabilitiesReport. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned capabilities is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.env: {raw: "OSC 1337 ; Env=Pt (BEL|ST)", effect: "update environment metadata", relevance: "host metadata",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches env to terminalIsTrusted then terminalUpdateEnv. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned env is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.it2ssh: {raw: "OSC 1337 ; it2ssh=Pt (BEL|ST)", effect: "begin SSH integration", relevance: "transport",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches it2ssh to terminalBeginSSHIntegeration. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned it2ssh is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.send_conductor: {raw: "OSC 1337 ; SendConductor=Pt (BEL|ST)", effect: "send Conductor message", relevance: "transport",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches send_conductor to terminalSendConductor. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned send_conductor is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.end_ssh: {raw: "OSC 1337 ; EndSSH=Pt (BEL|ST)", effect: "end SSH integration", relevance: "transport",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches end_ssh to terminalIsTrusted and nonempty value then terminalEndSSH. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned end_ssh is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.open_url: {raw: "OSC 1337 ; OpenURL=Pm:base64-url (BEL|ST)", effect: "open host URL", relevance: "host consequence",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches open_url to terminalIsTrusted, decoded URL then terminalOpenURL. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned open_url is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.wrap_start: {raw: "OSC 1337 ; wrap=a=start;cmd=base64;uid=hex (BEL|ST)", effect: "start wrapped command channel", relevance: "transport",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches wrap_start to terminalIsTrusted and valid channel then terminalStartWrappedCommand. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned wrap_start is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.debug: {raw: "OSC 1337 ; Debug=Pt (BEL|ST)", effect: "mutate or report debug input state", relevance: "diagnostic",
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp dispatches debug to DEBUG-only debug/report branch. Howl src/iterm_control.zig:parse1337 has no such consequence; this full packet leaves native VT and host queue unchanged. DEBUG build",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned debug is a product-specific host consequence without an equivalent native Howl owner; the received control is safely ignored.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse1337, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
+          iterm2.osc1337.exec_failed: {raw: "OSC 1337 ; ExecFailed[=Pt] (BEL|ST)",
+            effect: notify host that command execution failed, relevance: host consequence,
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp final ExecFailed branch calls terminalExecDidFail on its host delegate. This branch was absent from the prior 54-key accepted roster; Howl's OSC 1337 decoder ignores it without state or consequence.",
+            howl: {support: missing, disposition: excluded,
+              rationale: "Pinned product-specific host command failure UI requires session-side policy; canonical Howl VT has no equivalent delegate, and the exact no-op is tested.",
+              source: howl-vt/src/iterm_control.zig, symbol: parse, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned iTerm2 OSC 1337 absent host actions have no native consequences"}}}
       execute:
         source: VT100DCSParser.m
         line: 591

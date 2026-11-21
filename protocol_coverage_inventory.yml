@@ -2,7 +2,7 @@
 # Changing this file is a review of a pinned reference subtree, not a score update.
 schema: 1
 total_groups: 41
-total_records: 672
+total_records: 675
 references:
   libvterm:
     revision: 934bc2fbf21800ac3458a499df8820ca5fb45fd3
@@ -23,13 +23,13 @@ references:
   iterm2:
     revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
     root: sources/VT100
-    total_records: 270
+    total_records: 273
     groups:
       VT100ControlParser.decodeFromContext: 9
       decodeBytes: 27
       VT100CSIParser.decodeFromContext: 66
-      tokenTypeForMode: 24
-      executeXtermSetKvp: 54
+      tokenTypeForMode: 26
+      executeXtermSetKvp: 55
       execute: 11
       VT100GraphicRenditionExecuteSGR: 25
       executeDecSetReset: 38

@@ -40,7 +40,22 @@ for group in ($kitty_delta_ids | transpose name ids) {
   }
 }
 
-let bad_total = ($inventory | update total_records 673)
+# The pinned reference inventory grew by one independently reviewed
+# ExecFailed branch. Guard its exact presence, not merely the group count.
+# Pinned iTerm2's OSC selector table also has Linux OSC P and OSC 9.
+for id in ["iterm2.osc.linux_palette" "iterm2.osc.user_notification"] {
+  if ($catalogue.references.iterm2.groups.tokenTypeForMode.records
+    | columns | where $it == $id | length) != 1 {
+    error make {msg: $"missing pinned iTerm2 OSC dispatch ($id)"}
+  }
+}
+
+if ($catalogue.references.iterm2.groups.executeXtermSetKvp.records
+  | columns | where $it == "iterm2.osc1337.exec_failed" | length) != 1 {
+  error make {msg: "pinned iTerm2 OSC1337 ExecFailed branch missing from approved catalogue"}
+}
+
+let bad_total = ($inventory | update total_records ($inventory.total_records + 1))
 require-rule (protocol inventory diagnostics $catalogue $bad_total) inventory_total
 
 let bad_pin = ($catalogue | update references.windows_terminal.revision "not-the-pinned-commit")
@@ -95,7 +110,7 @@ let expanded_ref = ($inventory.references.windows_terminal
 let approved_inventory = ($inventory
   | update references.windows_terminal $expanded_ref
   | update total_groups 42
-  | update total_records 674)
+  | update total_records ($inventory.total_records + 2))
 let approved = (protocol inventory diagnostics $approved_cat $approved_inventory)
 if ($approved | length) != 0 {
   error make {msg: $"correctly approved future group failed: ($approved | to json -r)"}
