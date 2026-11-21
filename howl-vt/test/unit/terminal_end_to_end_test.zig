@@ -917,6 +917,28 @@ test "terminal: C0 controls retain exact stream effects" {
     }
 }
 
+test "terminal: pinned Kitty bell host throttle differs from ordered native BEL events" {
+    // Frozen Kitty screen.c::screen_bell suppresses repeated BEL while its
+    // ignore_bells timer is active, then drives audio, visual and on_bell
+    // platform hooks. Howl VT queues every BEL in exact FIFO order and
+    // leaves audio/visual throttling policy to its caller.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x07\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 2), terminal.consequenceCount());
+    const first = terminal.consequenceHead().?;
+    try std.testing.expect(first == .bell);
+    try terminal.consumeConsequence(first.id());
+    const second = terminal.consequenceHead().?;
+    try std.testing.expect(second == .bell);
+    try std.testing.expect(second.id() > first.id());
+    try terminal.consumeConsequence(second.id());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expect((try terminal.feed("A")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+}
+
 test "terminal: pinned iTerm2 LF VT FF and IND gate bottom scrolling outside horizontal margins" {
     // Pinned iTerm2 VT100ScreenMutableState+TerminalDelegate.m::terminalLineFeed
     // returns early at the vertical region bottom if its cursor is outside
@@ -1970,6 +1992,35 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     try std.testing.expect(!(try terminal.feed("\x1b[4;6H\x1b[E")).historyLost());
     try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+}
+
+test "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl" {
+    // Frozen kitty/vt-parser.c::dispatch_csi uses AT_MOST_ONE_PARAMETER
+    // for VPA/CBT and CALL_CSI_HANDLER2 for DECSTBM. Howl's shared
+    // decoder accepts the needed leading fields and ignores surplus.
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 20);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[3;2d")).stateChanged());
+        try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 20);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[1;17H")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[1;2Z")).stateChanged());
+        try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 20);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[2;3;4r")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?6h")).stateChanged());
+        try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+        try std.testing.expect((try terminal.feed("Q")).stateChanged());
+        try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(1, 0));
+    }
 }
 
 test "terminal: Kitty cursor excess parameters retain shared permissive CSI policy" {

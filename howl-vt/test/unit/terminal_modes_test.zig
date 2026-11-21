@@ -492,6 +492,44 @@ test "kitty keyboard stack has exact flags depth mutation and replies" {
     try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
 }
 
+test "pinned Kitty keyboard CSI u handlers reject excess params unlike Howl" {
+    // Pinned kitty/vt-parser.c::dispatch_csi uses CALL_CSI_HANDLER2
+    // for CSI =u, and CALL_CSI_HANDLER1 for CSI >u and CSI <u. Their
+    // guards reject an excess argument; the native shared decoder
+    // admits each complete packet using the first one or two fields.
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[=3;1;99u")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[=3u")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[>8;99u")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        try std.testing.expectEqualStrings("\x1b[?8u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        try std.testing.expect((try terminal.feed("\x1b[<1u")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[=3u\x1b[>8u")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[<1;99u")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+}
+
 test "invalid Kitty keyboard set mode preserves state" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
@@ -2987,6 +3025,30 @@ test "noncursor DEC mode assignments do not destroy pending autowrap" {
     }
 }
 
+test "pinned Kitty passive DEC input modes preserve pending wrap in native VT" {
+    // Frozen Kitty screen.c::set_mode_from_const applies SIMPLE_MODE to
+    // DECARM(8), COLOR_PREFERENCE_NOTIFICATION(2031), and
+    // HANDLE_TERMIOS_SIGNALS(19997), never touching the cursor. Howl
+    // likewise preserves exact-fill wrap across the typed mode toggles,
+    // unlike stale historical coverage descriptions.
+    for ([_]u16{ 8, 2031, 19997 }) |mode| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("ABCD")).stateChanged());
+        var command: [32]u8 = undefined;
+        const enable = try std.fmt.bufPrint(&command, "\x1b[?{d}h", .{mode});
+        try std.testing.expectEqual(mode != 8, (try terminal.feed(enable)).stateChanged());
+        const disable = try std.fmt.bufPrint(&command, "\x1b[?{d}l", .{mode});
+        try std.testing.expect((try terminal.feed(disable)).stateChanged());
+        try std.testing.expect((try terminal.feed("Z")).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(0, 3));
+        try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_col);
+    }
+}
+
 test "ignored and unknown DEC modes preserve pending wrap and grid state" {
     const modes = [_]u16{ 2, 4, 20, 42, 7727, std.math.maxInt(u16) };
     const finals = [_]u8{ 'h', 'l' };
@@ -3049,6 +3111,51 @@ test "application keypad modes affect keypad encoding and DECRQM" {
 
     write(&terminal, "\x1b>");
     try std.testing.expectEqualStrings("1", encodeKey(&terminal, .{ .named = .keypad_1 }, .{}));
+}
+
+test "pinned Kitty rejects application resize CSI while Howl retains host intent" {
+    // Frozen kitty/vt-parser.c::dispatch_csi case 't' explicitly rejects
+    // selectors 4 and 8 with no screen call or window request. Native
+    // Howl keeps caller-neutral requests for app policy to decline.
+    for ([_]struct { bytes: []const u8, expected: Terminal.ContainerRequest }{
+        .{ .bytes = "\x1b[4;80;160t", .expected = .{ .resize_pixels = .{ .height = 80, .width = 160 } } },
+        .{ .bytes = "\x1b[8;12;34t", .expected = .{ .resize_cells = .{ .rows = 12, .cols = 34 } } },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 20);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("X")).stateChanged());
+        const initial = terminal.semanticView(0);
+        const data = case.bytes;
+        try std.testing.expect(!(try terminal.feed(data[0 .. data.len - 1])).stateChanged());
+        try std.testing.expect((try terminal.feed(data[data.len - 1 ..])).stateChanged());
+        const occurrence = terminal.consequenceHead().?.container;
+        try std.testing.expectEqualDeep(case.expected, occurrence.request);
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+        try std.testing.expectEqual(initial.rows, terminal.semanticView(0).rows);
+        try std.testing.expectEqual(initial.cols, terminal.semanticView(0).cols);
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+        try terminal.consumeConsequence(occurrence.generation);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+}
+
+test "pinned Kitty ESC keypad handlers are GUI-owned while Howl changes VT mode" {
+    // Frozen Kitty screen.c::screen_normal_keypad_mode and
+    // ::screen_alternate_keypad_mode are explicitly empty C handlers;
+    // its comment delegates keypad interpretation to the GUI. Howl
+    // escProcess owns mode 66 and typed keypad encoding directly.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b=")).stateChanged());
+    try std.testing.expectEqualStrings("\x1bOq", encodeKey(&terminal, .{ .named = .keypad_1 }, .{}));
+    try std.testing.expect((try terminal.feed("\x1b[?66$p")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?66;1$y", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b>")).stateChanged());
+    try std.testing.expectEqualStrings("1", encodeKey(&terminal, .{ .named = .keypad_1 }, .{}));
+    try std.testing.expect((try terminal.feed("\x1b[?66$p")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?66;2$y", pendingOutput(&terminal));
 }
 
 test "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported" {

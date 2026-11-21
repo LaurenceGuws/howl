@@ -3164,10 +3164,13 @@ references:
         census: {semantic_branches: 9}
         recognition: implemented
         records:
-          kitty.c0.bel: {raw: BEL, effect: ring bell, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+          kitty.c0.bel: {raw: "BEL", effect: "ring bell",
+            conditions: "Pinned Kitty kitty/screen.c:screen_bell checks an ignore_bells timer and can suppress a repeated BEL; it also requests audio, visual and on_bell host attention. Howl queues each BEL as a distinct, ordered caller-neutral bell without a timer or audiovisual policy.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl implements the core BEL occurrence but differs in pinned host throttling and audiovisual consequence policy.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned Kitty bell host throttle differs from ordered native BEL events"}}}
           kitty.c0.bs: {raw: "\\x08", effect: cursor left,
             conditions: Kitty crosses rows unconditionally while Howl follows iTerm2 soft-wrap and mode gating,
             howl: {support: partial, disposition: excluded,
@@ -3283,14 +3286,20 @@ references:
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: Terminal.restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
-          kitty.esc.deckpnm: {raw: "ESC >", effect: numeric keypad,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
-              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                test: application keypad modes affect keypad encoding and DECRQM}}}
-          kitty.esc.deckpam: {raw: "ESC =", effect: application keypad,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
-              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                test: application keypad modes affect keypad encoding and DECRQM}}}
+          kitty.esc.deckpnm: {raw: "ESC >", effect: "numeric keypad",
+            conditions: "Pinned Kitty kitty/vt-parser.c:consume_esc invokes screen_normal_keypad_mode for ESC >. In kitty/screen.c that function is explicitly empty because numeric keypad interpretation is GUI-owned. Howl escProcess changes application-keypad mode directly in VT, including typed input and DEC 66 reporting.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl implements numeric keypad intent, but Kitty delegates actual keypad policy to GUI and its Screen handler is a no-op.",
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty ESC keypad handlers are GUI-owned while Howl changes VT mode"}}}
+          kitty.esc.deckpam: {raw: "ESC =", effect: "application keypad",
+            conditions: "Pinned Kitty kitty/vt-parser.c:consume_esc invokes screen_alternate_keypad_mode for ESC =. In kitty/screen.c that function is explicitly empty because application keypad interpretation is GUI-owned. Howl escProcess directly modifies native VT mode and typed keypad input.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl implements keypad intent, but the pinned Screen no-op plus GUI host input policy is not the same owner or complete consequence.",
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty ESC keypad handlers are GUI-owned while Howl changes VT mode"}}}
           kitty.esc.latin1: {raw: "ESC % @", effect: ignore attempt to select legacy decoding,
             recognition: recognized_noop, conditions: Kitty remains permanently UTF-8 while Howl selects ISO-8859-1,
             howl: *howl_kitty_encoding_excluded}
@@ -3383,13 +3392,13 @@ references:
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
-          kitty.mode.decarm: {raw: "CSI ? 8 h|l", effect: toggle autorepeat,
-            conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
-              press and release preservation, default-on lifetime, mode query, and save or restore match",
-            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+          kitty.mode.decarm: {raw: "CSI ? 8 h|l", effect: "toggle autorepeat",
+            conditions: "Pinned Kitty screen.c:set_mode_from_const uses SIMPLE_MODE(DECARM), changing only its input auto-repeat flag. Howl Terminal.setDecMode(8) also preserves pending exact-fill wrap on all passive mode updates, but its typed repeat event admission and key-encoding owner does not reproduce Kitty platform keyboard-repeat policy.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The DECARM flag and typed repeated-press suppression work; native VT does not own Kitty GUI/OS physical repeat events.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
           kitty.mode.decsclm: {raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
             recognition: recognized_noop, howl: {support: full, source: howl-vt/src/terminal.zig,
               symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -3430,19 +3439,20 @@ references:
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
-          kitty.mode.alt_47:
-            raw: "CSI ? 47 h|l"
-            effect: toggle alternate screen without clear or cursor save
-            conditions: acts only on an actual transition and resets the alternate cursor and rendition on entry
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}
-          kitty.mode.alt_1047: {raw: "CSI ? 1047 h|l",
-            effect: toggle alternate screen without clear or cursor save,
-            conditions: acts only on an actual transition and resets the alternate cursor and rendition on entry,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}}
+          kitty.mode.alt_47: {raw: "CSI ? 47 h|l", effect: "toggle alternate screen without clear or cursor save",
+            conditions: "Pinned Kitty kitty/screen.c:screen_toggle_screen_buffer unconditionally clears active_hyperlink_id on DEC ?47 bank transitions. Howl Terminal.switchScreenMode keeps bank-local current_link_id, so returning to primary continues the prior active OSC 8 hyperlink.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Basic alternate-screen text/cursor transitions work, but hyperlink lifetime at the bank boundary conflicts.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned Kitty alternate buffer clears active hyperlink unlike Howl bank-local link"}}}
+          kitty.mode.alt_1047: {raw: "CSI ? 1047 h|l", effect: "toggle alternate screen without clear or cursor save",
+            conditions: "Pinned Kitty kitty/screen.c:screen_toggle_screen_buffer unconditionally clears active_hyperlink_id on DEC ?1047 bank transitions. Howl Terminal.switchScreenMode keeps each bank current_link_id; new primary text after return can inherit an old link.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary alternate-screen modes work, but pinned Kitty closes active hyperlinks on bank transitions and Howl retains them.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned Kitty alternate buffer clears active hyperlink unlike Howl bank-local link"}}}
           kitty.mode.cursor_1048: {raw: "CSI ? 1048 h|l", effect: save cursor on set or reset,
             recognition: implemented,
             conditions: "Kitty saves on both set and reset; Howl saves on set, restores on reset, and includes cursor
@@ -3460,27 +3470,21 @@ references:
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: terminal paste encoding is gated by DECSET 2004}}}
-          kitty.mode.synchronized_output: {raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
-            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
-              residual: Howl retains exact VT mode state and withholds observer publication with a one-second fail-open timeout; Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
+          kitty.mode.synchronized_output: {raw: "CSI ? 2026 h|l", effect: "toggle synchronized output",
+            conditions: "Pinned Kitty kitty/screen.c::set_mode_from_const PENDING_MODE uses screen_pause_rendering; it holds a captured screen for up to 2000ms and cancels the hold on resize. Howl Terminal.synchronizedOutput exposes canonical VT state and the app independently applies a 1000ms fail-open observer gate, without Kitty source-level capture/resize policy.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation; reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode breadth are outside the complete Howl family.",
+              residual: "Howl retains exact VT mode state and withholds observer publication with a one-second fail-open timeout; Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.synchronizedOutput, proof: {
                 path: howl-vt/src/terminal.zig,
                 symbol: "actions: DEC private synchronized output maps enable disable"}}}
-          kitty.mode.color_preference:
-            raw: "CSI ? 2031 h|l"
-            effect: toggle color-preference notifications
-            conditions: >-
-              Howl gates and transactionally serializes notifications, reports mode state, saves and restores it, and
-              clears it on RIS. Its executable uses one fixed dark preference, so no unsolicited preference transition
-              occurs. Howl additionally cancels pending wrap at the DECSET or DECRST boundary.
-            relevance: extension
+          kitty.mode.color_preference: {raw: "CSI ? 2031 h|l", effect: "toggle color-preference notifications", relevance: "extension",
+            conditions: "Pinned Kitty screen.c:set_mode_from_const uses SIMPLE_MODE(COLOR_PREFERENCE_NOTIFICATION), retaining only the mode flag until host theme events. Howl Terminal.setDecMode(2031) likewise preserves pending wrap; its deterministic dark preference and lack of active external theme event stream intentionally differ from Kitty.",
             howl: {support: partial, disposition: excluded,
-              rationale: *howl_input_policy_difference,
-              residual: Howl deliberately uses one fixed dark executable preference rather than observing system theme changes.,
-              source: howl-vt/src/terminal.zig,
-              symbol: Terminal.reportColorSchemePreference, proof: {
+              rationale: "The mode and explicit query/report survive, but native Howl does not subscribe to Kitty host-theme events or generate the same unsolicited updates.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.reportColorSchemePreference, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "Kitty caller-coordinated modes retain exact state reports and color notifications"}}
+                symbol: "Kitty caller-coordinated modes retain exact state reports and color notifications"}}}
           kitty.mode.inband_resize: {raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
             conditions: immediate enable and repeated-enable reports use zero pixels when host metrics are unknown, relevance: extension,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.formatResizeReport,
@@ -3510,20 +3514,13 @@ references:
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "Kitty application escape mode rejection is an exact no-op for both toggle values"}}
-          kitty.mode.termios_signals:
-            raw: "CSI ? 19997 h|l"
-            effect: toggle terminal-generated termios signals
-            conditions: >-
-              Howl VT reports and saves the mode and cancels pending wrap at its boundary. PTY signal routing remains
-              deferred composition; Kitty does none of those three.
-            relevance: input
+          kitty.mode.termios_signals: {raw: "CSI ? 19997 h|l", effect: "toggle terminal-generated termios signals", relevance: "input",
+            conditions: "Pinned Kitty screen.c:set_mode_from_const uses SIMPLE_MODE(HANDLE_TERMIOS_SIGNALS) and leaves cursor/wrap intact; Kitty host PTY drives signal delivery. Howl Terminal.setDecMode(19997) also preserves pending wrap but additionally exposes mode query/save/restore, while PTY signal routing remains a separate caller policy.",
             howl: {support: partial, disposition: excluded,
-              rationale: "Howl deliberately preserves query, save/restore, and pending-wrap mutation truth for every
-                accepted DEC mode rather than reproducing Kitty's hidden mode exception.",
-              residual: Kitty neither reports nor saves mode 19997 and does not cancel pending wrap at its boundary.,
+              rationale: "Mode state is represented in VT but native PTY/host signal delivery and Kitty mode query/save policy are not identical.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.termiosSignals, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "low priority private modes and media copy retain caller-neutral state"}}
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "low priority private modes and media copy retain caller-neutral state"}}}
       dispatch_csi:
         source: vt-parser.c
         line: 1114
@@ -3600,15 +3597,20 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: exact-fill cursor movement resolves canonical pending wrap"}}}
-          kitty.csi.vpa: {raw: "CSI [Ps=1] d", effect: absolute row,
-            conditions: DECOM resolves against vertical margins and preserves column, howl: {support: full,
+          kitty.csi.vpa: {raw: "CSI [Ps=1] d", effect: "absolute row",
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi VPA invokes CALL_CSI_HANDLER1 with AT_MOST_ONE_PARAMETER and rejects CSI 3;2d. Howl decodeCsi accepts the leading row, ignoring the extra operand.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary VPA and DECOM work; excess-operand admission conflicts.",
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds"}}}
-          kitty.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: Kitty CBT traverses only active-bank stops and clamps exact counts"}}}
+                symbol: "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl"}}}
+          kitty.csi.cbt: {raw: "CSI [Ps=1] Z", effect: "backward tabs",
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi CBT invokes CALL_CSI_HANDLER1 and rejects CSI 1;2Z. Howl accepts and moves backward one tab.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary backward-tab motion works; excess-operand admission conflicts.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl"}}}
           kitty.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
             conditions: "Pinned Kitty screen_tabn calls screen_tab repeatedly and can preserve an internal
               tab marker in the source cell on blank intervals. Howl moves the cursor but never stores
@@ -3666,14 +3668,20 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
-          kitty.csi.push_colors: {raw: "CSI [Ps=0] # P", effect: push color stack, conditions: ten slots,
-            howl: {support: full, source: howl-vt/src/properties.zig, symbol: State.pushColor, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
-          kitty.csi.pop_colors: {raw: "CSI [Ps=0] # Q", effect: pop color stack, conditions: ten slots,
-            howl: {support: full, source: howl-vt/src/properties.zig, symbol: State.popColor, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
+          kitty.csi.push_colors: {raw: "CSI [Ps=0] # P", effect: "push color stack",
+            conditions: "Pinned Kitty kitty/colors.c colorprofile_push_colors returns true on an identical repeated indexed push; kitty/screen.c marks the profile dirty. Howl State.pushColor treats a repeated same-value indexed push as idempotent without semantic mutation.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Common bounded push behavior works, but repeated-push host dirtiness and state transitions differ.",
+              source: howl-vt/src/properties.zig, symbol: State.pushColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "pinned Kitty indexed color push is always dirty but Howl is idempotent"}}}
+          kitty.csi.pop_colors: {raw: "CSI [Ps=0] # Q", effect: "pop color stack",
+            conditions: "Pinned Kitty kitty/colors.c colorprofile_pop_colors zeroes the popped sequential slot and retains allocation extent; kitty/screen.c also emits color_profile_popped callback on a successful pop. Howl resets the slot to initialized ColorState without the host callback.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Active color restoration works; indexed slot lifetime and pinned host callback differ.",
+              source: howl-vt/src/properties.zig, symbol: State.popColor, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "kitty indexed color stack exposes default-filled slot and reset extent differences"}}}
           kitty.csi.report_colors: {raw: "CSI # R", effect: report current stack index and count,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: appendColorStackReport, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -3688,10 +3696,11 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
-          kitty.csi.da1: {raw: "CSI [Ps=0] c", effect: delegate primary device attributes to the host,
-            relevance: query, howl: {support: partial, disposition: excluded,
-              rationale: *howl_report_identity_difference,
-              residual: Howl emits its own primary device attributes instead of delegating identity.,
+          kitty.csi.da1: {raw: "CSI [Ps=0] c", effect: "delegate primary device attributes to the host", relevance: "query",
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi DA routes zero-parameter primary DA1 to kitty/screen.c::report_device_attributes, whose case 0 invokes host on_da1. Howl applyReportEvent returns its curated native identity without delegating to Kitty application capability policy.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl emits one stable bounded terminal identity; reference-specific product names, versions, emulation levels, delegated identity, and optional capability advertisements are outside the complete Howl family.",
+              residual: "Howl emits its own primary device attributes instead of delegating identity.",
               source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
@@ -3724,8 +3733,22 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: TBC mode 5 selects libvterm all-clear instead of pinned Kitty no-op"}}}
-          kitty.csi.sm: {raw: "CSI Pm h", effect: set modes, howl: *howl_ansi_mode_breadth_excluded}
-          kitty.csi.rm: {raw: "CSI Pm l", effect: reset modes, howl: *howl_ansi_mode_breadth_excluded}
+          kitty.csi.sm: {raw: "CSI Pm h", effect: "set modes",
+            conditions: "Pinned Kitty kitty/vt-parser.c::handle_mode CSI Pm h passes every admitted nonnegative operand to screen_set_mode. Kitty screen.c::set_mode_from_const uses a curated mix of ANSI modes, DEC private modes and ignored diagnostics; Howl Terminal.setAnsiModes implements shared ANSI state and retains a distinct optional DEC mode set, not Kitty product mode breadth and policy.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation; reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode breadth are outside the complete Howl family.",
+              residual: "Howl implements its curated ANSI mode set rather than every mode recognized by the pinned reference.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
+          kitty.csi.rm: {raw: "CSI Pm l", effect: "reset modes",
+            conditions: "Pinned Kitty kitty/vt-parser.c::handle_mode CSI Pm l forwards every admitted nonnegative operand to screen_reset_mode, including private-mode cases; Howl Terminal.setAnsiModes handles its canonical ANSI subset and separate DEC mode owner, without matching Kitty complete product mode breadth.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation; reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode breadth are outside the complete Howl family.",
+              residual: "Howl implements its curated ANSI mode set rather than every mode recognized by the pinned reference.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           kitty.csi.dsr: {raw: "CSI [Ps=0] n", effect: report device status,
             conditions: under DECOM Kitty makes only the row origin-relative while Howl also applies the left margin,
             howl: {support: partial, disposition: excluded, rationale: "Pinned Kitty report_device_status adjusts only cursor row for DECOM and reports absolute column. Pinned iTerm2 and Howl instead report both coordinates relative to the active DEC origin. One CSI 6n response cannot match both when DECSLRM and DECOM are enabled.",
@@ -3785,36 +3808,20 @@ references:
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
-          kitty.csi.resize_pixels_unsupported:
-            raw: CSI 4 ; height ; width t
-            effect: reject application pixel resize
-            recognition: rejected_known
-            relevance: host consequence
-            conditions: VT retains the ordered terminal intent; the app-owned desktop handler applies a deterministic reply,
-              decline, or no-op without making canonical VT wait for an observer. GPU and host UI policy remain embedder-owned.
-            howl:
-              support: full
-              owner: howl-app
-              source: howl-app/src/consequences.zig
-              symbol: drain
-              proof:
-                path: howl-app/src/consequences.zig
-                symbol: terminal consequences decline container geometry and window mutation without changing VT
-          kitty.csi.resize_cells_unsupported:
-            raw: CSI 8 ; rows ; cols t
-            effect: reject application cell resize
-            recognition: rejected_known
-            relevance: host consequence
-            conditions: VT retains the ordered terminal intent; the app-owned desktop handler applies a deterministic reply,
-              decline, or no-op without making canonical VT wait for an observer. GPU and host UI policy remain embedder-owned.
-            howl:
-              support: full
-              owner: howl-app
-              source: howl-app/src/consequences.zig
-              symbol: drain
-              proof:
-                path: howl-app/src/consequences.zig
-                symbol: terminal consequences decline container geometry and window mutation without changing VT
+          kitty.csi.resize_pixels_unsupported: {raw: "CSI 4 ; height ; width t", effect: "reject application pixel resize", recognition: "rejected_known", relevance: "host consequence",
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi explicitly rejects CSI 4;h;wt without calling Screen. Howl decodeContainerRequest queues a typed pixel resize intent for its host; the current howl-app declines it.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "No current physical resize results, but native VT admits and queues what Kitty parser rejects.",
+              source: howl-vt/src/terminal.zig, symbol: decodeContainerRequest, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty rejects application resize CSI while Howl retains host intent"}}}
+          kitty.csi.resize_cells_unsupported: {raw: "CSI 8 ; rows ; cols t", effect: "reject application cell resize", recognition: "rejected_known", relevance: "host consequence",
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi explicitly rejects CSI 8;rows;cols t without calling Screen. Howl decodeContainerRequest queues a typed cell resize intent for its host; the current howl-app declines it.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Host decline does not establish full parity because the VT parser accepts an action that pinned Kitty refuses.",
+              source: howl-vt/src/terminal.zig, symbol: decodeContainerRequest, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty rejects application resize CSI while Howl retains host intent"}}}
           kitty.csi.restore_cursor: {raw: "CSI u", effect: restore cursor,
             conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
               and baseline rendition",
@@ -3825,25 +3832,34 @@ references:
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applyKittyEvent, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
-          kitty.csi.kitty_set: {raw: "CSI = flags ; [mode=1] u", effect: set keyboard flags,
-            conditions: retains seven protocol bits and mutates the current per-screen stack slot,
-            howl: {support: full, source: howl-vt/src/modes.zig, symbol: KittyKeyStack.set, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
-          kitty.csi.kitty_push: {raw: "CSI > [flags=0] u", effect: push keyboard flags,
-            conditions: eight per-screen slots; the oldest slot is dropped when full,
-            howl: {support: full, source: howl-vt/src/modes.zig, symbol: KittyKeyStack.push, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
-          kitty.csi.kitty_pop: {raw: "CSI < [count=1] u", effect: pop keyboard flags,
-            conditions: popping past the active stack restores zero flags,
-            howl: {support: full, source: howl-vt/src/modes.zig, symbol: KittyKeyStack.pop, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
-          kitty.csi.decstbm: {raw: "CSI [top] ; [bottom] r", effect: set vertical margins,
-            howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.setScrollRegion, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+          kitty.csi.kitty_set: {raw: "CSI = flags ; [mode=1] u", effect: "set keyboard flags",
+            conditions: "Pinned kitty/vt-parser.c::dispatch_csi '=' u dispatch uses CALL_CSI_HANDLER2 and rejects more than two parameters. Howl decodeKittyKeyboardSet ignores trailing operands and changes the active keyboard flags for CSI =3;1;99u.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Common seven-bit flag setting is supported; pinned strict two-operand admission differs from native permissive CSI handling.",
+              source: howl-vt/src/modes.zig, symbol: KittyKeyStack.set, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty keyboard CSI u handlers reject excess params unlike Howl"}}}
+          kitty.csi.kitty_push: {raw: "CSI > [flags=0] u", effect: "push keyboard flags",
+            conditions: "Pinned kitty/vt-parser.c::dispatch_csi '>' u uses CALL_CSI_HANDLER1 and rejects more than one parameter. Howl decoder processes CSI >8;99u as a valid push of flags 8, changing the per-screen stack.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Normal Kitty keyboard stack push/depth behavior works, but pinned excess-parameter rejection is absent.",
+              source: howl-vt/src/modes.zig, symbol: KittyKeyStack.push, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty keyboard CSI u handlers reject excess params unlike Howl"}}}
+          kitty.csi.kitty_pop: {raw: "CSI < [count=1] u", effect: "pop keyboard flags",
+            conditions: "Pinned kitty/vt-parser.c::dispatch_csi '<' u uses CALL_CSI_HANDLER1 and rejects more than one parameter. Howl decoder processes CSI <1;99u and pops one keyboard stack entry.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Normal pop behavior works, but pinned Kitty leaves the stack untouched when an extra operand is present.",
+              source: howl-vt/src/modes.zig, symbol: KittyKeyStack.pop, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "pinned Kitty keyboard CSI u handlers reject excess params unlike Howl"}}}
+          kitty.csi.decstbm: {raw: "CSI [top] ; [bottom] r", effect: "set vertical margins",
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi DECSTBM invokes CALL_CSI_HANDLER2 rejecting more than two params. Howl accepts CSI 2;3;4r, setting scroll region from the first two; a following DECOM homes to its top.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary two-operand margins work; trailing-operand rejection differs.",
+              source: howl-vt/src/screen.zig, symbol: Screen.setScrollRegion, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl"}}}
           kitty.csi.restore_modes:
             raw: "CSI ? Pm r"
             effect: restore DEC modes
@@ -3877,15 +3893,19 @@ references:
               source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values"}}}
-          kitty.csi.multi_cursor: {raw: "CSI > Pm SP q", effect: set multiple cursor shapes, relevance: extension,
+          kitty.csi.multi_cursor: {raw: "CSI > Pm SP q", effect: "set multiple cursor shapes", relevance: "extension",
+            conditions: "Pinned Kitty kitty/vt-parser.c::_parse_multi_cursors dispatches CSI > Pm SP q into screen_multi_cursor for extra cursor placement and shape changes. Howl decodeCsiLeader rejects the leader/space combination without any cursor mutation or reply because its VT has only one canonical cursor.",
             howl: {support: missing, disposition: excluded,
-              rationale: *howl_cursor_compatibility_policy_difference,
-              residual: Howl deliberately retains one terminal cursor rather than Kitty multiple cursors., proof: {
+              rationale: "Howl keeps one VT-level-independent bounded cursor, savepoint, presentation, and tab-stop model; conflicting emulation gates, row crossing, command ambiguity, permissive parsing, unbounded retention, and multiple-cursor policy are outside the complete Howl family.",
+              residual: "Howl deliberately retains one terminal cursor rather than Kitty multiple cursors.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader, proof: {
                 path: howl-vt/test/unit/terminal_cursor_test.zig,
                 symbol: "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops"}}}
-          kitty.csi.xtversion: {raw: "CSI > [Ps=0] q", effect: report version, relevance: query,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
-              residual: Howl reports its own terminal identity rather than Kitty identity.,
+          kitty.csi.xtversion: {raw: "CSI > [Ps=0] q", effect: "report version", relevance: "query",
+            conditions: "Pinned Kitty kitty/vt-parser.c::dispatch_csi calls screen_xtversion for CSI > 0 q, which replies DCS >|kitty(<compiled version>) ST. Howl appendXtVersionReport instead returns its curated howl-vt identity and cannot reproduce a different product version without violating self-identification.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl emits one stable bounded terminal identity; reference-specific product names, versions, emulation levels, delegated identity, and optional capability advertisements are outside the complete Howl family.",
+              residual: "Howl reports its own terminal identity rather than Kitty identity.",
               source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
@@ -3904,8 +3924,11 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.scrollback_fill: {raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
-            conditions: Howl restores bounded primary text rows and retained cell and line state but has no graphics plane,
-            relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/screen.zig,
+            conditions: "Pinned Kitty vt-parser.c::dispatch_csi CSI +T calls screen_reverse_scroll_and_fill_from_scrollback, whose _reverse_scroll uses historybuf_pop_line, INDEX_DOWN, and primary/alternate dispatch. Howl Screen.scrollDownFromHistory restores bounded primary history text and row attributes, but Terminal.applyScreenEvent does not restore graphics-plane placements on this path.",
+            relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
+              rationale: "Text and history restoration works; full parity needs a separate proof for scrollback graphics placement lifetime and presentation on +T.",
+              residual: "Pinned CSI +T graphics placement and retained primary history projection are not yet fully verified.",
+              source: howl-vt/src/screen.zig,
               symbol: Screen.scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal Kitty unscroll consumes primary history in row order"}}}
           kitty.csi.decstr: {raw: "CSI ! p", effect: reject unrecognized soft-reset spelling,
@@ -3926,12 +3949,14 @@ references:
               source: howl-vt/src/mode_report.zig,
               symbol: decState, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC mode queries append DECRPM replies"}}}
-          kitty.csi.sgr: {raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
-            disposition: excluded, rationale: *howl_rendition_policy_difference,
-            residual: Howl implements the indexed bounded rendition subset proved below.,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
+          kitty.csi.sgr: {raw: "CSI Pm m", effect: "select graphic rendition",
+            conditions: "Pinned Kitty kitty/vt-parser.c::_parse_sgr calls screen.select_graphic_rendition with parameter groups and its native screen/color presentation policy, including Kitty-specific attribute handling. Howl Screen.applySgr implements the bounded canonical cell rendition subset, with source-proven differences in unsupported underline/color grammar, dual appearance attributes, and strict invalid-color tail handling.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl retains one bounded cell-rendition model with group-local malformed-color handling; reference-only rendering configuration and conflicting invalid-color tail rejection are outside the complete Howl family.",
+              residual: "Howl implements the indexed bounded rendition subset proved below.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           kitty.csi.modify_other_keys: {raw: "CSI > Ps ; Ps m", effect: set modifyOtherKeys, relevance: input,
             conditions: Kitty recognizes and logs the superseded request without changing key encoding while Howl
               implements bounded xterm levels zero through two,

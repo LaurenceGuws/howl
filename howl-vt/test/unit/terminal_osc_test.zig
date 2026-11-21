@@ -523,6 +523,32 @@ fn oscZeroAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("both", terminal.icon().?);
 }
 
+test "pinned Kitty alternate buffer clears active hyperlink unlike Howl bank-local link" {
+    // Pinned kitty/screen.c::screen_toggle_screen_buffer unconditionally
+    // sets active_hyperlink_id = 0 on both enter and leave. Howl retains
+    // current link state independently per bank, so after returning from
+    // DEC 47/1047 it can continue the previous primary hyperlink.
+    for ([_][]const u8{ "\x1b[?47", "\x1b[?1047" }) |prefix| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 12);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b]8;;https://example.com\x07A")).stateChanged());
+        const initial = terminal.semanticView(0).cellInfoAt(0, 0).attrs.link_id;
+        try std.testing.expect(initial != 0);
+        var cmd: [32]u8 = undefined;
+        const enter = try std.fmt.bufPrint(&cmd, "{s}h", .{prefix});
+        try std.testing.expect((try terminal.feed(enter)).stateChanged());
+        try std.testing.expect((try terminal.feed("ALT")).stateChanged());
+        const leave = try std.fmt.bufPrint(&cmd, "{s}l", .{prefix});
+        try std.testing.expect((try terminal.feed(leave)).stateChanged());
+        try std.testing.expect((try terminal.feed("B")).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+        try std.testing.expectEqual(initial, view.cellInfoAt(0, 1).attrs.link_id);
+        try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(initial).?);
+    }
+}
+
 test "OSC 8 retains explicit identity separately from URI and exact active mutation" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 20);
@@ -2174,6 +2200,26 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
     try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b[#R"));
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
     try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+}
+
+test "pinned Kitty indexed color push is always dirty but Howl is idempotent" {
+    // Frozen kitty/colors.c::colorprofile_push_colors returns true for
+    // each accepted indexed push, including identical contents; screen.c
+    // then marks the color profile dirty. Howl State.pushColor declines
+    // the same-value indexed repeat without a semantic mutation.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[1#P")).stateChanged());
+    const first = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[1#P")).stateChanged());
+    try std.testing.expectEqual(first, terminal.semanticSequence());
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#010203\x07")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[1#P")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[1#P")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#040506\x07")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[1#Q")).stateChanged());
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
 test "kitty indexed color stack exposes default-filled slot and reset extent differences" {
