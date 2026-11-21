@@ -3371,6 +3371,162 @@ test "Kitty margin scroll scales clipping without changing image allocation" {
     try std.testing.expectEqual(@as(u32, 4), plane.image(0).?.height);
 }
 
+test "Kitty six geometric deletions exclude virtual placement prototypes" {
+    // Pinned Kitty graphics.c x/y/z/point/point3d/cursor filters exclude
+    // virtual references; image id and placement id are separate selectors.
+    const requests = [_][]const u8{
+        "a=d,d=P,x=1,y=1",
+        "a=d,d=Q,x=1,y=1,z=0",
+        "a=d,d=X,x=1",
+        "a=d,d=Y,y=1",
+        "a=d,d=Z,z=0",
+        "a=d,d=C",
+    };
+    for (requests) |request| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        try std.testing.expect((try plane.command(
+            "a=T,f=32,s=2,v=1,i=42,p=22,c=2,r=1,U=1,q=2;AQAA/wIAAP8=",
+            .primary,
+            10,
+            12,
+            3,
+            10,
+            20,
+        )).changed);
+        const original = plane.placement(0).?;
+        const before_generation = plane.generation();
+        const before_image_generation = plane.content_generation;
+        const before_bytes = plane.storage_bytes;
+        const skipped = try plane.command(request, .primary, 10, 10, 0, 10, 20);
+        try std.testing.expect(!skipped.changed);
+        try std.testing.expectEqual(@as(u2, 2), skipped.quiet);
+        try std.testing.expectEqual(before_generation, plane.generation());
+        try std.testing.expectEqual(before_image_generation, plane.content_generation);
+        try std.testing.expectEqual(before_bytes, plane.storage_bytes);
+        try std.testing.expectEqualDeep(original, plane.placement(0).?);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        // Exact image-plus-placement selectors may retire the virtual ref.
+        try std.testing.expect((try plane.command(
+            "a=d,d=i,i=42,p=22",
+            .primary,
+            10,
+            0,
+            0,
+            10,
+            20,
+        )).changed);
+        try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    }
+}
+
+test "Kitty geometric upper Q retires animation frames only after final matched placement" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=71,p=1,z=-3,q=2,C=1;/wAA/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=71,r=99,c=1,z=50,q=2;AAD/gA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=p,i=71,p=2,z=-3,q=2,C=1",
+        .primary,
+        0,
+        0,
+        1,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    const generation = plane.content_generation;
+    const bytes = plane.storage_bytes;
+    const first = try plane.command("a=d,d=Q,x=1,y=1,z=-3", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(first.changed);
+    try std.testing.expectEqual(@as(u2, 2), first.quiet);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    try std.testing.expectEqual(bytes, plane.storage_bytes);
+    try std.testing.expectEqual(generation, plane.content_generation);
+    try std.testing.expectEqual(@as(u32, 2), plane.placement(0).?.kitty_id);
+    const miss = try plane.command("a=d,d=Q,x=1,y=1,z=-3", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(!miss.changed);
+    try std.testing.expectEqual(generation, plane.content_generation);
+    const last = try plane.command("a=d,d=Q,x=2,y=1,z=-3", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(last.changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+    try std.testing.expect(plane.content_generation > generation);
+}
+
+test "Kitty relative parent placements remain an explicit unsupported branch" {
+    // The pinned Kitty reference admits P=parent image id and Q=parent
+    // placement id on put. Howl's bounded grammar intentionally does not
+    // invent parent identity, motion or cascading geometry ownership.
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=91,p=3,C=1,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=92,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const parent = plane.placement(0).?;
+    const prior_generation = plane.generation();
+    const prior_content_generation = plane.content_generation;
+    const prior_storage = plane.storage_bytes;
+    const relative_put = try plane.command(
+        "a=p,i=92,p=4,P=91,Q=3,q=2",
+        .primary,
+        0,
+        1,
+        1,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, relative_put.failure.?);
+    try std.testing.expect(!relative_put.changed);
+    try std.testing.expectEqual(prior_generation, plane.generation());
+    try std.testing.expectEqual(prior_content_generation, plane.content_generation);
+    try std.testing.expectEqual(prior_storage, plane.storage_bytes);
+    try std.testing.expectEqualDeep(parent, plane.placement(0).?);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(?u32, 91), plane.images[0].kitty_id);
+    try std.testing.expectEqual(@as(?u32, 92), plane.images[1].kitty_id);
+}
+
 test "Kitty clipped margin geometry respects all six matched-only deletion selectors" {
     const cases = [_]struct {
         miss: []const u8,

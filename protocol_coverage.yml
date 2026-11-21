@@ -3296,19 +3296,19 @@ references:
             conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
             howl: *howl_kitty_selective_erase_line_graphics}
           kitty.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
-            conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
+            conditions: "Pinned Kitty ignores private mode 69 and inserts complete physical rows; Howl supports DECSLRM and inserts only inside horizontal margins. Multiline and selection behavior has independent bounded proofs.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Howl now preserves complete OSC 66 multiline leads at full-width IL insertion boundaries and clears the direct app's selection on admitted CSI L, while retaining exact cursor and margin admission. Full Kitty multiline, selection and graphics behavior across all resize, history and clipping cases still needs reference qualification.",
+              residual: "A real pinned whole-row versus Howl DECSLRM compatibility difference is proven. Ordinary full-width/multiline editing still requires separate history, selection and projected graphics checks.",
               source: howl-vt/src/screen.zig, symbol: Screen.editLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M"}}}
+                symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.dl: {raw: "CSI [Ps=1] M", effect: delete lines,
-            conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
+            conditions: "Pinned Kitty ignores private mode 69 and deletes complete physical rows; Howl supports DECSLRM and deletes only inside horizontal margins. Multiline and selection behavior remains a separate owner.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Howl retains intact OSC 66 multiline clusters below the deleted region, clears crossing fragments, and clears the direct app's selection on admitted CSI M. Exact Kitty multiline, selection and graphics behavior across all resize, history and clipping cases still needs reference qualification.",
+              residual: "A real pinned whole-row versus Howl DECSLRM compatibility difference is proven. Ordinary full-width/multiline editing still requires separate history, selection and projected graphics checks.",
               source: howl-vt/src/screen.zig, symbol: Screen.editLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M"}}}
+                symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -3539,19 +3539,19 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           kitty.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
-            conditions: "Kitty moves fully contained graphics within vertical margins and clips top overflow; Howl now proves the same source and deletion geometry for ordinary physical placements, with selection and history policy still separate", howl: {support: partial,
+            conditions: "Pinned Kitty ignores private mode 69 and scrolls complete physical rows; Howl confines row scroll to configured DECSLRM horizontal margins. Howl also clips fully contained physical graphics against vertical margins.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Accepted physical margin clipping now has pinned positive/negative tests. Full history, selection and animated-image behavior remain unverified.",
+              residual: "Pinned mode 69 rejection versus Howl horizontal region support is proven, while ordinary vertical-margin clipping passes. Deep history, selection and relative image references remain partial.",
               source: howl-vt/src/terminal.zig, symbol: scrollGraphicsRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: Kitty margin scroll clips image source and geometric deletion coordinates"}}}
+                symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.sd: {raw: "CSI [Ps=1] T", effect: scroll down,
-            conditions: "Kitty clips fully contained graphics at bottom of scrolled vertical margins; Howl now proves exact source/deletion geometry for ordinary physical placements, with selection and animation still separate", howl: {support: partial,
+            conditions: "Pinned Kitty ignores private mode 69 and scrolls complete physical rows; Howl confines reverse scroll to configured DECSLRM horizontal margins. Clipped-margin image geometry has direct bounded proof.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Accepted physical margin clipping now has pinned positive/negative tests. Full history, selection and animated-image behavior remain unverified.",
+              residual: "Pinned mode 69 rejection versus Howl horizontal region support is proven, while ordinary vertical-margin clipping passes. Deep history, selection and relative image references remain partial.",
               source: howl-vt/src/terminal.zig, symbol: scrollGraphicsRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: Kitty margin scroll clips image source and geometric deletion coordinates"}}}
+                symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.scrollback_fill: {raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
             conditions: Howl restores bounded primary text rows and retained cell and line state but has no graphics plane,
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/screen.zig,
@@ -4351,7 +4351,7 @@ references:
               placement rectangles at 1-based x/y. Howl's direct matched-hit/miss and unrelated
               unplaced-data retention are proven for ordinary anchored placements.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Pinned physical margin-clipped hit and miss cases now pass, with exact matched-only uppercase reclamation. Scrolled history, projected placeholder cells, relative placements and animated frames remain unresolved.",
+              residual: "Physical selectors are proven on intact, margin-clipped and scrollback-anchored images with matched-only data/animation lifetime and virtual-prototype exclusions. Pinned parent-relative P/Q placements are accepted by Kitty but rejected by Howl, so descendant geometry remains unsupported.",
               source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
               path: howl-vt/src/graphics.zig,
               symbol: "Kitty clipped margin geometry respects all six matched-only deletion selectors"}}}
@@ -4361,7 +4361,7 @@ references:
               Howl correctly retains unrelated stored bytes on matched or missed uppercase Q and
               preserves other layers on lowercase q in the tested ordinary placement cases.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Pinned physical margin-clipped hit and miss cases now pass, with exact matched-only uppercase reclamation. Scrolled history, projected placeholder cells, relative placements and animated frames remain unresolved.",
+              residual: "Physical selectors are proven on intact, margin-clipped and scrollback-anchored images with matched-only data/animation lifetime and virtual-prototype exclusions. Pinned parent-relative P/Q placements are accepted by Kitty but rejected by Howl, so descendant geometry remains unsupported.",
               source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
               path: howl-vt/src/graphics.zig,
               symbol: "Kitty clipped margin geometry respects all six matched-only deletion selectors"}}}
@@ -4371,7 +4371,7 @@ references:
               visible columns. Howl proves uppercase X single-column hits and misses without
               reclaiming unrelated unplaced bytes.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Pinned physical margin-clipped hit and miss cases now pass, with exact matched-only uppercase reclamation. Scrolled history, projected placeholder cells, relative placements and animated frames remain unresolved.",
+              residual: "Physical selectors are proven on intact, margin-clipped and scrollback-anchored images with matched-only data/animation lifetime and virtual-prototype exclusions. Pinned parent-relative P/Q placements are accepted by Kitty but rejected by Howl, so descendant geometry remains unsupported.",
               source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
               path: howl-vt/src/graphics.zig,
               symbol: "Kitty clipped margin geometry respects all six matched-only deletion selectors"}}}
@@ -4381,7 +4381,7 @@ references:
               hit/miss correctly retains unrelated unplaced images and uses its explicit
               primary-history or alternate screen-origin translation.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Pinned physical margin-clipped hit and miss cases now pass, with exact matched-only uppercase reclamation. Scrolled history, projected placeholder cells, relative placements and animated frames remain unresolved.",
+              residual: "Physical selectors are proven on intact, margin-clipped and scrollback-anchored images with matched-only data/animation lifetime and virtual-prototype exclusions. Pinned parent-relative P/Q placements are accepted by Kitty but rejected by Howl, so descendant geometry remains unsupported.",
               source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
               path: howl-vt/src/graphics.zig,
               symbol: "Kitty clipped margin geometry respects all six matched-only deletion selectors"}}}
@@ -4391,7 +4391,7 @@ references:
               non-cell refs. Howl's upper Z hit/miss and lower z layer preservation are tested
               without collateral storage reclamation.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Pinned physical margin-clipped hit and miss cases now pass, with exact matched-only uppercase reclamation. Scrolled history, projected placeholder cells, relative placements and animated frames remain unresolved.",
+              residual: "Physical selectors are proven on intact, margin-clipped and scrollback-anchored images with matched-only data/animation lifetime and virtual-prototype exclusions. Pinned parent-relative P/Q placements are accepted by Kitty but rejected by Howl, so descendant geometry remains unsupported.",
               source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
               path: howl-vt/src/graphics.zig,
               symbol: "Kitty clipped margin geometry respects all six matched-only deletion selectors"}}}
@@ -4401,7 +4401,7 @@ references:
               virtual/cell refs. Howl's upper C hit/miss on the active bank preserves all unrelated
               unplaced decoded images.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Pinned physical margin-clipped hit and miss cases now pass, with exact matched-only uppercase reclamation. Scrolled history, projected placeholder cells, relative placements and animated frames remain unresolved.",
+              residual: "Physical selectors are proven on intact, margin-clipped and scrollback-anchored images with matched-only data/animation lifetime and virtual-prototype exclusions. Pinned parent-relative P/Q placements are accepted by Kitty but rejected by Howl, so descendant geometry remains unsupported.",
               source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
               path: howl-vt/src/graphics.zig,
               symbol: "Kitty clipped margin geometry respects all six matched-only deletion selectors"}}}

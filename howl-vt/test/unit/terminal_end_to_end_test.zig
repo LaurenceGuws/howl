@@ -3485,6 +3485,97 @@ test "terminal: top-anchored LF and NEL keep scrolling and fixed graphics aligne
     }
 }
 
+test "terminal: Kitty geometric deletion distinguishes viewport rows from scrollback columns and layers" {
+    // Pinned graphics.c point/y/cursor filters use a 1-based visible
+    // screen-row coordinate, while x and z filters inspect all physical
+    // references in the active manager, including scrollback.
+    const cases = [_]struct { command: []const u8, hit: bool }{
+        .{ .command = "\x1b_Ga=d,d=P,x=1,y=1\x1b\\", .hit = false },
+        .{ .command = "\x1b_Ga=d,d=Q,x=1,y=1,z=-2\x1b\\", .hit = false },
+        .{ .command = "\x1b_Ga=d,d=Y,y=1\x1b\\", .hit = false },
+        .{ .command = "\x1b_Ga=d,d=C\x1b\\", .hit = false },
+        .{ .command = "\x1b_Ga=d,d=X,x=1\x1b\\", .hit = true },
+        .{ .command = "\x1b_Ga=d,d=Z,z=-2\x1b\\", .hit = true },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1H\x1b_Ga=T,f=32,s=1,v=1,i=41,z=-2,C=1,q=2;AQIDBA==\x1b\\");
+        try feed(&terminal, "\x1b[2;1H\n");
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expect(terminal.images(0).placement(0) == null);
+        try std.testing.expect(terminal.images(1).placement(0) != null);
+        const generation = terminal.images(0).generation;
+        const bytes_generation = terminal.images(0).content_generation;
+        const result = try terminal.feed(case.command);
+        try std.testing.expectEqual(case.hit, result.stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+        if (case.hit) {
+            try std.testing.expect(after.generation > generation);
+            try std.testing.expect(after.content_generation > bytes_generation);
+            try std.testing.expectEqual(@as(usize, 0), after.imageCount());
+            try std.testing.expectEqual(@as(usize, 0), after.placementCount());
+        } else {
+            try std.testing.expectEqual(generation, after.generation);
+            try std.testing.expectEqual(bytes_generation, after.content_generation);
+            try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+            try std.testing.expect(after.placement(0) == null);
+            try std.testing.expect(terminal.images(1).placement(0) != null);
+        }
+    }
+}
+
+test "terminal: Kitty virtual placeholder rows follow pinned margin-scroll projection" {
+    // Pinned kitty_tests/graphics.py:test_unicode_placeholders_scroll
+    // retains physical image data while only the placeholder cell rows
+    // inside margins move. Unit-size cells preserve the exact source-index
+    // geometry of the pinned 5x10-cell/5x80-image oracle.
+    var terminal = try Terminal.init(std.testing.allocator, 8, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const prototype = "\x1b_Ga=T,f=32,s=1,v=8,i=42,c=1,r=8,U=1,C=1,q=2;/wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP8=\x1b\\";
+    try feed(&terminal, prototype);
+    try consumeReplies(&terminal);
+    const accents = [_][]const u8{
+        "\xcc\x85", "\xcc\x8d", "\xcc\x8e", "\xcc\x90",
+        "\xcc\x92", "\xcc\xbd", "\xcc\xbe", "\xcc\xbf",
+    };
+    try feed(&terminal, "\x1b[38;5;42m");
+    for (accents, 0..) |accent, idx| {
+        var position: [16]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&position, "\x1b[{d};1H", .{idx + 1}));
+        try feed(&terminal, "\xf4\x8e\xbb\xae");
+        try feed(&terminal, accent);
+    }
+    var prior = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), prior.imageCount());
+    try std.testing.expectEqual(@as(usize, 9), prior.placementCount());
+    const generation = prior.content_generation;
+    for (0..8) |row| {
+        const image = prior.placement(row + 1) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(u16, @intCast(row)), image.row);
+        try std.testing.expectEqual(@as(u32, @intCast(row)), image.source_y);
+        try std.testing.expectEqual(@as(u32, 1), image.source_height);
+    }
+    try feed(&terminal, "\x1b[3;6r\x1b[6;1H\x1b[S\x1b[S");
+    const after = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+    try std.testing.expectEqual(generation, after.content_generation);
+    try std.testing.expectEqual(@as(usize, 7), after.placementCount());
+    const expected_source_rows = [_]u32{ 0, 1, 4, 5, 6, 7 };
+    const expected_screen_rows = [_]u16{ 0, 1, 2, 3, 6, 7 };
+    for (expected_source_rows, expected_screen_rows, 0..) |src, row, i| {
+        const image = after.placement(i + 1) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(row, image.row);
+        try std.testing.expectEqual(src, image.source_y);
+        try std.testing.expectEqual(@as(u32, 1), image.source_height);
+    }
+}
+
 test "terminal: Kitty margin scroll clips image source and geometric deletion coordinates" {
     const pixels = "\x1b_Ga=T,f=32,s=1,v=2,i=72,C=1,q=2;AQIDBAUGBwg=\x1b\\";
     for ([_]struct { scroll: []const u8, row: u16, source_y: u32, miss: []const u8, hit: []const u8 }{
@@ -3665,6 +3756,37 @@ test "terminal: clearing pending wrap does not admit a CSI line edit" {
         try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 7));
         try std.testing.expect(!(try terminal.feed(operation)).stateChanged());
         try std.testing.expectEqual(initial, terminal.observation().structuralEditGeneration());
+    }
+}
+
+test "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally" {
+    // Pinned Kitty screen.c:set_mode_from_const has no private mode 69,
+    // and its linebuf_insert/delete and index routines edit complete rows.
+    // Howl deliberately owns DECSLRM and applies it consistently to all
+    // four commands. Do not force incompatible per-reference behavior.
+    const cases = [_]struct { sequence: []const u8, inside: u21 }{
+        .{ .sequence = "\x1b[L", .inside = 0 },
+        .{ .sequence = "\x1b[M", .inside = 'C' },
+        .{ .sequence = "\x1b[S", .inside = 'C' },
+        .{ .sequence = "\x1b[T", .inside = 0 },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 6);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD");
+        try feed(&terminal, "\x1b[?69h\x1b[3;4s\x1b[2;3r\x1b[2;3H");
+        try std.testing.expect((try terminal.feed(case.sequence)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(3, 0));
+        for ([_]u16{ 0, 1, 4, 5 }) |col| {
+            try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(1, col));
+            try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(2, col));
+        }
+        try std.testing.expectEqual(case.inside, view.cellAt(1, 2));
+        try std.testing.expectEqual(case.inside, view.cellAt(1, 3));
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
     }
 }
 
