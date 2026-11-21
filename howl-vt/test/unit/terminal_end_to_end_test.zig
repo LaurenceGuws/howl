@@ -2147,6 +2147,75 @@ test "terminal: out of range Kitty underline style is ignored by Howl" {
     try std.testing.expect(!view.cellInfoAt(0, 3).attrs.underline);
 }
 
+test "terminal: pinned libvterm and iTerm2 unsupported underline styles differ from Howl" {
+    // Pinned libvterm pen.c sets single underline before parsing any
+    // colon substyle, and only recognizes styles 0..3. For 4:4, Howl
+    // instead understands dotted underline. The valid 4:3 agrees.
+    var vterm = try Terminal.init(std.testing.allocator, 1, 8);
+    defer vterm.deinit();
+    try feed(&vterm, "\x1b[4:4mA\x1b[4:3mB");
+    const dotted = vterm.semanticView(0).cellInfoAt(0, 0).attrs;
+    const curly = vterm.semanticView(0).cellInfoAt(0, 1).attrs;
+    try std.testing.expect(dotted.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dotted, dotted.underline_style);
+    try std.testing.expect(curly.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.curly, curly.underline_style);
+
+    // Pinned iTerm2 VT100GraphicRendition.m sets underline=YES first,
+    // even when it sees an unknown substyle. Howl's out-of-range 4:6
+    // deliberately leaves a previously disabled underline disabled.
+    var iterm = try Terminal.init(std.testing.allocator, 1, 8);
+    defer iterm.deinit();
+    try feed(&iterm, "\x1b[4:0m\x1b[4:");
+    try std.testing.expect((try iterm.feed("6mA\x1b[4:5mB\x1b[4:6mC")).stateChanged());
+    const view = iterm.semanticView(0);
+    try std.testing.expect(!view.cellInfoAt(0, 0).attrs.underline);
+    try std.testing.expect(view.cellInfoAt(0, 1).attrs.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, view.cellInfoAt(0, 1).attrs.underline_style);
+    try std.testing.expect(view.cellInfoAt(0, 2).attrs.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, view.cellInfoAt(0, 2).attrs.underline_style);
+}
+
+test "terminal: optional libvterm bold-highbright policy differs from native indexed SGR" {
+    // Pinned libvterm pen.c supports state->bold_is_highbright=1, which
+    // maps a basic indexed foreground to index+8 on either SGR ordering.
+    // Howl has no analogous mode and retains indexed 1 plus bold flag.
+    for ([_][]const u8{ "\x1b[31;1mA", "\x1b[1;31mA" }) |sequence| {
+        var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+        defer terminal.deinit();
+        try feed(&terminal, sequence);
+        const attr = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+        try std.testing.expect(attr.bold);
+        try std.testing.expectEqual(Terminal.Color.indexed(1), attr.fg);
+        // Explicit bright SGR remains fully supported as a distinct
+        // command even though opt-in bold-bright remapping is not.
+        try feed(&terminal, "\x1b[91mB");
+        const bright = terminal.semanticView(0).cellInfoAt(0, 1).attrs;
+        try std.testing.expect(bright.bold);
+        try std.testing.expectEqual(Terminal.Color.indexed(9), bright.fg);
+    }
+}
+
+test "terminal: pinned libvterm extended color wraps while Howl clamps overrange channels" {
+    // Frozen libvterm pen.c passes CSI values without clipping into
+    // vterm_color_indexed and vterm_color_rgb, whose uint8_t parameters
+    // wrap modulo 256. Howl intentionally saturates to 255 instead.
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b[38;5;2")).stateChanged());
+    try feed(&terminal, "56;48;2;256;257;258mA");
+    const overrange = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    try std.testing.expectEqual(Terminal.Color.indexed(255), overrange.fg);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(255, 255, 255), overrange.bg);
+    // Both references agree on in-range channels; the exceptional result
+    // is about parser policy, not a missing ordinary color capability.
+    try feed(&terminal, "\x1b[38;5;255;48;2;0;1;2mB");
+    const in_range = terminal.semanticView(0).cellInfoAt(0, 1).attrs;
+    try std.testing.expectEqual(Terminal.Color.indexed(255), in_range.fg);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(0, 1, 2), in_range.bg);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: SGR rapid blink is an exact fragmented no-op" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 8);

@@ -1014,10 +1014,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           libvterm.sgr.underline: {raw: "CSI 4[:style]|21 m", effect: enable or style underline,
-            conditions: styles 0..3 and SGR 21 double underline, howl: {support: full,
+            conditions: "Pinned libvterm supports styles 0..3, but also defaults unsupported 4:4 to single underline. Howl interprets the same wire input as dotted underline, which matches other terminals but not the pinned libvterm fallback.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "An invalid-colon-style fallback cannot match incompatible reference underlining policies without a requested terminal-specific emulation mode.",
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+                symbol: "terminal: pinned libvterm and iTerm2 unsupported underline styles differ from Howl"}}}
           libvterm.sgr.blink: {raw: "CSI 5 m", effect: enable blink, howl: {support: full,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1066,14 +1068,20 @@ references:
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          libvterm.sgr.fg_basic: {raw: "CSI 30..37 m", effect: set basic foreground, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          libvterm.sgr.fg_basic: {raw: "CSI 30..37 m", effect: set basic foreground,
+            conditions: "Pinned libvterm optional vterm_state_set_bold_highbright(1) maps basic foreground 30..37 to bright 8..15 while bold, independent of whether SGR 1 precedes or follows the colour. Howl does not expose that optional remapping and retains basic indexed colour plus bold.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The default palette semantics work, but pinned libvterm's explicit optional bold-highbright policy is not an owned Howl option; no new mode is implied.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: optional libvterm bold-highbright policy differs from native indexed SGR"}}}
           libvterm.sgr.fg_extended: {raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
-            howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
+            conditions: "Pinned libvterm uses uint8_t color parameters for 38;5;N and 38;2;R;G;B, so out-of-range values wrap mod 256. Howl instead saturates to 255. Both accept ordinary in-range colors.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl retains bounded saturating channel semantics rather than the pinned libvterm C 8-bit truncation on invalid color components.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm extended color wraps while Howl clamps overrange channels"}}}
           libvterm.sgr.fg_default: {raw: "CSI 39 m", effect: reset foreground, howl: {support: full,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1083,9 +1091,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           libvterm.sgr.bg_extended: {raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
-            howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
+            conditions: "Pinned libvterm passes background RGB components through uint8_t and truncates overrange 256/257/258 to 0/1/2. Howl clips them to 255/255/255; ordinary in-range RGB and palette forms agree.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native saturation is a bounded input policy; reproducing reference-only C integer truncation on malformed RGB channels is not required for common color support.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm extended color wraps while Howl clamps overrange channels"}}}
           libvterm.sgr.bg_default: {raw: "CSI 49 m", effect: reset background, howl: {support: full,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2248,10 +2259,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           iterm2.sgr.underline: {raw: "CSI 4[:style]|21 m", effect: enable or style underline,
-            conditions: styles 0..5 and SGR 21 double underline, howl: {support: full,
+            conditions: "Pinned iTerm2 unconditionally turns underline on for SGR 4, then applies recognized styles 0..5. Unknown 4:6 still underlines with the prior style; Howl deliberately treats it as a no-op, preserving off as off.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The current unknown underline-style policy matches neither this pinned iTerm2 fallback nor the pinned Kitty saturation, while ordinary 0..5 and 21 still work.",
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+                symbol: "terminal: pinned libvterm and iTerm2 unsupported underline styles differ from Howl"}}}
           iterm2.sgr.blink: {raw: "CSI 5 m", effect: enable blink, howl: {support: full,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
