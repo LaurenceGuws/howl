@@ -2493,15 +2493,21 @@ references:
           iterm2.dcs.sync_begin:
             raw: "DCS = 1 s ST"
             effect: begin synchronized update
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
-              path: howl-vt/test/unit/terminal_test.zig,
-              test: synchronized update DCS shares exact bounded mode state}}
+            conditions: "Pinned iTerm2 VT100DCSParser.m:execute compares raw parameterString to exactly 1, rejecting zero-padded spellings like 01 and 001. Howl dcsProcess accepts numeric parameters 01 and 001, while exact 1 remains compatible in both 7-bit and C1 DCS framing."
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native numeric DCS sync selection is broader than pinned iTerm2 exact-string admission; preserving one canonical numeric decoder rather than adding an iTerm-only spelling gate.",
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+                path: howl-vt/test/unit/terminal_test.zig,
+                symbol: "pinned iTerm2 synchronized DCS rejects padded parameter while Howl accepts numeric"}}
           iterm2.dcs.sync_end:
             raw: "DCS = 2 s ST"
             effect: end synchronized update
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
-              path: howl-vt/test/unit/terminal_test.zig,
-              test: synchronized update DCS shares exact bounded mode state}}
+            conditions: "Pinned iTerm2 VT100DCSParser.m:execute compares raw parameterString to exactly 2, rejecting zero-padded spellings like 02 and 002. Howl dcsProcess accepts numeric parameters 02 and 002, while exact 2 remains compatible in both 7-bit and C1 DCS framing."
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native numeric DCS sync selection is broader than pinned iTerm2 exact-string admission; preserving one canonical numeric decoder rather than adding an iTerm-only spelling gate.",
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+                path: howl-vt/test/unit/terminal_test.zig,
+                symbol: "pinned iTerm2 synchronized DCS rejects padded parameter while Howl accepts numeric"}}
           iterm2.dcs.decrqss: {raw: "DCS $ q Pt ST", effect: request terminal state string, relevance: query,
             conditions: "Howl reports iTerm2's seven request families including VT220 DECSCL and minimum-24-row
               DECSLPP; DECSLRM availability and retained SGR/cursor domains differ",
@@ -2627,10 +2633,13 @@ references:
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          iterm2.sgr.fg_basic: {raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          iterm2.sgr.fg_basic: {raw: "CSI 30..37|90..97 m", effect: set basic foreground,
+            conditions: "Pinned iTerm2 VT100GraphicRendition.m basic foreground selector does not clear hasDualModeFg after a prior 38:12/13 dual light/dark color, retaining dark-variant external attributes. Howl accepts ordinary indexed foreground without any second appearance-dependent slot.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary foreground color and default reset work, but pinned iTerm2 retains dual-mode dark-variant state across basic SGR selection that Howl intentionally does not represent.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "pinned iTerm2 basic SGR colors retain prior unsupported dark variant metadata"}}}
           iterm2.sgr.fg_extended: {raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
             conditions: "Pinned iTerm2 additionally supports 38:12 light/dark RGB and 38:13 light/dark indexed pairs; Howl ignores color modes 12/13 while common 2/5 work.",
             howl: {support: partial, disposition: excluded,
@@ -2643,9 +2652,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           iterm2.sgr.bg_basic: {raw: "CSI 40..47|100..107 m", effect: set basic background,
-            howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+            conditions: "Pinned iTerm2 VT100GraphicRendition.m basic background selector does not clear hasDualModeBg after a prior 48:12/13 dual light/dark color, retaining dark-variant external attributes. Howl accepts ordinary indexed background without any second appearance-dependent slot.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary background color and default reset work, but pinned iTerm2 retains dual-mode dark-variant state across basic SGR selection that Howl intentionally does not represent.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "pinned iTerm2 basic SGR colors retain prior unsupported dark variant metadata"}}}
           iterm2.sgr.bg_extended: {raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
             conditions: "Pinned iTerm2 accepts 48:12 and 48:13 light/dark background variants; Howl rejects those dual-mode subtypes but retains common RGB and indexed colors.",
             howl: {support: partial, disposition: excluded,
@@ -2699,8 +2711,9 @@ references:
               symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "ignored and unknown DEC modes preserve pending wrap and grid state"}}}
           iterm2.mode.decscnm: {raw: "CSI ? 5 h|l", effect: toggle reverse video,
-            conditions: Howl additionally cancels pending wrap at the CSI boundary, howl: {support: partial,
-              disposition: excluded, rationale: *howl_mode_policy_difference,
+            conditions: "Pinned iTerm2 VT100Terminal.m::setReverseVideo always marks the product dirty even on repeated equal DECSET/DECRST 5; executeDecSetReset also unconditionally requests terminalNeedsRedraw. Howl Terminal.setDecMode updates global reverse presentation on a transition only and preserves pending wrap across a repeated setting; it does not produce a redundant host redraw.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl deliberately reports semantic transitions rather than repeating iTerm2 product-host redraw callbacks when reverseVideo is unchanged.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
@@ -2709,18 +2722,19 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           iterm2.mode.decawm: {raw: "CSI ? 7 h|l", effect: toggle autowrap,
-            conditions: Howl additionally cancels pending wrap at the CSI boundary, howl: {support: partial,
-              disposition: excluded, rationale: *howl_mode_policy_difference,
+            conditions: "Pinned iTerm2 VT100Terminal.m::setWraparoundMode calls terminalWraparoundModeDidChangeTo only when the mode transitions. Howl also skips repeated selection, but Screen.applyScreen(.auto_wrap=false) explicitly cancels an already pending wrap on disable, whereas the iTerm2 mode setter and delegate only assign wraparoundMode. Ordinary enabled wrap and repeats remain supported.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pending exact-fill wrap cancellation when disabling DECAWM is a native Screen choice; reference host wraparound property policy is not an identical state machine.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           iterm2.mode.decarm: {raw: "CSI ? 8 h|l", effect: toggle autorepeat,
-            conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
-              default-on lifetime, mode query, and save or restore match",
-            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+            conditions: "Pinned iTerm2 VT100Terminal.m::setAutorepeatMode unconditionally marks product dirty on repeated identical assignments. Howl Terminal.setDecMode models DECARM as a direct input encoding mode and considers repeated assignments idempotent, preserving pending wrap. Physical host key-repeat and redraw policy differ.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl implements typed repeat suppression and mode lifetime, but reference host dirtiness and platform repeat policy are not reproduced.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
           iterm2.mode.mouse_x10:
             raw: "CSI ? 9 h|l"
             effect: accept legacy mouse mode without implementation
@@ -2902,17 +2916,17 @@ references:
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: terminal paste encoding is gated by DECSET 2004}}}
           iterm2.mode.synchronized_output: {raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode,
-              proof: {path: howl-vt/test/unit/terminal_test.zig,
-                test: synchronized update DCS shares exact bounded mode state}}}
-          iterm2.mode.dark_mode_dsr: {raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
-            conditions: "Howl retains, reports, saves, and resets the mode but uses a fixed dark executable preference,
-              so no unsolicited preference transition occurs; Howl additionally cancels pending wrap at its boundary.",
-            relevance: extension, howl: {support: partial, disposition: excluded,
-              rationale: *howl_report_policy_difference,
-              residual: Howl deliberately uses one fixed dark executable preference rather than observing system theme changes.,
-              source: howl-vt/src/terminal.zig,
-              symbol: Terminal.reportColorSchemePreference, proof: {
+            conditions: "Pinned iTerm2 VT100Terminal.m::setSynchronizedUpdates sets dirty and calls terminalSynchronizedUpdate after every CSI 2026 assignment, even repeated equal h/l. Howl Terminal.setDecMode changes only canonical state on a transition; redundant assignments emit no callback. Initial enable and disable remain supported.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps direct transition-only synchronized-output state, not pinned iTerm2 redundant host callback effects.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_test.zig,
+                symbol: "pinned iTerm2 DEC 2026 repeats the host sync callback unlike Howl"}}}
+          iterm2.mode.dark_mode_dsr: {raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report, relevance: "extension",
+            conditions: "Pinned iTerm2 VT100Terminal.m::setSendUnsolicitedDarkModeDSR unconditionally marks product dirty even on repeated DEC mode 2031, then host appearance changes may generate unsolicited theme replies. Howl stores a bounded mode and has deterministic color preference queries without a live host appearance subscription; passive toggles do not consume pending wrap.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl supports explicit mode state and deterministic replies, not iTerm2 host-driven appearance notifications or redundant product dirty events.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.reportColorSchemePreference, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty caller-coordinated modes retain exact state reports and color notifications"}}}
           iterm2.mode.resize_notifications: {raw: "CSI ? 2048 h|l", effect: toggle resize notifications,

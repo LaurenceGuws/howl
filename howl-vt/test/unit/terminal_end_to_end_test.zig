@@ -2557,6 +2557,31 @@ test "terminal: pinned iTerm2 dual-mode colors are explicit unsupported SGR subm
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
+test "pinned iTerm2 basic SGR colors retain prior unsupported dark variant metadata" {
+    // Pinned iTerm2 VT100GraphicRendition.m applies basic FG and BG in
+    // its default branch without clearing hasDualModeFg/hasDualModeBg.
+    // After an accepted 38:12/48:13, a basic color still carries the
+    // retained dark variant in external attributes. Howl has no dual-
+    // mode attributes, so subsequent basic colors remain single-valued.
+    var terminal = try Terminal.init(std.testing.allocator, 1, 5);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b[38:12:10:20:30:200:210:220m")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[48:13:1:2m")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[31;44mA")).stateChanged());
+    const basic = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    try std.testing.expectEqual(Terminal.Color.indexed(1), basic.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(4), basic.bg);
+    try std.testing.expect((try terminal.feed("\x1b[90;107mB")).stateChanged());
+    const bright = terminal.semanticView(0).cellInfoAt(0, 1).attrs;
+    try std.testing.expectEqual(Terminal.Color.indexed(8), bright.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(15), bright.bg);
+    try std.testing.expect((try terminal.feed("\x1b[39;49mC")).stateChanged());
+    const reset = terminal.semanticView(0).cellInfoAt(0, 2).attrs;
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, reset.fg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.bg, reset.bg);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: SGR rapid blink is an exact fragmented no-op" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 8);

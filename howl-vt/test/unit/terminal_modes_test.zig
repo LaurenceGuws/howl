@@ -2818,6 +2818,25 @@ test "DEC screen origin and autowrap modes own exact repeated command effects" {
     try std.testing.expect(!(try terminal.feed("\x1b[?7h")).stateChanged());
 }
 
+test "pinned iTerm2 passive mode setters mark dirty on repeat unlike Howl" {
+    // Pinned VT100Terminal.m setReverseVideo, setAutorepeatMode, and
+    // setSendUnsolicitedDarkModeDSR always set dirty, even on identical
+    // values. Howl owns only observable state transitions, preserving
+    // pending exact-fill wrap across those passive commands.
+    for ([_][]const u8{ "\x1b[?5h", "\x1b[?8h", "\x1b[?2031h" }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("ABCD")).stateChanged());
+        const first = try terminal.feed(command);
+        try std.testing.expect(first.stateChanged() or std.mem.eql(u8, command, "\x1b[?8h"));
+        const before = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expect((try terminal.feed("Z")).stateChanged());
+        try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(1, 0));
+    }
+}
+
 test "Kitty DECSCNM toggles global reverse screen without consuming pending wrap" {
     // Pinned kitty/screen.c:set_mode_from_const marks presentation dirty
     // on a transition, but it neither moves the cursor nor changes its

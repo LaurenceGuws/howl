@@ -571,6 +571,47 @@ test "synchronized update DCS shares exact bounded mode state" {
     try std.testing.expect(!vt.synchronizedOutput());
 }
 
+test "pinned iTerm2 synchronized DCS rejects padded parameter while Howl accepts numeric" {
+    // Pinned iTerm2 VT100DCSParser.m::execute checks the raw parameter
+    // string against exactly "1" and "2". With 01/02 it generates no
+    // DCS_BEGIN/END_SYNCHRONIZED_UPDATE. Howl parses u16 params, so
+    // zero-padded 01/02 work, with matching 7-bit and C1 framing.
+    var vt = try Terminal.init(std.testing.allocator, 2, 8);
+    defer vt.deinit();
+    try std.testing.expect(!(try vt.feed("\x1bP=01s")).stateChanged());
+    try std.testing.expect((try vt.feed("\x1b\\")).stateChanged());
+    try std.testing.expect(vt.synchronizedOutput());
+    try std.testing.expect(!(try vt.feed("\x90=001s\x9c")).stateChanged());
+    try std.testing.expect((try vt.feed("\x90=02s\x9c")).stateChanged());
+    try std.testing.expect(!vt.synchronizedOutput());
+    try std.testing.expect(!(try vt.feed("\x1bP=002s\x1b\\")).stateChanged());
+    try std.testing.expect((try vt.feed("\x1bP=1s\x1b\\")).stateChanged());
+    try std.testing.expect(vt.synchronizedOutput());
+    try std.testing.expect((try vt.feed("\x1bP=2s\x1b\\")).stateChanged());
+    try std.testing.expect(!vt.synchronizedOutput());
+    try std.testing.expectEqualStrings("", vt.replyBytes());
+}
+
+test "pinned iTerm2 DEC 2026 repeats the host sync callback unlike Howl" {
+    // Pinned VT100Terminal.m::setSynchronizedUpdates invokes the host
+    // terminalSynchronizedUpdate callback after every assignment, even
+    // repeated equal DECSET/DECRST. Howl reports real transitions only;
+    // both standard first-on and first-off wire forms still work.
+    var vt = try Terminal.init(std.testing.allocator, 2, 8);
+    defer vt.deinit();
+    try std.testing.expect((try vt.feed("\x1b[?2026h")).stateChanged());
+    try std.testing.expect(vt.synchronizedOutput());
+    const held = vt.semanticSequence();
+    try std.testing.expect(!(try vt.feed("\x1b[?2026h")).stateChanged());
+    try std.testing.expectEqual(held, vt.semanticSequence());
+    try std.testing.expect((try vt.feed("\x1b[?2026l")).stateChanged());
+    try std.testing.expect(!vt.synchronizedOutput());
+    const released = vt.semanticSequence();
+    try std.testing.expect(!(try vt.feed("\x1b[?2026l")).stateChanged());
+    try std.testing.expectEqual(released, vt.semanticSequence());
+    try std.testing.expectEqualStrings("", vt.replyBytes());
+}
+
 test "terminal visible view projects scrollback rows" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 2, 4);
     defer vt.deinit();
