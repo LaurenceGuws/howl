@@ -1714,6 +1714,46 @@ test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
 }
 
+test "terminal: DECFRA replaces only graphics in the accepted origin rectangle" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+
+    // The admitted image at the target cell must disappear even when the
+    // replacement glyph is already identical, without retiring other images.
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+    try feed(&terminal, "\x1b[1;1HO\x1b[1;1H" ++ image ++ "\x1b[2;3HX\x1b[2;3H" ++ image);
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(1).?.row);
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(1).?.col);
+    const original_content_generation = terminal.images(0).content_generation;
+
+    // DECOM and DECSLRM make 1,1 address the target at physical row 2,
+    // column 3. An inverted rectangle or invalid fill character is inert.
+    try feed(&terminal, "\x1b[2;3r\x1b[?69h\x1b[3;6s\x1b[?6h");
+    const initial_sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[88;3;3;2;2$x\x1b[31;1;1;1;1$x")).stateChanged());
+    try std.testing.expectEqual(initial_sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+    try std.testing.expectEqual(original_content_generation, terminal.images(0).content_generation);
+
+    // Fragmented parser completion must revoke only the overwritten placement.
+    try std.testing.expect(!(try terminal.feed("\x1b[88;1;1;")).stateChanged());
+    try std.testing.expect((try terminal.feed("1;1$x")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 'O'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.col);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(original_content_generation, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+}
+
 test "terminal: DEC origin rectangle erasure moves graphics with the accepted Screen rectangle" {
     for ([_][]const u8{ "\x1b[1;1;1;1$z", "\x1b[1;1;1;1$\x7b" }) |erase| {
         var terminal = try Terminal.init(std.testing.allocator, 4, 8);

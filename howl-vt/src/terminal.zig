@@ -3748,7 +3748,11 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const changed = screen.eraseRect(area, true);
             return eraseGraphicsRect(vt, screen, area) or changed;
         },
-        .rect_fill => |request| return vt.screen_state.active().fillRect(request.area, request.ch),
+        .rect_fill => |request| {
+            const screen = vt.screen_state.active();
+            const changed = screen.fillRect(request.area, request.ch);
+            return eraseGraphicsRect(vt, screen, request.area) or changed;
+        },
         .rect_copy => |request| return vt.screen_state.active().copyRect(request),
         .rect_attrs_change => |request| return vt.screen_state.active().changeRectAttrs(
             request.area,
