@@ -1503,6 +1503,45 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
 }
 
+test "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try feed(&terminal, "\x1b]12;#112233\x1b\\\x1b]21;cursor_text=#445566\x1b\\");
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x11, .g = 0x22, .b = 0x33 }), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x44, .g = 0x55, .b = 0x66 }), terminal.presentation().cursor_text);
+
+    // The canonical OSC 21 parser sees every key; the old separate cursor
+    // action parser only sees the first key and leaves stale Screen shadows.
+    try feed(&terminal, "\x1b]21;foreground=#010203;cursor=#778899;cursor_text=#aabbcc\x1b\\");
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x77, .g = 0x88, .b = 0x99 }), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0xaa, .g = 0xbb, .b = 0xcc }), terminal.presentation().cursor_text);
+
+    try feed(&terminal, "\x1b[?1049h");
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x77, .g = 0x88, .b = 0x99 }), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0xaa, .g = 0xbb, .b = 0xcc }), terminal.presentation().cursor_text);
+
+    // Reapplying identical values and querying them must not turn a stale
+    // cursor projection into a semantic update.
+    try std.testing.expect(!(try terminal.feed("\x1b]21;cursor=#778899;cursor_text=#aabbcc\x1b\\")).stateChanged());
+    const stable_cursor = terminal.presentation().cursor;
+    try feed(&terminal, "\x1b]21;cursor=?;cursor_text=?\x1b\\");
+    try std.testing.expectEqual(stable_cursor, terminal.presentation().cursor);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    try feed(&terminal, "\x1b]21;cursor;cursor_text\x1b\\");
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor_text);
+    try feed(&terminal, "\x1b[?1049l");
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor_text);
+    try feed(&terminal, "\x1b]12;#0a0b0c\x1b\\");
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 10, .g = 11, .b = 12 }), terminal.presentation().cursor);
+    try feed(&terminal, "\x1b]112\x1b\\");
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
+}
+
 test "xterm OSC colors set query and reset palette and dynamic colors" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

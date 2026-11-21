@@ -3562,21 +3562,24 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             return !std.meta.eql(before, cursor.*);
         },
 
-        .color_control => |control| {
-            const primary_before = vt.screen_state.primary.cursor;
-            const alternate_before = vt.screen_state.alternate.cursor;
-            errdefer {
-                vt.screen_state.primary.cursor = primary_before;
-                vt.screen_state.alternate.cursor = alternate_before;
-            }
-            if (color_control.cursorAction(control)) |cursor_event| {
-                vt.screen_state.primary.applyScreen(cursor_event);
-                vt.screen_state.alternate.applyScreen(cursor_event);
-            }
+        .color_control => {
+            // The color owner parses every OSC 21 key once and commits
+            // transactionally. Project only the committed cursor values;
+            // independently parsing the first key here left stale per-bank
+            // cursor overrides masking the new canonical color.
+            const cursor_before = vt.properties.colors.cursor;
+            const text_before = vt.properties.colors.cursor_text;
             const semantic_changed = try applySemanticEvent(vt, event);
-            return semantic_changed or
-                !std.meta.eql(primary_before, vt.screen_state.primary.cursor) or
-                !std.meta.eql(alternate_before, vt.screen_state.alternate.cursor);
+            const colors = &vt.properties.colors;
+            if (!std.meta.eql(cursor_before, colors.cursor)) {
+                vt.screen_state.primary.cursor.cursor_color = colors.cursor;
+                vt.screen_state.alternate.cursor.cursor_color = colors.cursor;
+            }
+            if (!std.meta.eql(text_before, colors.cursor_text)) {
+                vt.screen_state.primary.cursor.cursor_text_color = colors.cursor_text;
+                vt.screen_state.alternate.cursor.cursor_text_color = colors.cursor_text;
+            }
+            return semantic_changed;
         },
         .iterm_set_colors => |payload| {
             const changed = color_control.applyItermSetColors(

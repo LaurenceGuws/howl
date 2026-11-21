@@ -1424,3 +1424,42 @@ Zig and project audits, Nu protocol/inventory validation, Zig format
 and diff gates all passed. No installed binary or running process
 changed. After the two corrections the catalogue has 277 full,
 338 partial, 48 missing and nine unassessed records (672 total).
+
+## OSC 21 cursor colours derive from committed canonical colour state (21 November 2026)
+
+The 10x10 OSC colour intake 07 exposed a singular-ownership
+violation in Kitty OSC 21 mixed-key updates. Frozen Kitty
+d4106ef2db687579a69fefc949a6dc1b662f3ca8,
+kitty/window.py:color_control parses the semicolon-separated keys
+in one pass. Howl's color_control.handleKittyControl already did
+likewise for canonical ColorState and replies, but Terminal also
+reparsed OSC 21 through cursorAction, which understood only the
+first cursor key. If an older OSC 12 cursor screen override existed,
+OSC 21 foreground=...;cursor=...;cursor_text=... committed the
+new canonical colours while the old Screen cursor shadow still
+masked them. A bare cursor/cursor_text reset could also leave
+stale shadows.
+
+Terminal now invokes the colour owner transactionally and projects
+only actually changed canonical cursor and cursor-text colours into
+both screen banks *after* successful commitment. The duplicate
+cursorAction parser, helper functions and test were deleted from
+color_control.zig, with no new mutable owner or shadow state.
+The resulting implementation retains existing OSC 12/112 behavior
+and the previous all-or-nothing reply admission contract.
+
+The terminal test was red before the fix and green afterward.
+It covers a pre-existing OSC 12 cursor override, later-key mixed
+OSC 21 cursor and text values, simultaneous primary/alternate bank
+projection, repeated values and read-only queries, bare key reset,
+and OSC 12/112 transitions after reset. VT Debug/ReleaseFast, root
+ReleaseFast graph, complete Zig/project audits, protocol validator,
+formatting and diff checks passed.
+
+The Kitty OSC 21 catalogue record remains partial/deferred. Pinned
+Kitty merges multi-key queries into one OSC reply using eight-bit
+RGB components; Howl currently returns multiple sixteen-bit replies
+and does not own transparent-alpha, visual-bell and host opacity
+or refresh state. The sole record's conditions and test evidence
+were updated without changing the support count or pin. This fixes
+a real colour projection bug without claiming full Kitty parity.

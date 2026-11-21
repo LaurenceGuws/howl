@@ -2,12 +2,11 @@
 //!
 //! Persistent color storage/defaults live in `properties.zig`. This owner
 //! interprets xterm/Kitty/iTerm color controls, mutates borrowed ColorState,
-//! emits exact bounded replies, and projects cursor-color Screen actions.
+//! emits exact bounded replies. Terminal projects only committed cursor state.
 
 const std = @import("std");
 const properties = @import("properties.zig");
 const replies = @import("replies.zig");
-const Screen = @import("screen.zig").Screen;
 
 const Rgb = properties.Rgb;
 const KittyColorState = properties.ColorState;
@@ -231,15 +230,6 @@ fn resetXtermDynamicColor(colors: *TerminalColorState, command: u16, payload: []
     resetDynamicColor(colors, key, defaults);
 }
 
-// Converts a cursor color-control request into a semantic event when applicable.
-/// Projects cursor-specific color controls into canonical Screen actions.
-pub fn cursorAction(command: Command) ?Screen.Action {
-    if (command.command == 12) return cursorColorEventFromDynamicPayload(command.payload, .cursor);
-    if (command.command == 112 and command.payload.len == 0) return .{ .cursor_color = null };
-    if (command.command == 21) return cursorColorEventFromKittyPayload(command.payload);
-    return null;
-}
-
 fn parseColor(value: []const u8) ?Rgb {
     const color_text = stripAlpha(std.mem.trim(u8, value, " \t\r\n"));
     if (color_text.len == 0) return null;
@@ -412,39 +402,6 @@ fn dynamicKeyForCommand(command: u16) ?DynamicKey {
         17 => .selection_background,
         18 => .tektronix_cursor,
         19 => .selection_foreground,
-        else => null,
-    };
-}
-
-fn cursorColorEventFromDynamicPayload(payload: []const u8, key: SpecialKey) ?Screen.Action {
-    var parts = std.mem.splitScalar(u8, payload, ';');
-    const value = parts.next() orelse return null;
-    if (std.mem.eql(u8, value, "?")) return null;
-    return cursorColorEventForValue(key, value);
-}
-
-fn cursorColorEventFromKittyPayload(payload: []const u8) ?Screen.Action {
-    const split = std.mem.indexOfScalar(u8, payload, '=') orelse return null;
-    const key_text = payload[0..split];
-    const value = payload[split + 1 ..];
-    const key = specialColorKey(key_text) orelse return null;
-    switch (key) {
-        .cursor, .cursor_text => return cursorColorEventForValue(key, value),
-        .foreground, .background, .selection_background, .selection_foreground => return null,
-    }
-}
-
-fn cursorColorEventForValue(key: SpecialKey, value: []const u8) ?Screen.Action {
-    if (std.mem.eql(u8, value, "?")) return null;
-    if (value.len == 0) return switch (key) {
-        .cursor => .{ .cursor_color = null },
-        .cursor_text => .{ .cursor_text_color = null },
-        else => null,
-    };
-    const rgb = parseColor(value) orelse return null;
-    return switch (key) {
-        .cursor => .{ .cursor_color = rgb },
-        .cursor_text => .{ .cursor_text_color = rgb },
         else => null,
     };
 }
@@ -730,22 +687,6 @@ test "color control set query and transaction rollback are exact" {
     );
     try std.testing.expectEqual(before, colors);
     try std.testing.expectEqual(@as(u32, replies.max_bytes - 1), output.len());
-}
-
-test "cursor color action mutates canonical cursor owner" {
-    var screen = Screen.init(2, 2);
-
-    const cursor_event = cursorAction(.{ .command = 12, .payload = "#010203" }).?;
-    screen.applyScreen(.{ .cursor_color = cursor_event.cursor_color });
-    try std.testing.expectEqual(@as(?Rgb, .{ .r = 1, .g = 2, .b = 3 }), screen.cursor.cursor_color);
-
-    const cursor_text_event = cursorAction(.{ .command = 21, .payload = "cursor_text=#040506" }).?;
-    screen.applyScreen(.{ .cursor_text_color = cursor_text_event.cursor_text_color });
-    try std.testing.expectEqual(@as(?Rgb, .{ .r = 4, .g = 5, .b = 6 }), screen.cursor.cursor_text_color);
-
-    const reset_event = cursorAction(.{ .command = 112, .payload = "" }).?;
-    screen.applyScreen(.{ .cursor_color = reset_event.cursor_color });
-    try std.testing.expectEqual(@as(?Rgb, null), screen.cursor.cursor_color);
 }
 
 test "iTerm SetColors remains presentation-state only" {

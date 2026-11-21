@@ -3712,12 +3712,17 @@ references:
             raw: "OSC 21 ; Pt (BEL|ST)"
             effect: query set or reset terminal colors
             conditions: >-
-              Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB states; transparent
-              backgrounds, visual-bell color, opacity, and Kitty host refresh policy remain outside this subset.
+              Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB states. Mixed-key
+              cursor changes now project from one committed canonical color parse into both screen banks;
+              pinned Kitty queries combine keys into one OSC reply using 8-bit RGB while Howl emits separate
+              16-bit replies. Transparent backgrounds, visual-bell color, opacity and host refresh remain outside.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Pinned Kitty's combined query reply, eight-bit RGB spelling, transparent alpha,
+                visual bell and host refresh behavior remain unqualified. The former duplicate cursor-action
+                parse was deleted after red/green mixed-key projection proof.",
               source: howl-vt/src/color_control.zig, symbol: handleKittyControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "kitty OSC 21 sets queries and resets terminal colors"}}
+              symbol: "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors"}}
           kitty.osc.clipboard:
             raw: OSC 52 ; Pc ; Pd (BEL|ST)
             effect: clipboard transfer
