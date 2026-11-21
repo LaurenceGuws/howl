@@ -1466,7 +1466,7 @@ pub const Plane = struct {
                 const prior_offset = retained.row - top;
                 if (prior_offset < count) {
                     const clipped = @as(u64, count) - prior_offset;
-                    if (!clip_margins or clipped >= retained.rows or !trimScrolledPlacement(retained, clipped, true)) {
+                    if (clipped >= retained.rows or !trimScrolledPlacement(retained, clipped, true)) {
                         self.removePlacement(index);
                         changed = true;
                         continue;

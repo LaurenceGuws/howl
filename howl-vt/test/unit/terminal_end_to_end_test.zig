@@ -3827,6 +3827,91 @@ test "terminal: CSI row scrolls respect horizontal margins for graphics as for c
     }
 }
 
+test "terminal: no-history full-screen scroll retains the visible tail of a multirow image" {
+    // Pinned Kitty's no-margin grman_scroll_images keeps an image whose
+    // anchor leaves the viewport if part of it still intersects the screen.
+    // Howl's unsigned absolute row model must represent only the visible
+    // remainder without retaining an impossible negative-row anchor.
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 0);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[1;1H\x1b_Ga=T,f=32,s=1,v=2,i=60,C=1,q=2;AQIDBAUGBwg=\x1b\\");
+    const prior = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), prior.placementCount());
+    try std.testing.expectEqual(@as(u16, 0), prior.placement(0).?.row);
+    try std.testing.expectEqual(@as(u32, 2), prior.placement(0).?.pixel_height);
+    const prior_content = prior.content_generation;
+    try feed(&terminal, "\x1b[3;1H\n");
+    const after = terminal.images(0);
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+    try std.testing.expectEqual(@as(usize, 1), after.placementCount());
+    const remaining = after.placement(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 0), remaining.row);
+    try std.testing.expectEqual(@as(u32, 1), remaining.source_y);
+    try std.testing.expectEqual(@as(u32, 1), remaining.source_height);
+    try std.testing.expectEqual(@as(u32, 1), remaining.pixel_height);
+    try std.testing.expectEqual(prior_content, after.content_generation);
+    // The erased leading row cannot still be hit by a Y deletion.
+    try std.testing.expect(!(try terminal.feed("\x1b_Ga=d,d=Y,y=2\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b_Ga=d,d=Y,y=1\x1b\\")).stateChanged());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+}
+
+test "terminal: successive no-history full-screen scrolls clip each surviving image row" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 0);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[1;1H\x1b_Ga=T,f=32,s=1,v=3,i=61,C=1,q=2;AQIDBAUGBwgJCgsM\x1b\\");
+    const initial = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), initial.placementCount());
+    const data_generation = initial.content_generation;
+    for ([_]struct { source_y: u32, height: u32 }{
+        .{ .source_y = 1, .height = 2 },
+        .{ .source_y = 2, .height = 1 },
+    }) |case| {
+        try feed(&terminal, "\x1b[3;1H\n");
+        const images = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+        try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+        const placement = images.placement(0) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(u16, 0), placement.row);
+        try std.testing.expectEqual(case.source_y, placement.source_y);
+        try std.testing.expectEqual(case.height, placement.source_height);
+        try std.testing.expectEqual(case.height, placement.pixel_height);
+        try std.testing.expectEqual(data_generation, images.content_generation);
+    }
+    try feed(&terminal, "\x1b[3;1H\n");
+    const final = terminal.images(0);
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(usize, 1), final.imageCount());
+    try std.testing.expectEqual(@as(usize, 0), final.placementCount());
+    try std.testing.expectEqual(data_generation, final.content_generation);
+}
+
+test "terminal: retained history scroll keeps full image source and projects negative viewport top" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[1;1H\x1b_Ga=T,f=32,s=1,v=3,i=62,C=1,q=2;AQIDBAUGBwgJCgsM\x1b\\");
+    const data_generation = terminal.images(0).content_generation;
+    try feed(&terminal, "\x1b[3;1H\n");
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).placement(0) == null);
+    const historical = terminal.images(1).placement(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 0), historical.source_y);
+    try std.testing.expectEqual(@as(u32, 3), historical.source_height);
+    try std.testing.expectEqual(@as(u32, 3), historical.pixel_height);
+    try std.testing.expectEqual(data_generation, terminal.images(0).content_generation);
+    var iterator = terminal.images(0).placementIterator();
+    const visible = iterator.next() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(i128, -1), visible.top);
+    try std.testing.expectEqual(@as(u32, 0), visible.placement.source_y);
+    try std.testing.expectEqual(@as(u32, 3), visible.placement.pixel_height);
+    try std.testing.expect(iterator.next() == null);
+}
+
 test "terminal: full-screen LF scrolls graphics both with and without retained history" {
     for ([_]u16{ 0, 2 }) |history_capacity| {
         var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, history_capacity);
