@@ -354,18 +354,27 @@ references:
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
-          libvterm.c1.ri: {raw: "\\x8d", effect: reverse index, relevance: core, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
+          libvterm.c1.ri: {raw: "\\x8d", effect: reverse index, relevance: core,
+            conditions: "Pinned libvterm src/parser.c dispatches 0x8d to on_control(RI) only when vt->mode.utf8 is false. With UTF-8 enabled raw 0x8d is routed to the text callback and does not reverse-index. Howl accepts it under UTF-8 and scrolls the bounded region; ESC M works in both.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The pinned per-UTF-8 raw-C1 admission gate is incompatible with Howl broad raw-C1 handling; valid reverse index and 7-bit alias work.",
+              source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm UTF8 C1 RI admission differs from Howl"}}}
           libvterm.c1.ss2: {raw: "ESC N | \\x8e", effect: single shift G2, relevance: charset,
-            howl: {support: full, source: howl-vt/src/charset.zig, symbol: State.selectSingleShift, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: "Pinned libvterm src/state.c on_control handles raw 0x8e only when parser.c permits C1 outside UTF-8. Pinned on_escape lacks an ESC N handler, although Howl accepts both raw 0x8e under UTF-8 and ESC N; both Howl forms select G2 for exactly one graphic.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The shared G2 selection works for raw C1 outside the pinned UTF-8 gate, but pinned libvterm does not implement the ESC N alias or admit raw C1 under UTF-8.",
+              source: howl-vt/src/charset.zig, symbol: State.selectSingleShift, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm SS2 C1 UTF8 gate and ESC N alias differ from Howl"}}}
           libvterm.c1.ss3: {raw: "ESC O | \\x8f", effect: single shift G3, relevance: charset,
-            howl: {support: full, source: howl-vt/src/charset.zig, symbol: State.selectSingleShift, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: "Pinned libvterm src/state.c on_control handles raw 0x8f only when parser.c permits C1 outside UTF-8. Pinned on_escape lacks an ESC O handler, although Howl accepts both raw 0x8f under UTF-8 and ESC O; both Howl forms select G3 for exactly one graphic.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The shared G3 selection works for raw C1 outside the pinned UTF-8 gate, but pinned libvterm does not implement the ESC O alias or admit raw C1 under UTF-8.",
+              source: howl-vt/src/charset.zig, symbol: State.selectSingleShift, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned libvterm SS3 C1 UTF8 gate and ESC O alias differ from Howl"}}}
       on_escape:
         source: state.c
         line: 619

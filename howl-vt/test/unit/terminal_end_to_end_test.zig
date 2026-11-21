@@ -1410,6 +1410,60 @@ test "terminal: Kitty CBT traverses only active-bank stops and clamps exact coun
     try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
 }
 
+test "terminal: pinned libvterm UTF8 C1 RI admission differs from Howl" {
+    // Pinned libvterm src/parser.c c1_allowed = !vt->mode.utf8. When its
+    // UTF-8 mode is enabled, raw 0x8d is sent to the text callback, not
+    // src/state.c::on_control(RI). Howl accepts raw RI even in UTF-8.
+    for ([_][]const u8{ "\x8d", "\x1bM" }) |ri| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b%G\x1b[2;3r\x1b[2;1HBBBB\x1b[3;1HCCCC\x1b[2;3H");
+        try std.testing.expect((try terminal.feed(ri)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
+    }
+}
+
+test "terminal: pinned libvterm SS2 C1 UTF8 gate and ESC N alias differ from Howl" {
+    // In pinned libvterm src/state.c on_control handles only raw 0x8e
+    // for SS2, while on_escape has no ESC N case. The C1 is disabled
+    // by its parser when vterm_set_utf8(vt, 1) is active.
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b*0\x1b%G");
+    try std.testing.expect((try terminal.feed("\x8e")).stateChanged());
+    try feed(&terminal, "qq");
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expect(!(try terminal.feed("\x1b")).stateChanged());
+    try std.testing.expect((try terminal.feed("N")).stateChanged());
+    try feed(&terminal, "qq");
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 3));
+}
+
+test "terminal: pinned libvterm SS3 C1 UTF8 gate and ESC O alias differ from Howl" {
+    // Pinned libvterm has on_control(0x8f) but no on_escape ESC O
+    // selector and disables C1 dispatch in UTF-8. Howl implements both
+    // forms with one-shot G3 charset mapping.
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b+A\x1b%G");
+    try std.testing.expect((try terminal.feed("\x8f")).stateChanged());
+    try feed(&terminal, "##");
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expect(!(try terminal.feed("\x1b")).stateChanged());
+    try std.testing.expect((try terminal.feed("O")).stateChanged());
+    try feed(&terminal, "##");
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(0, 3));
+}
+
 test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
     const allocator = std.testing.allocator;
     const controls = [_]struct {
