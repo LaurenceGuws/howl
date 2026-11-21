@@ -1370,3 +1370,23 @@ support census moves from 279 full / 335 partial / 48 missing /
 Full root ReleaseFast tests/audits, Nu protocol validation and diff
 checks passed. This is a narrowly qualified advisory capability,
 not a claim of Kitty-equivalent storage-pressure performance.
+
+## libvterm IND remains partial after the corrected newline-mode bug (21 November 2026)
+
+Independent reconciliation of 10x10 intake 01 confirmed frozen
+libvterm parser.c at 934bc2fb21800ac3458a499df8820ca5fb45fd3
+only executes a raw C1 0x84 IND byte when c1_allowed, which is false
+under UTF-8. The hoisted ESC D alias remains accepted in UTF-8 mode.
+Howl parser.zig accepts raw C1 controls in both UTF-8 and Latin-1
+modes as an intentional bounded parser contract.
+
+The earlier runtime fix ebca049 correctly separated IND from LF
+under ANSI newline mode, and its positive terminal-stream proof is
+green. It did not make the raw-C1 admission policy equal to libvterm.
+Therefore the historical libvterm.c1.ind support claim was corrected
+from full to partial/excluded, with precise 8-bit admission residual.
+This is an independent compatibility classification adjustment, not
+a regression from ebca049. Changing the shared raw-C1 policy requires
+cross-reference consideration and cannot follow from this one row.
+Root ReleaseFast check/test/audits, protocol validator and diff gates
+remained green.

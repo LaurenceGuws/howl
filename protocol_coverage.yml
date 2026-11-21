@@ -282,10 +282,20 @@ references:
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects"}}}
-          libvterm.c1.ind: {raw: "\\x84", effect: index, relevance: compatibility, howl: {support: full,
+          libvterm.c1.ind: {raw: "\\x84", effect: index, relevance: compatibility,
+            conditions: "Pinned libvterm parser.c admits raw C1 IND only when UTF-8 mode is disabled,
+              while its ESC D alias is always accepted. Howl accepts raw C1 in either text decoding mode.
+              The earlier LNM incorrectly changed IND's column, fixed in ebca049.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl deliberately accepts raw C1 control bytes under UTF-8 alongside 7-bit
+                ESC aliases; pinned libvterm routes them to text decoding until UTF-8 is disabled.
+                Changing that shared parser policy would affect other terminal protocol families.",
+              residual: "IND now preserves column independently of ANSI LNM and shares the existing
+                bounded history/scroll owner, but raw 8-bit C1 admission in default UTF-8 still differs
+                from the pinned libvterm control parser.",
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
+              symbol: "terminal: IND ignores ANSI newline mode while LF and NEL retain their own column rules"}}}
           libvterm.c1.nel: {raw: "\\x85", effect: next line, relevance: core, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
