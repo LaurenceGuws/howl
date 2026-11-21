@@ -21,8 +21,8 @@ classifications:
     Howl edits its bounded cell, row-geometry, continuation, history, and damage model exactly; reference-only
     multicell, selection, callback, or external-attribute consequences are outside the complete Howl family.
   rendition_policy_difference: &howl_rendition_policy_difference >-
-    Howl retains one bounded cell-rendition model with exact group-local malformed-color handling; reference-only
-    rendering configuration and conflicting whole-command rejection are outside the complete Howl family.
+    Howl retains one bounded cell-rendition model with group-local malformed-color handling; reference-only
+    rendering configuration and conflicting invalid-color tail rejection are outside the complete Howl family.
   rectangle_policy_difference: &howl_rectangle_policy_difference >-
     Howl mutates its bounded cell, protection, origin, and damage model exactly; reference-only multicell repair,
     external attributes, graphics, and conflicting erase or destination policy are outside the complete Howl family.
@@ -4101,45 +4101,62 @@ references:
         census: {semantic_branches: 25}
         recognition: implemented
         records:
-          kitty.sgr.reset: {raw: "CSI 0 m", effect: reset rendition, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
-          kitty.sgr.bold: {raw: "CSI 1 m", effect: enable bold, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          kitty.sgr.faint: {raw: "CSI 2 m", effect: enable faint, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          kitty.sgr.italic: {raw: "CSI 3 m", effect: enable italic, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          kitty.sgr.reset: {raw: "CSI 0 m", effect: reset rendition,
+            conditions: SGR 0 resets display styling but preserves open OSC 8 link and DEC character protection,
+            howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.resetRendition,
+              proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 8 hyperlink remains active through SGR reset until explicit close"}}}
+          kitty.sgr.bold: {raw: "CSI 1 m", effect: enable bold,
+            conditions: Ordinary on and off semantics match; after malformed CSI 38;9 the trailing 1 is
+              ignored by pinned Kitty but applied by Howl and libvterm,
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: unknown SGR color type retains following recognized attributes"}}}
+          kitty.sgr.faint: {raw: "CSI 2 m", effect: enable faint,
+            conditions: SGR 2 and 22 retain dim state; pinned Kitty default dim opacity is 0.4 while native
+              Howl glyph alpha is 140 of 255; malformed CSI 38;9 also has conflicting trailing-attribute policy,
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: unknown SGR color type retains following recognized attributes"}}}
+          kitty.sgr.italic: {raw: "CSI 3 m", effect: enable italic,
+            conditions: Ordinary on and off semantics match; after malformed CSI 38;9 the trailing 3 is
+              ignored by pinned Kitty but applied by Howl and libvterm,
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: unknown SGR color type retains following recognized attributes"}}}
           kitty.sgr.underline: {raw: "CSI 4[:style]|21 m", effect: enable or style underline,
-            conditions: styles 0..5 and SGR 21 double underline, howl: {support: full,
-              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+            conditions: Styles 0..5 and SGR 21 match; pinned Kitty clamps 4:6 to dashed 5 while Howl leaves
+              the prior underline unchanged; malformed-color tail policy also differs,
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.setUnderlineStyle,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: out of range Kitty underline style is ignored by Howl"}}}
+          kitty.sgr.blink: {raw: "CSI 5 m", effect: enable blink,
+            conditions: "Howl retains SGR 5 and 25 cell flags but lacks Kitty text blink timing in native output; malformed-color trailing attribute handling also differs",
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          kitty.sgr.blink: {raw: "CSI 5 m", effect: enable blink, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           kitty.sgr.rapid_blink: {raw: "CSI 6 m", effect: ignore unsupported rapid blink,
             recognition: accepted_noop, howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: SGR rapid blink is an exact fragmented no-op"}}}
-          kitty.sgr.reverse: {raw: "CSI 7 m", effect: enable inverse, howl: {support: full,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          kitty.sgr.reverse: {raw: "CSI 7 m", effect: enable inverse,
+            conditions: Ordinary on and off semantics match; after malformed CSI 38;9 the trailing 7 is
+              ignored by pinned Kitty but applied by Howl and libvterm,
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: unknown SGR color type retains following recognized attributes"}}}
           kitty.sgr.conceal: {raw: "CSI 8 m", effect: ignore unsupported conceal,
             recognition: accepted_noop, howl: {support: partial, disposition: excluded,
               rationale: *howl_rendition_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: SGR retains exact rendition and colon color state"}},
-            conditions: Howl retains conceal state}
+            conditions: Pinned Kitty ignores SGR 8 whereas Howl hides subsequent text and native extraction}
           kitty.sgr.strike: {raw: "CSI 9 m", effect: enable strike, howl: {support: full,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -4169,7 +4186,7 @@ references:
               rationale: *howl_rendition_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: SGR retains exact rendition and colon color state"}},
-            conditions: Howl clears retained conceal state}
+            conditions: Pinned Kitty ignores SGR 8 and 28 as a pair; Howl restores visibility after conceal}
           kitty.sgr.strike_off: {raw: "CSI 29 m", effect: disable strike, howl: {support: full,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -4179,7 +4196,7 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           kitty.sgr.fg_extended: {raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
-            conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
+            conditions: "Pinned Kitty retains preceding applied SGR groups but abandons an invalid color group and all trailing groups; Howl skips the invalid color and processes later attrs",
             howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -4193,7 +4210,7 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           kitty.sgr.bg_extended: {raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
-            conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
+            conditions: "Pinned Kitty retains preceding applied SGR groups but abandons an invalid color group and all trailing groups; Howl skips the invalid color and processes later attrs",
             howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -4203,7 +4220,7 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           kitty.sgr.underline_color: {raw: "CSI 58 ; 2|5 ; Pm m", effect: set underline color,
-            conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
+            conditions: "Pinned Kitty retains preceding applied SGR groups but abandons an invalid color group and all trailing groups; Howl skips the invalid color and processes later attrs",
             howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
               source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,

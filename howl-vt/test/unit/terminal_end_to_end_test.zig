@@ -1801,6 +1801,60 @@ test "terminal: SGR color mutation is exact fragmented and malformed-transaction
     try std.testing.expect(!(try terminal.feed("\x1b[m")).stateChanged());
 }
 
+test "terminal: unknown SGR color type retains following recognized attributes" {
+    const Property = enum { bold, dim, italic, underline, blink, reverse };
+    const Case = struct { suffix: []const u8, property: Property };
+    const cases = [_]Case{
+        .{ .suffix = "1mA", .property = .bold },
+        .{ .suffix = "2mA", .property = .dim },
+        .{ .suffix = "3mA", .property = .italic },
+        .{ .suffix = "4mA", .property = .underline },
+        .{ .suffix = "5mA", .property = .blink },
+        .{ .suffix = "7mA", .property = .reverse },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 1, 4);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed("\x1b[38;")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("9;")).stateChanged());
+        try std.testing.expect((try terminal.feed(case.suffix)).stateChanged());
+        const attrs = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+        try std.testing.expect(switch (case.property) {
+            .bold => attrs.bold,
+            .dim => attrs.dim,
+            .italic => attrs.italic,
+            .underline => attrs.underline,
+            .blink => attrs.blink,
+            .reverse => attrs.reverse,
+        });
+        try std.testing.expectEqual(Terminal.default_cell_attrs.fg, attrs.fg);
+    }
+
+    // Unlike pinned Kitty, invalid colour does not undo completed groups.
+    // Like pinned libvterm, Howl also continues with the trailing group.
+    var terminal = try Terminal.init(std.testing.allocator, 1, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[31;1;38;9;3mA");
+    const attrs = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    try std.testing.expect(attrs.bold);
+    try std.testing.expect(attrs.italic);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), attrs.fg);
+}
+
+test "terminal: out of range Kitty underline style is ignored by Howl" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 6);
+    defer terminal.deinit();
+
+    // Pinned Kitty saturates style 6 to 5; Howl retains its chosen style.
+    try feed(&terminal, "\x1b[4:6mA\x1b[4:5mB\x1b[4:6mC\x1b[4:0mD");
+    const view = terminal.semanticView(0);
+    try std.testing.expect(!view.cellInfoAt(0, 0).attrs.underline);
+    try std.testing.expect(view.cellInfoAt(0, 1).attrs.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, view.cellInfoAt(0, 1).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, view.cellInfoAt(0, 2).attrs.underline_style);
+    try std.testing.expect(!view.cellInfoAt(0, 3).attrs.underline);
+}
+
 test "terminal: SGR rapid blink is an exact fragmented no-op" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 8);
