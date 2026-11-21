@@ -3703,11 +3703,15 @@ pub const Screen = struct {
         return !std.meta.eql(before, self.current_attrs);
     }
 
-    // SGR does not own ISO or DEC character protection.
+    // SGR owns neither character protection nor the active OSC 8 link.
+    // Both remain attached to subsequently written cells until their
+    // respective protocol closes or resets them.
     fn resetRendition(self: *Screen) void {
         const protection = self.current_attrs.protected;
+        const link_id = self.current_attrs.link_id;
         self.current_attrs = initial_cell_attrs;
         self.current_attrs.protected = protection;
+        self.current_attrs.link_id = link_id;
     }
 
     fn applyBasicSgr(self: *Screen, param: i32) void {

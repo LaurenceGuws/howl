@@ -487,6 +487,29 @@ test "OSC 8 retains explicit identity separately from URI and exact active mutat
     try std.testing.expect(!(try terminal.feed("\x1b]8;missing-separator\x07")).stateChanged());
 }
 
+test "OSC 8 hyperlink remains active through SGR reset until explicit close" {
+    for ([_][]const u8{ "\x1b[0m", "\x1b[m" }) |reset_sgr| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b]8;id=guide;https://example.com\x1b\\\x1b[1\"q\x1b[31;1mA");
+        const first = terminal.semanticView(0).cellInfoAt(0, 0);
+        try std.testing.expect(first.attrs.link_id != 0);
+        try std.testing.expect(first.attrs.bold);
+        try std.testing.expect(first.attrs.protected == .dec);
+        try feed(&terminal, reset_sgr);
+        try feed(&terminal, "B\x1b]8;;\x1b\\C");
+        const view = terminal.semanticView(0);
+        const second = view.cellInfoAt(0, 1);
+        const third = view.cellInfoAt(0, 2);
+        try std.testing.expectEqual(first.attrs.link_id, second.attrs.link_id);
+        try std.testing.expectEqual(@as(u32, 0), third.attrs.link_id);
+        try std.testing.expect(second.attrs.protected == .dec);
+        try std.testing.expect(!second.attrs.bold);
+        try std.testing.expect(second.attrs.fg.kind == .default);
+        try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(second.attrs.link_id).?);
+    }
+}
+
 test "terminal metadata owns exact screen resize and reset lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

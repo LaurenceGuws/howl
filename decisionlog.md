@@ -1287,3 +1287,32 @@ graphics deletion parity. Other ten-record wave 09 findings on
 virtual prototypes, bank-global image storage, per-selector filters,
 relative placement and animation remain independently open. The
 reference-specific graphics rows stay partial pending further proofs.
+
+## SGR rendition reset cannot terminate an active OSC 8 hyperlink (21 November 2026)
+
+The 10x10 Kitty rendition audit (intake 04) identified a concrete
+source-level OSC 8/SGR 0 state interaction. Frozen Kitty at
+d4106ef2db687579a69fefc949a6dc1b662f3ca8 keeps
+active_hyperlink_id in kitty/screen.c outside cursor.sgr; SGR 0
+calls cursor_reset_display_attrs in kitty/cursor.c and does not
+close the active hyperlink. Howl stores the active link id with
+current_cell attributes, but Screen.resetRendition previously
+replaced those attributes with defaults, retaining only ISO/DEC
+character protection. A character written after SGR 0 silently
+lost its still-open OSC 8 hyperlink.
+
+The Screen rendition reset now preserves the existing link id as
+well as character protection, without introducing shadow hyperlink
+state. A red-before/green-after terminal test for SGR 0 and bare
+SGR confirms the hyperlink id persists on the next printable
+character, bold/foreground reset to defaults, character protection
+persists, explicit OSC 8 close disables the next link, and the
+retained URI remains resolvable. Existing hard-reset/alternate-bank
+hyperlink lifetime tests still pass.
+
+VT Debug/ReleaseFast and root ReleaseFast check/test, project/Zig
+audits, protocol validation, formatting and diff gates passed.
+This is one real runtime correctness improvement, not a blanket
+claim that Kitty's entire SGR branch is fully compatible; other
+underlines, blink/presentation and malformed-color differences
+remain subject to separate pinned review.
