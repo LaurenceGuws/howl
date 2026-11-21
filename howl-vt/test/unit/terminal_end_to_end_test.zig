@@ -222,6 +222,77 @@ test "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime" {
     try std.testing.expectEqual(@as(u21, 0xE9), terminal.semanticView(0).cellAt(0, 0));
 }
 
+test "terminal: Kitty private erase preserves attrs but Howl protects DEC characters" {
+    // Pinned Kitty screen_erase_in_line/display private=true clears text
+    // unconditionally and preserves each cell's old attributes. Howl's
+    // private DEC erase respects protected cells instead. One wire input
+    // cannot implement both policies without a terminal profile.
+    for ([_][]const u8{ "\x1b[?2K", "\x1b[?2J" }) |erase| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[31m\x1b[1\"qP\x1b[0\"qU\x1b[1;1H");
+        const protected_before = terminal.semanticView(0).cellInfoAt(0, 0);
+        try std.testing.expect(protected_before.attrs.protected == .dec);
+        try std.testing.expect((try terminal.feed(erase)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'P'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 1));
+        try std.testing.expectEqualDeep(protected_before, view.cellInfoAt(0, 0));
+        try std.testing.expect(!(try terminal.feed(erase)).stateChanged());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
+test "terminal: pinned Kitty ED22 moves visible lines to history while Howl ignores it" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1;1Hone\x1b[2;1Htwo");
+    const before = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 0), before.history_count);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[22")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("J")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u32, 0), after.history_count);
+    try std.testing.expectEqual(@as(u21, 'o'), after.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 't'), after.cellAt(1, 0));
+    try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+    try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "terminal: Kitty ED3 clears visible display but Howl clears only history" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "one\r\ntwo\r\nthree");
+    const before = terminal.semanticView(0);
+    try std.testing.expect(before.history_count > 0);
+    try std.testing.expectEqual(@as(u21, 't'), before.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 't'), before.cellAt(1, 0));
+    try std.testing.expect((try terminal.feed("\x1b[3J")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 0), after.history_count);
+    try std.testing.expectEqual(@as(u21, 't'), after.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 't'), after.cellAt(1, 0));
+    // Kitty screen.c:screen_erase_in_display(3) erases the visible
+    // viewport too, not merely its scrollback as Howl does.
+    try std.testing.expect(!(try terminal.feed("\x1b[3J")).stateChanged());
+}
+
+test "terminal: Kitty ordinary blank EL dirties selection while Howl keeps an exact noop" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const before = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[2K")).stateChanged());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expect(!(try terminal.feed("\x1b[K")).stateChanged());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    // Pinned Kitty screen_erase_in_line runs mark_line_dirty and clears any
+    // intersecting selection for either request even if cells were blank.
+    // Howl has no equivalent forced selection/presentation side effect.
+}
+
 test "terminal: erase families retain exact ranges protection geometry and mutation" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer terminal.deinit();

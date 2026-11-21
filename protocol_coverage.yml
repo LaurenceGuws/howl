@@ -3284,13 +3284,13 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: Kitty cursor excess parameters retain shared permissive CSI policy"}}}
           kitty.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display,
-            conditions: Kitty additionally accepts Ps 22 and owns multicell and selection consequences,
+            conditions: "Pinned Kitty ED 3 clears visible display and scrollback, and ED 22 moves visible content into history before clearing; Howl ED 3 clears scrollback only and ignores 22. Ordinary ED also has reference-specific selection/multicell consequences.",
             howl: *howl_kitty_erase_display_graphics}
           kitty.csi.decsed: {raw: "CSI ? [Ps=0] J", effect: selective erase display,
             conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
             howl: *howl_kitty_selective_erase_display_graphics}
           kitty.csi.el: {raw: "CSI [Ps=0] K", effect: erase line,
-            conditions: Kitty owns multicell and selection consequences,
+            conditions: "Pinned Kitty dirties an admitted EL region and clears intersecting selection even on already blank cells; Howl preserves exact no-mutation blank EL. Other multiline, image and selection consequences remain partial.",
             howl: *howl_kitty_erase_line_graphics}
           kitty.csi.decsel: {raw: "CSI ? [Ps=0] K", effect: selective erase line,
             conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
