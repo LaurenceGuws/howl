@@ -4297,9 +4297,11 @@ references:
             effect: probe image transmission support then discard probe, relevance: graphics,
             howl: *howl_static_graphics_transmit}
           kitty.graphics.animate: {raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
-            howl: {support: full,
-              source: howl-vt/src/graphics.zig, symbol: Plane.advanceAnimations, proof: {path: howl-vt/src/terminal.zig,
-                symbol: "terminal animation lifecycle preserves finite loading stop selection and gaps"}}}
+            conditions: "Pinned Kitty resolves animation commands only in the active main/alt GraphicsManager. Howl's shared Plane permits inactive-bank image identities to change selected frames.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The existing bounded shared image plane deliberately reuses identity across bank-tagged placements; Kitty has two independent image namespaces.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.animate, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy"}}}
           kitty.graphics.frame: {raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
             relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
               milestone: advanced_graphics,
@@ -4318,9 +4320,11 @@ references:
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "static delete selectors preserve placement and image ownership distinctions"}}}
           kitty.graphics.compose: {raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
-            howl: {support: full,
+            conditions: "Pinned Kitty composes only frames in the active main/alt GraphicsManager. Howl's shared Plane can apply a compose command from the other bank to the primary image's decoded bytes.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The shared bounded image plane deliberately does not reproduce Kitty's separate per-screen image-ID namespaces.",
               source: howl-vt/src/graphics.zig, symbol: Plane.composeFrames, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "Kitty composition owns root and nonoverlapping same-frame edits"}}}
+                symbol: "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy"}}}
       handle_delete_command:
         source: graphics.c
         line: 2047
@@ -4408,9 +4412,12 @@ references:
           kitty.graphics.delete_number: {raw: "APC G a=d,d=n|N,I=Ps ST",
             effect: delete by image number optionally including data, relevance: graphics, howl: *howl_static_graphics_delete}
           kitty.graphics.delete_frame: {raw: "APC G a=d,d=f|F,Pm ST", effect: delete animation frame or image,
-            relevance: graphics, howl: {support: full,
+            relevance: graphics,
+            conditions: "Pinned Kitty frame deletion is confined to the active screen's GraphicsManager, whereas Howl can remove retained frames in the other bank by shared image ID.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl's deliberately shared decoded image owner differs from Kitty's two independent graphics managers; ordinary frame deletion semantics remain tested.",
               source: howl-vt/src/graphics.zig, symbol: Plane.deleteFrame, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "Kitty frame deletion defaults to root and uppercase retires frame-less image"}}}
+                symbol: "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy"}}}
           kitty.graphics.delete_default: {raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
             relevance: graphics, howl: *howl_static_graphics_delete}
 

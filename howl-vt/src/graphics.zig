@@ -4039,6 +4039,83 @@ test "Kitty composition owns root and nonoverlapping same-frame edits" {
     try std.testing.expectEqual(storage, plane.storage_bytes);
 }
 
+test "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy" {
+    // Pinned Kitty screen.c owns separate main_grman and alt_grman. The
+    // same client ID in the other bank cannot resolve this primary image
+    // there. Howl deliberately keeps one shared bounded decoded image
+    // plane, so these global-ID actions can mutate primary image data.
+    // This negative compatibility proof must not be mislabelled full.
+    for ([_]struct {
+        command: []const u8,
+        operation: enum { select_frame, compose, delete_frame },
+    }{
+        .{ .command = "a=a,i=90,c=2,q=2", .operation = .select_frame },
+        .{ .command = "a=c,i=90,r=2,c=1,s=1,v=1,C=1,q=2", .operation = .compose },
+        .{ .command = "a=d,d=f,i=90,r=2", .operation = .delete_frame },
+    }) |case| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        try std.testing.expect((try plane.command(
+            "a=T,f=32,s=1,v=1,i=90,p=1,C=1,q=2;AQIDBA==",
+            .primary,
+            0,
+            0,
+            0,
+            1,
+            1,
+        )).changed);
+        try std.testing.expect((try plane.command(
+            "a=f,f=32,s=1,v=1,i=90,r=2,C=1,q=2;BQYHCA==",
+            .primary,
+            0,
+            0,
+            0,
+            1,
+            1,
+        )).changed);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+        const retained = plane.placement(0).?;
+        try std.testing.expectEqual(Bank.primary, retained.bank);
+        const original_content_generation = plane.content_generation;
+        const changed_by_other_bank = try plane.command(
+            case.command,
+            .alternate,
+            0,
+            0,
+            0,
+            1,
+            1,
+        );
+        try std.testing.expect(changed_by_other_bank.changed);
+        try std.testing.expectEqual(@as(?Failure, null), changed_by_other_bank.failure);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqualDeep(retained, plane.placement(0).?);
+        try std.testing.expectEqual(Bank.primary, plane.images[0].bank);
+        switch (case.operation) {
+            .select_frame => {
+                try std.testing.expectEqual(@as(u16, 1), plane.images[0].current_frame);
+                try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.image(0).?.pixels);
+                try std.testing.expect(plane.content_generation > original_content_generation);
+                try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+            },
+            .compose => {
+                try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.image(0).?.pixels);
+                try std.testing.expect(plane.content_generation > original_content_generation);
+                try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+            },
+            .delete_frame => {
+                try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+                try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, plane.image(0).?.pixels);
+                try std.testing.expectEqual(original_content_generation, plane.content_generation);
+                try std.testing.expectEqual(@as(u2, 2), changed_by_other_bank.quiet);
+            },
+        }
+    }
+}
+
 test "Kitty frame deletion defaults to root and uppercase retires frame-less image" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
