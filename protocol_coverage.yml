@@ -2253,6 +2253,7 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm safe controls mutate presentation metadata and exact replies"}}
           iterm2.osc1337.set_colors: {raw: "OSC 1337 ; SetColors=Pt (BEL|ST)", effect: set terminal colors,
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeXtermSetKvp(SetColors) splits comma-separated name=color pairs and forwards each to a macOS host color delegate. Howl color_control.applyItermSetColors implements a bounded local palette/dynamic-color subset, including valid pairs and independent malformed-pair rejection; iTerm-specific platform color names and host policy are not represented.",
             howl: {support: partial, disposition: excluded,
               residual: Howl implements only represented deterministic color pairs and omits iTerm2 host policy.,
               rationale: *howl_color_policy_difference,
