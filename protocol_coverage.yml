@@ -2795,6 +2795,7 @@ references:
               symbol: Terminal.switchScreenMode, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           iterm2.mode.deckpam: {raw: "CSI ? 66 h|l", effect: toggle application keypad,
+            conditions: "Pinned iTerm2 VT100Terminal.m:executeDecSetReset case 66 assigns keypadMode for its platform keyboard-event encoder. Howl Terminal.setDecMode(66) implements the same terminal mode flag with typed keypad input, but not macOS raw host keymap policy.",
             howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
               residual: Howl encodes application keypad mode through its owned key model rather than iTerm2 host events.,
               source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
