@@ -1189,22 +1189,34 @@ references:
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells"}}}
-          iterm2.c0.lf: {raw: "\\x0a", effect: line feed, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
-          iterm2.c0.vt: {raw: "\\x0b", effect: line feed, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
-          iterm2.c0.ff: {raw: "\\x0c", effect: line feed, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
-          iterm2.c0.cr: {raw: "\\x0d", effect: carriage return, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects"}}}
+          iterm2.c0.lf: {raw: "\\x0a", effect: line feed,
+            conditions: "Pinned iTerm2 VT100Terminal.m forwards LF to terminalLineFeed. Pinned VT100ScreenMutableState+TerminalDelegate.m returns before scrolling at the vertical region bottom if the cursor is outside active left-right margins. Howl Screen.lineFeed scrolls the vertical region there.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned horizontal-margin suppression differs from Howl at the bottom boundary. Ordinary LF is supported.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 LF VT FF and IND gate bottom scrolling outside horizontal margins"}}}
+          iterm2.c0.vt: {raw: "\\x0b", effect: line feed,
+            conditions: "Pinned iTerm2 VT100Terminal.m forwards VT to the same terminalLineFeed delegate as LF. It suppresses bottom-region scroll outside left-right margins, while Howl scrolls there.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned horizontal-margin gate differs for VT. Ordinary vertical-tab handling is supported.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 LF VT FF and IND gate bottom scrolling outside horizontal margins"}}}
+          iterm2.c0.ff: {raw: "\\x0c", effect: line feed,
+            conditions: "Pinned iTerm2 VT100Terminal.m forwards FF to terminalLineFeed. It suppresses bottom-region scroll outside left-right margins, while Howl scrolls there.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned horizontal-margin gate differs for FF. Ordinary form-feed handling is supported.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 LF VT FF and IND gate bottom scrolling outside horizontal margins"}}}
+          iterm2.c0.cr: {raw: "\\x0d", effect: carriage return,
+            conditions: "Pinned iTerm2 VT100ScreenMutableState.m::carriageReturn moves to the active left margin when the cursor starts inside or right of that margin, and to physical column zero only if left of it. Howl CR always moves to physical column zero.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned horizontal carriage-return home differs from native CR with left-right margins enabled; basic CR remains supported.",
+              source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 carriage return homes at horizontal margin unlike Howl"}}}
           iterm2.c0.so: {raw: "\\x0e", effect: select G1 into GL, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: TerminalStream.applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1237,9 +1249,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
           iterm2.esc.utf8: {raw: "ESC % G", effect: select UTF-8 decoding, relevance: charset,
-            howl: {support: full, source: howl-vt/src/parser.zig, symbol: Parser.selectLatin1, proof: {
+            conditions: "Pinned iTerm2 VT100OtherParser.m emits ISO2022_SELECT_UTF_8 and VT100Terminal.m selects NSUTF8StringEncoding. VT100ControlParser.m only recognizes raw C1 bytes when encoding is ASCII or Latin-1, so raw 0x85 ceases to dispatch NEL after this sequence. Howl selects UTF-8 but continues accepting raw C1 NEL.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "UTF-8 scalar decoding and the 7-bit ESC E alias work, but pinned iTerm2 suppresses raw 8-bit C1 under UTF-8 while Howl intentionally retains its shared raw-C1 policy.",
+              source: howl-vt/src/parser.zig, symbol: Parser.selectLatin1, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
+              symbol: "terminal: pinned iTerm2 UTF8 selection disables raw C1 execution unlike Howl"}}}
           iterm2.esc.decdhl_top:
             raw: "ESC # 3"
             effect: double-height top line
@@ -1326,14 +1341,20 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.indexHorizontal, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges"}}}
-          iterm2.esc.ind: {raw: "ESC D", effect: index, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
-          iterm2.esc.nel: {raw: "ESC E", effect: next line, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
+          iterm2.esc.ind: {raw: "ESC D", effect: index,
+            conditions: "Pinned iTerm2 VT100Terminal.m::VT100CSI_IND invokes terminalLineFeed. At the vertical region bottom outside left-right margins, pinned handler suppresses scrolling but Howl ESC D scrolls.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned horizontal-margin suppression of IND conflicts with direct native line-feed owner at the bottom boundary.",
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 LF VT FF and IND gate bottom scrolling outside horizontal margins"}}}
+          iterm2.esc.nel: {raw: "ESC E", effect: next line,
+            conditions: "Pinned iTerm2 VT100Terminal.m::VT100CSI_NEL invokes terminalLineFeed then terminalCarriageReturn. Outside horizontal margins at the bottom, LF is suppressed then CR returns to left margin; Howl sets column zero and scrolls the region.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned NEL outside-margin scroll and carriage-return ordering differs, despite ordinary NEL support.",
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 NEL and RI gate margin-edge scrolling unlike Howl"}}}
           iterm2.esc.hts: {raw: "ESC H", effect: set tab stop,
             conditions: "Pinned iTerm2 setTabStopAtCursor inserts into one shared tabStops set independently
               of currentGrid, while Howl adds only to its active Screen's storage.",
@@ -1344,15 +1365,20 @@ references:
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
-          iterm2.esc.ri: {raw: "ESC M", effect: reverse index, howl: {support: full,
-            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects"}}}
+          iterm2.esc.ri: {raw: "ESC M", effect: reverse index,
+            conditions: "Pinned iTerm2 VT100ScreenMutableState.m::reverseIndex returns without scrolling at the vertical region top if the cursor is outside left-right margins. Howl Screen.reverseIndex scrolls down there.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned horizontal-margin admission at the top RI boundary differs; ordinary RI remains supported.",
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 NEL and RI gate margin-edge scrolling unlike Howl"}}}
           iterm2.esc.decid: {raw: "ESC Z", effect: primary device attributes report, relevance: query,
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
-              residual: Howl reports its own primary device attributes., source: howl-vt/src/terminal.zig,
-              symbol: escProcess, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
+            conditions: "Pinned iTerm2 VT100OtherParser.m maps ESC Z to VT100CSI_DECID, and VT100Terminal.m explicitly executes no-op break with no reply. Howl escProcess sends its bounded DA1 identity reply CSI ?62;22c.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Pinned DECID is no-op but native Howl deliberately identifies itself, so reply parity is impossible.",
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 DECID is a no-op while Howl identifies itself"}}}
           iterm2.esc.ris: {raw: "ESC c", effect: hard reset,
             conditions: iTerm2 reset includes application delegate and parser policy outside Howl VT state,
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: Terminal.hardReset, proof: {
@@ -1549,11 +1575,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           iterm2.csi.sd: {raw: "CSI [Ps=1] T", effect: scroll down,
-            conditions: selection consequences, howl: {support: partial,
-              disposition: excluded, rationale: *howl_structural_policy_difference,
+            conditions: "Pinned iTerm2 VT100CSIParser.m::SetCSITypeAndDefaultParameters recognizes CSI T only when fewer than two parameters are present, rejecting CSI 1;2T entirely. Howl accepts the first count and performs a scroll. iTerm2 also emits selection consequences in its screen delegate.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Ordinary bounded scroll-down works; extra CSI T arguments and host-owned selection update policy differ from the pinned reference.",
               source: howl-vt/src/screen.zig, symbol: Screen.scrollDownRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI T scroll down preserves bounded margins, cursor and exact mutation"}}}
+                symbol: "terminal: pinned iTerm2 CSI T rejects excess parameters while Howl accepts count"}}}
           iterm2.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs,
             conditions: "Pinned iTerm2 backTab walks one shared tabStops set after screen changes,
               while Howl's Screen tab-stop array is bank-local.",
@@ -1664,9 +1691,12 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.changeRectAttrs, proof: {
               path: howl-vt/src/screen/main_test.zig, symbol: "screen: DECRARA toggles supported attrs"}}}
           iterm2.csi.decsace: {raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: processStar, proof: {
+            conditions: "Pinned iTerm2 VT100CSIParser.m recognizes CSI Ps * x, but VT100Terminal.m executes DECSACE only when _vtLevel >= iTermEmulationLevel400; VT100, VT200 and VT300 emulation levels ignore it. Howl processStar always accepts valid 0/1/2 rectangle-extent parameters without an emulation-level gate.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl has a single canonical rectangle-extent owner and does not emulate iTerm2's legacy VT400 conformance-level admission policy.",
+              source: howl-vt/src/terminal.zig, symbol: processStar, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+              symbol: "terminal: pinned iTerm2 DECSACE requires VT400 while Howl always admits extent"}}}
           iterm2.csi.deccra: {raw: "CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt2 ; Pl2 ; Pp2 $ v", effect: copy rectangle,
             conditions: "iTerm2 keeps destination page-relative while Howl resolves it against DECOM origin;
               clipped wide and multicell boundary repair remains unproved",
@@ -1771,7 +1801,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
                 symbol: "terminal: XTPUSHSGR restores selected rendition with bounded stack truth"
           iterm2.csi.xtsmgraphics: {raw: "CSI ? Pm S", effect: set or query graphics attributes,
-            relevance: host consequence, howl: *howl_missing_deferred_graphics}
+            relevance: host consequence,
+            conditions: "Pinned iTerm2 VT100CSIParser.m recognizes XTERMCC_XTSMGRAPHICS and VT100Terminal.m::executeSetRequestGraphics can answer register-count, Sixel-geometry and unknown-property requests, subject to its host reporting policy. Howl decodePrivateCsi does not handle private CSI ?S; the bounded native parser ignores complete requests without replies or state mutation.",
+            howl: {support: missing, disposition: deferred, owner: howl-vt, milestone: graphics,
+              source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported"}}}
           iterm2.csi.kitty_set: {raw: "CSI = flags ; [mode=1] u", effect: set Kitty keyboard flags,
             conditions: iTerm2 clears the active stack and retains unbounded integer flags while Howl mutates the
               active eight-slot stack entry and retains seven protocol bits,

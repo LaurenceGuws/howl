@@ -32,6 +32,26 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try std.testing.expectEqual(@as(u16, 2), s.cursor_col);
 }
 
+test "terminal: pinned iTerm2 DECID is a no-op while Howl identifies itself" {
+    // Pinned iTerm2 VT100OtherParser.m parses ESC Z as VT100CSI_DECID,
+    // and VT100Terminal.m executes an explicit break with no report.
+    // Howl deliberately aliases ESC Z to its bounded DA1 identity reply.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b")).stateChanged());
+    try std.testing.expect((try terminal.feed("Z")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?62;22c", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    try consumeReplies(&terminal);
+    try std.testing.expect((try terminal.feed("\x1bZ")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?62;22c", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    // The identity query does not alter the grid, and normal text follows.
+    try std.testing.expect((try terminal.feed("Q")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: VT52 exit escape is an exact fragmented no-op" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
@@ -220,6 +240,38 @@ test "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime" {
     try std.testing.expect(!(try terminal.feed("X")).stateChanged());
     try std.testing.expect((try terminal.feed("\xc3\xa9")).stateChanged());
     try std.testing.expectEqual(@as(u21, 0xE9), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "terminal: pinned iTerm2 UTF8 selection disables raw C1 execution unlike Howl" {
+    // Pinned iTerm2 VT100ControlParser.m checks encoding before recognizing
+    // raw 8-bit C1. Only ASCII/Latin-1 admit C1; after ESC % G selects
+    // NSUTF8StringEncoding, 0x85 must not become a NEL terminal token.
+    // Howl intentionally continues admitting raw C1 under UTF-8.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b%@")).stateChanged());
+    try feed(&terminal, "\x1b[1;4H");
+    try std.testing.expect((try terminal.feed("\x85")).stateChanged());
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+
+    try std.testing.expect((try terminal.feed("\x1b%G")).stateChanged());
+    try feed(&terminal, "\x1b[1;4H");
+    // This changes Howl's cursor, but pinned iTerm2 does not dispatch
+    // the raw byte as VT100CSI_NEL in its UTF-8 encoding state.
+    try std.testing.expect((try terminal.feed("\x85")).stateChanged());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+    // The 7-bit NEL alias remains supported in either encoding and the
+    // terminal still accepts ordinary multi-byte UTF-8 graphics.
+    try feed(&terminal, "\x1b[1;4H\x1bE\xc3\xa9");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 0x00E9), view.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_col);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
 test "terminal: Kitty private erase preserves attrs but Howl protects DEC characters" {
@@ -862,6 +914,93 @@ test "terminal: C0 controls retain exact stream effects" {
         try std.testing.expect(!(try terminal.feed("\x1b)0\x0eq\x0fq")).historyLost());
         try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
         try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 1));
+    }
+}
+
+test "terminal: pinned iTerm2 LF VT FF and IND gate bottom scrolling outside horizontal margins" {
+    // Pinned iTerm2 VT100ScreenMutableState+TerminalDelegate.m::terminalLineFeed
+    // returns early at the vertical region bottom if its cursor is outside
+    // the left-right scroll region. VT100Terminal.m invokes this exact
+    // delegate for C0 LF, VT, FF and ESC D (IND). Howl Screen.lineFeed
+    // allows the region to scroll at the same cursor coordinate.
+    for ([_][]const u8{ "\x0a", "\x0b", "\x0c", "\x1bD" }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 6);
+        defer terminal.deinit();
+        try feed(
+            &terminal,
+            "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD" ++
+                "\x1b[2;3r\x1b[?69h\x1b[3;4s\x1b[3;1H",
+        );
+        const before = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 2), before.cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), before.cursor_col);
+        try std.testing.expectEqual(@as(u21, 'B'), before.cellAt(1, 2));
+        try std.testing.expectEqual(@as(u21, 'C'), before.cellAt(2, 2));
+        try std.testing.expect((try terminal.feed(command)).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), after.cursor_col);
+        try std.testing.expectEqual(@as(u21, 'C'), after.cellAt(1, 2));
+        try std.testing.expectEqual(@as(u21, 0), after.cellAt(2, 2));
+        try std.testing.expectEqual(@as(u21, 'B'), after.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'D'), after.cellAt(3, 0));
+    }
+}
+
+test "terminal: pinned iTerm2 carriage return homes at horizontal margin unlike Howl" {
+    // Pinned iTerm2 VT100ScreenMutableState.m::carriageReturn moves to
+    // the left margin unless starting outside it on the left. Howl's
+    // CR always sets column zero, independently of the horizontal region.
+    for ([_]struct { column: u8, reference_home: u16 }{
+        .{ .column = 1, .reference_home = 0 },
+        .{ .column = 3, .reference_home = 2 },
+        .{ .column = 6, .reference_home = 2 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+        defer terminal.deinit();
+        var sequence: [32]u8 = undefined;
+        const setup = try std.fmt.bufPrint(
+            &sequence,
+            "\x1b[?69h\x1b[3;4s\x1b[2;{d}H",
+            .{case.column},
+        );
+        try feed(&terminal, setup);
+        try std.testing.expectEqual(@as(u16, case.column - 1), terminal.semanticView(0).cursor_col);
+        const update = try terminal.feed("\r");
+        try std.testing.expectEqual(case.column != 1, update.stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 0), after.cursor_col);
+        try std.testing.expectEqual(@as(u16, 1), after.cursor_row);
+        // The expected pinned home is independently specified above,
+        // exposing its conflict for inside/right-of-margin positions.
+        try std.testing.expect(case.reference_home == 0 or case.reference_home == 2);
+        if (case.column != 1) try std.testing.expect(case.reference_home != after.cursor_col);
+    }
+}
+
+test "terminal: pinned iTerm2 NEL and RI gate margin-edge scrolling unlike Howl" {
+    // Pinned iTerm2 invokes terminalLineFeed THEN carriageReturn for ESC E.
+    // When outside LR margins at the bottom, the first step is a no-op,
+    // whereas Howl's NEL changes column then scrolls. At the top, pinned
+    // VT100ScreenMutableState.m::reverseIndex likewise refuses to scroll
+    // outside horizontal margins; Howl Screen.reverseIndex does scroll.
+    for ([_]struct { command: []const u8, row: u8, expected_top: u21, expected_bottom: u21 }{
+        .{ .command = "\x1bE", .row = 3, .expected_top = 'C', .expected_bottom = 0 },
+        .{ .command = "\x1bM", .row = 2, .expected_top = 0, .expected_bottom = 'B' },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 6);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD\x1b[2;3r\x1b[?69h\x1b[3;4s");
+        var pos: [24]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&pos, "\x1b[{d};1H", .{case.row}));
+        try std.testing.expect((try terminal.feed(case.command)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(case.expected_top, view.cellAt(1, 2));
+        try std.testing.expectEqual(case.expected_bottom, view.cellAt(2, 2));
+        try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+        try std.testing.expectEqual(@as(u16, case.row - 1), view.cursor_row);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(3, 0));
     }
 }
 
@@ -1979,6 +2118,27 @@ test "terminal: cursor origin margins own exact aliases geometry wrap and resize
     );
 }
 
+test "terminal: pinned iTerm2 DECSACE requires VT400 while Howl always admits extent" {
+    // Pinned iTerm2 VT100Terminal.m executes VT100CSI_DECSACE only with
+    // _vtLevel >= iTermEmulationLevel400; lower emulations ignore it.
+    // Howl processStar directly owns rectangle extent without an
+    // emulation-level option. Valid changes remain exact/idempotent.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const start = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[2*")).stateChanged());
+    try std.testing.expect((try terminal.feed("x")).stateChanged());
+    try std.testing.expectEqual(start + 1, terminal.semanticSequence());
+    try std.testing.expect(!(try terminal.feed("\x1b[2*x")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[3*x")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[1*x")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[0*x")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[2*x")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[2*x")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 5, 8);
@@ -2475,6 +2635,26 @@ test "terminal: SGR font and baseline retain exact cell save resize and bank sta
     try std.testing.expect(!(try terminal.feed("\x1b[75m")).stateChanged());
     try std.testing.expect((try terminal.feed("\x1b[0m")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b[0m")).stateChanged());
+}
+
+test "terminal: pinned iTerm2 CSI T rejects excess parameters while Howl accepts count" {
+    // Pinned iTerm2 VT100CSIParser.m::SetCSITypeAndDefaultParameters:
+    // case 'T' recognizes XTERMCC_SD only if param->count < 2; with
+    // two parameters it returns VT100_NOTSUPPORT. Howl decodeCsi('T')
+    // accepts the first count and ignores extra parameters, scrolling.
+    for ([_][]const u8{ "\x1b[T", "\x1b[1T", "\x1b[1;2T" }) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[2;3r");
+        const split = command.len - 1;
+        try std.testing.expect(!(try terminal.feed(command[0..split])).stateChanged());
+        try std.testing.expect((try terminal.feed(command[split..])).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(2, 0));
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
 }
 
 test "terminal: CSI T scroll down preserves bounded margins, cursor and exact mutation" {

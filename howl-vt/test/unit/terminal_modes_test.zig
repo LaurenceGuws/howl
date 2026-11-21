@@ -3032,6 +3032,39 @@ test "application keypad modes affect keypad encoding and DECRQM" {
     try std.testing.expectEqualStrings("1", encodeKey(&terminal, .{ .named = .keypad_1 }, .{}));
 }
 
+test "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported" {
+    // Pinned iTerm2 VT100CSIParser.m recognizes CSI ?Pm S as
+    // XTERMCC_XTSMGRAPHICS. VT100Terminal.m::executeSetRequestGraphics
+    // routes color-register and Sixel geometry queries, set/reset
+    // requests, and unknown-property error replies to its host owner.
+    // Native Howl VT intentionally has no private CSI ?S handler.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AB")).stateChanged());
+    const before = terminal.semanticSequence();
+    for ([_][]const u8{
+        "\x1b[?1;1S", // read sixel palette register count
+        "\x1b[?1;3;32S", // request set of register count
+        "\x1b[?2;1S", // request sixel geometry
+        "\x1b[?3;1S", // ReGIS unsupported reply
+        "\x1b[?9;1S", // unknown-property status reply
+    }) |sequence| {
+        const split = sequence.len - 1;
+        try std.testing.expect(!(try terminal.feed(sequence[0..split])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(sequence[split..])).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
+    }
+    // A subsequent ordinary text/rendition command must still work.
+    try std.testing.expect((try terminal.feed("\x1b[31mC")).stateChanged());
+    const cell = terminal.semanticView(0).cellInfoAt(0, 2);
+    try std.testing.expectEqual(@as(u21, 'C'), cell.codepoint);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), cell.attrs.fg);
+}
+
 test "libvterm private DECSGR baseline collides with native modifyOtherKeys query" {
     // Pinned libvterm src/state.c:on_csi LEADER('?',0x6d) interprets
     // 4,5,24 as superscript, subscript and baseline reset, updating
