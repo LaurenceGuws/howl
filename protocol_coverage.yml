@@ -4271,24 +4271,88 @@ references:
             howl: *howl_static_graphics_delete}
           kitty.graphics.delete_range: {raw: "APC G a=d,d=r|R,Pm ST",
             effect: delete image id range optionally including data, relevance: graphics,
-            howl: *howl_static_graphics_delete}
+            conditions: "Pinned Kitty uses distinct primary/alternate graphics managers; upper R may
+              reclaim orphaned in-range images only from the current manager and with no placement-id
+              filter. Howl now retains each decoded image's admitting bank, but uses a shared image-ID index.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Matched lower/upper range deletion, bank-specific orphan retention and p-filter
+                suppression are proven. Cross-bank duplicate client IDs, shared image lookups, virtual
+                relative references and complete clipped geometry remain unqualified.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase range deletion cannot reclaim unplaced data from another bank"}}}
           kitty.graphics.delete_point: {raw: "APC G a=d,d=p|P,x=Ps,y=Ps ST",
             effect: delete at cell point optionally including data, relevance: graphics,
-            howl: *howl_static_graphics_delete}
+            conditions: "Pinned Kitty point selection filters active-manager physical, non-cell
+              placement rectangles at 1-based x/y. Howl's direct matched-hit/miss and unrelated
+              unplaced-data retention are proven for ordinary anchored placements.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Exact physical-cell hit/miss and matched-only uppercase reclamation are tested;
+                effective clipped geometry, projected virtual placeholders and scrolling history edges
+                still require independent pinned comparisons.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase geometric selectors reclaim matched data without sweeping other images"}}}
           kitty.graphics.delete_point3d: {raw: "APC G a=d,d=q|Q,x=Ps,y=Ps,z=Ps ST",
             effect: delete at cell point and z-index optionally including data, relevance: graphics,
-            howl: *howl_static_graphics_delete}
+            conditions: "Pinned Kitty combines physical point intersection with exact signed layer.
+              Howl correctly retains unrelated stored bytes on matched or missed uppercase Q and
+              preserves other layers on lowercase q in the tested ordinary placement cases.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Ordinary signed-z hit/miss and matched-only reclamation are covered, but
+                effective clipped geometry, virtual/cell layers and animated frame interactions
+                are not yet a complete pinned differential.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase geometric selectors reclaim matched data without sweeping other images"}}}
           kitty.graphics.delete_x: {raw: "APC G a=d,d=x|X,x=Ps ST",
             effect: delete at column optionally including data, relevance: graphics,
-            howl: *howl_static_graphics_delete}
+            conditions: "Pinned Kitty selects active-manager physical placements using effective
+              visible columns. Howl proves uppercase X single-column hits and misses without
+              reclaiming unrelated unplaced bytes.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Ordinary column hit/miss and matched-only data lifetime agree; dynamic
+                clipping, cropped effective width, history and virtual-placement boundaries remain
+                unverified against the pinned Kitty filter.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase geometric selectors reclaim matched data without sweeping other images"}}}
           kitty.graphics.delete_y: {raw: "APC G a=d,d=y|Y,y=Ps ST",
             effect: delete at row optionally including data, relevance: graphics,
-            howl: *howl_static_graphics_delete}
+            conditions: "Pinned Kitty uses active-manager physical effective rows. Howl's upper Y
+              hit/miss correctly retains unrelated unplaced images and uses its explicit
+              primary-history or alternate screen-origin translation.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Ordinary 1-based row selection and matched-only reclamation are tested;
+                scrolled history origins, clipped effective rows and virtual-cell projection remain
+                outside the complete pinned comparison.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase geometric selectors reclaim matched data without sweeping other images"}}}
           kitty.graphics.delete_z: {raw: "APC G a=d,d=z|Z,z=Ps ST",
-            effect: delete at z-index optionally including data, relevance: graphics, howl: *howl_static_graphics_delete}
+            effect: delete at z-index optionally including data, relevance: graphics,
+            conditions: "Pinned Kitty matches an exact signed layer among active physical
+              non-cell refs. Howl's upper Z hit/miss and lower z layer preservation are tested
+              without collateral storage reclamation.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Signed layer filtering and matched-only bytes are demonstrated for ordinary
+                placements; hidden virtual layers, overlapping clipped references and animation
+                frame retirement require additional proof.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase geometric selectors reclaim matched data without sweeping other images"}}}
           kitty.graphics.delete_cursor: {raw: "APC G a=d,d=c|C ST",
             effect: delete at cursor optionally including data, relevance: graphics,
-            howl: *howl_static_graphics_delete}
+            conditions: "Pinned Kitty cursor deletion uses its current physical cell and excludes
+              virtual/cell refs. Howl's upper C hit/miss on the active bank preserves all unrelated
+              unplaced decoded images.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Ordinary cursor-cell hit/miss and matched-only data retirement are tested.
+                Scrollback-origin cursor projection, virtual placeholder cells and clipped
+                multi-layer geometry remain unqualified.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.delete, proof: {
+              path: howl-vt/src/graphics.zig,
+              symbol: "Kitty uppercase geometric selectors reclaim matched data without sweeping other images"}}}
           kitty.graphics.delete_number: {raw: "APC G a=d,d=n|N,I=Ps ST",
             effect: delete by image number optionally including data, relevance: graphics, howl: *howl_static_graphics_delete}
           kitty.graphics.delete_frame: {raw: "APC G a=d,d=f|F,Pm ST", effect: delete animation frame or image,

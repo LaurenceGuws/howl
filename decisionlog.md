@@ -1608,3 +1608,58 @@ regression. VT Debug/ReleaseFast, full root ReleaseFast check/test,
 Zig/project audits and Nu protocol validation/diff checks passed.
 The accepted support census is now 272 full / 343 partial /
 48 missing / 9 unassessed, all 672 original records retained.
+
+## Kitty image deletion keeps unplaced data in its admitting screen bank (21 November 2026)
+
+The frozen 10x10 Kitty graphics delete intake 09 identified a
+remaining image-resource provenance mismatch. Pinned Kitty at
+d4106ef2db687579a69fefc949a6dc1b662f3ca8,
+kitty/screen.c, owns distinct main_grman and alt_grman. Its
+kitty/graphics.c:handle_delete_command permits uppercase I/N/R to
+free already-unreferenced images in the active manager only. Howl
+has a single bounded Plane with bank-tagged placements but
+previously kept no bank owner for the decoded Image itself. Thus
+an alternate-bank R range command could reclaim unplaced primary
+bytes, even with no matching alternate placement.
+
+A targeted test for uppercase R on an unplaced primary image was
+red before the correction and green afterward. The private Image
+owner now records the screen Bank at successful Kitty transmission
+or direct decoded-image admission. The existing delete routine
+uses that provenance only for the special uppercase identity/range
+unplaced-data shortcut; ordinary placement matches were already
+filtered by the active bank. No second graphics manager, parallel
+image registry or allocation was introduced. Tests prove
+bank-isolated R on unplaced and placed images, positive R in the
+admitting bank, an explicit p filter suppressing orphan deletion,
+and quiet no-op generation/resource accounting. A further test
+proves I/N unplaced deletion stays in the originating screen bank.
+
+The same coordinator inspection independently checked the pinned
+Kitty uppercase geometric P/Q/X/Y/Z/C filter semantics against
+Howl's current Plane.delete and deleteMatches owners. The broad
+unrelated-image sweep had already been eliminated at 22d0c78.
+A table-driven test now covers all six uppercase selectors with
+a miss followed by a hit, an unrelated unplaced image, signed z,
+1-based physical coordinates, exact storage retirement, no-op
+generation identity and quiet deletion. It proves that ordinary
+matching data is reclaimed without evicting unrelated data.
+This is NOT full Kitty graphics parity: separate same-client-ID
+namespaces for primary/alternate transmission, relative/virtual
+references, effective clipped geometry, scrollback and animated
+frame interactions remain open.
+
+Exactly seven catalogue records were upgraded in evidence while
+remaining partial/deferred: kitty.graphics.delete_range,
+delete_point, delete_point3d, delete_x, delete_y, delete_z, and
+delete_cursor. All 672 indexed IDs, support classifications and
+reference pins remain unchanged. The range record has a pinned
+global-image-index exception; the six geometry selectors have
+tested ordinary hit/miss behavior but incomplete edge qualification.
+
+New code adds only one Image.bank owner field and its admission
+assignments plus the scoped delete guard; all other source
+changes are direct regression proofs. VT Debug/ReleaseFast and
+root ReleaseFast check/test, all seven Zig/project package audits,
+Nu protocol validation with sixteen fixtures, Zig formatting and
+diff checks passed. No installed binary or running session changed.
