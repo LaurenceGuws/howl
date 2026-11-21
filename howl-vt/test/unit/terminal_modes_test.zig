@@ -186,6 +186,40 @@ test "mouse reporting supports legacy x10 normal utf8 and urxvt encodings" {
     try std.testing.expectEqualStrings("\x1b[32;241;241M", encodeMouse(&terminal, far_press));
 }
 
+test "libvterm UTF8 mouse encoding admits non-scalars that Howl rejects" {
+    // Pinned libvterm src/mouse.c:output_mouse(MOUSE_UTF8) forwards
+    // row+0x21 to src/utf8.h:fill_utf8 without a Unicode scalar check.
+    // For row = 0xD800-0x21 the reference emits ED A0 80 (a surrogate),
+    // while Howl declines the entire ESC [ M report transaction.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[?1000h\x1b[?1005h");
+    const first = MouseEvent{
+        .kind = .press,
+        .button = .left,
+        .row = 0xD800 - 0x21,
+        .col = 0,
+        .mod = .{},
+        .buttons_down = 1,
+    };
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, first));
+    // 0x110000 is above Unicode's ceiling, but pinned libvterm's
+    // historical 4-byte fill_utf8 encodes it as F4 90 80 80.
+    var outside = first;
+    outside.row = 0x110000 - 0x21;
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, outside));
+
+    // Admitted nearby UTF-8 mouse fields still work in the same mode.
+    var valid = first;
+    valid.row = 240;
+    valid.col = 240;
+    try std.testing.expectEqualStrings("\x1b[M \xc4\x91\xc4\x91", encodeMouse(&terminal, valid));
+    // SGR mode admits large decimal coordinates without Unicode encoding.
+    try feed(&terminal, "\x1b[?1006h");
+    try std.testing.expectEqualStrings("\x1b[<0;1;55264M", encodeMouse(&terminal, first));
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+}
+
 test "libvterm legacy X10 clamps out-of-range pointer while Howl drops it" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

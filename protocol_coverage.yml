@@ -850,9 +850,12 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           libvterm.mode.mouse_utf8: {raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            conditions: "Pinned libvterm src/mouse.c sends mouse row/column fields through src/utf8.h:fill_utf8 without Unicode scalar validation, including surrogate ED A0 80 and codepoints above U+10FFFF. Howl safely rejects the whole invalid report rather than emitting malformed UTF-8. Valid UTF-8 mouse reports and negotiated mode selection agree.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Native mouse input must not emit invalid Unicode scalar encodings; source-pinned libvterm's permissive historical UTF-8 writer is not a safe compatibility target.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
+              symbol: "libvterm UTF8 mouse encoding admits non-scalars that Howl rejects"}}}
           libvterm.mode.mouse_sgr: {raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
