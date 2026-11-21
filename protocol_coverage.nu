@@ -13,7 +13,6 @@ const group_fields = [source line census recognition records bounds symbol condi
 const record_fields = [raw effect relevance howl conditions recognition bounds source symbol line]
 export const protocol_cheatsheet = [
   "protocol                         compact coverage summary"
-  "protocol gaps                    active partial/missing/unassessed records"
   "protocol list                    compact filtered human table; shows 25 rows by default"
   "protocol list --limit 50         override the human row bound; --all shows every row"
   "protocol query ...               normalized structured records, including adjudicated decisions"
@@ -135,12 +134,6 @@ export def "protocol decision" [id: string@id-complete] {
     policy: ((load-catalogue).collision_policy)
     adjudication: $row.adjudication
   }
-}
-
-export def "protocol gaps" [] {
-  protocol query
-  | where disposition == active
-  | where support in [partial missing unassessed]
 }
 
 export def "protocol summary" [] {
@@ -520,5 +513,4 @@ export def "protocol help" [] {
 }
 
 export alias pc = protocol
-export alias pcg = protocol gaps
 export alias pcq = protocol query

@@ -84,20 +84,20 @@ The companion Nushell query surface makes the index discoverable:
 
 ```sh
 nu --no-config-file -c 'source protocol_coverage.nu; protocol summary'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol gaps'
+nu --no-config-file -c 'source protocol_coverage.nu; protocol query --support partial'
+nu --no-config-file -c 'source protocol_coverage.nu; protocol query --support missing'
 nu --no-config-file -c 'source protocol_coverage.nu; protocol query --disposition adjudicated'
 nu --no-config-file -c 'source protocol_coverage.nu; protocol query --text XTQMODKEYS'
 nu --no-config-file -c 'source protocol_coverage.nu; protocol show libvterm.csi.decsgr'
 nu --no-config-file -c 'source protocol_coverage.nu; protocol decision libvterm.csi.decsgr | to json -r'
 ```
 
-`protocol gaps` is the **active** remediation view, not the complete Round 2
-partial/missing queue. Existing deferred/excluded records still require the
-full-by-default review; only an explicit indexed collision decision records a
-resolved impossibility. The validator checks the priority policy, the ruling's
-required evidence and the existence of its named Zig test. `zig build protocol`
-runs that validation and corrupt-policy fixtures independently of the portable
-core `zig build check` gate.
+Use `protocol query --support partial` and `--support missing` for the
+full Round 2 queue, including records historically marked deferred or excluded.
+Only an explicit indexed collision decision records a resolved impossibility.
+The validator checks the priority policy, the ruling's required evidence and
+the existence of its named Zig test. `zig build protocol` runs that validation
+and corrupt-policy fixtures independently of the portable core `zig build check` gate.
 
 ## Build
 
