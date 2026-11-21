@@ -2216,6 +2216,36 @@ test "terminal: pinned libvterm extended color wraps while Howl clamps overrange
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
+test "terminal: pinned iTerm2 dual-mode colors are explicit unsupported SGR submodes" {
+    // Pinned iTerm2 VT100GraphicRendition.m accepts colon mode 12 for
+    // light/dark RGB and 13 for light/dark indexed colors. Each fg, bg,
+    // and underline-color action uses the shared color-value parser.
+    // Howl's native one-color slots accept only color modes 2 and 5.
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b[38:12:10:20:")).stateChanged());
+    try feed(&terminal, "30:200:210:220;48:13:42:90;58:12:1:2:3:4:5:6mA");
+    const unsupported = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, unsupported.fg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.bg, unsupported.bg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.underline_color, unsupported.underline_color);
+    try std.testing.expect(!unsupported.bold);
+    try std.testing.expect(!unsupported.reverse);
+
+    // A second unrecognized dual indexed foreground cannot leak its
+    // subparameters into normal SGR groups or mutate a previous color.
+    try std.testing.expect(!(try terminal.feed("\x1b[38:13:42:90m")).stateChanged());
+    try feed(&terminal, "B");
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, terminal.semanticView(0).cellInfoAt(0, 1).attrs.fg);
+
+    try feed(&terminal, "\x1b[38:2::10:20:30;48:5:42;58:2::40:50:60mC");
+    const supported = terminal.semanticView(0).cellInfoAt(0, 2).attrs;
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(10, 20, 30), supported.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(42), supported.bg);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 50, 60), supported.underline_color);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: SGR rapid blink is an exact fragmented no-op" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 8);
