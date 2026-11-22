@@ -147,39 +147,64 @@ fn handleKittyControl(
         ascii = cleaned[0..count];
         break;
     }
-    // Kitty collects every queried key into one OSC 21 response, in input
-    // order. The outer apply transaction owns both colour and reply rollback.
+    // Current Kitty 0.51 uses an ordered response list. Keep repeated query
+    // entries at their exact observation points, even after intervening sets.
+    // Its unknown field names are base64 encoded rather than echoed verbatim,
+    // including bare setters/resets and invalid names containing whitespace.
+    // Unlike the old pinned revision, modern Kitty never trims field names.
+    // Outer apply owns colour and reply rollback under any output failure.
     var replying = false;
     var parts = std.mem.splitScalar(u8, ascii, ';');
-    while (parts.next()) |raw_part| {
-        const part = std.mem.trim(u8, raw_part, " \t\r\n");
+    while (parts.next()) |part| {
         if (part.len == 0) continue;
         const eq = std.mem.indexOfScalar(u8, part, '=');
+        const key = if (eq) |pos| part[0..pos] else part;
+        if (key.len == 0) continue;
+        if (!isKnownColorKey(key)) {
+            try beginKittyColorReply(output, &replying);
+            try output.append("unknown=");
+            try appendKittyUnknownKey(output, key);
+            continue;
+        }
         if (eq) |pos| {
-            const key = std.mem.trim(u8, part[0..pos], " \t");
-            const value = std.mem.trim(u8, part[pos + 1 ..], " \t");
+            const value = part[pos + 1 ..];
             if (std.mem.eql(u8, value, "?")) {
-                if (!replying) {
-                    try output.appendControl(.kitty, .osc);
-                    try output.append("21");
-                    replying = true;
-                }
-                try output.append(";");
+                try beginKittyColorReply(output, &replying);
                 try output.append(key);
                 try output.append("=");
-                if (colorForKey(colors, key)) |color| {
-                    try appendKittyColorOsc(output, color);
-                } else if (!isKnownColorKey(key)) {
-                    try output.append("?");
-                }
+                if (colorForKey(colors, key)) |color| try appendKittyColorOsc(output, color);
             } else {
                 setColorKey(colors, key, value);
             }
         } else {
-            resetColorKey(colors, std.mem.trim(u8, part, " \t"), defaults);
+            resetColorKey(colors, key, defaults);
         }
     }
     if (replying) try output.appendControl(.kitty, .st);
+}
+
+// Begins one ordered OSC 21 response entry. Only this owner emits the reply
+// framing, and the caller's atomic apply transaction owns rollback.
+fn beginKittyColorReply(output: *replies.Buffer, replying: *bool) replies.AppendError!void {
+    if (!replying.*) {
+        try output.appendControl(.kitty, .osc);
+        try output.append("21");
+        replying.* = true;
+    }
+    try output.append(";");
+}
+
+// Unknown OSC 21 names are untrusted, even after stripping control bytes.
+// Current Kitty returns standard base64 under `unknown=` to prevent a child
+// from smuggling arbitrary printable text into its terminal's reply stream.
+fn appendKittyUnknownKey(output: *replies.Buffer, key: []const u8) replies.AppendError!void {
+    const max_bytes = @import("parser.zig").max_metadata_control_bytes;
+    std.debug.assert(key.len != 0 and key.len <= max_bytes);
+    // Kitty fast_data_types.base64_encode defaults to *unpadded* standard
+    // base64. The trailing '=' would be a real wire compatibility difference.
+    var encoded: [std.base64.standard_no_pad.Encoder.calcSize(max_bytes)]u8 = undefined;
+    const encoded_len = std.base64.standard_no_pad.Encoder.calcSize(key.len);
+    try output.append(std.base64.standard_no_pad.Encoder.encode(encoded[0..encoded_len], key));
 }
 
 // Kitty OSC 21 uses two hex digits per RGB component. Other OSC color
@@ -460,15 +485,35 @@ fn specialColorKey(key: []const u8) ?SpecialKey {
     return null;
 }
 
-// Reports whether a borrowed Kitty color key names supported state.
+// Kitty's modern OSC 21 parser accepts only ASCII decimal digits as palette
+// names, including leading zeroes. No signs, whitespace or mixed syntax.
+fn kittyPaletteIndex(key: []const u8) ?u8 {
+    if (key.len == 0) return null;
+    for (key) |byte| if (byte < '0' or byte > '9') return null;
+    return std.fmt.parseUnsigned(u8, key, 10) catch null;
+}
+
+// Kitty recognizes 1..8 transparent background slots, but Howl has no
+// retained RGBA/opacity owner for them. An initially empty slot is reported
+// as empty, never mislabelled unknown or invented as an opaque RGB color.
+fn isKittyTransparentBackgroundKey(key: []const u8) bool {
+    const prefix = "transparent_background_color";
+    if (!std.mem.startsWith(u8, key, prefix)) return false;
+    const index = kittyPaletteIndex(key[prefix.len..]) orelse return false;
+    return index >= 1 and index <= 8;
+}
+
+// Reports whether a borrowed Kitty color name is known to the OSC grammar.
 fn isKnownColorKey(key: []const u8) bool {
     if (specialColorKey(key) != null) return true;
-    return (std.fmt.parseUnsigned(u8, key, 10) catch null) != null;
+    if (std.mem.eql(u8, key, "visual_bell")) return true;
+    if (isKittyTransparentBackgroundKey(key)) return true;
+    return kittyPaletteIndex(key) != null;
 }
 
 // Returns the current color for a recognized Kitty key.
 fn colorForKey(colors: *const TerminalColorState, key: []const u8) ?Rgb {
-    if (std.fmt.parseUnsigned(u8, key, 10)) |idx| return colors.palette[idx] else |_| {}
+    if (kittyPaletteIndex(key)) |idx| return colors.palette[idx];
     if (specialColorKey(key)) |special| return switch (special) {
         .foreground => colors.foreground,
         .background => colors.background,
@@ -647,10 +692,10 @@ fn appendColorOsc(output: *replies.Buffer, color: Rgb) replies.AppendError!void 
 
 // Parses and applies a recognized Kitty color key, ignoring invalid values.
 fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) void {
-    if (std.fmt.parseUnsigned(u8, key, 10)) |idx| {
+    if (kittyPaletteIndex(key)) |idx| {
         if (parseColor(value)) |color| colors.palette[idx] = color;
         return;
-    } else |_| {}
+    }
     if (value.len == 0) {
         setSpecialColorDynamic(colors, key);
     } else if (parseColor(value)) |color| {
@@ -660,10 +705,10 @@ fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) 
 
 // Restores a recognized Kitty color key to its default value.
 fn resetColorKey(colors: *TerminalColorState, key: []const u8, defaults: *const TerminalColorState) void {
-    if (std.fmt.parseUnsigned(u8, key, 10)) |idx| {
+    if (kittyPaletteIndex(key)) |idx| {
         colors.palette[idx] = defaults.palette[idx];
         return;
-    } else |_| {}
+    }
     if (specialColorKey(key)) |special| switch (special) {
         .foreground => colors.foreground = defaults.foreground,
         .background => colors.background = defaults.background,
@@ -979,7 +1024,7 @@ test "Kitty OSC 21 strips nonprintable input before echo and interpretation" {
     ));
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.foreground);
     try std.testing.expectEqualStrings(
-        "\x1b]21;foreground=rgb:11/22/33;bad=?;cursor=\x1b\\",
+        "\x1b]21;foreground=rgb:11/22/33;unknown=YmFk;cursor=\x1b\\",
         output.bytes(),
     );
     try output.consumePrefix(output.bytes().len);
@@ -1009,6 +1054,54 @@ test "Kitty OSC 21 strips nonprintable input before echo and interpretation" {
     ));
     try std.testing.expectEqualDeep(before, colors);
     try std.testing.expectEqualStrings("", output.bytes());
+}
+
+test "current Kitty OSC 21 maximum unknown-name reply is bounded and atomic" {
+    const allocator = std.testing.allocator;
+    var colors: properties.ColorState = .{};
+    var output = replies.Buffer.init(allocator);
+    defer output.deinit();
+    var scratch: [64]u8 = undefined;
+
+    // The exact parser ceiling is also the longest unknown field name. A
+    // no-padding base64 reply grows to ~2.7KiB, but never allocates, echoes
+    // the original attacker text or bypasses the 64KiB reply queue.
+    const max = @import("parser.zig").max_metadata_control_bytes;
+    const unknown: [max]u8 = @splat('x');
+    const response_bytes = "\x1b]21;unknown=".len + std.base64.standard_no_pad.Encoder.calcSize(max) + "\x1b\\".len;
+    const prefix = try allocator.alloc(u8, replies.max_bytes - response_bytes + 1);
+    defer allocator.free(prefix);
+    @memset(prefix, 'p');
+    try output.append(prefix);
+    const before = colors;
+
+    try std.testing.expectError(error.ReplyLimit, apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 21, .payload = &unknown } },
+    ));
+    try std.testing.expectEqualDeep(before, colors);
+    try std.testing.expectEqualSlices(u8, prefix, output.bytes());
+    try output.consumePrefix(output.bytes().len);
+
+    try std.testing.expect(try apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 21, .payload = &unknown } },
+    ));
+    try std.testing.expectEqual(response_bytes, output.bytes().len);
+    try std.testing.expect(std.mem.startsWith(u8, output.bytes(), "\x1b]21;unknown="));
+    try std.testing.expect(std.mem.endsWith(u8, output.bytes(), "\x1b\\"));
+    const encoded = output.bytes()["\x1b]21;unknown=".len .. output.bytes().len - "\x1b\\".len];
+    const decoded = try allocator.alloc(u8, max);
+    defer allocator.free(decoded);
+    try std.base64.standard_no_pad.Decoder.decode(decoded, encoded);
+    try std.testing.expectEqualSlices(u8, &unknown, decoded);
+    try std.testing.expectEqualDeep(before, colors);
 }
 
 test "Kitty OSC 21 multi-query reply capacity failure rolls back colors and all replies" {

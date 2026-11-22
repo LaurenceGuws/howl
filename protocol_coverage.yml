@@ -5030,28 +5030,38 @@ references:
             effect: query set or reset terminal colors
             conditions: >-
               Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB states. Mixed-key
-              cursor changes now project from one committed canonical color parse into both screen banks;
-              Howl now also groups queried keys into one OSC 21 reply with Kitty's 8-bit RGB spelling and
-              exact positive, negative and capacity rollback proofs. Howl now removes nonprintable
-              and non-ASCII bytes before parsing OSC 21, matching frozen Kitty's safe-echo rule;
-              direct typed-control and split-VT tests prove both parsing and bounded reply bytes.
-              Pinned Kitty's transparent backgrounds, visual-bell color, duplicate-key coalescing,
-              opacity and host refresh remain outside the qualified subset.
-              Native proof rgbi grammar reaches all represented palette and dynamic color controls
-              verifies fractional-intensity colors; valid names/LAB and host presentation policy remain separate.
-              Separate pinned Kitty delta a79f376b85fd95e3dfd0589877123996bacd4184 and
-              live Kitty 0.51.0 replace the frozen dict response with an ordered
-              list: duplicate queries are retained in wire order and unknown
-              field names are base64 encoded under unknown=, unlike frozen Kitty's
-              duplicate-key coalescing and direct unknown-key echo. No duplicate
-              catalogue ID is minted for changed semantics of the same command.
+              cursor changes now project from one committed canonical color parse into both screen banks.
+              The grouped OSC 21 reply retains Kitty's RGB8 spelling and atomic
+              color/reply rollback. Both Kitty source revisions strip nonprintable
+              and non-ASCII bytes before interpreting or responding to controls.
+              The scoped modern Kitty delta a79f376b85fd95e3dfd0589877123996bacd4184
+              replaces frozen d4106ef's insertion-ordered dictionary with an
+              ordered response list: repeated queries retain each observed value,
+              while unknown query, setter and bare reset names are encoded under
+              unknown= using Kitty's unpadded standard base64. Howl now matches
+              that exact source-current response grammar, including whitespace-
+              sensitive ASCII key names, canonical decimal-only palette indices,
+              invalid transparent background slot names and empty records. Known
+              but unowned visual-bell and transparent slot names remain distinct
+              from unknown ones, with empty unset reports, not invented RGB data.
+              Source-bound 2048-byte unknown-key/64KiB reply-failure tests prove
+              bounded encoding and complete rollback. Installed Kitty 0.51.0
+              against staged ReleaseFast Howl in private Fleet-managed KWin
+              produced nine of nine byte-identical raw PTY query/reply cases,
+              including a maximum-size encoded unknown key and UTF-8 sanitization.
+              Frozen Kitty's duplicate-key coalescing and direct unknown-key echo
+              remain historical version-specific facts, not a competing current
+              default or a new duplicate catalogue command ID. Accepted native
+              rgbi grammar and ordinary RGB/color control behavior are unchanged.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "The ordinary multi-key query reply, RGB8 spelling and printable-ASCII
-                payload sanitization now match frozen Kitty. Transparent alpha, visual bell,
-                frozen duplicate-key coalescing, current delta base64 unknown-key replies,
-                opacity and host colour refresh remain unqualified; the two pinned
-                reference revisions cannot be treated as one interchangeable oracle.
-                No new host colour state was introduced.",
+              residual: "The scoped current Kitty OSC 21 ordered queries and unpadded base64
+                unknown-field reply grammar are now qualified, with atomic bounds.
+                Frozen Kitty d4106ef coalesces repeats and echoes unknown names,
+                intentionally different from current modern semantics. Howl lacks
+                actual 1..8 transparent-background RGBA/opacity storage, visual-
+                bell color state and host-specific presentation refresh; it only
+                recognizes initially unset keys without inventing color values.
+                Other color names and host-opacity policy are not full parity.",
               source: howl-vt/src/color_control.zig, symbol: handleKittyControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty OSC 21 groups ordered queries with eight bit RGB and one reply"}}

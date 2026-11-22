@@ -2012,7 +2012,7 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
     try std.testing.expectEqualStrings(
-        "\x1b]21;foreground=rgb:11/22/33;background=rgb:44/55/66;cursor=;no_such=?\x1b\\",
+        "\x1b]21;foreground=rgb:11/22/33;background=rgb:44/55/66;cursor=;unknown=bm9fc3VjaA\x1b\\",
         terminal.replyBytes(),
     );
 
@@ -2045,7 +2045,7 @@ test "kitty OSC 21 groups ordered queries with eight bit RGB and one reply" {
     try std.testing.expectEqualStrings("", terminal.replyBytes());
     try feed(&terminal, "background=?;cursor=?;unsupported=?\x1b\\");
     try std.testing.expectEqualStrings(
-        "\x1b]21;foreground=rgb:12/34/56;background=rgb:ab/cd/ef;cursor=;unsupported=?\x1b\\",
+        "\x1b]21;foreground=rgb:12/34/56;background=rgb:ab/cd/ef;cursor=;unknown=dW5zdXBwb3J0ZWQ\x1b\\",
         terminal.replyBytes(),
     );
     try std.testing.expectEqual(Rgb{ .r = 0x12, .g = 0x34, .b = 0x56 }, terminal.presentation().foreground);
@@ -2058,6 +2058,57 @@ test "kitty OSC 21 groups ordered queries with eight bit RGB and one reply" {
         "\x1b]21;foreground=rgb:12/34/56;background=rgb:ab/cd/ef\x1b\\",
         terminal.replyBytes(),
     );
+}
+
+test "current Kitty OSC 21 preserves duplicate query chronology and encodes unknown names" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+    defer terminal.deinit();
+
+    // Current Kitty window.py::color_control uses an ordered list, not the
+    // frozen reference's insertion-ordered response dictionary. Unknown
+    // fields are returned only inside base64-encoded unknown= values.
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b]21;foreground=#112233;foreground=?;bad=?;" ++
+            "foreground=#445566;foreground=?;bad=?; 5 =?;bad=red;" ++
+            "unsupported-setter;cursor=?;visual_bell=?\x1b",
+    )).stateChanged());
+    try feed(&terminal, "\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;foreground=rgb:11/22/33;unknown=YmFk;" ++
+            "foreground=rgb:44/55/66;unknown=YmFk;unknown=IDUg;" ++
+            "unknown=YmFk;unknown=dW5zdXBwb3J0ZWQtc2V0dGVy;" ++
+            "cursor=;visual_bell=\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    // The known-name query is still one response; an invalid value for a
+    // known key does not manufacture an unknown-key report.
+    try feed(&terminal, "\x1b]21;foreground=#not-a-color;foreground=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;foreground=rgb:44/55/66\x1b\\", terminal.replyBytes());
+}
+
+test "current Kitty OSC 21 unknown control names never echo attacker text" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Unrecognized names are never emitted verbatim, including a bare
+    // setter/reset command. Empty records are ignored, not echoed.
+    try feed(&terminal, "\x1b]21;;evil]21=X;;transparent_background_color9=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;unknown=ZXZpbF0yMQ;unknown=dHJhbnNwYXJlbnRfYmFja2dyb3VuZF9jb2xvcjk\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, terminal.replyBytes(), "evil]") == null);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    // A valid transparent-background slot is recognized even though Howl
+    // currently has no host alpha state. Its initial query is unset, not an
+    // unknown field. This does not claim full alpha-setting compatibility.
+    try feed(&terminal, "\x1b]21;transparent_background_color2=?\x1b\\");
+    try std.testing.expectEqualStrings("\x1b]21;transparent_background_color2=\x1b\\", terminal.replyBytes());
 }
 
 test "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors" {
