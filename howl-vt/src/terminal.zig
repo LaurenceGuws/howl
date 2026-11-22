@@ -1072,11 +1072,11 @@ fn decodeCsi(
     separators: parser_mod.CsiSeparatorList,
     intermediates: []const u8,
 ) ?SemanticEvent {
-    // Frozen Kitty's one-parameter cursor and cell-edit controls reject
-    // extras before mutation. The #P color stack and SP @ column shift
-    // have separate intermediate routes and retain their own admission.
+    // Frozen Kitty's one-parameter cursor, repeat, tab and cell-edit
+    // controls reject extras before mutation. #P and SP @ remain separate;
+    // TBC mode 5 retains the already accepted libvterm all-clear policy.
     if (params.len > 1) switch (final) {
-        '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'P', 'X', 'Z', '`', 'd' => return null,
+        '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'P', 'X', 'Z', '`', 'b', 'd', 'g' => return null,
         else => {},
     };
     switch (final) {

@@ -84,6 +84,8 @@ let expected_rulings = [
   iterm2.csi.dch
   iterm2.csi.ech
   iterm2.csi.hvp
+  iterm2.csi.rep
+  iterm2.csi.tbc
   iterm2.csi.vpa
   iterm2.osc.bg
   iterm2.osc.cursor
@@ -115,10 +117,32 @@ let expected_rulings = [
   libvterm.csi.hpa
   libvterm.csi.hvp
   libvterm.csi.ich
+  libvterm.csi.rep
+  libvterm.csi.tbc
   libvterm.csi.vpa
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Frozen Kitty's REP b and TBC g reject a second numeric operand,
+# unlike pinned libvterm/iTerm2 which act on the first. Preserve the
+# separate already accepted libvterm-style TBC mode-5 clear-all decision.
+for reference in [libvterm iterm2] {
+  for command in [
+    {name: rep, wire: "CSI 1 ; 9 b", proof: "terminal: pinned Kitty REP rejects excess counts without repeating or disturbing graphics"}
+    {name: tbc, wire: "CSI 3 ; 9 g", proof: "terminal: pinned Kitty TBC rejects excess operands while retaining libvterm mode five"}
+  ] {
+    let id = ($reference + ".csi." + $command.name)
+    let decision = (protocol decision $id)
+    if ($decision.disposition != adjudicated
+        or $decision.adjudication.kind != wire_collision
+        or $decision.adjudication.wire != $command.wire
+        or $decision.adjudication.winner.owner != kitty
+        or $decision.adjudication.loser.owner != $reference
+        or $decision.adjudication.proof.symbol != $command.proof) {
+      error make {msg: $"pinned REP/TBC admission ruling is not source-backed: ($id)"}
+    }
+  }
 }
 # Pinned Kitty admits only one operand for ordinary I/X/P/@. Both pinned
 # comparators consume the first even when extras exist. The frozen iTerm2

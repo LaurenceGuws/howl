@@ -865,8 +865,25 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           libvterm.csi.rep: {raw: "CSI [Ps=1] b", effect: repeat preceding character,
-            conditions: libvterm clamps complete glyph repetition to the logical row while Howl wraps through the grid,
-            howl: *howl_repeat_excluded}
+            conditions: "Pinned libvterm src/state.c:1260-1276 accepts extra REP operands and repeats using args[0], clamping the complete glyph to its logical row. Howl now follows frozen Kitty's strict one-operand admission but retains bounded retained-grapheme repetition through the grid.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: *howl_repeat_policy_difference,
+              residual: "Normal bounded grapheme REP differs from libvterm's logical-row clamp; surplus operands now reject rather than repeating from the first count.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: REP retains bounded glyph state and exact lifetime"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 b",
+                winner: &kitty_repeat_tab_arity_winner {owner: kitty, protocol: Kitty REP and TBC one-operand admission,
+                  behavior: Reject surplus numeric operands without terminal-state mutation.,
+                  evidence: "Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1140,1194-1195,1261-1262"},
+                loser: &libvterm_repeat_tab_arity_loser {owner: libvterm, protocol: libvterm permissive REP and TBC count admission,
+                  behavior: Apply the first count or tab-clear mode and ignore surplus operands.,
+                  evidence: "Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1006,1260-1276,1316-1336"},
+                current_usage: &repeat_tab_arity_usage "REP and TBC are established ANSI/ECMA cursor/edit controls. No contemporary application requiring malformed surplus operands was established; valid defaults, counts, and supported tab modes remain available.",
+                recency: &repeat_tab_arity_recency "REP and TBC originate in the ANSI/ECMA family; implementation-specific parser leniency does not establish a newer originating protocol.",
+                reason: &repeat_tab_arity_reason "The same malformed command cannot both mutate state and remain inert. With origin, effects, usage and pinned implementation preference examined, choose frozen Kitty's strict admission without an implicit terminal flavor.",
+                proof: &repeat_arity_proof {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                  symbol: "terminal: pinned Kitty REP rejects excess counts without repeating or disturbing graphics"}}}}
           libvterm.csi.da1: {raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
             conditions: "Pinned libvterm emits ?1;2c on bare DA1; Howl emits ?62;22c from fixed VT220-class identity. Both ignore nonzero ordinary DA1.",
             howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
@@ -955,13 +972,20 @@ references:
                 reason: *position_arity_reason
                 proof: *position_arity_proof
           libvterm.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stops, conditions: Ps 0|3|5,
-            howl: {support: partial, disposition: excluded,
+            howl: {support: partial, disposition: adjudicated,
             rationale: *howl_libvterm_global_tabs_difference,
-            residual: "TBC modes 0, 3 and 5 agree, unlike pinned Kitty mode 5. But clearing a stop in
-              one screen also removes it for the other in pinned libvterm and not in Howl.",
+            residual: "TBC 0/3/5 remain supported, but surplus operands now reject instead of applying the first mode. Pinned libvterm's global stop table differs from Howl's Kitty-compatible bank-local owner.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
+              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"},
+            adjudication: {kind: wire_collision, wire: "CSI 3 ; 9 g",
+              winner: *kitty_repeat_tab_arity_winner,
+              loser: *libvterm_repeat_tab_arity_loser,
+              current_usage: *repeat_tab_arity_usage,
+              recency: *repeat_tab_arity_recency,
+              reason: *repeat_tab_arity_reason,
+              proof: &tab_clear_arity_proof {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned Kitty TBC rejects excess operands while retaining libvterm mode five"}}}}
           libvterm.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes,
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
             howl: *howl_ansi_first_parameter_excluded}
@@ -1741,9 +1765,42 @@ references:
                   evidence: "Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:463-485,815-819 and VT100Terminal.m:1970-1998,2568-2570"},
                 current_usage: *direction_arity_usage, recency: *direction_arity_recency,
                 reason: *direction_arity_reason, proof: *direction_arity_proof}}}
-          iterm2.csi.rep: {raw: "CSI [Ps=1] b", effect: repeat preceding character,
-            conditions: "Pinned iTerm2 may disable REP by supportREPCode and replays its last screen character with DWC and external attributes; Howl always accepts a bounded previously written grapheme.",
-            howl: *howl_repeat_excluded}
+          iterm2.csi.rep:
+            raw: "CSI [Ps=1] b"
+            effect: repeat preceding character
+            conditions: >-
+              Pinned iTerm2 VT100CSIParser.m:458-461 accepts extra REP counts,
+              VT100Terminal.m:2464-2466 sends only p[0], optionally gating
+              repetition by supportREPCode and retaining distinct DWC and
+              external-attribute behavior. Howl now follows frozen Kitty's
+              strict admission while repeating its bounded last grapheme.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: *howl_repeat_policy_difference
+              residual: >-
+                Valid bounded grapheme repetition remains Howl-owned, but a
+                second REP count is now rejected rather than accepted as
+                iTerm2's first count; iTerm2's opt-out and DWC/external
+                attributes remain separately incompatible.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: REP retains bounded glyph state and exact lifetime"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 1 ; 9 b"
+                winner: *kitty_repeat_tab_arity_winner
+                loser: &iterm2_repeat_tab_arity_loser
+                  owner: iterm2
+                  protocol: iTerm2 permissive REP and TBC count admission
+                  behavior: Apply the first REP count or TBC mode even when surplus numeric operands are present.
+                  evidence: Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:458-461,626-629 and VT100Terminal.m:2448-2457,2464-2466
+                current_usage: *repeat_tab_arity_usage
+                recency: *repeat_tab_arity_recency
+                reason: *repeat_tab_arity_reason
+                proof: *repeat_arity_proof
           iterm2.csi.cud: {raw: "CSI [Ps=1] B", effect: cursor down,
             conditions: "Valid CUD clamps from above the vertical region into its bottom. Pinned iTerm2 ignores extra numeric operands; Kitty rejects them.",
             howl: {support: partial, disposition: adjudicated,
@@ -1934,16 +1991,38 @@ references:
           iterm2.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes,
             conditions: "Pinned iTerm2 VT100Terminal.m:2243-2257 iterates all operands but only applies 4/12; its mode 12 set writes false, while Howl sets 12 and also accepts 2/20. The existing Howl ANSI mode query test proves its retained 2/4/12/20 values.",
             howl: *howl_ansi_mode_breadth_excluded}
-          iterm2.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stops,
-            conditions: "Pinned iTerm2 clears its one cross-bank tabStops collection for 0/current or 3/all,
-              ignoring mode 5; Howl clears only the active bank and also accepts libvterm TBC 5 as all.",
-            howl: {support: partial, disposition: excluded,
-            rationale: *howl_iterm2_global_tabs_difference,
-            residual: "Two independent divergences: clearing stops across screen switches and accepting
-              mode 5 where iTerm2 ignores it. The libvterm mode-5 contract remains supported.",
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: TBC 5 libvterm all-clear contradicts iTerm2 and Kitty no-op"}}}
+          iterm2.csi.tbc:
+            raw: "CSI [Ps=0] g"
+            effect: clear tab stops
+            conditions: >-
+              Pinned iTerm2 VT100CSIParser.m:626-629 admits extra TBC
+              operands and VT100Terminal.m:2448-2457 executes p[0]. Its
+              tab-stop table spans banks and treats mode 5 as unsupported;
+              Howl now uses Kitty's strict single-operand admission but
+              preserves its libvterm-aligned mode 5 clear-all and bank-local
+              storage.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: *howl_iterm2_global_tabs_difference
+              residual: >-
+                Extra TBC operands are now rejected instead of applying the
+                first mode. Pinned iTerm2 retains cross-bank global stops and
+                ignores mode 5; Howl's mode-5 clear-all remains deliberate.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: TBC 5 libvterm all-clear contradicts iTerm2 and Kitty no-op"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 3 ; 9 g"
+                winner: *kitty_repeat_tab_arity_winner
+                loser: *iterm2_repeat_tab_arity_loser
+                current_usage: *repeat_tab_arity_usage
+                recency: *repeat_tab_arity_recency
+                reason: *repeat_tab_arity_reason
+                proof: *tab_clear_arity_proof
           iterm2.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: multiline character and selection consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -4463,9 +4542,29 @@ references:
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits"}}}
-          kitty.csi.rep: {raw: "CSI [Ps=1] b", effect: repeat preceding character,
-            conditions: Kitty repeats its last codepoint while Howl retains its bounded combining cluster,
-            howl: *howl_repeat_excluded}
+          kitty.csi.rep:
+            raw: "CSI [Ps=1] b"
+            effect: repeat preceding character
+            conditions: >-
+              Frozen Kitty vt-parser.c:1194-1195 rejects surplus REP
+              operands before repetition; Howl now matches that admission,
+              including fragmented/C1/colon variants and valid zero/default
+              counts. Kitty screen.c:2719-2726 repeats its last codepoint,
+              while Howl retains and repeats its bounded combining grapheme.
+            howl:
+              support: partial
+              disposition: excluded
+              rationale: *howl_repeat_policy_difference
+              residual: >-
+                Strict single-count admission now matches Kitty, with exact
+                cells, cursor, pending wrap, graphics and output invariants
+                on rejection. Last-codepoint versus grapheme, full-row clamp
+                and multicell behavior remain separate incompatibilities.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: pinned Kitty REP rejects excess counts without repeating or disturbing graphics"
           kitty.csi.cuu: {raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: "Kitty refuses excess CUU operands and uses the physical top when moving from outside a vertical scroll region. Howl now matches admission, but retains the iTerm2-derived target-side scroll-top clamp.",
             howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -4659,15 +4758,12 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
           kitty.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stop,
-            conditions: "Pinned Kitty accepts 0 to clear current and 3 to clear all, ignores 2,
-              and reports other values such as 5 unsupported. Howl accepts 5 as clear-all,
-              matching pinned libvterm but differing from Kitty's no-op.",
+            conditions: "Frozen Kitty vt-parser.c:1261-1262 rejects surplus TBC operands before mutating its stop table. Howl now matches strict admission and default/zero/trailing-empty semantics. Kitty accepts modes 0/current, 3/all and ignores 2, but reports 5 unsupported; Howl retains libvterm's mode-5 clear-all policy.",
             howl: {support: partial, disposition: excluded,
               rationale: "The same CSI 5 g has contradictory pinned outcomes: Kitty logs and retains
                 tab stops, libvterm erases all. Howl retains the already implemented libvterm policy
                 rather than introduce an implicit reference-specific mode.",
-              residual: "TBC 0/3 and ignored mode 2 match Kitty, but out-of-range 5 is a
-                pinned incompatibility; exact unsupported-parameter semantics remain partial.",
+              residual: "Strict one-parameter admission, zero/default and trailing-empty forms now match Kitty; TBC mode 5 still deliberately clears all stops in Howl rather than remaining a Kitty no-op.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: TBC mode 5 selects libvterm all-clear instead of pinned Kitty no-op"}}}
