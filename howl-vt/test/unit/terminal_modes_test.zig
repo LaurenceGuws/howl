@@ -492,42 +492,74 @@ test "kitty keyboard stack has exact flags depth mutation and replies" {
     try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
 }
 
-test "pinned Kitty keyboard CSI u handlers reject excess params unlike Howl" {
-    // Pinned kitty/vt-parser.c::dispatch_csi uses CALL_CSI_HANDLER2
-    // for CSI =u, and CALL_CSI_HANDLER1 for CSI >u and CSI <u. Their
-    // guards reject an excess argument; the native shared decoder
-    // admits each complete packet using the first one or two fields.
+test "pinned Kitty keyboard CSI u rejects excess operands and pop zero" {
+    // Pinned Kitty vt-parser.c CALL_CSI_HANDLER2 for =u, and
+    // CALL_CSI_HANDLER1 for >u / <u, reject any trailing extra operand.
+    // An explicit pop count of zero does not change the current stack.
     {
         var terminal = try Terminal.init(std.testing.allocator, 2, 8);
         defer terminal.deinit();
-        try std.testing.expect((try terminal.feed("\x1b[=3;1;99u")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b[=3;1;")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("99u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[=3u");
+        try std.testing.expect(!(try terminal.feed("\x1b[=1;2;99u")).stateChanged());
+        write(&terminal, "\x1b[?u");
         try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
         try consumeReplies(&terminal);
+        write(&terminal, "\x1b[=7;2u\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?7u", pendingOutput(&terminal));
     }
     {
         var terminal = try Terminal.init(std.testing.allocator, 2, 8);
         defer terminal.deinit();
-        try std.testing.expect((try terminal.feed("\x1b[=3u")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[>8;99u")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        write(&terminal, "\x1b[=3u");
+        try std.testing.expect(!(try terminal.feed("\x1b[>8;99u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[>8u\x1b[?u");
         try std.testing.expectEqualStrings("\x1b[?8u", pendingOutput(&terminal));
         try consumeReplies(&terminal);
-        try std.testing.expect((try terminal.feed("\x1b[<1u")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        write(&terminal, "\x1b[<1u\x1b[?u");
         try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
         try consumeReplies(&terminal);
     }
     {
         var terminal = try Terminal.init(std.testing.allocator, 2, 8);
         defer terminal.deinit();
-        try std.testing.expect((try terminal.feed("\x1b[=3u\x1b[>8u")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[<1;99u")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
+        write(&terminal, "\x1b[=3u\x1b[>8u");
+        try std.testing.expect(!(try terminal.feed("\x1b[<1;99u")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b[<0u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?8u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[<1u\x1b[?u");
         try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
         try consumeReplies(&terminal);
         try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
     }
+}
+
+test "CSI keyboard and version leader commands reject unexpected intermediates" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    write(&terminal, "\x1b[=3u");
+    for ([_][]const u8{
+        "\x1b[>8#u", "\x1b[=5#u", "\x1b[<1#u", "\x1b[>4;2#m", "\x1b[>0#q",
+    }) |rejected| {
+        try std.testing.expect(!(try terminal.feed(rejected)).stateChanged());
+        try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    }
+    write(&terminal, "\x1b[?u\x1b[?4m");
+    try std.testing.expectEqualStrings("\x1b[?3u\x1b[>4;0m", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // The unmodified leader-qualified paths still accept exact CSI bytes.
+    write(&terminal, "\x1b[>4;2m\x1b[>8u\x1b[?u\x1b[?4m");
+    try std.testing.expectEqualStrings("\x1b[?8u\x1b[>4;2m", pendingOutput(&terminal));
 }
 
 test "invalid Kitty keyboard set mode preserves state" {

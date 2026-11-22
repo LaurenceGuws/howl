@@ -799,18 +799,14 @@ fn rectErase(params: []const i32, selective: bool) ?SemanticEvent {
 
 // Decodes one leader-qualified CSI sequence; unsupported forms return null.
 fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
+    // None of the supported leader-qualified controls admits an intermediate.
+    // A stray byte must not enable keyboard modes or generate a false reply.
+    if (intermediates.len != 0) return null;
     return switch (leader) {
         '>' => switch (final) {
-            'c' => if (intermediates.len == 0 and zeroQuery(params))
-                SemanticEvent.secondary_device_attributes
-            else
-                null,
+            'c' => if (zeroQuery(params)) SemanticEvent.secondary_device_attributes else null,
             'f' => keyFormatChange(params),
-            'q' => if (!intermediatesHas(intermediates, ' ') and
-                paramAtOrDefault0(params, 0) == 0)
-                SemanticEvent.xtversion
-            else
-                null,
+            'q' => if (paramAtOrDefault0(params, 0) == 0) SemanticEvent.xtversion else null,
             'm' => if (paramAtOrDefault0(params, 0) == 4)
                 SemanticEvent{ .modify_other_keys_set = @intCast(
                     @max(if (params.len >= 2) params[1] else 0, 0),
@@ -819,19 +815,22 @@ fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []
                 null,
             'n' => if (paramAtOrDefault0(params, 0) == 4) SemanticEvent.modify_other_keys_disable else null,
             'p' => pointerMode(params),
-            'u' => SemanticEvent{ .kitty_keyboard_push = keyboardFlags(params) },
+            'u' => if (params.len <= 1 and (params.len == 0 or params[0] >= 0))
+                SemanticEvent{ .kitty_keyboard_push = keyboardFlags(params) }
+            else
+                null,
             else => null,
         },
         '=' => switch (final) {
-            'c' => if (intermediates.len == 0 and zeroQuery(params))
-                SemanticEvent.tertiary_device_attributes
-            else
-                null,
+            'c' => if (zeroQuery(params)) SemanticEvent.tertiary_device_attributes else null,
             'u' => decodeKittyKeyboardSet(params),
             else => null,
         },
         '<' => switch (final) {
-            'u' => SemanticEvent{ .kitty_keyboard_pop = paramAtOrDefault1(params, 0) },
+            'u' => if (params.len <= 1 and (params.len == 0 or params[0] >= 0))
+                SemanticEvent{ .kitty_keyboard_pop = if (params.len == 0) 1 else paramAtOrDefault0(params, 0) }
+            else
+                null,
             else => null,
         },
         else => null,
@@ -839,6 +838,7 @@ fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []
 }
 
 fn decodeKittyKeyboardSet(params: []const i32) ?SemanticEvent {
+    if (params.len > 2 or (params.len != 0 and params[0] < 0)) return null;
     const raw_mode = if (params.len >= 2) params[1] else 1;
     if (raw_mode < 1 or raw_mode > 3) return null;
     return SemanticEvent{ .kitty_keyboard_set = .{
@@ -1040,11 +1040,6 @@ fn paramOrDefault0(v: i32) u16 {
     if (v <= 0) return 0;
     if (v > std.math.maxInt(u16)) return std.math.maxInt(u16);
     return @intCast(v);
-}
-
-// Reports whether a borrowed intermediate-byte sequence contains one byte.
-fn intermediatesHas(intermediates: []const u8, needle: u8) bool {
-    return std.mem.indexOfScalar(u8, intermediates, needle) != null;
 }
 
 // Decodes one ordinary CSI sequence; unsupported forms return null.
