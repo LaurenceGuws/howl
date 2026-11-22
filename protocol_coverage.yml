@@ -5049,19 +5049,38 @@ references:
               against staged ReleaseFast Howl in private Fleet-managed KWin
               produced nine of nine byte-identical raw PTY query/reply cases,
               including a maximum-size encoded unknown key and UTF-8 sanitization.
-              Frozen Kitty's duplicate-key coalescing and direct unknown-key echo
-              remain historical version-specific facts, not a competing current
-              default or a new duplicate catalogue command ID. Accepted native
-              rgbi grammar and ordinary RGB/color control behavior are unchanged.
+              Current Kitty source data-types.h:341 and colors.c:1144-1181
+              also own eight transparent-background RGB/opacity slots with
+              per-cell background-color matching, program overrides, configured
+              baselines and color-stack snapshots. Howl now retains eight
+              fixed optional RGB+explicit-opacity slots in ColorState (no heap),
+              projects their values in typed VT presentation, resets with
+              the canonical host defaults and saves/restores them through its
+              existing bounded Kitty color stack. OSC 21 sets, queries and resets
+              each slot; the reply quantizes opacity to u8, then formats exactly
+              four decimals just like current Kitty. Invalid opacity uses the
+              current opaque host fallback and hostile public defaults are
+              clamped before conversion. Real VT tests prove slot bounds,
+              configured reset, indexed/sequential stacks, immutable observation
+              copies, 64KiB quota/rollback and hostile float admission.
+              In private managed KWin, installed Kitty 0.51.0 and staged
+              ReleaseFast Howl produced eight of eight byte-identical raw
+              transparent-color replies, including alpha, invalid values
+              and stack restoration. No SDL or Wayland blend policy changed.
+              Frozen Kitty's duplicate-key coalescing and direct unknown-key
+              echo remain historical revision-specific facts.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "The scoped current Kitty OSC 21 ordered queries and unpadded base64
-                unknown-field reply grammar are now qualified, with atomic bounds.
-                Frozen Kitty d4106ef coalesces repeats and echoes unknown names,
-                intentionally different from current modern semantics. Howl lacks
-                actual 1..8 transparent-background RGBA/opacity storage, visual-
-                bell color state and host-specific presentation refresh; it only
-                recognizes initially unset keys without inventing color values.
-                Other color names and host-opacity policy are not full parity.",
+              residual: "The scoped current Kitty OSC 21 ordered queries,
+                unpadded base64 unknown-field replies and eight opacity-aware
+                transparent background color slots now have native and live
+                wire-level evidence. The fixed VT state and query/stack lifecycle
+                are implemented, but Howl's SDL host does not yet blend matching
+                cell backgrounds against the window or support dynamic configured
+                background_opacity. The current opaque fallback is 1.0; other host
+                opacity policies remain unqualified. Visual-bell RGB, additional
+                color names and presentation refresh are separate incomplete
+                obligations. Frozen Kitty d4106ef uses different duplicate and
+                unknown-field replies, preserved as historical behavior.",
               source: howl-vt/src/color_control.zig, symbol: handleKittyControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty OSC 21 groups ordered queries with eight bit RGB and one reply"}}

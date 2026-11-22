@@ -172,7 +172,12 @@ fn handleKittyControl(
                 try beginKittyColorReply(output, &replying);
                 try output.append(key);
                 try output.append("=");
-                if (colorForKey(colors, key)) |color| try appendKittyColorOsc(output, color);
+                if (kittyTransparentBackgroundIndex(key)) |index| {
+                    if (colors.transparent_background[index]) |color|
+                        try appendKittyTransparentBackgroundOsc(output, color);
+                } else if (colorForKey(colors, key)) |color| {
+                    try appendKittyColorOsc(output, color);
+                }
             } else {
                 setColorKey(colors, key, value);
             }
@@ -219,6 +224,37 @@ fn appendKittyColorOsc(output: *replies.Buffer, color: Rgb) replies.AppendError!
     text[10] = digits[color.b >> 4];
     text[11] = digits[color.b & 0x0f];
     try output.append(&text);
+}
+
+// The returned alpha is quantized to one byte by Kitty ColorProfile before
+// being converted back into a four-decimal opacity string. Using integers
+// for the last step makes the public reply exact and independent of floating
+// point formatting state. Host background-opacity fallback is currently 1.0;
+// VT still retains the optional original opacity for a future host policy.
+fn appendKittyTransparentBackgroundOsc(
+    output: *replies.Buffer,
+    color: properties.TransparentBackgroundColor,
+) replies.AppendError!void {
+    try appendKittyColorOsc(output, color.rgb);
+    // ColorDefaults is a public host-supplied struct. Do not let a buggy
+    // embedder's NaN, infinity or out-of-range opacity reach @intFromFloat.
+    const opacity: f32 = if (color.opacity) |configured|
+        if (std.math.isFinite(configured) and configured >= 0) @min(1, configured) else 1
+    else
+        1;
+    const alpha: u32 = @intFromFloat(@as(f32, 255) * opacity);
+    const scaled = (alpha * 10000 + 127) / 255;
+    const digits = "0123456789";
+    const suffix: [7]u8 = .{
+        '@',
+        if (scaled == 10000) '1' else '0',
+        '.',
+        digits[@intCast((scaled / 1000) % 10)],
+        digits[@intCast((scaled / 100) % 10)],
+        digits[@intCast((scaled / 10) % 10)],
+        digits[@intCast(scaled % 10)],
+    };
+    try output.append(&suffix);
 }
 
 const color_osc_max_bytes = 18;
@@ -493,21 +529,22 @@ fn kittyPaletteIndex(key: []const u8) ?u8 {
     return std.fmt.parseUnsigned(u8, key, 10) catch null;
 }
 
-// Kitty recognizes 1..8 transparent background slots, but Howl has no
-// retained RGBA/opacity owner for them. An initially empty slot is reported
-// as empty, never mislabelled unknown or invented as an opaque RGB color.
-fn isKittyTransparentBackgroundKey(key: []const u8) bool {
+// The source-current Kitty OSC 21 grammar accepts one through eight
+// transparent background slots. This identifies the canonical zero-based
+// array position without allocating or granting host blending capability.
+fn kittyTransparentBackgroundIndex(key: []const u8) ?usize {
     const prefix = "transparent_background_color";
-    if (!std.mem.startsWith(u8, key, prefix)) return false;
-    const index = kittyPaletteIndex(key[prefix.len..]) orelse return false;
-    return index >= 1 and index <= 8;
+    if (!std.mem.startsWith(u8, key, prefix)) return null;
+    const index = kittyPaletteIndex(key[prefix.len..]) orelse return null;
+    if (index < 1 or index > 8) return null;
+    return index - 1;
 }
 
 // Reports whether a borrowed Kitty color name is known to the OSC grammar.
 fn isKnownColorKey(key: []const u8) bool {
     if (specialColorKey(key) != null) return true;
     if (std.mem.eql(u8, key, "visual_bell")) return true;
-    if (isKittyTransparentBackgroundKey(key)) return true;
+    if (kittyTransparentBackgroundIndex(key) != null) return true;
     return kittyPaletteIndex(key) != null;
 }
 
@@ -690,8 +727,25 @@ fn appendColorOsc(output: *replies.Buffer, color: Rgb) replies.AppendError!void 
     try output.append(text[0..len]);
 }
 
+// Parses the explicit opacity used by a Kitty transparent background slot.
+// Any malformed or negative value requests the host background-opacity
+// fallback, represented by null rather than by a second guessed alpha.
+fn parseKittyOpacity(value: []const u8) ?f32 {
+    if (value.len == 0 or value.len > 32) return null;
+    const opacity = std.fmt.parseFloat(f32, value) catch return null;
+    if (!std.math.isFinite(opacity) or opacity < 0) return null;
+    return @min(1, opacity);
+}
+
 // Parses and applies a recognized Kitty color key, ignoring invalid values.
 fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) void {
+    if (kittyTransparentBackgroundIndex(key)) |index| {
+        const at = std.mem.indexOfScalar(u8, value, '@');
+        const rgb = parseColor(if (at) |pos| value[0..pos] else value) orelse return;
+        const opacity = if (at) |pos| parseKittyOpacity(value[pos + 1 ..]) else null;
+        colors.transparent_background[index] = .{ .rgb = rgb, .opacity = opacity };
+        return;
+    }
     if (kittyPaletteIndex(key)) |idx| {
         if (parseColor(value)) |color| colors.palette[idx] = color;
         return;
@@ -703,8 +757,12 @@ fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) 
     }
 }
 
-// Restores a recognized Kitty color key to its default value.
+// Restores a recognized Kitty color key to its configured baseline.
 fn resetColorKey(colors: *TerminalColorState, key: []const u8, defaults: *const TerminalColorState) void {
+    if (kittyTransparentBackgroundIndex(key)) |index| {
+        colors.transparent_background[index] = defaults.transparent_background[index];
+        return;
+    }
     if (kittyPaletteIndex(key)) |idx| {
         colors.palette[idx] = defaults.palette[idx];
         return;

@@ -2111,6 +2111,150 @@ test "current Kitty OSC 21 unknown control names never echo attacker text" {
     try std.testing.expectEqualStrings("\x1b]21;transparent_background_color2=\x1b\\", terminal.replyBytes());
 }
 
+test "current Kitty OSC 21 retains eight opacity-aware transparent background slots" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Current Kitty has eight color-profile slots. An opacity of 0.5 is
+    // quantized to alpha byte 127, and the reply reports 127/255 to four
+    // decimal places, not the unquantized input float.
+    try feed(&terminal, "\x1b]21;transparent_background_color1=#112233@0.5;" ++
+        "transparent_background_color2=red@0.2;transparent_background_color8=rgb:aa/bb/cc@1.5\x1b\\");
+    try feed(&terminal, "\x1b]21;transparent_background_color1=?;" ++
+        "transparent_background_color2=?;transparent_background_color8=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color1=rgb:11/22/33@0.4980;" ++
+            "transparent_background_color2=rgb:ff/00/00@0.2000;" ++
+            "transparent_background_color8=rgb:aa/bb/cc@1.0000\x1b\\",
+        terminal.replyBytes(),
+    );
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    // Bare reset clears only the addressed program override. Malformed
+    // colors cannot replace previously retained values.
+    try feed(&terminal, "\x1b]21;transparent_background_color1;" ++
+        "transparent_background_color2=not-a-color@0.75;" ++
+        "transparent_background_color3=#040506@bogus\x1b\\");
+    try feed(&terminal, "\x1b]21;transparent_background_color1=?;" ++
+        "transparent_background_color2=?;transparent_background_color3=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color1=;" ++
+            "transparent_background_color2=rgb:ff/00/00@0.2000;" ++
+            "transparent_background_color3=rgb:04/05/06@1.0000\x1b\\",
+        terminal.replyBytes(),
+    );
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    // The existing bounded Kitty color stack must snapshot opacity too.
+    try feed(&terminal, "\x1b]30001\x1b\\");
+    try feed(&terminal, "\x1b]21;transparent_background_color2=#070809@0.8\x1b\\");
+    try feed(&terminal, "\x1b]30101\x1b\\");
+    try feed(&terminal, "\x1b]21;transparent_background_color2=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color2=rgb:ff/00/00@0.2000\x1b\\",
+        terminal.replyBytes(),
+    );
+}
+
+test "transparent color host defaults copy to presentation but renderer policy stays separate" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.transparent_background[3] = .{
+        .rgb = .{ .r = 0x11, .g = 0x22, .b = 0x33 },
+        .opacity = 0.8,
+    };
+    terminal.setColorDefaults(defaults);
+    const accepted = terminal.presentation();
+    try std.testing.expectEqualDeep(
+        defaults.transparent_background[3].?,
+        accepted.transparent_background[3].?,
+    );
+    try feed(&terminal, "\x1b]21;transparent_background_color4=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color4=rgb:11/22/33@0.8000\x1b\\",
+        terminal.replyBytes(),
+    );
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    try feed(&terminal, "\x1b]21;transparent_background_color4=#abcdef@0.25\x1b\\");
+    try std.testing.expectEqualDeep(
+        defaults.transparent_background[3].?,
+        accepted.transparent_background[3].?,
+    );
+    try std.testing.expectEqual(Rgb{ .r = 0xab, .g = 0xcd, .b = 0xef }, terminal.presentation().transparent_background[3].?.rgb);
+
+    // Reset only removes the program override; the configured baseline is
+    // still reportable. No renderer change is implied by this VT metadata.
+    try feed(&terminal, "\x1b]21;transparent_background_color4\x1b\\");
+    try feed(&terminal, "\x1b]21;transparent_background_color4=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color4=rgb:11/22/33@0.8000\x1b\\",
+        terminal.replyBytes(),
+    );
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    // Hard reset clears program alpha overrides and restores the host default.
+    try feed(&terminal, "\x1b]21;transparent_background_color8=#010203@0\x1b\\");
+    try feed(&terminal, "\x1bc");
+    try std.testing.expectEqual(@as(?@import("../../src/properties.zig").TransparentBackgroundColor, null), terminal.presentation().transparent_background[7]);
+    try std.testing.expectEqualDeep(
+        defaults.transparent_background[3].?,
+        terminal.presentation().transparent_background[3].?,
+    );
+}
+
+test "transparent slot queries clamp hostile host defaults without floating traps" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.transparent_background[0] = .{
+        .rgb = .{ .r = 1, .g = 2, .b = 3 },
+        .opacity = std.math.nan(f32),
+    };
+    defaults.transparent_background[1] = .{
+        .rgb = .{ .r = 4, .g = 5, .b = 6 },
+        .opacity = std.math.inf(f32),
+    };
+    defaults.transparent_background[2] = .{
+        .rgb = .{ .r = 7, .g = 8, .b = 9 },
+        .opacity = -3,
+    };
+    terminal.setColorDefaults(defaults);
+    try feed(&terminal, "\x1b]21;transparent_background_color1=?;" ++
+        "transparent_background_color2=?;transparent_background_color3=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color1=rgb:01/02/03@1.0000;" ++
+            "transparent_background_color2=rgb:04/05/06@1.0000;" ++
+            "transparent_background_color3=rgb:07/08/09@1.0000\x1b\\",
+        terminal.replyBytes(),
+    );
+}
+
+test "current Kitty transparent color query quota rolls back set and reply" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]21;transparent_background_color1=#010203@0.4\x1b\\");
+    const query = "\x1b]21;transparent_background_color1=#aabbcc@0.3;transparent_background_color1=?\x1b\\";
+    const response = "\x1b]21;transparent_background_color1=rgb:aa/bb/cc@0.2980\x1b\\";
+    const filler = try @import("../support/reply_fill.zig").fill(
+        &terminal,
+        allocator,
+        64 * 1024 - response.len + 1,
+        false,
+    );
+    defer allocator.free(filler);
+    try std.testing.expectError(error.ReplyLimit, terminal.feed(query));
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try feed(&terminal, "\x1b]21;transparent_background_color1=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]21;transparent_background_color1=rgb:01/02/03@0.4000\x1b\\",
+        terminal.replyBytes(),
+    );
+}
+
 test "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

@@ -12,6 +12,14 @@ pub const default_foreground = Rgb{ .r = 220, .g = 220, .b = 220 };
 /// Default terminal background color.
 pub const default_background = Rgb{ .r = 24, .g = 25, .b = 33 };
 
+/// A Kitty OSC 21 background-color match, with an optional explicit opacity.
+/// Null opacity means use the host's configured background opacity; VT does
+/// not choose compositor alpha or decide how the matching cells are blended.
+pub const TransparentBackgroundColor = struct {
+    rgb: Rgb,
+    opacity: ?f32 = null,
+};
+
 /// Owns the terminal-wide palette and dynamic presentation colors.
 pub const ColorState = struct {
     foreground: Rgb = default_foreground,
@@ -26,6 +34,9 @@ pub const ColorState = struct {
     cursor_text: ?Rgb = null,
     selection_background: ?Rgb = null,
     selection_foreground: ?Rgb = null,
+    /// Eight fixed program/configuration slots, copied by the existing
+    /// bounded color stack and reset with the other transient OSC overrides.
+    transparent_background: [8]?TransparentBackgroundColor = @splat(null),
     special_palette: [5]?Rgb = @as([5]?Rgb, @splat(null)),
     palette: [256]Rgb = buildDefaultPalette(),
 };
@@ -362,6 +373,47 @@ test "color stack is bounded and restores exact state" {
     try std.testing.expect(state.popColor(0));
     try std.testing.expectEqual(default_foreground, state.colors.foreground);
     try std.testing.expect(!state.popColor(0));
+}
+
+test "transparent color slots inherit bounded stack snapshots and configured reset" {
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    const selected: TransparentBackgroundColor = .{
+        .rgb = .{ .r = 0x12, .g = 0x34, .b = 0x56 },
+        .opacity = 0.5,
+    };
+    state.colors.transparent_background[0] = selected;
+    try std.testing.expect(state.pushColor(0));
+    state.colors.transparent_background[0] = .{
+        .rgb = .{ .r = 0xaa, .g = 0xbb, .b = 0xcc },
+        .opacity = 0.25,
+    };
+    state.colors.transparent_background[7] = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } };
+    try std.testing.expect(state.popColor(0));
+    try std.testing.expectEqualDeep(selected, state.colors.transparent_background[0].?);
+    try std.testing.expectEqual(@as(?TransparentBackgroundColor, null), state.colors.transparent_background[7]);
+    try std.testing.expect(!state.popColor(0));
+
+    // Same fixed eight slots participate in indexed snapshots.
+    try std.testing.expect(state.pushColor(3));
+    state.colors.transparent_background[0] = null;
+    try std.testing.expect(state.popColor(3));
+    try std.testing.expectEqualDeep(selected, state.colors.transparent_background[0].?);
+
+    // Program overrides are transient. The host-configured baseline is kept
+    // by resetTerminal without retaining any extra slot allocations.
+    state.color_defaults.transparent_background[4] = .{
+        .rgb = .{ .r = 0x44, .g = 0x55, .b = 0x66 },
+        .opacity = null,
+    };
+    state.resetTerminal();
+    try std.testing.expectEqual(@as(?TransparentBackgroundColor, null), state.colors.transparent_background[0]);
+    try std.testing.expectEqualDeep(
+        state.color_defaults.transparent_background[4].?,
+        state.colors.transparent_background[4].?,
+    );
+    try std.testing.expectEqual(@as(u8, 0), state.color_stack.len);
+    try std.testing.expectEqual(@as(u8, 0), state.color_stack.slot_count);
 }
 
 test "property state cleanup uses retained allocator" {
