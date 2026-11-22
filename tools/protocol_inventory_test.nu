@@ -83,10 +83,12 @@ let expected_rulings = [
   iterm2.csi.cht
   iterm2.csi.dch
   iterm2.csi.ech
+  iterm2.csi.hpr
   iterm2.csi.hvp
   iterm2.csi.rep
   iterm2.csi.tbc
   iterm2.csi.vpa
+  iterm2.csi.vpr
   iterm2.osc.bg
   iterm2.osc.cursor
   iterm2.osc.fg
@@ -115,14 +117,36 @@ let expected_rulings = [
   libvterm.csi.dch
   libvterm.csi.ech
   libvterm.csi.hpa
+  libvterm.csi.hpr
   libvterm.csi.hvp
   libvterm.csi.ich
   libvterm.csi.rep
   libvterm.csi.tbc
   libvterm.csi.vpa
+  libvterm.csi.vpr
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Frozen Kitty's HPR/VPR cursor aliases reject a second numeric operand.
+# Both pinned comparators accept extras and move from the first count.
+# Keep their existing independent margin and geometry obligations intact.
+for reference in [libvterm iterm2] {
+  for command in [
+    {name: hpr, wire: "CSI 1 ; 9 a"}
+    {name: vpr, wire: "CSI 1 ; 9 e"}
+  ] {
+    let id = ($reference + ".csi." + $command.name)
+    let decision = (protocol decision $id)
+    if ($decision.disposition != adjudicated
+        or $decision.adjudication.kind != wire_collision
+        or $decision.adjudication.wire != $command.wire
+        or $decision.adjudication.winner.owner != kitty
+        or $decision.adjudication.loser.owner != $reference
+        or $decision.adjudication.proof.symbol != "terminal: pinned Kitty HPR VPR reject surplus operands without cursor or graphics mutation") {
+      error make {msg: $"pinned relative cursor alias ruling is not source-backed: ($id)"}
+    }
+  }
 }
 # Frozen Kitty's REP b and TBC g reject a second numeric operand,
 # unlike pinned libvterm/iTerm2 which act on the first. Preserve the

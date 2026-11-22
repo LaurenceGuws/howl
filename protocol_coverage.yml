@@ -858,12 +858,45 @@ references:
               adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 `", winner: *kitty_direction_winner,
                 loser: *libvterm_direction_loser, current_usage: *direction_arity_usage,
                 recency: *direction_arity_recency, reason: *direction_arity_reason, proof: *direction_arity_proof}}}
-          libvterm.csi.hpr: {raw: "CSI [Ps=1] a", effect: cursor forward,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+          libvterm.csi.hpr:
+            raw: "CSI [Ps=1] a"
+            effect: cursor forward
+            conditions: >-
+              Pinned libvterm src/state.c:1254-1258 admits extra HPR operands
+              and moves using args[0]; its origin-enabled-only horizontal
+              margin clamp also differs from Howl's normal directional rule.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: *howl_cursor_policy_difference
+              residual: >-
+                Valid HPR and bounds remain implemented, but libvterm moves
+                for extra numeric operands while Kitty/Howl now reject them;
+                origin-disabled horizontal-margin clipping still differs.
+              source: howl-vt/src/screen.zig
+              symbol: Screen.moveCursor
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 1 ; 9 a"
+                winner: &kitty_relative_alias_winner
+                  owner: kitty
+                  protocol: Kitty HPR VPR single-operand admission
+                  behavior: Reject extra numeric operands without moving the cursor or consuming pending wrap.
+                  evidence: Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1140,1199-1204
+                loser: &libvterm_relative_alias_loser
+                  owner: libvterm
+                  protocol: libvterm permissive HPR VPR first-count admission
+                  behavior: Move with args[0] despite a second supplied numeric operand.
+                  evidence: Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1006,1254-1258,1297-1301
+                current_usage: *direction_arity_usage
+                recency: *direction_arity_recency
+                reason: *direction_arity_reason
+                proof: &relative_alias_arity_proof
+                  path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                  symbol: "terminal: pinned Kitty HPR VPR reject surplus operands without cursor or graphics mutation"
           libvterm.csi.rep: {raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: "Pinned libvterm src/state.c:1260-1276 accepts extra REP operands and repeats using args[0], clamping the complete glyph to its logical row. Howl now follows frozen Kitty's strict one-operand admission but retains bounded retained-grapheme repetition through the grid.",
             howl: {support: partial, disposition: adjudicated,
@@ -932,11 +965,16 @@ references:
                 reason: *cursor_arity_reason
                 proof: *cursor_arity_collision_proof
           libvterm.csi.vpr: {raw: "CSI [Ps=1] e", effect: cursor down,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c:1297-1301 uses the first VPR count despite extras and post-clamps differently without DECOM. Howl now follows Kitty's strict one-count admission while preserving directional margin policy.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: *howl_cursor_policy_difference,
+              residual: "Normal VPR remains bounded; extra numeric operands reject rather than moving, while the preexisting origin-disabled vertical-margin clamp differs.",
+              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 e", winner: *kitty_relative_alias_winner,
+                loser: *libvterm_relative_alias_loser, current_usage: *direction_arity_usage,
+                recency: *direction_arity_recency, reason: *direction_arity_reason, proof: *relative_alias_arity_proof}}}
           libvterm.csi.hvp:
             raw: "CSI [row=1] ; [col=1] f"
             effect: absolute cursor position
@@ -2157,12 +2195,40 @@ references:
               adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 G", winner: *kitty_direction_winner,
                 loser: *iterm2_direction_loser, current_usage: *direction_arity_usage,
                 recency: *direction_arity_recency, reason: *direction_arity_reason, proof: *direction_arity_proof}}}
-          iterm2.csi.hpr: {raw: "CSI [Ps=1] a", effect: cursor forward,
-            conditions: double-width line stepping, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+          iterm2.csi.hpr:
+            raw: "CSI [Ps=1] a"
+            effect: cursor forward
+            conditions: >-
+              Pinned iTerm2 VT100CSIParser.m:820-823 recognizes HPR without
+              an operand-count gate and VT100Terminal.m:2560-2562 forwards
+              p[0], even with extras. Its double-width line stepping remains
+              distinct from Howl's bounded terminal-cell cursor movement.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: *howl_cursor_policy_difference
+              residual: >-
+                Valid HPR remains supported, but malformed extra counts now
+                reject rather than moving. The iTerm2 double-width stepping
+                policy remains separately incompatible.
+              source: howl-vt/src/screen.zig
+              symbol: Screen.moveCursor
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 1 ; 9 a"
+                winner: *kitty_relative_alias_winner
+                loser: &iterm2_relative_alias_loser
+                  owner: iterm2
+                  protocol: iTerm2 permissive HPR VPR first-count admission
+                  behavior: Forward the first count to its cursor delegate despite an extra numeric operand.
+                  evidence: Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:820-823,828-831 and VT100Terminal.m:2560-2562,2574-2576
+                current_usage: *direction_arity_usage
+                recency: *direction_arity_recency
+                reason: *direction_arity_reason
+                proof: *relative_alias_arity_proof
           iterm2.csi.vpa:
             raw: "CSI [Ps=1] d"
             effect: absolute row
@@ -2195,10 +2261,16 @@ references:
                 reason: *cursor_arity_reason
                 proof: *cursor_arity_collision_proof
           iterm2.csi.vpr: {raw: "CSI [Ps=1] e", effect: cursor down,
-            conditions: clamps from above the vertical region into its bottom, howl: {support: full,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned iTerm2 VT100CSIParser.m:828-831 admits surplus VPR operands and VT100Terminal.m:2574-2576 moves using p[0]. Normal target-side vertical clamping still matches Howl, but frozen Kitty refuses extra counts.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: "The original valid-command full VPR proof does not cover incompatible surplus-operand admission: iTerm2 moves and Kitty/Howl now reject.",
+              residual: "Valid VPR and target-side margin clamping remain supported; extra numeric operands now leave cursor and pending wrap untouched instead of moving.",
+              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 e", winner: *kitty_relative_alias_winner,
+                loser: *iterm2_relative_alias_loser, current_usage: *direction_arity_usage,
+                recency: *direction_arity_recency, reason: *direction_arity_reason, proof: *relative_alias_arity_proof}}}
           iterm2.csi.ech: {raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: "Pinned iTerm2 VT100CSIParser.m:832-835 and VT100Terminal.m:2578-2579 accept surplus ECH operands, erasing from p[0]. iTerm2's defaultChar, physical double-width and ISO protection behavior still differs from Howl's logical current-attr erase.",
             howl: {support: partial, disposition: adjudicated,
@@ -4580,11 +4652,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: directional cursor margins use target-side clipping from outside region"}}}
           kitty.csi.vpr: {raw: "CSI [Ps=1] e", effect: cursor down,
-            conditions: Kitty uses only initial vertical scroll-region membership for its margin clamp, howl: {support: partial,
+            conditions: "Frozen Kitty VPR shares CUD's CALL_CSI_HANDLER1 and rejects excess operands; Howl now matches. Kitty uses initial vertical-region membership for its clamp, unlike Howl's target-side bound.", howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
+              residual: "One-count admission, fragmented/C1/colon rejection and pending-wrap preservation now match Kitty. Original vertical margin membership policy still differs.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: pinned Kitty HPR VPR reject surplus operands without cursor or graphics mutation"}}}
           kitty.csi.cuf: {raw: "CSI [Ps=1] C", effect: cursor forward,
             conditions: "Kitty refuses excess CUF operands and has no DECSLRM horizontal margins; Howl now matches admission but clips cursor motion at its enabled right margin.",
             howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -4593,11 +4666,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty directional CSI rejects surplus counts without cursor or graphics mutation"}}}
           kitty.csi.hpr: {raw: "CSI [Ps=1] a", effect: cursor forward,
-            conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
+            conditions: "Frozen Kitty HPR shares CUF's CALL_CSI_HANDLER1 and rejects extra numeric operands; Howl now matches. Kitty ignores DECSLRM horizontal margins while Howl retains explicit horizontal clipping.", howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
+              residual: "Strict one-count admission, zero/default forms, pending-wrap and image nonmutation are source-proven; Kitty whole-row relative motion still differs under DECSLRM.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+                symbol: "terminal: pinned Kitty HPR VPR reject surplus operands without cursor or graphics mutation"}}}
           kitty.csi.cub: {raw: "CSI [Ps=1] D", effect: cursor backward,
             conditions: "Kitty refuses excess CUB operands and subtracts from its one-past-edge exact-fill cursor. Howl now matches admission but cancels its canonical last-column pending wrap before subtraction.",
             howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,

@@ -1076,7 +1076,7 @@ fn decodeCsi(
     // controls reject extras before mutation. #P and SP @ remain separate;
     // TBC mode 5 retains the already accepted libvterm all-clear policy.
     if (params.len > 1) switch (final) {
-        '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'P', 'X', 'Z', '`', 'b', 'd', 'g' => return null,
+        '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'P', 'X', 'Z', '`', 'a', 'b', 'd', 'e', 'g' => return null,
         else => {},
     };
     switch (final) {
