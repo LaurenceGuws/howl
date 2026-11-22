@@ -5039,11 +5039,19 @@ references:
               opacity and host refresh remain outside the qualified subset.
               Native proof rgbi grammar reaches all represented palette and dynamic color controls
               verifies fractional-intensity colors; valid names/LAB and host presentation policy remain separate.
+              Separate pinned Kitty delta a79f376b85fd95e3dfd0589877123996bacd4184 and
+              live Kitty 0.51.0 replace the frozen dict response with an ordered
+              list: duplicate queries are retained in wire order and unknown
+              field names are base64 encoded under unknown=, unlike frozen Kitty's
+              duplicate-key coalescing and direct unknown-key echo. No duplicate
+              catalogue ID is minted for changed semantics of the same command.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
               residual: "The ordinary multi-key query reply, RGB8 spelling and printable-ASCII
-                payload sanitization now match pinned Kitty. Transparent alpha, visual bell, duplicate-key
-                coalescing, unknown-key reply policy and host colour refresh remain unqualified;
-                no new host colour state was introduced.",
+                payload sanitization now match frozen Kitty. Transparent alpha, visual bell,
+                frozen duplicate-key coalescing, current delta base64 unknown-key replies,
+                opacity and host colour refresh remain unqualified; the two pinned
+                reference revisions cannot be treated as one interchangeable oracle.
+                No new host colour state was introduced.",
               source: howl-vt/src/color_control.zig, symbol: handleKittyControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty OSC 21 groups ordered queries with eight bit RGB and one reply"}}
@@ -5864,21 +5872,25 @@ references:
                 path: howl-vt/test/unit/terminal_osc_test.zig
                 symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
   kitty_delta:
-    revision: f7a16a93191a1103665905398d807ca79dab74a2
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
     root: kitty
     kind: delta
     base_reference: kitty
     base_revision: d4106ef2db687579a69fefc949a6dc1b662f3ca8
     scope: >-
-      Reviewed new semantic branches only, NOT a complete census of this newer
-      Kitty revision. Existing commands such as CSI ! p retain their historical
-      IDs under the frozen Kitty reference; altered recognition is recorded
-      there rather than minting duplicate command identities.
+      Source-verified new semantic branches between the frozen Kitty base and
+      the explicitly pinned 22 November 2026 upstream revision, NOT a complete
+      re-audit of the base's 249 records. Existing commands retain historical
+      IDs under the frozen Kitty reference. Changed semantics of existing
+      commands (notably OSC 21 response-list/unknown-field policy) are versioned
+      findings linked to their original IDs, never duplicate command identities.
+      The previous 17 October delta pin f7a16a93191a1103665905398d807ca79dab74a2
+      remains available in Git and frozen worker reports.
     groups:
       dispatch_osc_program_status:
         source: vt-parser.c
         symbol: dispatch_osc
-        line: 669
+        line: 693
         census: {semantic_branches: 1}
         recognition: implemented
         conditions: >-
@@ -5911,7 +5923,7 @@ references:
       indexed_graphics_formats:
         source: graphics.c
         symbol: initialize_load_data
-        line: 889
+        line: 908
         census: {semantic_branches: 2}
         recognition: implemented
         conditions: >-
@@ -5960,6 +5972,128 @@ references:
               proof:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
                 symbol: "terminal: newer Kitty indexed formats remain explicit rejected admissions"
+      conemu_cwd_report:
+        source: vt-parser.c
+        symbol: dispatch_osc
+        line: 603
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          The new OSC 9;9 selector dispatches the remaining plain or quoted
+          path to screen.c:process_cwd_notification, instead of the regular
+          OSC 9 host notification. Only nonempty absolute paths are admitted
+          as working directories; Kitty stores a kitty-shell-cwd:// URI.
+          This is a new branch inside the existing OSC 9 command, not a second
+          census of the complete OSC dispatcher.
+        records:
+          kitty_delta.osc.conemu_cwd:
+            raw: "OSC 9 ; 9 ; [quoted]absolute-path (BEL|ST)"
+            effect: update reported current directory from ConEmu's plain-path spelling
+            relevance: host metadata
+            conditions: >-
+              Source Kitty a79f376 kitty/vt-parser.c:603-614 and
+              kitty/screen.c:3974-3991 accept the 9;9 subcommand and optional
+              enclosing quotes, ignore nonabsolute paths, and retain the
+              resulting working directory as a kitty-shell-cwd URI. Howl's
+              OSC 9 path sends a caller-owned notification instead; only
+              its separate OSC 7 and iTerm CurrentDir mutate CWD.
+            howl:
+              support: missing
+              disposition: deferred
+              owner: howl-vt
+              milestone: working_directory
+              rationale: >-
+                The existing canonical working-directory owner can admit
+                bounded absolute paths without mixing untrusted notification
+                text into URI state, but that specific OSC 9;9 dispatch is absent.
+              residual: >-
+                OSC 9;9 is classified as a host notification and does not
+                update the retained CWD, unlike current Kitty.
+              source: howl-vt/src/terminal.zig
+              symbol: oscProcess
+              proof:
+                path: howl-vt/test/unit/terminal_osc_test.zig
+                symbol: "newer Kitty ConEmu OSC 9;9 current directory is not a Howl directory report"
+      kitty_dcs_color_scheme:
+        source: vt-parser.c
+        symbol: parse_kitty_dcs
+        line: 753
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          The new kitty-color-scheme| DCS prefix is parsed within Kitty's
+          existing caller-directed DCS host-dispatch family. It is not a
+          general terminal colour change, and does not automatically approve
+          user-session colour operations in other terminal hosts.
+        records:
+          kitty_delta.dcs.remote_color_scheme:
+            raw: "DCS @kitty-color-scheme|base64-json ST"
+            effect: set host session color-scheme variants after an existing color-stack push
+            relevance: host consequence
+            conditions: >-
+              Source Kitty a79f376 kitty/vt-parser.c:753 and
+              kitty/window.py:1951-1963 decode base64 JSON, require a pushed
+              color-stack depth, retain session light/dark/no-preference
+              variants and ask the Kitty host to reapply selected colors.
+              Howl recognizes other Kitty DCS payloads but not this new
+              host-owned selector.
+            howl:
+              support: missing
+              disposition: deferred
+              owner: howl-app
+              milestone: host_consequence
+              rationale: >-
+                A typed, bounded and consent-aware host consequence plus
+                actual color-stack/session ownership is required; treating
+                an untrusted DCS as an automatic global theme change is unsafe.
+              residual: >-
+                Howl drops this DCS selector with no session theme variant
+                state or host refresh action; ordinary Kitty DCS handlers still work.
+              source: howl-vt/src/terminal.zig
+              symbol: kittyDcsPayload
+              proof:
+                path: howl-vt/test/unit/terminal_modes_test.zig
+                symbol: "newer Kitty color scheme DCS remains unclaimed host policy"
+      graphics_feature_queries:
+        source: graphics.c
+        symbol: grman_handle_command
+        line: 2854
+        census: {semantic_branches: 1}
+        recognition: implemented
+        conditions: >-
+          New 0.50+ Kitty graphics action a=q with e=ACTION queries the
+          support of the indicated action and non-default fields, without
+          image data or effects on an in-progress upload. The e parser
+          belongs to parse-graphics-command.h:50/150; the feature report is
+          generated by graphics.c:supported_keys_for_query.
+        records:
+          kitty_delta.graphics.feature_query:
+            raw: "APC G a=q,i=ID,e=ACTION[,keys] ST"
+            effect: report supported graphics actions and keys without loading image data
+            relevance: graphics
+            conditions: >-
+              Kitty a79f376 graphics.c:1047-1179 and 2846-2858 require a
+              nonzero image id for a feature query, echo supported non-default
+              key/value pairs plus e=ACTION, and do not transmit data or
+              disturb chunked uploads. docs/graphics-protocol.rst:548-593
+              specifies this feature introduced with Kitty 0.50.0.
+            howl:
+              support: missing
+              disposition: deferred
+              owner: howl-vt
+              milestone: graphics
+              rationale: >-
+                Howl's bounded parser rejects the new e flag. Advertising
+                actions and key combinations needs a precise capability
+                catalogue and zero-mutation reply proof, not a generic OK.
+              residual: >-
+                Feature queries containing e are rejected with EINVAL by
+                Plane.command; no supported-action/key reply is produced.
+              source: howl-vt/src/graphics.zig
+              symbol: Plane.command
+              proof:
+                path: howl-vt/src/graphics.zig
+                symbol: "newer Kitty graphics feature query e is not advertised by Howl"
       transient_usage_hint:
         source: parse-graphics-command.h
         symbol: parse_graphics_code

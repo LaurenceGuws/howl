@@ -2861,6 +2861,24 @@ test "iTerm2 DCS payloads retain bounded unescaped occurrences in order" {
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
+test "newer Kitty color scheme DCS remains unclaimed host policy" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Kitty a79f376 accepts DCS @kitty-color-scheme|base64-json ST and
+    // delegates to the host only after an existing pushed color stack.
+    // Howl does not interpret untrusted session color schemes as VT state.
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-color-scheme|e30=\x1b\\")).stateChanged());
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    // Unrelated existing Kitty DCS payloads still reach their typed owner.
+    try std.testing.expect((try terminal.feed("\x1bP@kitty-echo|hello\x1b\\")).stateChanged());
+    const received = terminal.consequenceHead().?.dcs;
+    try std.testing.expectEqual(Terminal.DcsPayloadKind.kitty_echo, received.kind);
+    try std.testing.expectEqualStrings("hello", received.payload);
+}
+
 test "Kitty caller-directed DCS commands retain exact handler payloads in order" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

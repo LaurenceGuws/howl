@@ -31,6 +31,9 @@ if $ghostty_ids != ([ghostty.osc7501.status_query ghostty.osc7501.status_report]
 let kitty_delta_ids = {
   dispatch_osc_program_status: [kitty_delta.osc.program_status]
   indexed_graphics_formats: [kitty_delta.graphics.format_indexed8 kitty_delta.graphics.format_indexed16]
+  conemu_cwd_report: [kitty_delta.osc.conemu_cwd]
+  kitty_dcs_color_scheme: [kitty_delta.dcs.remote_color_scheme]
+  graphics_feature_queries: [kitty_delta.graphics.feature_query]
   transient_usage_hint: [kitty_delta.graphics.usage_hint_transient]
 }
 for group in ($kitty_delta_ids | transpose name ids) {
@@ -222,7 +225,7 @@ let expanded_ref = ($inventory.references.windows_terminal
   | update group_ids ($inventory.references.windows_terminal.group_ids | insert accepted_future ["fixture.first" "fixture.second"]))
 let approved_inventory = ($inventory
   | update references.windows_terminal $expanded_ref
-  | update total_groups 42
+  | update total_groups ($inventory.total_groups + 1)
   | update total_records ($inventory.total_records + 2))
 let approved = (protocol inventory diagnostics $approved_cat $approved_inventory)
 if ($approved | length) != 0 {

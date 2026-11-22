@@ -168,6 +168,25 @@ test "GNU Screen title retains bounded title and icon with exact mutation" {
     try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.icon().?.len);
 }
 
+test "newer Kitty ConEmu OSC 9;9 current directory is not a Howl directory report" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect(terminal.workingDirectory() == null);
+
+    // Kitty a79f376 dispatch_osc routes OSC 9;9;path to its CWD owner,
+    // with optional surrounding quotes and an absolute-path requirement.
+    // Howl currently treats this as an OSC 9 host notification, not CWD.
+    try feed(&terminal, "\x1b]9;9;\"/var/test\"\x07");
+    try std.testing.expect(terminal.workingDirectory() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    // The already-supported OSC 7 still performs an actual directory update.
+    try feed(&terminal, "\x1b]7;file://host/work\x1b\\");
+    try std.testing.expectEqualStrings("file://host/work", terminal.workingDirectory().?.value);
+    try feed(&terminal, "\x1b]9;9;/another/dir\x1b\\");
+    try std.testing.expectEqualStrings("file://host/work", terminal.workingDirectory().?.value);
+}
+
 test "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

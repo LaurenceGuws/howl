@@ -4371,6 +4371,23 @@ test "Kitty PNG grows bounded chunk storage without admitting a partial image" {
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, plane.image(0).?.pixels);
 }
 
+test "newer Kitty graphics feature query e is not advertised by Howl" {
+    // Kitty 0.50+ uses APC G a=q,i=31,e=T,U=1,C=1 to report exact
+    // supported action/key capabilities without mutating image state.
+    // Howl currently rejects the new e selector instead of claiming parity.
+    try std.testing.expect(parseCommand("a=q,i=31") != null);
+    try std.testing.expect(parseCommand("a=q,i=31,e=T,U=1,C=1") == null);
+    try std.testing.expect(parseCommand("a=q,i=31,e=f,r=1,X=1") == null);
+
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    const generation = plane.generation();
+    const result = try plane.command("a=q,i=31,e=T,U=1,C=1", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.invalid, result.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+}
+
 test "Kitty usage hints are bounded advisory no-op metadata" {
     const parsed = parseCommand("a=t,f=32,s=1,v=1,i=80,N=1,q=2;/wAA/w==") orelse
         return error.TestUnexpectedResult;
