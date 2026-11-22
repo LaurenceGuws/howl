@@ -197,7 +197,7 @@ classifications:
       symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}
   ansi_mode_breadth_excluded: &howl_ansi_mode_breadth_excluded {support: partial, disposition: excluded,
     rationale: *howl_mode_policy_difference,
-    residual: Howl implements its curated ANSI mode set rather than every mode recognized by the pinned reference.,
+    residual: "Pinned iTerm2 handles ANSI modes 4 and 12, setting sendReceiveMode to the inverse of mode 12; Howl additionally handles modes 2 and 20 and retains mode 12 without inversion.",
     source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
       path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}
@@ -1534,14 +1534,18 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
-          iterm2.csi.rm: {raw: "CSI Pm l", effect: reset ANSI modes, howl: *howl_ansi_mode_breadth_excluded}
+          iterm2.csi.rm: {raw: "CSI Pm l", effect: reset ANSI modes,
+            conditions: "Pinned iTerm2 VT100Terminal.m:2243-2257 iterates all operands but only applies 4/12; its mode 12 reset writes true, while Howl clears 12 and also accepts 2/20. The existing Howl ANSI mode query test proves its retained 2/4/12/20 values.",
+            howl: *howl_ansi_mode_breadth_excluded}
           iterm2.csi.sgr: {raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
             disposition: excluded, rationale: *howl_rendition_policy_difference,
             residual: Howl implements the indexed bounded rendition subset proved below.,
             source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
-          iterm2.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes, howl: *howl_ansi_mode_breadth_excluded}
+          iterm2.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes,
+            conditions: "Pinned iTerm2 VT100Terminal.m:2243-2257 iterates all operands but only applies 4/12; its mode 12 set writes false, while Howl sets 12 and also accepts 2/20. The existing Howl ANSI mode query test proves its retained 2/4/12/20 values.",
+            howl: *howl_ansi_mode_breadth_excluded}
           iterm2.csi.tbc: {raw: "CSI [Ps=0] g", effect: clear tab stops,
             conditions: "Pinned iTerm2 clears its one cross-bank tabStops collection for 0/current or 3/all,
               ignoring mode 5; Howl clears only the active bank and also accepts libvterm TBC 5 as all.",
@@ -4170,7 +4174,7 @@ references:
             conditions: "Pinned Kitty kitty/vt-parser.c::handle_mode CSI Pm h passes every admitted nonnegative operand to screen_set_mode. Kitty screen.c::set_mode_from_const uses a curated mix of ANSI modes, DEC private modes and ignored diagnostics; Howl Terminal.setAnsiModes implements shared ANSI state and retains a distinct optional DEC mode set, not Kitty product mode breadth and policy.",
             howl: {support: partial, disposition: excluded,
               rationale: "Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation; reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode breadth are outside the complete Howl family.",
-              residual: "Howl implements its curated ANSI mode set rather than every mode recognized by the pinned reference.",
+              residual: "Pinned Kitty implements ANSI 4 (IRM) and 20 (LNM), but treats 2 (KAM) and 12 (SRM) as unsupported; Howl additionally toggles both as retained ANSI modes. Kitty also forwards private operands to its screen mode owner.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
@@ -4178,7 +4182,7 @@ references:
             conditions: "Pinned Kitty kitty/vt-parser.c::handle_mode CSI Pm l forwards every admitted nonnegative operand to screen_reset_mode, including private-mode cases; Howl Terminal.setAnsiModes handles its canonical ANSI subset and separate DEC mode owner, without matching Kitty complete product mode breadth.",
             howl: {support: partial, disposition: excluded,
               rationale: "Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation; reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode breadth are outside the complete Howl family.",
-              residual: "Howl implements its curated ANSI mode set rather than every mode recognized by the pinned reference.",
+              residual: "Pinned Kitty implements ANSI 4 (IRM) and 20 (LNM), but treats 2 (KAM) and 12 (SRM) as unsupported; Howl additionally toggles both as retained ANSI modes. Kitty also forwards private operands to its screen mode owner.",
               source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
