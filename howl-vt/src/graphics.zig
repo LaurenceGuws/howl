@@ -253,6 +253,11 @@ pub fn mayRespond(bytes: []const u8) bool {
     return command_value.action != 'd';
 }
 
+// Every selector admitted by Plane.delete also qualifies for e=d queries.
+// The query formatter uses the same vocabulary, but only reports fields
+// consumed by the selected deletion mode.
+const delete_selectors = "afinrpqxyzc";
+
 // =============================================================================
 // Retained graphics plane
 // =============================================================================
@@ -333,6 +338,12 @@ pub const Plane = struct {
                 .failure = .invalid,
                 .quiet = command_value.quiet,
             };
+            // Current Kitty rejects invalid delete-selector bytes at parse
+            // time. A feature query must neither fabricate an e=d success
+            // nor cancel a suspended upload when d has an unknown value.
+            if (command_value.delete != 0 and
+                std.mem.indexOfScalar(u8, delete_selectors, std.ascii.toLower(command_value.delete)) == null)
+                return .{ .quiet = 2 };
             return .{
                 .response_id = command_value.id,
                 .feature_query = bytes,
@@ -1090,7 +1101,7 @@ pub const Plane = struct {
         const selector = if (command_value.delete == 0) 'a' else command_value.delete;
         const remove_data = std.ascii.isUpper(selector);
         const normalized = std.ascii.toLower(selector);
-        if (std.mem.indexOfScalar(u8, "afinrpqxyzc", normalized) == null)
+        if (std.mem.indexOfScalar(u8, delete_selectors, normalized) == null)
             return .{ .quiet = 2 };
         if (normalized == 'f') return self.deleteFrame(command_value, remove_data);
         if (normalized == 'i' and command_value.id == 0) return .{ .quiet = 2 };
@@ -2432,11 +2443,17 @@ const FeatureWriter = struct {
 pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![]const u8 {
     const command_value = parseCommand(packet) orelse return error.ReplyLimit;
     if (command_value.action != 'q' or command_value.feature_action == 0) return error.ReplyLimit;
+    // Direct callers also must never receive a success-looking capability
+    // string for a selector that current Kitty rejects at parse admission.
+    if (command_value.delete != 0 and
+        std.mem.indexOfScalar(u8, delete_selectors, std.ascii.toLower(command_value.delete)) == null)
+        return scratch[0..0];
     var out: FeatureWriter = .{ .bytes = scratch };
     const action = command_value.feature_action;
     const transmitting = action == 't' or action == 'T';
     const placing = action == 'T' or action == 'p';
-    if (!transmitting and !placing) return scratch[0..0];
+    const deleting = action == 'd';
+    if (!transmitting and !placing and !deleting) return scratch[0..0];
     try out.flag('e', action);
 
     // Both supported action families reuse the actual encoded command values;
@@ -2480,6 +2497,30 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         if (present & (1 << 23) != 0 and command_value.unicode_placement) try out.number('U', 1);
         if (present & (1 << 18) != 0 and command_value.z != 0) try out.number('z', command_value.z);
         // P/Q/H/V parent-relative placements remain deliberately absent.
+    }
+    if (deleting and present & (1 << 8) != 0 and
+        std.mem.indexOfScalar(u8, delete_selectors, std.ascii.toLower(command_value.delete)) != null)
+    {
+        const selector = command_value.delete;
+        try out.flag('d', selector);
+        const mode = std.ascii.toLower(selector);
+        // Only image/number selectors consume the placement ID. Geometry
+        // selectors and range deletions never claim that unrelated field.
+        if (mode == 'i' or mode == 'n') {
+            if (present & (1 << 11) != 0 and command_value.placement_id != 0)
+                try out.number('p', command_value.placement_id);
+        }
+        // Coordinates are source-visible only for geometry, layer+point and
+        // image-ID range selection. Preserve full u32 ranges without inventing
+        // arbitrary pixel-dimension caps on image-ID identity ranges.
+        if (std.mem.indexOfScalar(u8, "pqrxy", mode) != null) {
+            if (mode != 'y' and present & (1 << 9) != 0 and command_value.x != 0)
+                try out.number('x', command_value.x);
+            if (mode != 'x' and present & (1 << 10) != 0 and command_value.y != 0)
+                try out.number('y', command_value.y);
+        }
+        if ((mode == 'q' or mode == 'z') and present & (1 << 18) != 0 and command_value.z != 0)
+            try out.number('z', command_value.z);
     }
     return scratch[0..out.used];
 }
@@ -4507,6 +4548,14 @@ test "Kitty graphics feature queries return exact advertised keys without changi
         try formatFeatureQuery("a=q,i=31,e=p,p=2,x=1,y=2,w=3,h=4,X=5,Y=6,c=2,r=3,C=1,U=1,z=-3,s=1", &output),
     );
     try std.testing.expectEqualStrings(",e=p", try formatFeatureQuery("a=q,i=31,e=p,C=0,U=0,s=1,f=24", &output));
+    try std.testing.expectEqualStrings(",e=d,d=i,p=7", try formatFeatureQuery("a=q,i=31,e=d,d=i,p=7", &output));
+    try std.testing.expectEqualStrings(",e=d,d=q,x=2,y=3,z=-7", try formatFeatureQuery("a=q,i=31,e=d,d=q,x=2,y=3,z=-7", &output));
+    try std.testing.expectEqualStrings(",e=d,d=R,x=99,y=101", try formatFeatureQuery("a=q,i=31,e=d,d=R,x=99,y=101", &output));
+    try std.testing.expectEqualStrings(",e=d,d=c", try formatFeatureQuery("a=q,i=31,e=d,d=c,p=7,x=2,y=3,z=-7", &output));
+    try std.testing.expectEqualStrings("", try formatFeatureQuery("a=q,i=31,e=d,d=U", &output));
+    try std.testing.expectEqualStrings("", try formatFeatureQuery("a=q,i=31,e=T,d=U", &output));
+    try std.testing.expectEqualStrings(",e=d,d=F", try formatFeatureQuery("a=q,i=31,e=d,d=F", &output));
+    try std.testing.expectEqualStrings(",e=d,d=Z,z=-3", try formatFeatureQuery("a=q,i=31,e=d,d=Z,z=-3", &output));
     try std.testing.expectEqualStrings(
         ",e=p,p=2,C=1",
         try formatFeatureQuery("a=q,i=31,e=p,p=2,P=123,Q=456,H=-8,V=7,C=1", &output),

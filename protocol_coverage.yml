@@ -6086,20 +6086,24 @@ references:
               key/value pairs plus e=ACTION, and do not transmit data or
               disturb chunked uploads. docs/graphics-protocol.rst:548-593
               specifies this feature introduced with Kitty 0.50.0. Howl now
-              accepts a=q,i=ID,e=t|T|p and advertises source-backed, bounded
-              capabilities: t/T support direct transmission, zlib, RGB/RGBA/PNG,
-              represented dimensions and advisory N=1. T/p share image placement
-              IDs, cropped source regions x/y/w/h, cell offsets X/Y, columns/
-              rows c/r, no-cursor-move C=1, Unicode U=1 and signed z layers.
-              The query parser also validates the parent-relative P/Q/H/V keys
-              but omits them from replies; actual parent-placement commands
-              remain rejected. Actions d/f/a/c do not claim support; q=1/2
-              remain silent. Native red-to-green tests prove exact ordered bytes,
-              supported value caps, quiet/full-queue atomic failure and recovery,
-              no graphics mutation and uninterrupted chunked uploads.
-              Installed Kitty 0.51.0 and staged ReleaseFast Howl in one private
-              KWin agreed byte-for-byte on five of six placement feature probes;
-              the sixth intentionally omits Kitty's unsupported P/Q/H/V fields.
+              accepts a=q,i=ID,e=t|T|p|d and advertises source-backed, bounded
+              capabilities: t/T direct/zlib/RGB/RGBA/PNG, represented dimensions,
+              advisory N=1. T/p share placement identity, crop, cell offsets,
+              destination geometry, no-cursor-move, Unicode and signed z layers.
+              d reuses the actual deletion selector vocabulary: image/number
+              selectors with placement IDs, point/layer/range selectors with
+              only the coordinates and z fields each uses, and frame deletion.
+              Kitty a79f376 parse-graphics-command.h:120-125 rejects invalid
+              delete-selector bytes; Howl similarly emits no feature reply for
+              such input, preserving any in-progress chunked upload. The query
+              parser also validates P/Q/H/V but omits unsupported parent-linked
+              placement capabilities. Actions f/a/c still do not claim support;
+              q=1/2 remain silent. Native red-to-green tests cover exact ordered
+              replies, invalid selectors, full-queue atomic error/recovery,
+              no image mutation and ongoing chunked uploads. Private KWin A/B
+              with installed Kitty 0.51.0 verifies 7/8 exact deletion replies;
+              the remaining difference is deliberate omission of unrelated
+              fields in cursor-cell deletion instead of overclaiming them.
             howl:
               support: partial
               disposition: deferred
@@ -6107,23 +6111,25 @@ references:
               milestone: graphics
               rationale: >-
                 Only previously proved native graphics behavior is advertised.
-                Source placement geometry and transcript order match current
-                Kitty for represented fields. The bounded on-stack query writer
-                is shared by T/p rather than duplicating placement semantics,
-                and never disturbs a pending upload or retains new graphics state.
-                Avoid claiming unimplemented parent relationships or media.
+                Placement geometry and source-ordered wire keys match Kitty for
+                represented fields; e=d uses the same canonical delete selector
+                vocabulary as real Plane.delete and reports only selector-used
+                parameters. The bounded on-stack query formatter owns no new
+                graphics state and cannot mutate or cancel pending image data.
+                Avoid claiming unrelated delete fields, parent links or media.
               residual: >-
-                The remaining action negotiation d/f/a/c, their exact key/value
-                combinations, parent-relative P/Q/H/V placement links, long
-                unsupported geometry requests and external media are not fully
-                covered. Indexed f=8/16 and reference-specific host rendering
-                policy remain missing. This is a scoped partial contract,
-                not full modern Kitty feature-query parity.
+                Action negotiation e=f/a/c and their key/value matrices,
+                parent-relative P/Q/H/V placement links, external media and
+                unsupported large geometry remain unqualified. Kitty echoes
+                additional fields even for deletion selectors that do not
+                consume them; Howl intentionally does not advertise those
+                ineffective combinations. Indexed f=8/16 and host presentation
+                policy remain outside full modern Kitty feature-query parity.
               source: howl-vt/src/graphics.zig
               symbol: formatFeatureQuery
               proof:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
-                symbol: "terminal: Kitty graphics placement features negotiate only represented keys"
+                symbol: "terminal: Kitty graphics deletion capability replies are selector honest"
       transient_usage_hint:
         source: parse-graphics-command.h
         symbol: parse_graphics_code
