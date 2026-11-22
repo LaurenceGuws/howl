@@ -2501,9 +2501,7 @@ fn appendModifyOtherKeysReport(
     encode_buf: []u8,
     value: i8,
 ) replies.AppendError!void {
-    // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-    const payload = std.fmt.bufPrint(encode_buf, ">4;{d}m", .{value}) catch unreachable;
+    const payload = std.fmt.bufPrint(encode_buf, ">4;{d}m", .{value}) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -2513,9 +2511,7 @@ fn appendKeyFormatReport(
     resource: u8,
     value: u16,
 ) replies.AppendError!void {
-    // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-    const payload = std.fmt.bufPrint(encode_buf, ">{d};{d}f", .{ resource, value }) catch unreachable;
+    const payload = std.fmt.bufPrint(encode_buf, ">{d};{d}f", .{ resource, value }) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -2714,10 +2710,28 @@ fn appendColorStackReport(
     stack: *const KittyColorStack,
 ) replies.AppendError!void {
     const index = if (stack.len == 0) 0 else stack.len - 1;
-    // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch unreachable;
+    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch return error.ReplyLimit;
     try output.appendCsi(.kitty, payload);
+}
+
+test "fixed keyboard and color-stack reports reject undersized scratch atomically" {
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    try output.append("kept");
+    var tiny: [0]u8 = .{};
+    const stack = KittyColorStack{};
+    try std.testing.expectError(error.ReplyLimit, appendModifyOtherKeysReport(&output, &tiny, 2));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendKeyFormatReport(&output, &tiny, 1, 9));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendColorStackReport(&output, &tiny, &stack));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+
+    var enough: [32]u8 = undefined;
+    try appendModifyOtherKeysReport(&output, &enough, 2);
+    try appendKeyFormatReport(&output, &enough, 1, 9);
+    try appendColorStackReport(&output, &enough, &stack);
+    try std.testing.expectEqualStrings("kept\x1b[>4;2m\x1b[>1;9f\x1b[0;0#Q", output.bytes());
 }
 
 fn appendSelectedGraphicRenditionReport(
