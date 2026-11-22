@@ -716,13 +716,18 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
     } };
 }
 
-fn processPlus(final: u8, params: []const i32) ?SemanticEvent {
-    // Pinned Kitty admits at most one nonnegative CSI +T operand. An
-    // omitted operand means one step; an explicit zero does no work.
-    if (final != 'T' or params.len > 1) return null;
-    if (params.len == 0) return .{ .scroll_down_from_history = 1 };
+fn scrollCount(params: []const i32) ?u16 {
+    // Pinned Kitty's S/T and +T each admit one nonnegative operand.
+    // Missing means one; explicit zero is a no-op, not a default.
+    if (params.len > 1) return null;
+    if (params.len == 0) return 1;
     if (params[0] <= 0) return null;
-    return .{ .scroll_down_from_history = paramAtOrDefault0(params, 0) };
+    return paramAtOrDefault0(params, 0);
+}
+
+fn processPlus(final: u8, params: []const i32) ?SemanticEvent {
+    if (final != 'T') return null;
+    return .{ .scroll_down_from_history = scrollCount(params) orelse return null };
 }
 
 fn processHash(final: u8, params: []const i32) ?SemanticEvent {
@@ -1078,8 +1083,8 @@ fn decodeCsi(
         'L' => return SemanticEvent{ .insert_lines = paramAtOrDefault1(params, 0) },
         'M' => return SemanticEvent{ .delete_lines = paramAtOrDefault1(params, 0) },
         'P' => return SemanticEvent{ .delete_chars = paramAtOrDefault1(params, 0) },
-        'S' => return SemanticEvent{ .scroll_up_lines = paramAtOrDefault1(params, 0) },
-        'T' => return SemanticEvent{ .scroll_down_lines = paramAtOrDefault1(params, 0) },
+        'S' => return SemanticEvent{ .scroll_up_lines = scrollCount(params) orelse return null },
+        'T' => return SemanticEvent{ .scroll_down_lines = scrollCount(params) orelse return null },
         'h' => return SemanticEvent{ .ansi_mode_set = collectParams(params) },
         'l' => return SemanticEvent{ .ansi_mode_reset = collectParams(params) },
         'm' => return SemanticEvent{ .sgr = .{ .params = params, .separators = separators } },

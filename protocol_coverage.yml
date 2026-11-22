@@ -1642,18 +1642,20 @@ references:
               rationale: Graphical and platform presentation policy is client-local and not part of canonical VT progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
-            conditions: line-buffer history and selection consequences, howl: {support: partial,
-              disposition: excluded, rationale: *howl_structural_policy_difference,
+            conditions: "Pinned iTerm2 VT100CSIParser.m unconditionally maps CSI S to XTERMCC_SU even with extra operands; its VT100Terminal.m handler consumes only p[0]. Pinned Kitty rejects extra S operands, and Howl now follows that stricter one-parameter admission. iTerm2 line-buffer history and selection consequences also differ.",
+            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
+              residual: "Howl rejects extra CSI S operands before mutation to match pinned Kitty; pinned iTerm2 instead consumes the first and scrolls. The shared valid one-count scroll works, but history, selection and host callbacks remain distinct.",
               source: howl-vt/src/screen.zig, symbol: Screen.scrollUpRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: pinned iTerm2 CSI S accepts extras but Howl keeps Kitty arity"}}}
           iterm2.csi.sd: {raw: "CSI [Ps=1] T", effect: scroll down,
-            conditions: "Pinned iTerm2 VT100CSIParser.m::SetCSITypeAndDefaultParameters recognizes CSI T only when fewer than two parameters are present, rejecting CSI 1;2T entirely. Howl accepts the first count and performs a scroll. iTerm2 also emits selection consequences in its screen delegate.",
+            conditions: "Pinned iTerm2 VT100CSIParser.m recognizes CSI T only with fewer than two operands, rejecting CSI 1;2T. Howl now matches this admission, in common with Kitty; terminal-owned row mutation and host selection consequences remain distinct.",
             howl: {support: partial, disposition: excluded,
-              rationale: "Ordinary bounded scroll-down works; extra CSI T arguments and host-owned selection update policy differ from the pinned reference.",
+              rationale: "Ordinary bounded scroll-down and excess-operand rejection now match pinned iTerm2. Its selection updates and other delegate-owned consequences remain outside the VT-only semantic contract.",
+              residual: "Excess CSI T operand admission now matches iTerm2, and the next valid scroll after rejection succeeds. iTerm2 host selection invalidation, callbacks and exact historical image/multicell consequences remain unqualified.",
               source: howl-vt/src/screen.zig, symbol: Screen.scrollDownRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: pinned iTerm2 CSI T rejects excess parameters while Howl accepts count"}}}
+                symbol: "terminal: pinned iTerm2 CSI T extra-operand rejection now matches Howl"}}}
           iterm2.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs,
             conditions: "Pinned iTerm2 backTab walks one shared tabStops set after screen changes,
               while Howl's Screen tab-stop array is bank-local.",
@@ -4402,16 +4404,16 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           kitty.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
-            conditions: "Pinned Kitty ignores private mode 69 and scrolls complete physical rows; Howl confines row scroll to configured DECSLRM horizontal margins. Howl also clips fully contained physical graphics against vertical margins.", howl: {support: partial,
+            conditions: "Pinned Kitty CALL_CSI_HANDLER1 admits at most one S count; missing defaults to one, explicit zero loops zero times, and trailing semicolon is not a second operand. Howl now matches these bounds, including fragmented C1 CSI and unchanged text/image identity on rejection. Kitty ignores private mode 69 and scrolls full physical rows; Howl retains DECSLRM horizontal region clipping.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Pinned mode 69 rejection versus Howl horizontal region support is proven, while ordinary vertical-margin clipping passes. Deep history, selection and relative image references remain partial.",
+              residual: "Pinned SU count admission, explicit-zero no-op, and ordinary vertical scrolling now have native proofs, but Kitty rejects horizontal mode 69 while Howl honors DECSLRM. Deep history, selection and relative image references remain partial.",
               source: howl-vt/src/terminal.zig, symbol: scrollGraphicsRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.sd: {raw: "CSI [Ps=1] T", effect: scroll down,
-            conditions: "Pinned Kitty ignores private mode 69 and scrolls complete physical rows; Howl confines reverse scroll to configured DECSLRM horizontal margins. Clipped-margin image geometry has direct bounded proof.", howl: {support: partial,
+            conditions: "Pinned Kitty CALL_CSI_HANDLER1 admits at most one ordinary T count; missing defaults to one, explicit zero loops zero times, and trailing semicolon is not a second operand. Howl now matches this independent scroll-down admission without changing the separately-owned CSI +T history-restoration command. Kitty ignores private mode 69 while Howl honors DECSLRM horizontal regions.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "Pinned mode 69 rejection versus Howl horizontal region support is proven, while ordinary vertical-margin clipping passes. Deep history, selection and relative image references remain partial.",
+              residual: "Pinned SD count admission, explicit-zero no-op, and normal vertical-margin scrolling now have native proofs. Kitty's mode 69 rejection versus Howl DECSLRM remains incompatible; deep history, selection and relative image references remain partial.",
               source: howl-vt/src/terminal.zig, symbol: scrollGraphicsRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}

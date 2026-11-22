@@ -2815,12 +2815,37 @@ test "terminal: SGR font and baseline retain exact cell save resize and bank sta
     try std.testing.expect(!(try terminal.feed("\x1b[0m")).stateChanged());
 }
 
-test "terminal: pinned iTerm2 CSI T rejects excess parameters while Howl accepts count" {
-    // Pinned iTerm2 VT100CSIParser.m::SetCSITypeAndDefaultParameters:
-    // case 'T' recognizes XTERMCC_SD only if param->count < 2; with
-    // two parameters it returns VT100_NOTSUPPORT. Howl decodeCsi('T')
-    // accepts the first count and ignores extra parameters, scrolling.
-    for ([_][]const u8{ "\x1b[T", "\x1b[1T", "\x1b[1;2T" }) |command| {
+test "terminal: pinned iTerm2 CSI S accepts extras but Howl keeps Kitty arity" {
+    // iTerm2 1d6e758 VT100CSIParser.m case S unconditionally accepts
+    // XTERMCC_SU and VT100Terminal.m consumes only p[0]. Pinned Kitty's
+    // CALL_CSI_HANDLER1 rejects extras; Howl uses that same safe boundary.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[2;3r");
+    const before = terminal.semanticView(0);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[1;2")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("S")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    for (0..3) |row| {
+        try std.testing.expectEqualDeep(before.cellInfoAt(@intCast(row), 0), after.cellInfoAt(@intCast(row), 0));
+    }
+    try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+    try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    // The common one-operand request remains valid after rejection.
+    try std.testing.expect((try terminal.feed("\x1b[S")).stateChanged());
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(2, 0));
+}
+
+test "terminal: pinned iTerm2 CSI T extra-operand rejection now matches Howl" {
+    // Pinned iTerm2 1d6e758 sources/VT100/VT100CSIParser.m accepts
+    // XTERMCC_SD only with fewer than two operands. Howl now agrees:
+    // malformed extra parameters cannot induce an accidental scroll.
+    for ([_][]const u8{ "\x1b[T", "\x1b[1T" }) |command| {
         var terminal = try Terminal.init(std.testing.allocator, 3, 6);
         defer terminal.deinit();
         try feed(&terminal, "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[2;3r");
@@ -2832,6 +2857,29 @@ test "terminal: pinned iTerm2 CSI T rejects excess parameters while Howl accepts
         try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 0));
         try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(2, 0));
         try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+
+    for ([_][]const u8{ "\x1b[1;2T", "\x1b[2;1T", "\x1b[1;2;3T" }) |invalid| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[2;3r");
+        const before = terminal.semanticView(0);
+        const sequence = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        for (0..3) |row| {
+            try std.testing.expectEqualDeep(
+                before.cellInfoAt(@intCast(row), 0),
+                after.cellInfoAt(@intCast(row), 0),
+            );
+        }
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expect((try terminal.feed("\x1b[T")).stateChanged());
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
     }
 }
 
@@ -4313,6 +4361,117 @@ test "terminal: wide printing boundaries reject REP on a one-column row" {
     try std.testing.expect(!(try terminal.feed("\x1b[b")).stateChanged());
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
     try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
+}
+
+test "terminal: pinned Kitty SU SD reject excess counts and preserve zero as a no-op" {
+    // Pinned Kitty d4106ef vt-parser.c calls AT_MOST_ONE_PARAMETER for
+    // ordinary S and T; screen_scroll and screen_reverse_scroll each loop
+    // over the explicit count, so zero does no work. CSI + T retains its
+    // separate history-restoring owner and private CSI ? S is a SIXEL query.
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=94,C=1;AQIDBA==\x1b\\";
+    for ([_]struct { malformed: []const u8, valid: []const u8 }{
+        .{ .malformed = "\x1b[2;1S", .valid = "\x1b[S" },
+        .{ .malformed = "\x1b[2;1T", .valid = "\x1b[T" },
+        .{ .malformed = "\x1b[1;2S", .valid = "\x1b[S" },
+        .{ .malformed = "\x1b[1;2T", .valid = "\x1b[T" },
+        .{ .malformed = "\x1b[0;;S", .valid = "\x1b[S" },
+        .{ .malformed = "\x1b[0;;T", .valid = "\x1b[T" },
+        .{ .malformed = "\x1b[2:1S", .valid = "\x1b[S" },
+        .{ .malformed = "\x1b[2:1T", .valid = "\x1b[T" },
+        .{ .malformed = "\x9b2;1S", .valid = "\x1b[S" },
+        .{ .malformed = "\x9b2;1T", .valid = "\x1b[T" },
+        .{ .malformed = "\x1b[;0;S", .valid = "\x1b[S" },
+        .{ .malformed = "\x1b[;0;T", .valid = "\x1b[T" },
+    }) |case| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 4);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBBBBBB\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[2;2H");
+        try feed(&terminal, image);
+        try consumeReplies(&terminal);
+        const before = terminal.semanticView(0);
+        const baseline_cells = [_]@TypeOf(before.cellInfoAt(0, 0)){
+            before.cellInfoAt(0, 0),
+            before.cellInfoAt(1, 0),
+            before.cellInfoAt(2, 0),
+            before.cellInfoAt(3, 0),
+        };
+        const sequence = terminal.semanticSequence();
+        const history = before.history_count;
+        const edit_generation = terminal.observation().structuralEditGeneration();
+        const imgs = terminal.images(0);
+        const placements = imgs.placementCount();
+        try std.testing.expectEqual(@as(usize, 1), placements);
+        const position = imgs.placement(0).?;
+        const img_generation = imgs.generation;
+        const content_generation = imgs.content_generation;
+
+        try std.testing.expect(!(try terminal.feed(case.malformed[0 .. case.malformed.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(case.malformed[case.malformed.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(history, after.history_count);
+        try std.testing.expectEqual(edit_generation, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        for (baseline_cells, 0..) |cell, row| {
+            try std.testing.expectEqualDeep(cell, after.cellInfoAt(@intCast(row), 0));
+        }
+        try std.testing.expectEqual(placements, terminal.images(0).placementCount());
+        try std.testing.expectEqual(position.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(position.col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(img_generation, terminal.images(0).generation);
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+        // Invalid scrolling cannot poison an adjacent valid command.
+        try std.testing.expect((try terminal.feed(case.valid)).stateChanged());
+        try std.testing.expectEqual(before.cursor_row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(before.cursor_col, terminal.semanticView(0).cursor_col);
+    }
+
+    // Valid trailing semicolon leaves one operand, but explicit zero must
+    // not erase content, scroll history, move graphics or cancel the cursor.
+    for ([_][]const u8{
+        "\x1b[0S", "\x1b[0T", "\x1b[0;S", "\x1b[0;T",
+        "\x1b[;S", "\x1b[;T", "\x9b0S",   "\x9b0T",
+    }) |zero| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 4);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HAAAA\x1b[2;1HBBBB\x1b[3;1HCCCC\x1b[4;1HDDDD\x1b[2;2H");
+        try feed(&terminal, image);
+        try consumeReplies(&terminal);
+        const before = terminal.semanticView(0);
+        const cell = before.cellInfoAt(1, 0);
+        const sequence = terminal.semanticSequence();
+        const placement = terminal.images(0).placement(0).?;
+        const image_generation = terminal.images(0).generation;
+        try std.testing.expect(!(try terminal.feed(zero)).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(before.history_count, after.history_count);
+        try std.testing.expectEqualDeep(cell, after.cellInfoAt(1, 0));
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(image_generation, terminal.images(0).generation);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+
+    // Missing count and positive single count are still supported.
+    for ([_][]const u8{
+        "\x1b[S",   "\x1b[T",   "\x1b[1S", "\x1b[1T",
+        "\x1b[1;S", "\x1b[1;T",
+    }) |valid| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HAAAA\x1b[2;1HBBBB\x1b[3;1HCCCC\x1b[2;2H");
+        const before = terminal.semanticView(0);
+        try std.testing.expect((try terminal.feed(valid)).stateChanged());
+        try std.testing.expectEqual(before.cursor_row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(before.cursor_col, terminal.semanticView(0).cursor_col);
+    }
 }
 
 test "terminal: Kitty CSI plus T rejects extra operands and honors zero count" {
