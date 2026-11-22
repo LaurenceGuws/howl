@@ -189,6 +189,12 @@ classifications:
     source: howl-vt/src/screen.zig, symbol: Screen.applyLineGeometry, proof: {
       path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: DEC line geometry owns width movement scroll resize reset and visual observation"}}
+  libvterm_cursor_origin_excluded: &howl_libvterm_cursor_origin_excluded {support: partial,
+    disposition: excluded, rationale: *howl_cursor_policy_difference,
+    residual: "Pinned libvterm bounds cursor movements to the full visible screen when DECOM is off, while Howl deliberately follows the active scrolling margins in the movement direction even without DECOM. Under DECOM both clamp into the active origin region; source-specific full behavior remains partial.",
+    source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: libvterm origin-only motion bounds differ from Howl directional margins"}}
   ansi_first_parameter_excluded: &howl_ansi_first_parameter_excluded {support: partial, disposition: excluded,
     rationale: *howl_mode_policy_difference,
     residual: The pinned reference applies only the first parameter while Howl applies every supported ANSI mode.,
@@ -532,41 +538,23 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"}}}
           libvterm.csi.cuu: {raw: "CSI [Ps=1] A", effect: cursor up,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c::on_csi case 0x41 subtracts count and post-clamps row to 0 without DECOM; from row 4 with DECSTBM 2..5, Howl CUU 99 stops at row 2 while libvterm stops at row 1.",
+            howl: *howl_libvterm_cursor_origin_excluded}
           libvterm.csi.cud: {raw: "CSI [Ps=1] B", effect: cursor down,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c::on_csi case 0x42 adds count and post-clamps to the last visible row without DECOM; from row 3 with DECSTBM 2..5, Howl CUD 99 stops at row 5 while libvterm reaches row 6.",
+            howl: *howl_libvterm_cursor_origin_excluded}
           libvterm.csi.cuf: {raw: "CSI [Ps=1] C", effect: cursor forward,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c::on_csi case 0x43 adds count and post-clamps to the physical row edge without DECOM; from column 6 with DECSLRM 4..9, Howl CUF 99 stops at column 9 while libvterm reaches column 12.",
+            howl: *howl_libvterm_cursor_origin_excluded}
           libvterm.csi.cub: {raw: "CSI [Ps=1] D", effect: cursor backward,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c::on_csi case 0x44 subtracts count and post-clamps to column 1 without DECOM; from column 6 with DECSLRM 4..9, Howl CUB 99 stops at column 4 while libvterm reaches column 1.",
+            howl: *howl_libvterm_cursor_origin_excluded}
           libvterm.csi.cnl: {raw: "CSI [Ps=1] E", effect: cursor next line,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c::on_csi case 0x45 resets column to 0 and advances count, post-clamping only under DECOM; from row 3/column 6 with margins, Howl CNL 99 returns column 4 on row 5 but libvterm returns column 1 on row 6.",
+            howl: *howl_libvterm_cursor_origin_excluded}
           libvterm.csi.cpl: {raw: "CSI [Ps=1] F", effect: cursor previous line,
-            conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              disposition: excluded, rationale: *howl_cursor_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
+            conditions: "Pinned libvterm src/state.c::on_csi case 0x46 resets column to 0 and retreats count, post-clamping only under DECOM; from row 4/column 6 with margins, Howl CPL 99 returns column 4 on row 2 but libvterm returns column 1 on row 1.",
+            howl: *howl_libvterm_cursor_origin_excluded}
           libvterm.csi.cha: {raw: "CSI [Ps=1] G", effect: absolute column,
             conditions: clamps to the current logical row width, howl: {support: full,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {

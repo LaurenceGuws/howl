@@ -2169,6 +2169,53 @@ test "terminal: cursor origin margins own exact aliases geometry wrap and resize
     );
 }
 
+test "terminal: libvterm origin-only motion bounds differ from Howl directional margins" {
+    // Pinned libvterm state.c::on_csi 0x41..0x46 clamps cursor movement
+    // against scroll margins only when mode.origin is set. Howl retains its
+    // deliberate iTerm2-style directional margin bounds with DECOM unset.
+    // Both references accept the same input bytes but have different output.
+    const cases = [_]struct {
+        start: []const u8,
+        move: []const u8,
+        row: u16,
+        col: u16,
+        pinned_libvterm_row: u16,
+        pinned_libvterm_col: u16,
+    }{
+        .{ .start = "\x1b[4;6H", .move = "\x1b[99A", .row = 1, .col = 5, .pinned_libvterm_row = 0, .pinned_libvterm_col = 5 },
+        .{ .start = "\x1b[3;6H", .move = "\x1b[99B", .row = 4, .col = 5, .pinned_libvterm_row = 5, .pinned_libvterm_col = 5 },
+        .{ .start = "\x1b[3;6H", .move = "\x1b[99C", .row = 2, .col = 8, .pinned_libvterm_row = 2, .pinned_libvterm_col = 11 },
+        .{ .start = "\x1b[3;6H", .move = "\x1b[99D", .row = 2, .col = 3, .pinned_libvterm_row = 2, .pinned_libvterm_col = 0 },
+        .{ .start = "\x1b[3;6H", .move = "\x1b[99E", .row = 4, .col = 3, .pinned_libvterm_row = 5, .pinned_libvterm_col = 0 },
+        .{ .start = "\x1b[4;6H", .move = "\x1b[99F", .row = 1, .col = 3, .pinned_libvterm_row = 0, .pinned_libvterm_col = 0 },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 6, 12);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;5r\x1b[?69h\x1b[4;9s");
+        try feed(&terminal, case.start);
+        try std.testing.expect((try terminal.feed(case.move)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(case.row, view.cursor_row);
+        try std.testing.expectEqual(case.col, view.cursor_col);
+        try std.testing.expect(case.row != case.pinned_libvterm_row or
+            case.col != case.pinned_libvterm_col);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+
+    // Under DEC origin mode the two choices agree on the admitted margin
+    // bounds; the difference is the origin-independent directional policy.
+    var origin = try Terminal.init(std.testing.allocator, 6, 12);
+    defer origin.deinit();
+    try feed(&origin, "\x1b[2;5r\x1b[?69h\x1b[4;9s\x1b[?6h\x1b[2;3H");
+    try feed(&origin, "\x1b[99A\x1b[99D");
+    try std.testing.expectEqual(@as(u16, 1), origin.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), origin.semanticView(0).cursor_col);
+    try feed(&origin, "\x1b[99B\x1b[99C");
+    try std.testing.expectEqual(@as(u16, 4), origin.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), origin.semanticView(0).cursor_col);
+}
+
 test "terminal: pinned iTerm2 DECSACE requires VT400 while Howl always admits extent" {
     // Pinned iTerm2 VT100Terminal.m executes VT100CSI_DECSACE only with
     // _vtLevel >= iTermEmulationLevel400; lower emulations ignore it.
