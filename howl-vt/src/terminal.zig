@@ -2445,7 +2445,7 @@ fn appendDecrqssReply(
     try output.appendControl(.terminal, .dcs);
     if (std.mem.eql(u8, request, "m")) {
         try output.append("1$r");
-        try appendSgrAttrs(output, encode_buf, currentAttrs(screen));
+        try appendSgrAttrs(output, encode_buf, sgrReportAttrs(screen.current_attrs));
         try output.appendControl(.terminal, .st);
         return;
     }
@@ -2815,9 +2815,10 @@ const CommonAttrs = struct {
     bg: Screen.Color,
 };
 
-// Copies current pen attributes into the shared bounded SGR report shape.
-fn currentAttrs(screen: *const Screen) CommonAttrs {
-    const attrs = screen.current_attrs;
+// One projection from the canonical cell/pen attributes into the SGR
+// report vocabulary. OSC links, DEC protection and fast-blink provenance
+// deliberately remain outside a graphic-rendition reply.
+fn sgrReportAttrs(attrs: Screen.CellAttrs) CommonAttrs {
     return .{
         .font = attrs.font,
         .baseline = attrs.baseline,
@@ -2836,25 +2837,44 @@ fn currentAttrs(screen: *const Screen) CommonAttrs {
     };
 }
 
+test "SGR report projections agree for pen and single retained cell" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 3);
+    defer screen.deinit(std.testing.allocator);
+    screen.current_attrs = .{
+        .font = 3,
+        .baseline = .raised,
+        .bold = true,
+        .dim = true,
+        .italic = true,
+        .blink = true,
+        .blink_fast = true,
+        .reverse = true,
+        .invisible = true,
+        .underline = true,
+        .strikethrough = true,
+        .underline_style = .curly,
+        .underline_color = Screen.Color.rgbComponents(7, 8, 9),
+        .fg = Screen.Color.indexed(11),
+        .bg = Screen.Color.rgbComponents(2, 4, 6),
+        .protected = .dec,
+        .link_id = 17,
+    };
+    screen.writeText("X");
+    const pen = sgrReportAttrs(screen.current_attrs);
+    const cell = commonAttrsForRect(&screen, .{ .top = 0, .left = 0, .bottom = 0, .right = 0 }).?;
+    try std.testing.expectEqualDeep(pen, cell);
+    try std.testing.expectEqual(Screen.Color.indexed(11), cell.fg);
+    try std.testing.expectEqual(Screen.Color.rgbComponents(7, 8, 9), cell.underline_color);
+    // Mutation of non-rendition metadata cannot enter DECRQSS/XTREPORTSGR.
+    screen.current_attrs.link_id = 37;
+    screen.current_attrs.protected = .iso;
+    screen.current_attrs.blink_fast = false;
+    try std.testing.expectEqualDeep(pen, sgrReportAttrs(screen.current_attrs));
+}
+
 fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
     const bounds = screen.rectBounds(area) orelse return null;
-    const first_cell = screen.cellInfoAt(bounds.top, bounds.left);
-    var common = CommonAttrs{
-        .font = first_cell.attrs.font,
-        .baseline = first_cell.attrs.baseline,
-        .bold = first_cell.attrs.bold,
-        .dim = first_cell.attrs.dim,
-        .italic = first_cell.attrs.italic,
-        .underline = first_cell.attrs.underline,
-        .underline_style = first_cell.attrs.underline_style,
-        .underline_color = first_cell.attrs.underline_color,
-        .blink = first_cell.attrs.blink,
-        .reverse = first_cell.attrs.reverse,
-        .invisible = first_cell.attrs.invisible,
-        .strikethrough = first_cell.attrs.strikethrough,
-        .fg = first_cell.attrs.fg,
-        .bg = first_cell.attrs.bg,
-    };
+    var common = sgrReportAttrs(screen.cellInfoAt(bounds.top, bounds.left).attrs);
 
     var row = bounds.top;
     while (row <= bounds.bottom) : (row += 1) {
