@@ -297,8 +297,21 @@ test "clipboard allocation pressure retains the exact FIFO head until successful
 
 test "host OSC7501 per-pane index remains compact and allocation-free" {
     try std.testing.expect(@sizeOf(host_status.Index) <= 8 * 1024);
-    try std.testing.expect(@sizeOf(host_status.Summary) <= 16);
+    try std.testing.expect(@sizeOf(host_status.Summary) <= 64);
     try std.testing.expectEqual(@as(usize, 32), host_status.max_records);
+}
+
+test "host status snapshot includes only validated app name for toast" {
+    var index: host_status.Index = .{};
+    const parse = vt.Terminal.ProgramStatus.parse;
+    try std.testing.expect(index.apply(parse("state=working:id=compile:app=zig:progress=32").?));
+    const current = index.summary();
+    try std.testing.expectEqualStrings("zig", current.appText());
+    try std.testing.expectEqual(@as(?u8, 32), current.progress);
+    try std.testing.expect(index.apply(parse("state=working:id=compile:app=cargo:progress=32").?));
+    try std.testing.expectEqualStrings("cargo", index.summary().appText());
+    try std.testing.expect(@sizeOf(host_status.Index) <= 8192);
+    try std.testing.expect(@sizeOf(host_status.Summary) <= 64);
 }
 
 test "host OSC7501 index preserves most urgent program, ties and count" {
@@ -315,8 +328,8 @@ test "host OSC7501 index preserves most urgent program, ties and count" {
     try std.testing.expect(index.apply(parse("state=done:id=compile").?));
     try std.testing.expect(index.summary().state.? == .blocked);
     try std.testing.expect(!index.apply(parse("state=blocked:kind=question:id=download").?));
-    var scratch: [32]u8 = undefined;
-    try std.testing.expectEqualStrings("[WAIT 2] ", host_status.label(index.summary(), &scratch));
+    try std.testing.expect(index.summary().state.? == .blocked);
+    try std.testing.expectEqual(@as(u8, 2), index.summary().count);
     try std.testing.expectEqual(@as(usize, 3), index.len);
 }
 

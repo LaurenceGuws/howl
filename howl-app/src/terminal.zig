@@ -91,6 +91,8 @@ pub const Status = struct {
     title_len: usize = 0,
     /// Copied, bounded program-status summary, never a borrowed VT event.
     program_status: host_status.Summary = .{},
+    /// The separate OSC 9;4 task progress, copied from canonical VT state.
+    task_progress: vt.Terminal.Progress = .{},
     failure: ?Failure = null,
     presentation_failure: ?PresentationFailure = null,
     revision: u64 = 0,
@@ -905,6 +907,9 @@ const State = struct {
         const program_status_changed = program_status_dirty or
             !std.meta.eql(self.status.program_status, next_program_status);
         self.status.program_status = next_program_status;
+        const next_task_progress = observation.taskProgress();
+        const task_progress_changed = !std.meta.eql(self.status.task_progress, next_task_progress);
+        self.status.task_progress = next_task_progress;
         self.status.selected = self.selected;
         self.status.selection_serial = self.selection_serial;
         self.status.selection_failure = self.selection_failure;
@@ -923,7 +928,7 @@ const State = struct {
         self.status.title_len = title_len;
         @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
         self.mutex.unlock(self.io);
-        if (lifecycle_changed or title_changed or program_status_changed or search_changed) self.notify();
+        if (lifecycle_changed or title_changed or program_status_changed or task_progress_changed or search_changed) self.notify();
         // Only this turn's failed text claim earns a retry deadline.
         self.store_busy = false;
         var published = false;

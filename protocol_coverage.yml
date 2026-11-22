@@ -5848,11 +5848,17 @@ references:
               The reference accepts states 0 through 4, clamps percentages
               greater than 100, and invokes the host taskbar API; Howl currently
               rejects percentages over 100 in its terminal progress state.
+              The SDL host now copies valid OSC 9;4 progress into the same
+              bounded top-right toast used by OSC 7501 and transient notices.
+              In private KWin, a real child reported OSC 9;4 normal 63 percent;
+              Howl visibly rendered animated progress without inventing an app
+              name and removed the toast when the child sent state=0. There is
+              no terminal-row reservation, tab-chip rewrite or taskbar effect.
             howl:
               support: partial
               disposition: excluded
               rationale: "Strict reject-versus-clamp is a same-input difference; platform taskbar integration remains an optional host responsibility, not VT."
-              residual: "Pinned WT accepts states 0..4, clamps percent 101+ to 100 and triggers host taskbar progress; Howl retains bounded terminal progress but rejects percent over 100 and has no taskbar effect."
+              residual: "Pinned WT accepts states 0..4, clamps percent 101+ to 100 and triggers host taskbar progress; Howl retains and displays valid bounded progress in a compact per-window toast, but rejects percentages over 100 and does not call the OS taskbar API. The host paint improvement does not resolve this wire/host parity difference."
               source: howl-vt/src/progress.zig
               symbol: parse
               proof:
@@ -5906,7 +5912,7 @@ references:
               disposition: deferred
               milestone: program_status
               owner: howl-vt
-              rationale: "The shared VT grammar and typed FIFO remain host-neutral; the Howl SDL app now explicitly opts in at worker construction, advertises query support and presents a compact source-backed per-pane status label."
+              rationale: "The shared VT grammar and typed FIFO remain host-neutral. Howl SDL explicitly opts in and now displays a single compact top-right toast for the focused pane, preserving tab titles and native C opt-in behavior."
               residual: "Standalone VT without an opted-in Zig or C consumer remains silent, matching Ghostty's optional host policy. The native C ABI can now opt in and receive typed status, but per-host record storage/UI remain caller-owned. The shared 2043-byte report limit is below the full 4096-byte source protocol and full external reset-clear behavior remains unqualified."
               source: howl-vt/src/terminal.zig
               symbol: oscProcess
@@ -5938,10 +5944,16 @@ references:
               report eviction recency, exact hierarchical clear, process-exit
               or shell prompt transient retirement, done/error user acknowledgment
               and reset-generation rejection of prior-life queued reports.
-              Only a bounded copied state, kind, percentage and count crosses
-              into the retained GUI tab label; no raw encoded message or live
-              mutable VT pointer enters SDL. A real PTY child and private KWin
-              qualify the visible working, blocked, done and acknowledged UI.
+              Only bounded copied state, kind, percentage, count and the
+              source-validated <=32-byte app name cross the worker snapshot;
+              no raw encoded title/message or mutable VT pointer enters SDL.
+              The old tab-chip status formatter was deleted. Instead, Howl
+              now draws one compact right-aligned toast below the tab bar
+              (or near the top edge if hidden), shared with transient notices
+              and native OSC 9;4 progress. A real PTY child in private KWin
+              produced a visibly animated "⣾ 32% - zig", then blocked-auth,
+              done, user acknowledgment, and unnamed OSC 9;4 fallback.
+              The overlay never consumes terminal rows or changes tab names.
               The additive native C v2 request kind 13 now carries explicit
               state/action/kind/progress, reset generation and validated
               offsets for ID, app name and encoded title/message in the
@@ -5955,7 +5967,7 @@ references:
               disposition: deferred
               milestone: program_status
               owner: howl-vt
-              rationale: "One canonical VT grammar and opt-in typed event transport are now consumed by an app-worker-owned bounded status index; the GUI receives copied summaries and a tab indicator, never protocol data ownership."
+              rationale: "One canonical VT grammar and opt-in typed event transport feed the app worker's bounded 32-record index. The graphical host now uses a single compact top-right toast shared with notices and OSC 9;4, not a tab-chip indicator or raw protocol UI ownership."
               residual: "The SDL host index holds 32 compact status/priority facts but not source-current rich title/msg content or a full status pane. The stable native C v2 request projection and explicit opt-in are now qualified, but a C embedder must maintain its own status/index/presentation and decode copied base64 titles/messages. Full 4096-byte source reports and Ghostty's external synthetic hard-reset clear callback remain unimplemented; reset generations allow caller-driven clearing."
               source: howl-vt/src/program_status.zig
               symbol: parse
@@ -6008,7 +6020,11 @@ references:
               SDL app now opts in at worker construction, drains the shared FIFO
               on its existing PTY worker, and maintains a single fixed 32-record
               per-pane index. Highest-urgency state and progress are copied
-              into the tab header without mutating titles or leaking raw text.
+              into an independent compact toast below the tab bar without
+              mutating titles or leaking raw text. The source-validated app
+              name is copied into the bounded host summary when present,
+              never inferred from the shell command or tab title. The same
+              paint surface hosts transient notices and OSC 9;4 progress.
               Real PTY and staged private KWin tests show working 42 percent,
               blocked on authentication, done and user acknowledgment, with a
               source-exact child-side feature query reply. An independent
@@ -6023,8 +6039,8 @@ references:
               disposition: deferred
               milestone: program_status
               owner: howl-vt
-              rationale: "One Ghostty/Kitty shared bounded protocol owner feeds a real opt-in SDL host index and visible status label. Statuses remain per pane, while the original VT and native C embedding boundaries stay explicitly separate."
-              residual: "Modern Kitty retains up to 256 rich status records per window, up to 263-byte IDs and 4096-byte controls with combined presentation. Howl's SDL index is 32 records per pane, the VT FIFO eight pending events, IDs <=128 bytes and bodies <=2043 bytes. Native C now receives opt-in typed/copied status requests but owns its own storage, decoding and UI; SDL still displays only a compact summary, not decoded title/message. This remains partial parity."
+              rationale: "One Ghostty/Kitty shared bounded protocol owner feeds a real opt-in SDL host index and a nonintrusive top-right status toast. Statuses remain per pane, tab chips retain only names, and native C embedding remains independently opt-in."
+              residual: "Modern Kitty retains up to 256 rich status records per window, up to 263-byte IDs and 4096-byte controls with combined presentation. Howl's SDL index is 32 per pane, the VT FIFO eight pending events, IDs <=128 bytes and bodies <=2043 bytes. Native C remains opt-in and host-owned; SDL now shows one small floating status toast with validated app name and progress but not rich decoded title/message or Kitty's full 256-record UX. This remains partial parity."
               source: howl-vt/src/program_status.zig
               symbol: parse
               proof:

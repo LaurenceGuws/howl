@@ -19,6 +19,7 @@ const config = @import("config.zig");
 const widgets = @import("widgets.zig");
 const tab_title = @import("tab_title.zig");
 const host_status = @import("program_status.zig");
+const status_toast = @import("status_toast.zig");
 const settings = @import("settings.zig");
 const pages = @import("settings_pages.zig");
 const settings_input = @import("settings_input.zig");
@@ -116,25 +117,6 @@ const HeaderLabel = struct {
     fn text(self: *const HeaderLabel) []const u8 {
         return self.bytes[0..self.len];
     }
-
-    // The short status prefix is always visible, even if the program's
-    // automatic or manually named title must be clipped. Never mutate the
-    // actual tab title, SDL font cache, or canonical VT state.
-    fn setWithProgramStatus(self: *HeaderLabel, title: []const u8, summary: host_status.Summary) void {
-        var scratch: [32]u8 = undefined;
-        const prefix = host_status.label(summary, &scratch);
-        std.debug.assert(prefix.len <= self.bytes.len);
-        @memcpy(self.bytes[0..prefix.len], prefix);
-        const available = self.bytes.len - prefix.len;
-        var count = @min(title.len, available);
-        // Don't split a valid UTF-8 scalar at the bound. In all other cases
-        // use the existing title bytes exactly, without reinterpretation.
-        if (count < title.len) {
-            while (count != 0 and title[count] & 0xc0 == 0x80) count -= 1;
-        }
-        @memcpy(self.bytes[prefix.len..][0..count], title[0..count]);
-        self.len = prefix.len + count;
-    }
 };
 
 /// Exact current chrome paint inputs; terminal content changes are deliberately
@@ -165,23 +147,32 @@ const HeaderPicture = struct {
     }
 };
 
-test "program status prefix stays visible without changing manually named tabs" {
+test "top-right OSC 7501 toast leaves tab labels unchanged" {
+    const plain: host_status.Summary = .{ .state = .working, .progress = 32, .count = 1 };
+    var status = plain;
+    @memcpy(status.app[0..3], "zig");
+    status.app_len = 3;
+    const view = status_toast.fromStatus(status, .{}, "", 0).?;
+    try std.testing.expectEqualStrings("⣾ 32% - zig", view.text());
+    const geometry = status_toast.geometry(900, 650, chrome.height, 120, .top_right).?;
+    try std.testing.expect(geometry.x > 700);
+    try std.testing.expect(geometry.y >= chrome.height);
     var label: HeaderLabel = .{};
-    label.setWithProgramStatus("AUTOMATIC", .{});
+    label.set("SHELL");
+    try std.testing.expectEqualStrings("SHELL", label.text());
+}
+
+test "tab chip labels remain only terminal or manual titles, never status" {
+    var label: HeaderLabel = .{};
+    label.set("AUTOMATIC");
     try std.testing.expectEqualStrings("AUTOMATIC", label.text());
-    label.setWithProgramStatus("MANUAL", .{ .state = .working, .progress = 42, .count = 1 });
-    try std.testing.expectEqualStrings("[RUN 42%] MANUAL", label.text());
-    label.setWithProgramStatus("MANUAL", .{ .state = .blocked, .kind = .auth, .count = 1 });
-    try std.testing.expectEqualStrings("[WAIT AUTH] MANUAL", label.text());
-    label.setWithProgramStatus("MANUAL", .{ .state = .@"error", .count = 1 });
-    try std.testing.expectEqualStrings("[FAIL] MANUAL", label.text());
+    label.set("MANUAL");
+    try std.testing.expectEqualStrings("MANUAL", label.text());
     var full: [1024]u8 = @splat('x');
-    // The last scalar is multi-byte and must never be split by the prefix.
     @memcpy(full[1021..1024], "界");
-    label.setWithProgramStatus(&full, .{ .state = .done, .count = 1 });
-    try std.testing.expect(label.text().len <= label.bytes.len);
+    label.set(&full);
+    try std.testing.expectEqual(@as(usize, 1024), label.text().len);
     try std.testing.expect(std.unicode.utf8ValidateSlice(label.text()));
-    try std.testing.expect(std.mem.startsWith(u8, label.text(), "[DONE] "));
 }
 
 const HeaderCache = struct {
@@ -243,6 +234,11 @@ pub const App = struct {
     notice: [256]u8 = @splat(0),
     notice_len: usize = 0,
     notice_until: u64 = 0,
+    // UI-only transient lifetime and Braille refresh, never PTY state.
+    toast_owner: ?u16 = null,
+    toast_last_summary: host_status.Summary = .{},
+    toast_done_until: u64 = 0,
+    toast_animated: bool = false,
 
     const InputUI = settings_input.ForHost(@This());
     const PaintUI = settings_paint.ForHost(@This());
@@ -290,9 +286,75 @@ pub const App = struct {
         const scrolling = self.selecting != null and self.selecting.?.edge != 0;
         var timeout: ?u64 = if (scrolling) 50 else null;
         if (self.notice_len != 0) timeout = @min(timeout orelse std.math.maxInt(c_int), @max(1, self.notice_until -| now));
+        if (self.toast_animated) timeout = @min(timeout orelse std.math.maxInt(c_int), status_toast.frame_ms - now % status_toast.frame_ms);
+        if (self.toast_done_until != 0) timeout = @min(timeout orelse std.math.maxInt(c_int), @max(1, self.toast_done_until -| now));
         if (self.cursor_deadline) |deadline| timeout = @min(timeout orelse std.math.maxInt(c_int), @max(1, deadline -| now));
         return if (timeout) |value| @intCast(@min(value, std.math.maxInt(c_int))) else null;
     }
+    fn toastState(self: *App, now: u64) ?status_toast.View {
+        self.expireNotice(now);
+        self.toast_animated = false;
+        var status: terminal.Status = .{};
+        var owner: ?u16 = null;
+        if (self.tab_count != 0) {
+            const current_tab = self.tab();
+            owner = @as(u16, self.active) * layout.pane_limit + current_tab.tree.active;
+            if (current_tab.panes[current_tab.tree.active]) |owned_pane| status = owned_pane.snapshot();
+        }
+        // A completion is visible briefly. A blocked/failed job remains
+        // until the existing host program-status policy resolves/acknowledges it.
+        if (self.toast_owner != owner or !std.meta.eql(self.toast_last_summary, status.program_status)) {
+            self.toast_owner = owner;
+            self.toast_last_summary = status.program_status;
+            self.toast_done_until = if (status.program_status.state == .done) now +| 3000 else 0;
+        }
+        if (self.toast_done_until != 0 and now >= self.toast_done_until) self.toast_done_until = 0;
+        const notice = self.notice[0..self.notice_len];
+        if (status.program_status.state == .done and self.toast_done_until == 0 and notice.len == 0) return null;
+        const view = status_toast.fromStatus(status.program_status, status.task_progress, notice, now) orelse return null;
+        self.toast_animated = view.animated;
+        return view;
+    }
+
+    // One non-interactive overlay for user notices and program progress.
+    // This draws after panes without reserving rows or touching the header
+    // texture cache, so status changes cannot redraw tab-chip titles.
+    fn drawToast(self: *App, now: u64) !void {
+        const view = self.toastState(now) orelse return;
+        const text_width = try self.textWidth(view.text());
+        const rect = status_toast.geometry(
+            self.width,
+            self.height,
+            self.headerHeight(),
+            text_width,
+            self.configuration.value.status_toast_position,
+        ) orelse return;
+        const colors = try self.uiPalette();
+        const surface = switch (view.kind) {
+            .failed => appearance.closeHover(colors.title),
+            .blocked => appearance.hover(colors.title),
+            .notice, .running, .done => colors.title,
+        };
+        // A 1px outline makes the floating surface readable over both
+        // dark and light TUIs. Every pixel remains window-clipped.
+        try drawing.fillRounded(self.renderer, rect, colors.border, 12);
+        const inner: layout.Rect = .{
+            .x = rect.x + 1,
+            .y = rect.y + 1,
+            .width = @max(0, rect.width - 2),
+            .height = @max(0, rect.height - 2),
+        };
+        try drawing.fillRounded(self.renderer, inner, surface, 11);
+        const label: layout.Rect = .{
+            .x = inner.x + 12,
+            .y = inner.y,
+            .width = @max(0, inner.width - 24),
+            .height = inner.height,
+        };
+        if (label.width > 0)
+            try self.clippedTextColor(view.text(), label, label.x, colors.text);
+    }
+
     // zig-audit: acknowledge anytype
     // reason: The UI formats exact inferred error sets from distinct owned operations; it neither erases nor returns their error authority.
     fn report(self: *App, failure: anytype) void {
@@ -2242,10 +2304,9 @@ pub const App = struct {
             // A tab with a manually supplied display name need not yet
             // have an attached pane (e.g. during initial UI construction).
             const status = if (value.panes[value.tree.active]) |owned_pane| owned_pane.snapshot() else terminal.Status{};
-            picture.labels[index].setWithProgramStatus(
-                value.title.resolve(status.title[0..status.title_len]),
-                status.program_status,
-            );
+            // Tab labels retain their original semantics; OSC 7501 and
+            // OSC 9;4 now render only in the independent top-edge toast.
+            picture.labels[index].set(value.title.resolve(status.title[0..status.title_len]));
         }
         return picture;
     }
@@ -2408,12 +2469,7 @@ pub const App = struct {
         } else if (self.hover_divider) |held| {
             for (held.dividers[0..held.count]) |divider| try self.drawDivider(divider, colors.accent);
         }
-        self.expireNotice(c.SDL_GetTicks());
-        if (self.notice_len != 0) {
-            const notice: layout.Rect = .{ .x = 6, .y = self.height - 28, .width = @max(1, self.width - 12), .height = 22 };
-            try fill(self.renderer, notice, colors.title);
-            try self.clippedText(self.notice[0..self.notice_len], notice, notice.x + 4);
-        }
+        try self.drawToast(c.SDL_GetTicks());
         if (self.palette != null) try self.drawPalette();
         if (self.settings_editor != null) try PaintUI.drawSettings(self);
         if (self.chooser != null) try self.drawChooser();
@@ -3600,6 +3656,97 @@ test "centred terminal lattice shares slack, clips stale frames and maps input a
     try std.testing.expectEqualDeep(available, oversized);
     const tiny: c.SDL_FRect = .{ .x = 10, .y = 20, .w = 0.125, .h = 0.25 };
     try std.testing.expectEqualDeep(tiny, terminalPlacement(tiny, .{ .width = 1, .height = 1 }, 1.7));
+}
+
+test "top-right toast paints only a compact corner and reuses the notice surface" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("top-right toast pixels", 320, 110, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    const surface = c.SDL_CreateSurface(320, 110, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    configuration.value.hide_single_tab = true;
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .width = 320,
+        .height = 110,
+    };
+    const message = "Settings saved";
+    @memcpy(app.notice[0..message.len], message);
+    app.notice_len = message.len;
+    app.notice_until = 5000;
+    const sentinel: c.SDL_Color = .{ .r = 7, .g = 33, .b = 91, .a = 255 };
+    try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, sentinel.r, sentinel.g, sentinel.b, sentinel.a));
+    try std.testing.expect(c.SDL_RenderClear(renderer));
+    try app.drawToast(100);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    const right = status_toast.geometry(320, 110, 0, try app.textWidth(message), .top_right).?;
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 8, 18));
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 160, 96));
+    try std.testing.expect(!std.meta.eql(sentinel, try testPixel(
+        surface,
+        @intFromFloat(right.x + 8),
+        @intFromFloat(right.y + 15),
+    )));
+    configuration.value.status_toast_position = .top_left;
+    try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, sentinel.r, sentinel.g, sentinel.b, sentinel.a));
+    try std.testing.expect(c.SDL_RenderClear(renderer));
+    try app.drawToast(101);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    try std.testing.expectEqual(sentinel, try testPixel(
+        surface,
+        @intFromFloat(right.x + 8),
+        @intFromFloat(right.y + 15),
+    ));
+    try std.testing.expect(!std.meta.eql(sentinel, try testPixel(surface, 20, 23)));
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 160, 96));
+}
+
+test "toast spinner and completion share bounded deadlines without idle polling" {
+    var app: App = .{
+        .init = undefined,
+        .configuration = undefined,
+        .fonts = undefined,
+        .window = undefined,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+    };
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(0));
+    app.toast_animated = true;
+    try std.testing.expectEqual(@as(?c_int, 120), app.waitTimeout(0));
+    try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(119));
+    app.toast_done_until = 300;
+    try std.testing.expectEqual(@as(?c_int, 60), app.waitTimeout(240));
+    app.toast_animated = false;
+    try std.testing.expectEqual(@as(?c_int, 60), app.waitTimeout(240));
+    app.toast_done_until = 0;
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(240));
 }
 
 test "notice expiry wakes a quiet window once and preserves bounded selection scrolling" {

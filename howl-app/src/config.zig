@@ -48,6 +48,8 @@ pub const ScannedProfile = struct {
 };
 /// Saved tab sizing policy; fitted chips share the available caption space equally.
 pub const TabWidth = enum { fixed, fit };
+/// A tiny noninteractive status toast floats above the terminal content.
+pub const StatusToastPosition = @import("status_toast.zig").Position;
 /// Strict Local-only saved configuration; no remote route vocabulary.
 pub const Schema = struct {
     schema: i16 = 0,
@@ -62,6 +64,8 @@ pub const Schema = struct {
     terminal_colors: colors.TerminalColors = .{},
     hide_single_tab: bool = false,
     tab_width: TabWidth = .fixed,
+    /// Top-right keeps the left prompt area clear; top-left is explicit opt-in.
+    status_toast_position: StatusToastPosition = .top_right,
     cursor_blink: cursor.Policy = .off,
     cursor_shape: cursor.Shape = .block,
     cursor_motion: bool = false,
@@ -461,6 +465,20 @@ fn allocationProof(allocator: std.mem.Allocator) !void {
 }
 test "config constructor releases every completed resource on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationProof, .{});
+}
+
+test "status toast placement defaults right and accepts explicit left in persisted JSON" {
+    var default = Config.defaults(std.testing.allocator);
+    defer default.deinit();
+    try std.testing.expectEqual(StatusToastPosition.top_right, default.value.status_toast_position);
+    var left = try Config.parse(std.testing.allocator, std.testing.io, "{\"schema\":1,\"terminal_font_pixels\":15,\"status_toast_position\":\"top_left\"}");
+    defer left.deinit();
+    try std.testing.expectEqual(StatusToastPosition.top_left, left.value.status_toast_position);
+    try std.testing.expectError(error.InvalidEnumTag, Config.parse(
+        std.testing.allocator,
+        std.testing.io,
+        "{\"schema\":1,\"terminal_font_pixels\":15,\"status_toast_position\":\"center\"}",
+    ));
 }
 
 test "saved Local path uses XDG and empty XDG inherits HOME" {

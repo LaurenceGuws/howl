@@ -16,11 +16,22 @@ pub const Summary = struct {
     kind: ?status.Kind = null,
     progress: ?u8 = null,
     count: u8 = 0,
+    /// Already validated ASCII application name; no raw program title or
+    /// arbitrary OSC string enters the graphical worker snapshot.
+    app: [32]u8 = @splat(0),
+    app_len: u8 = 0,
+
+    /// Exact validated program name, or empty when the child did not provide one.
+    pub fn appText(self: *const Summary) []const u8 {
+        return self.app[0..self.app_len];
+    }
 };
 
 const Record = struct {
     id: [128]u8 = undefined,
     id_len: u8,
+    app: [32]u8 = @splat(0),
+    app_len: u8 = 0,
     state: status.State,
     kind: ?status.Kind,
     progress: ?u8,
@@ -29,6 +40,10 @@ const Record = struct {
 
     fn idBytes(self: *const Record) []const u8 {
         return self.id[0..self.id_len];
+    }
+
+    fn appText(self: *const Record) []const u8 {
+        return self.app[0..self.app_len];
     }
 };
 
@@ -104,12 +119,16 @@ pub const Index = struct {
         for (self.records[0..self.len]) |record| {
             if (record.state == selected.state) same += 1;
         }
-        return .{
+        var result: Summary = .{
             .state = selected.state,
             .kind = selected.kind,
             .progress = selected.progress,
             .count = same,
         };
+        const app = selected.appText();
+        @memcpy(result.app[0..app.len], app);
+        result.app_len = @intCast(app.len);
+        return result;
     }
 
     fn find(self: *const Index, id: []const u8) ?usize {
@@ -130,17 +149,21 @@ pub const Index = struct {
         std.debug.assert(report.id.len <= 128);
         const now = self.nextSequence();
         var index: usize = undefined;
+        var new_record = false;
         if (self.find(report.id)) |existing| {
             index = existing;
             const old = &self.records[index];
             const changed = old.state != report.state or
-                old.kind != report.kind or old.progress != report.progress;
+                old.kind != report.kind or old.progress != report.progress or
+                (report.app.len != 0 and !std.mem.eql(u8, old.appText(), report.app));
             old.reported_at = now;
             if (!changed) return false;
         } else if (self.len < max_records) {
+            new_record = true;
             index = self.len;
             self.len += 1;
         } else {
+            new_record = true;
             index = 0;
             for (self.records[1..self.len], 1..) |record, i| {
                 if (record.reported_at < self.records[index].reported_at) index = i;
@@ -149,6 +172,12 @@ pub const Index = struct {
         const entry = &self.records[index];
         @memcpy(entry.id[0..report.id.len], report.id);
         entry.id_len = @intCast(report.id.len);
+        if (report.app.len != 0) {
+            @memcpy(entry.app[0..report.app.len], report.app);
+            entry.app_len = @intCast(report.app.len);
+        } else if (new_record) {
+            entry.app_len = 0;
+        }
         entry.state = report.state;
         entry.kind = report.kind;
         entry.progress = report.progress;
@@ -187,35 +216,5 @@ fn rank(state: status.State) u8 {
         .done => 3,
         .@"error" => 4,
         .blocked => 5,
-    };
-}
-
-/// Short ASCII-only status indicator placed before clipped terminal titles.
-/// Caller owns the fixed scratch, and the host retains no renderer data.
-pub fn label(summary: Summary, scratch: *[32]u8) []const u8 {
-    const state = summary.state orelse return "";
-    return switch (state) {
-        .idle => "[IDLE] ",
-        .working => if (summary.count > 1)
-            (std.fmt.bufPrint(scratch, "[RUN {d}] ", .{summary.count}) catch "")
-        else if (summary.progress) |progress|
-            (std.fmt.bufPrint(scratch, "[RUN {d}%] ", .{progress}) catch "")
-        else
-            "[RUN] ",
-        .done => if (summary.count > 1)
-            (std.fmt.bufPrint(scratch, "[DONE {d}] ", .{summary.count}) catch "")
-        else
-            "[DONE] ",
-        .@"error" => if (summary.count > 1)
-            (std.fmt.bufPrint(scratch, "[FAIL {d}] ", .{summary.count}) catch "")
-        else
-            "[FAIL] ",
-        .blocked => if (summary.count > 1)
-            (std.fmt.bufPrint(scratch, "[WAIT {d}] ", .{summary.count}) catch "")
-        else switch (summary.kind orelse return "[WAIT] ") {
-            .auth => "[WAIT AUTH] ",
-            .question => "[WAIT ?] ",
-            .permission => "[WAIT PERM] ",
-        },
     };
 }
