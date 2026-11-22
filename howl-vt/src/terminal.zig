@@ -1072,10 +1072,11 @@ fn decodeCsi(
     separators: parser_mod.CsiSeparatorList,
     intermediates: []const u8,
 ) ?SemanticEvent {
-    // Frozen Kitty's one-parameter cursor controls reject extras before
-    // moving. Keep their ordinary zero-as-one count and coordinate policy.
+    // Frozen Kitty's one-parameter cursor and cell-edit controls reject
+    // extras before mutation. The #P color stack and SP @ column shift
+    // have separate intermediate routes and retain their own admission.
     if (params.len > 1) switch (final) {
-        'A', 'B', 'C', 'D', 'E', 'F', 'G', '`', 'd', 'Z' => return null,
+        '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'P', 'X', 'Z', '`', 'd' => return null,
         else => {},
     };
     switch (final) {

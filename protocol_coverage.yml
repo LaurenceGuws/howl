@@ -530,13 +530,61 @@ references:
         recognition: implemented
         bounds: one leader and one intermediate byte
         records:
-          libvterm.csi.ich: {raw: "CSI [Ps=1] @", effect: insert characters,
-            conditions: "Pinned libvterm src/state.c:on_csi rejects ICH when is_cursor_in_scrollregion is false, including rows outside vertical DEC scroll margins. Howl Screen.insertChars admits a horizontal in-row shift there.",
-            howl: {support: partial, disposition: excluded,
-              rationale: "Howl keeps ordinary in-row edits independent of vertical scroll-margin admission; both bound writes when admitted.",
-              source: howl-vt/src/screen.zig, symbol: Screen.insertChars, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"}}}
+          libvterm.csi.ich:
+            raw: "CSI [Ps=1] @"
+            effect: insert characters
+            conditions: >-
+              Pinned libvterm src/state.c:1007-1023 accepts surplus ICH operands
+              and uses args[0]; it also requires vertical scroll-region admission
+              for an in-row insert. Howl follows Kitty's strict one-count admission
+              while retaining its independent in-row editing policy.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: >-
+                Kitty rejects extra ordinary ICH operands while libvterm inserts
+                using only the first count. The existing vertical-region admission
+                difference remains independently documented.
+              residual: >-
+                Valid ICH retains exact native bounded edits; surplus numeric
+                operands are now rejected rather than inserted, and edits outside
+                the vertical region still differ from libvterm.
+              source: howl-vt/src/screen.zig
+              symbol: Screen.insertChars
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 1 ; 9 @"
+                winner: &kitty_edit_arity_winner
+                  owner: kitty
+                  protocol: Kitty CHT ICH DCH ECH one-operand admission
+                  behavior: Reject excess operands without changing cursor cells images or pending wrap.
+                  evidence: Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1140,1191-1193,1218-1219,1231-1236,1257-1258
+                loser: &libvterm_edit_arity_loser
+                  owner: libvterm
+                  protocol: libvterm permissive scalar CSI editing and tab admission
+                  behavior: Execute using the first supplied count even when a second numeric operand is present.
+                  evidence: Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1008,1007-1023,1082-1085,1189-1205,1231-1241
+                current_usage: &edit_arity_usage >-
+                  These four ordinary CSI operations are established terminal
+                  commands; no contemporary application requiring malformed
+                  surplus numeric operands was established. All normal
+                  zero/default/positive forms remain admitted.
+                recency: &edit_arity_recency >-
+                  The operations originate in the ANSI/ECMA terminal-control
+                  family, not in a later vendor protocol. Pinned implementations
+                  differ in parser leniency, not command ownership.
+                reason: &edit_arity_reason >-
+                  The same malformed CSI bytes cannot both mutate terminal state
+                  and leave it untouched. With original protocol ownership and
+                  current use checked, prefer frozen Kitty's strict bounded
+                  rejection under the recorded implementation policy; do not
+                  introduce terminal-flavor emulation.
+                proof: &edit_arity_proof
+                  path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                  symbol: "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits"
           libvterm.csi.cuu: {raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: "Pinned libvterm src/state.c::on_csi case 0x41 subtracts count and post-clamps row to 0 without DECOM; from row 4 with DECSTBM 2..5, Howl CUU 99 stops at row 2 while libvterm stops at row 1.",
             howl: {support: partial, disposition: adjudicated, rationale: *howl_cursor_policy_difference,
@@ -669,14 +717,16 @@ references:
                   path: howl-vt/test/unit/terminal_end_to_end_test.zig
                   symbol: "terminal: pinned Kitty CUP HVP reject surplus operands without cursor or graphics mutation"
           libvterm.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
-            conditions: "libvterm forward-tab traversal reads terminal-global tabstops, including stops
-              installed on a previously active screen.",
-            howl: {support: partial, disposition: excluded,
-            rationale: *howl_libvterm_global_tabs_difference,
-            residual: "Default and bounded counts agree within a bank; cross-bank configured stops differ.",
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
+            conditions: "Pinned libvterm src/state.c:1082-1085 accepts surplus CHT counts; its global tab-stop owner also spans primary and alternate screens unlike Howl's Kitty-compatible bank-local stops.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: *howl_libvterm_global_tabs_difference,
+              residual: "Valid single-bank counts remain supported; pinned libvterm accepts extra CHT operands while Kitty/Howl reject them. Global cross-bank tab-stop ownership also differs.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 I", winner: *kitty_edit_arity_winner,
+                loser: *libvterm_edit_arity_loser, current_usage: *edit_arity_usage,
+                recency: *edit_arity_recency, reason: *edit_arity_reason, proof: *edit_arity_proof}}}
           libvterm.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display,
             conditions: "For Ps 3 pinned libvterm src/state.c:on_csi optionally invokes sb_clear and otherwise leaves scrollback unchanged. Howl Screen.eraseDisplay(.scrollback) clears owned history. Ordinary Ps 0/1/2 ranges remain supported.",
             howl: {support: partial, disposition: excluded,
@@ -711,12 +761,16 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
           libvterm.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: "Pinned libvterm src/state.c:on_csi rejects DCH when is_cursor_in_scrollregion is false, including rows outside vertical DEC scroll margins. Howl Screen.deleteChars admits a horizontal in-row shift there.",
-            howl: {support: partial, disposition: excluded,
-              rationale: "Howl keeps ordinary in-row edits independent of vertical scroll-margin admission; both bound writes when admitted.",
-              source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"}}}
+            conditions: "Pinned libvterm src/state.c:1189-1205 accepts surplus DCH counts using args[0], but rejects edits outside the vertical scroll region. Howl now follows Kitty's one-count admission and retains bounded in-row edits independent of vertical margins.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: "Kitty rejects extra DCH counts while libvterm uses the first; the existing vertical-region admission difference remains separately documented.",
+              residual: "Ordinary bounded DCH remains implemented; surplus operands are now rejected rather than edited. Libvterm's vertical scroll-region gate also differs.",
+              source: howl-vt/src/screen.zig, symbol: Screen.deleteChars,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: libvterm ICH and DCH require vertical scroll-region admission"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 P", winner: *kitty_edit_arity_winner,
+                loser: *libvterm_edit_arity_loser, current_usage: *edit_arity_usage,
+                recency: *edit_arity_recency, reason: *edit_arity_reason, proof: *edit_arity_proof}}}
           libvterm.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: wide-row line information and callback consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -730,10 +784,16 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI T scroll down preserves bounded margins, cursor and exact mutation"}}}
           libvterm.csi.ech: {raw: "CSI [Ps=1] X", effect: erase characters,
-            conditions: logical row width, howl: {support: full,
-              source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: "Pinned libvterm src/state.c:1231-1241 erases the logical row width using args[0] even with surplus operands. Howl matches normal bounded erasure but now rejects extras like frozen Kitty.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: "Kitty's strict extra-operand ECH rejection and pinned libvterm's permissive erase are incompatible on identical CSI bytes.",
+              residual: "Normal ECH erasure remains implemented; a second numeric operand now rejects the command rather than erasing from the first count.",
+              source: howl-vt/src/screen.zig, symbol: Screen.eraseChars,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 X", winner: *kitty_edit_arity_winner,
+                loser: *libvterm_edit_arity_loser, current_usage: *edit_arity_usage,
+                recency: *edit_arity_recency, reason: *edit_arity_reason, proof: *edit_arity_proof}}}
           libvterm.csi.cbt:
             raw: "CSI [Ps=1] Z"
             effect: backward tabs
@@ -1775,15 +1835,19 @@ references:
                 reason: *position_arity_reason
                 proof: *position_arity_proof
           iterm2.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
-            conditions: "Pinned iTerm2 repeats appendTabAtCursor against one shared tabStops set and can
-              insert TAB_FILLER on blank spans; Howl uses bank-local cursor-only movement.",
-            howl: {support: partial, disposition: excluded,
-            rationale: *howl_iterm2_global_tabs_difference,
-            residual: "Cross-bank tab-stop lookup and retained blank-span tab text differ. iTerm2's
-              optional tabsWrapAround host preference is also outside the fixed VT contract.",
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells"}}}
+            conditions: "Pinned iTerm2 VT100CSIParser.m:494-497 and VT100Terminal.m:1983-1986 admit surplus CHT counts using p[0]. Its shared tabStops owner and blank-span TAB_FILLER differ from Howl's Kitty-compatible bank-local cursor-only model.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: *howl_iterm2_global_tabs_difference,
+              residual: "Kitty/Howl reject extra CHT operands while iTerm2 advances using the first count. Existing cross-bank stops, TAB_FILLER and optional tabsWrapAround host-policy differences remain.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 I", winner: *kitty_edit_arity_winner,
+                loser: &iterm2_edit_arity_loser {owner: iterm2, protocol: iTerm2 permissive scalar CSI editing and tab admission,
+                  behavior: Apply the first count to its delegate even with surplus numeric operands.,
+                  evidence: "Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:494-497,709-712,728-731,832-835 and VT100Terminal.m:1983-1986,2578-2579,2723-2724"},
+                current_usage: *edit_arity_usage, recency: *edit_arity_recency,
+                reason: *edit_arity_reason, proof: *edit_arity_proof}}}
           iterm2.csi.da: {raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
             conditions: iTerm2 identity and optional attributes depend on emulation and host policy,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
@@ -1887,11 +1951,16 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           iterm2.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: "Howl now preserves intact wide/combining graphemes during DCH and clears only split or multiline clusters; pinned iTerm2 repairs DWC/EOL and relocates external attributes, but also fills erased cells with defaultChar rather than Howl's current SGR attrs.",
-            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: iTerm2 structural erase attrs differ from Howl current SGR"}}}
+            conditions: "Pinned iTerm2 VT100CSIParser.m:728-731 accepts DCH surplus operands and executes with p[0]; its DWC/EOL repair, external attribute relocation and defaultChar erase also differ from Howl's bounded grapheme/current-SGR handling.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: *howl_structural_policy_difference,
+              residual: "Extra DCH operands now reject rather than invoking iTerm2's first-count deletion; DWC/EOL representation, attributes and erased-cell styling remain incompatible.",
+              source: howl-vt/src/screen.zig, symbol: Screen.deleteChars,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: iTerm2 structural erase attrs differ from Howl current SGR"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 P", winner: *kitty_edit_arity_winner,
+                loser: *iterm2_edit_arity_loser, current_usage: *edit_arity_usage,
+                recency: *edit_arity_recency, reason: *edit_arity_reason, proof: *edit_arity_proof}}}
           iterm2.csi.dl: {raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: multiline character and selection consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -2052,11 +2121,16 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           iterm2.csi.ech: {raw: "CSI [Ps=1] X", effect: erase characters,
-            conditions: "Pinned iTerm2 erases defaultChar, scales counts to physical columns on double-width rows and respects ISO protection; Howl erases logical columns with current styling and its own protection rules.",
-            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase commands use current attrs rather than iTerm2 default or old attrs"}}}
+            conditions: "Pinned iTerm2 VT100CSIParser.m:832-835 and VT100Terminal.m:2578-2579 accept surplus ECH operands, erasing from p[0]. iTerm2's defaultChar, physical double-width and ISO protection behavior still differs from Howl's logical current-attr erase.",
+            howl: {support: partial, disposition: adjudicated,
+              rationale: *howl_structural_policy_difference,
+              residual: "Extra ECH operands now reject instead of erasing from the first count; iTerm2's erased-cell defaults, double-width geometry and protection remain distinct.",
+              source: howl-vt/src/screen.zig, symbol: Screen.eraseChars,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: erase commands use current attrs rather than iTerm2 default or old attrs"},
+              adjudication: {kind: wire_collision, wire: "CSI 1 ; 9 X", winner: *kitty_edit_arity_winner,
+                loser: *iterm2_edit_arity_loser, current_usage: *edit_arity_usage,
+                recency: *edit_arity_recency, reason: *edit_arity_reason, proof: *edit_arity_proof}}}
           iterm2.csi.media_copy:
             raw: "CSI [Ps=0] i"
             effect: media copy request
@@ -4383,11 +4457,12 @@ references:
         bounds: scalar handlers reject excess and negative parameters
         records:
           kitty.csi.ich: {raw: "CSI [Ps=1] @", effect: insert characters,
-            conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
+            conditions: "Kitty rejects extra ordinary ICH operands before mutation; Howl now matches while retaining DECSLRM horizontal clipping and its own multicell repair. CSI SP @ remains an independent shift control.", howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.insertChars, proof: {
+              residual: "One-count admission, zero-as-one and graphics nonmutation are source-proven. Kitty ignores horizontal margins and repairs multicell boundaries differently.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits"}}}
           kitty.csi.rep: {raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: Kitty repeats its last codepoint while Howl retains its bounded combining cluster,
             howl: *howl_repeat_excluded}
@@ -4474,18 +4549,15 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty VPA CBT reject excess operands and preserve cursor and graphics"}}}
           kitty.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
-            conditions: "Pinned Kitty screen_tabn calls screen_tab repeatedly and can preserve an internal
-              tab marker in the source cell on blank intervals. Howl moves the cursor but never stores
-              that tab marker, affecting later line text and copy behavior.",
+            conditions: "Pinned Kitty CHT rejects extra parameters. Howl now matches admission, while Kitty screen_tabn can retain a tab marker in blank source cells and Howl only moves its cursor.",
             howl: {support: partial, disposition: excluded,
               rationale: "Pinned Kitty's tab marker represents the traversed blank span as retained
                 source text; Howl's current canonical cell representation has only the cursor movement.
                 This is an observable text-history and selection policy difference.",
-              residual: "Cursor count/default/clamp and bank-local tab-stop movement agree, but Kitty's
-                stored tab-marker representation and derived copy behavior are not implemented.",
+              residual: "One-count admission, zero-as-one and active-bank tab movement agree, but Kitty's preserved blank-span tab marker and derived copy behavior are not implemented.",
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: forward tabs move the cursor without Kitty preserved tab marker cells"}}}
+              symbol: "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits"}}}
           kitty.csi.cup: {raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
             conditions: "Pinned Kitty CUP CALL_CSI_HANDLER2 rejects a third operand; Howl now rejects it identically through one bounded direct/generic decoder, preserving pending wrap on invalid input. Kitty ignores DECSLRM and applies origin only vertically, while Howl supports left-relative horizontal origin under DECOM.",
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: cursor,
@@ -4527,11 +4599,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.dch: {raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
+            conditions: "Pinned Kitty rejects extra ordinary DCH operands; Howl now matches, while CSI # P color-stack admission stays independent. Kitty ignores horizontal margins and repairs multicell boundaries differently.", howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.deleteChars, proof: {
+              residual: "One-count admission, zero-as-one and graphic/cell nonmutation on rejection now have proofs; Kitty whole-row and multicell edit policy remains different.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
+                symbol: "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits"}}}
           kitty.csi.push_colors: {raw: "CSI [Ps=0] # P", effect: "push color stack",
             conditions: "Pinned Kitty kitty/colors.c colorprofile_push_colors returns true on an identical repeated indexed push; kitty/screen.c marks the profile dirty. Howl State.pushColor treats a repeated same-value indexed push as idempotent without semantic mutation.",
             howl: {support: partial, disposition: excluded,
@@ -4555,11 +4628,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab stops remain bank local and Kitty DECST8C resets only the active bank"}}}
           kitty.csi.ech: {raw: "CSI [Ps=1] X", effect: erase characters,
-            conditions: multicell boundary repair, howl: {support: partial,
+            conditions: "Pinned Kitty rejects extra ECH operands; Howl now matches this admission. Multicell boundary repair and erased-cell presentation remain separate partial differences.", howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
+              residual: "One-count admission, zero-as-one and image nonmutation on rejected ECH now have proofs; Kitty multicell repair and presentation remain partial.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+                symbol: "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits"}}}
           kitty.csi.da1: {raw: "CSI [Ps=0] c", effect: "delegate primary device attributes to the host", relevance: "query",
             conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi DA routes zero-parameter primary DA1 to kitty/screen.c::report_device_attributes, whose case 0 invokes host on_da1. Howl applyReportEvent returns its curated native identity without delegating to Kitty application capability policy.",
             howl: {support: partial, disposition: excluded,

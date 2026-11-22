@@ -80,6 +80,9 @@ let expected_rulings = [
   iterm2.csi.cud
   iterm2.csi.cuf
   iterm2.csi.cuu
+  iterm2.csi.cht
+  iterm2.csi.dch
+  iterm2.csi.ech
   iterm2.csi.hvp
   iterm2.csi.vpa
   iterm2.osc.bg
@@ -105,13 +108,40 @@ let expected_rulings = [
   libvterm.csi.cud
   libvterm.csi.cuf
   libvterm.csi.cuu
+  libvterm.csi.cht
   libvterm.csi.decsgr
+  libvterm.csi.dch
+  libvterm.csi.ech
   libvterm.csi.hpa
   libvterm.csi.hvp
+  libvterm.csi.ich
   libvterm.csi.vpa
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Pinned Kitty admits only one operand for ordinary I/X/P/@. Both pinned
+# comparators consume the first even when extras exist. The frozen iTerm2
+# catalogue has no separately indexed ICH ID, so don't invent one here.
+for reference in [libvterm iterm2] {
+  for command in [
+    {name: ich, wire: "CSI 1 ; 9 @"}
+    {name: cht, wire: "CSI 1 ; 9 I"}
+    {name: dch, wire: "CSI 1 ; 9 P"}
+    {name: ech, wire: "CSI 1 ; 9 X"}
+  ] {
+    if $reference == iterm2 and $command.name == ich { continue }
+    let id = ($reference + ".csi." + $command.name)
+    let ruling = (protocol decision $id)
+    if ($ruling.disposition != adjudicated
+        or $ruling.adjudication.kind != wire_collision
+        or $ruling.adjudication.wire != $command.wire
+        or $ruling.adjudication.winner.owner != kitty
+        or $ruling.adjudication.loser.owner != $reference
+        or $ruling.adjudication.proof.symbol != "terminal: pinned Kitty I X P at reject surplus operands without cell or graphic edits") {
+      error make {msg: $"pinned edit/tab admission decision is not source-backed: ($id)"}
+    }
+  }
 }
 # Frozen Kitty's eight single-operand directional commands reject extras;
 # pinned libvterm and iTerm2 consume the first. Each losing command must
