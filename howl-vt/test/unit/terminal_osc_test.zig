@@ -2426,6 +2426,52 @@ test "xterm extra dynamic colors set query and reset caller-neutral state" {
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
+test "unset xterm special palette queries cannot fabricate empty RGB packets" {
+    // A host-neutral optional special color has no reportable RGB value.
+    // Both xterm's OSC 5 index and OSC 4's index+256 alias must stay quiet.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]5;0;?\x07\x1b]4;256;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    // Only representable slots 0..4 exist. Reject 5..7 without indexing
+    // beyond the bounded canonical storage or mutating neighboring state.
+    try std.testing.expect(!(try terminal.feed("\x1b]5;5;#abcdef;7;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    try feed(&terminal, "\x1b]5;1;#112233;2;#445566\x1b\\");
+    try feed(&terminal, "\x1b]5;0;?;1;?;7;?;2;?\x07" ++
+        "\x1b]4;256;?;257;?;258;?;260;?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]5;1;rgb:1111/2222/3333\x07" ++
+            "\x1b]5;2;rgb:4444/5555/6666\x07" ++
+            "\x1b]4;257;rgb:1111/2222/3333\x1b\\" ++
+            "\x1b]4;258;rgb:4444/5555/6666\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expect(terminal.title() == null);
+}
+
+test "unreportable special colors never consume saturated reply capacity" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes, false);
+    defer allocator.free(fill);
+    const before = terminal.presentation();
+
+    // No bytes of an absent color reply may be reserved or emitted.
+    try std.testing.expect(!(try terminal.feed("\x1b]5;0;?\x07\x1b]4;256;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+
+    // A known color still fails atomically with no corrupt reply prefix.
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b]4;1;?\x07"));
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+}
+
 test "xterm special colors via OSC 5 and OSC 4 special offsets" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

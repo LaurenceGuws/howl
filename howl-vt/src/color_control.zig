@@ -213,6 +213,9 @@ fn handleXtermPaletteControl(
         // palettes must be ignored, not answered with an empty color.
         if (@as(usize, idx) >= colors.palette.len + colors.special_palette.len) continue;
         if (std.mem.eql(u8, value, "?")) {
+            // The ordinary palette always has a color, but optional xterm
+            // special slots must not manufacture empty RGB packets.
+            const color = paletteTargetColor(colors, idx) orelse continue;
             // zig-audit: acknowledge catch_unreachable
             // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             const text = std.fmt.bufPrint(encode_buf, "4;{d};", .{idx}) catch unreachable;
@@ -220,7 +223,7 @@ fn handleXtermPaletteControl(
             errdefer output.truncate(start);
             try output.appendControl(.terminal, .osc);
             try output.append(text);
-            if (paletteTargetColor(colors, idx)) |color| try appendColorOsc(output, color);
+            try appendColorOsc(output, color);
             try appendColorReplyTerminator(output, reply_bel);
         } else if (parseColor(value)) |color| {
             setPaletteTarget(colors, idx, color);
@@ -239,16 +242,20 @@ fn handleXtermSpecialPaletteControl(
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
-        const idx = std.fmt.parseUnsigned(u3, idx_text, 10) catch continue;
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-        const text = std.fmt.bufPrint(encode_buf, "5;{d};", .{idx}) catch unreachable;
+        const idx = std.fmt.parseUnsigned(u8, idx_text, 10) catch continue;
+        // Representable xterm special slots are bounded by ColorState,
+        // not by the parser's numeric operand width.
+        if (idx >= colors.special_palette.len) continue;
         if (std.mem.eql(u8, value, "?")) {
+            const color = colors.special_palette[idx] orelse continue;
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
+            const text = std.fmt.bufPrint(encode_buf, "5;{d};", .{idx}) catch unreachable;
             const start = byteCount(output.bytes());
             errdefer output.truncate(start);
             try output.appendControl(.terminal, .osc);
             try output.append(text);
-            if (colors.special_palette[idx]) |color| try appendColorOsc(output, color);
+            try appendColorOsc(output, color);
             try appendColorReplyTerminator(output, reply_bel);
         } else if (parseColor(value)) |color| {
             colors.special_palette[idx] = color;
