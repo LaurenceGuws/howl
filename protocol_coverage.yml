@@ -1150,12 +1150,66 @@ references:
               residual: "All scoped libvterm recognized DEC states are already represented in Howl; exact unknown-mode identity parity remains incompatible with the additional supported query names. The surrounding state and parser gates still need full differential qualification.",
               source: howl-vt/src/mode_report.zig, symbol: decState, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig, symbol: "DEC mode queries append DECRPM replies"}}}
-          libvterm.csi.xtversion: {raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
-            conditions: "Pinned libvterm returns its own DCS terminal version even for CSI >7q; Howl emits its own bounded identity only for the zero-argument query.",
-            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
-                path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
+          libvterm.csi.xtversion:
+            raw: "CSI > [Ps=0] q"
+            effect: report terminal version
+            relevance: query
+            conditions: >-
+              Pinned libvterm src/state.c:1431-1433 reports its own DCS
+              version string regardless of the numeric operand count, even
+              for CSI >7q and CSI >0;9q. Frozen Kitty rejects any XTVERSION
+              request with more than one numeric operand, and only responds
+              for scalar zero. Howl now matches Kitty's bounded grammar
+              while returning its own truthful identity.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: >-
+                Pinned libvterm emits a version reply for malformed CSI >0;9q,
+                while frozen Kitty rejects the entire command. Howl follows
+                Kitty's strict admission; product version identities also
+                deliberately differ.
+              residual: >-
+                Valid bare/zero XTVERSION emits Howl's own DCS identity. A
+                surplus numeric operand no longer emits a reply, unlike pinned
+                libvterm. Nonzero single-operand queries also remain silent
+                under Howl's Kitty-compatible zero-mode gate.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsiLeader
+              proof:
+                path: howl-vt/test/unit/terminal_modes_test.zig
+                symbol: "libvterm device identity and status query grammar is deliberately nonparity"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI > 0 ; 9 q"
+                winner:
+                  owner: kitty
+                  protocol: Kitty XTVERSION one-operand zero-mode admission
+                  behavior: Reject excess numeric operands without replying or changing terminal state.
+                  evidence: Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1140,1366-1368 and kitty/screen.c:2815-2819
+                loser:
+                  owner: libvterm
+                  protocol: libvterm permissive XTVERSION query admission
+                  behavior: Emit the libvterm version string despite surplus numeric operands.
+                  evidence: Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1006,1431-1433
+                current_usage: >-
+                  Version queries are established terminal introspection;
+                  no contemporary consumer dependence on malformed surplus
+                  numeric operands was established. Valid zero-mode reporting
+                  retains its native identity.
+                recency: >-
+                  XTVERSION is an xterm-origin query, not a newer Kitty
+                  invention; the pinned versions differ in parser leniency
+                  rather than origin or report purpose.
+                reason: >-
+                  Identical malformed query bytes cannot both emit a DCS
+                  reply and leave the reply FIFO untouched. After checking
+                  origin, effects and observed use, the accepted terminal
+                  preference selects pinned Kitty's bounded admission,
+                  without introducing a terminal-flavor profile.
+                proof:
+                  path: howl-vt/test/unit/terminal_modes_test.zig
+                  symbol: "pinned Kitty XTVERSION rejects excess operands without replying or changing graphics"
           libvterm.csi.decscusr:
             raw: "CSI [Ps=0] SP q"
             effect: set cursor shape and blink
@@ -5094,13 +5148,13 @@ references:
                 path: howl-vt/test/unit/terminal_cursor_test.zig,
                 symbol: "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops"}}}
           kitty.csi.xtversion: {raw: "CSI > [Ps=0] q", effect: "report version", relevance: "query",
-            conditions: "Pinned Kitty kitty/vt-parser.c::dispatch_csi calls screen_xtversion for CSI > 0 q, which replies DCS >|kitty(<compiled version>) ST. Howl appendXtVersionReport instead returns its curated howl-vt identity and cannot reproduce a different product version without violating self-identification.",
+            conditions: "Pinned Kitty vt-parser.c:1366-1368 rejects extra XTVERSION operands via CALL_CSI_HANDLER1; screen.c:2815-2819 replies to the zero-mode query with DCS >|kitty(<compiled version>) ST. Howl now matches the bounded one-operand admission but reports its own truthful howl-vt identity.",
             howl: {support: partial, disposition: excluded,
               rationale: "Howl emits one stable bounded terminal identity; reference-specific product names, versions, emulation levels, delegated identity, and optional capability advertisements are outside the complete Howl family.",
-              residual: "Howl reports its own terminal identity rather than Kitty identity.",
-              source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
+              residual: "Strict one-operand admission, zero/default/trailing-semicolon/C1 inputs and no-reply negative space now match Kitty. The returned terminal identity intentionally differs from Kitty's version string.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
+                symbol: "pinned Kitty XTVERSION rejects excess operands without replying or changing graphics"}}}
           kitty.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: "Pinned Kitty CALL_CSI_HANDLER1 admits at most one S count; missing defaults to one, explicit zero loops zero times, and trailing semicolon is not a second operand. Howl now matches these bounds, including fragmented C1 CSI and unchanged text/image identity on rejection. Kitty ignores private mode 69 and scrolls full physical rows; Howl retains DECSLRM horizontal region clipping.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,

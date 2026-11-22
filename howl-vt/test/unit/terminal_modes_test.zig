@@ -1306,6 +1306,94 @@ test "report queries append pending caller output" {
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 }
 
+test "pinned Kitty XTVERSION rejects excess operands without replying or changing graphics" {
+    // Frozen Kitty vt-parser.c:1366-1368 uses CALL_CSI_HANDLER1 on CSI > Ps q;
+    // pinned libvterm and iTerm2 instead ignore supplied extra parameters.
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=95,C=1;AQIDBA==\x1b\\";
+    for ([_][]const u8{
+        "\x1b[>0;9q", "\x1b[>0;0q", "\x1b[>0;;q",   "\x1b[>0:9q",
+        "\x9b>0;9q",  "\x1b[>;0q",  "\x1b[>0;9;1q", "\x1b[>0;9;q",
+    }) |invalid| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 20, 4);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HABCDEFGHIJKLMNOPQRST\x1b[2;1HBBBBBBBB\x1b[3;6H" ++ image ++ "\x1b[2;3H");
+        // Consume the Kitty graphics upload acknowledgement, then use a
+        // known status reply as an exact retained FIFO sentinel.
+        try consumeReplies(&terminal);
+        try feed(&terminal, "\x1b[5n");
+        try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+        const before = terminal.semanticView(0);
+        const sequence = terminal.semanticSequence();
+        const edit = terminal.observation().structuralEditGeneration();
+        const cells = [_]@TypeOf(before.cellInfoAt(0, 0)){
+            before.cellInfoAt(0, 0), before.cellInfoAt(1, 2), before.cellInfoAt(2, 0), before.cellInfoAt(3, 0),
+        };
+        const graphics = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), graphics.placementCount());
+        const placement = graphics.placement(0).?;
+        const images_before = graphics.imageCount();
+        const generation = graphics.generation;
+        const content_generation = graphics.content_generation;
+
+        try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        try std.testing.expectEqual(before.history_count, after.history_count);
+        try std.testing.expectEqual(edit, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqualDeep(cells[0], after.cellInfoAt(0, 0));
+        try std.testing.expectEqualDeep(cells[1], after.cellInfoAt(1, 2));
+        try std.testing.expectEqualDeep(cells[2], after.cellInfoAt(2, 0));
+        try std.testing.expectEqualDeep(cells[3], after.cellInfoAt(3, 0));
+        try std.testing.expectEqual(images_before, terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(placement.col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(generation, terminal.images(0).generation);
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+
+        // One legal XTVERSION still appends behind the existing reply;
+        // malformed query admission must not poison future input.
+        try std.testing.expect((try terminal.feed("\x1b[>0q")).stateChanged());
+        try std.testing.expectEqualStrings("\x1b[0n\x1bP>|howl-vt dev\x1b\\", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+    }
+
+    for ([_][]const u8{
+        "\x1b[>q", "\x1b[>0q", "\x1b[>0;q", "\x1b[>;q", "\x9b>q", "\x9b>0q",
+    }) |valid| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed(valid)).stateChanged());
+        try std.testing.expectEqualStrings("\x1bP>|howl-vt dev\x1b\\", pendingOutput(&terminal));
+    }
+
+    // A syntactically valid but nonzero version request stays silent.
+    for ([_][]const u8{ "\x1b[>7q", "\x1b[>7;q", "\x9b>7q" }) |unsupported| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed(unsupported)).stateChanged());
+        try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    }
+
+    // A rejected query cannot eat last-column deferred wrap.
+    for ([_][]const u8{ "\x1b[>0;9q", "\x9b>0;9q" }) |invalid| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;8H!");
+        const sequence = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try feed(&terminal, "X");
+        try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 7));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 0));
+    }
+}
+
 test "device and status queries retain exact scalar transcripts and origin coordinates" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 6, 10);

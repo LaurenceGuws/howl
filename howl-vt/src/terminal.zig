@@ -819,7 +819,9 @@ fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []
         '>' => switch (final) {
             'c' => if (zeroQuery(params)) SemanticEvent.secondary_device_attributes else null,
             'f' => keyFormatChange(params),
-            'q' => if (paramAtOrDefault0(params, 0) == 0) SemanticEvent.xtversion else null,
+            // Frozen Kitty rejects extra XTVERSION parameters before the
+            // report owner; share the same bounded zero-query grammar as DA.
+            'q' => if (zeroQuery(params)) SemanticEvent.xtversion else null,
             'm' => if (paramAtOrDefault0(params, 0) == 4)
                 SemanticEvent{ .modify_other_keys_set = @intCast(
                     @max(if (params.len >= 2) params[1] else 0, 0),

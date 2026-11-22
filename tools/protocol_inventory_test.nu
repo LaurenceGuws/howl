@@ -126,9 +126,22 @@ let expected_rulings = [
   libvterm.csi.tbc
   libvterm.csi.vpa
   libvterm.csi.vpr
+  libvterm.csi.xtversion
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Pinned Kitty refuses excess XTVERSION operands while libvterm sends an
+# identity reply regardless of the extras. This is a reply-FIFO conflict,
+# not grounds to change the legitimate Howl terminal identity.
+let version_ruling = (protocol decision libvterm.csi.xtversion)
+if ($version_ruling.disposition != adjudicated
+    or $version_ruling.adjudication.kind != wire_collision
+    or $version_ruling.adjudication.wire != "CSI > 0 ; 9 q"
+    or $version_ruling.adjudication.winner.owner != kitty
+    or $version_ruling.adjudication.loser.owner != libvterm
+    or $version_ruling.adjudication.proof.symbol != "pinned Kitty XTVERSION rejects excess operands without replying or changing graphics") {
+  error make {msg: "pinned XTVERSION admission ruling is not source-backed"}
 }
 # Frozen Kitty ordinary DECSCUSR rejects a second cursor-style operand.
 # Pinned libvterm/iTerm2 apply the first style. Exact presentation and
