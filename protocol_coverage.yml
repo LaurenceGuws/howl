@@ -1537,12 +1537,23 @@ references:
           iterm2.csi.rm: {raw: "CSI Pm l", effect: reset ANSI modes,
             conditions: "Pinned iTerm2 VT100Terminal.m:2243-2257 iterates all operands but only applies 4/12; its mode 12 reset writes true, while Howl clears 12 and also accepts 2/20. The existing Howl ANSI mode query test proves its retained 2/4/12/20 values.",
             howl: *howl_ansi_mode_breadth_excluded}
-          iterm2.csi.sgr: {raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
-            disposition: excluded, rationale: *howl_rendition_policy_difference,
-            residual: Howl implements the indexed bounded rendition subset proved below.,
-            source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
+          iterm2.csi.sgr: {raw: "CSI Pm m", effect: select graphic rendition,
+            conditions: "Pinned iTerm2 VT100GraphicRendition.m:340-371 accepts colon submode 12
+              for light/dark RGB variants and 13 for light/dark indexed variants in 38, 48 and 58
+              color controls, retaining additional appearance-dependent attributes. Howl accepts
+              common 2/5 RGB/indexed forms but rejects 12/13 without leaking operands into
+              neighboring SGR groups.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "The iTerm2 light/dark dual-color data and later appearance-dependent
+                presentation require an explicit retained-cell and host-theme contract, not an
+                ad-hoc second mutable parser slot. Ordinary SGR color behavior remains supported.",
+              residual: "Pinned iTerm2 retains dual appearance values for 38/48/58 modes 12/13,
+                plus dark-variant metadata through some subsequent basic-color attributes.
+                Howl intentionally retains only one canonical FG/BG/underline value; full
+                iTerm2-specific appearance parity remains unproven.",
+              source: howl-vt/src/screen.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: pinned iTerm2 dual-mode colors are explicit unsupported SGR submodes"}}}
           iterm2.csi.sm: {raw: "CSI Pm h", effect: set ANSI modes,
             conditions: "Pinned iTerm2 VT100Terminal.m:2243-2257 iterates all operands but only applies 4/12; its mode 12 set writes false, while Howl sets 12 and also accepts 2/20. The existing Howl ANSI mode query test proves its retained 2/4/12/20 values.",
             howl: *howl_ansi_mode_breadth_excluded}
