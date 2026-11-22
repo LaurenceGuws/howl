@@ -2580,6 +2580,19 @@ fn termcapValue(encoded_name: []const u8) ?TermcapValue {
     if (hexNameEquals(encoded_name, "rmso")) return .{ .encoded = "1b5b32376d" };
     if (hexNameEquals(encoded_name, "dim")) return .{ .encoded = "1b5b326d" };
     if (hexNameEquals(encoded_name, "blink")) return .{ .encoded = "1b5b356d" };
+    // These pinned fixed input/mode/tab/motion sequences are interpreted by
+    // existing Terminal and Screen owners, independent of any host keymap.
+    if (hexNameEquals(encoded_name, "smkx")) return .{ .encoded = "1b5b3f3168" };
+    if (hexNameEquals(encoded_name, "rmkx")) return .{ .encoded = "1b5b3f316c" };
+    if (hexNameEquals(encoded_name, "smir")) return .{ .encoded = "1b5b3468" };
+    if (hexNameEquals(encoded_name, "rmir")) return .{ .encoded = "1b5b346c" };
+    if (hexNameEquals(encoded_name, "smam")) return .{ .encoded = "1b5b3f3768" };
+    if (hexNameEquals(encoded_name, "rmam")) return .{ .encoded = "1b5b3f376c" };
+    if (hexNameEquals(encoded_name, "hts")) return .{ .encoded = "1b48" };
+    if (hexNameEquals(encoded_name, "cbt") or hexNameEquals(encoded_name, "kcbt"))
+        return .{ .encoded = "1b5b5a" };
+    if (hexNameEquals(encoded_name, "cuu1")) return .{ .encoded = "1b5b41" };
+    if (hexNameEquals(encoded_name, "cuf1")) return .{ .encoded = "1b5b43" };
     if (hexNameEquals(encoded_name, "Tc") or hexNameEquals(encoded_name, "Su")) return .flag;
     return null;
 }
@@ -2629,7 +2642,7 @@ test "XTGETTCAP reply allocation failure rolls back the complete ordered respons
 fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
     var output = replies.Buffer.init(allocator);
     defer output.deinit();
-    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;736d756c;6369766973;736d637570;636c656172;73677230;6f70;626F677573") catch |failure| {
+    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;736d756c;6369766973;736d637570;636c656172;73677230;6f70;736d6b78;687473;6b636274;626F677573") catch |failure| {
         try std.testing.expectEqual(@as(usize, 0), output.bytes().len);
         return failure;
     };
@@ -2644,6 +2657,9 @@ fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
             "\x1bP1+r636c656172=1b5b481b5b324a\x1b\\" ++
             "\x1bP1+r73677230=1b28421b5b6d\x1b\\" ++
             "\x1bP1+r6f70=1b5b33393b34396d\x1b\\" ++
+            "\x1bP1+r736d6b78=1b5b3f3168\x1b\\" ++
+            "\x1bP1+r687473=1b48\x1b\\" ++
+            "\x1bP1+r6b636274=1b5b5a\x1b\\" ++
             "\x1bP0+r626F677573\x1b\\",
         output.bytes(),
     );

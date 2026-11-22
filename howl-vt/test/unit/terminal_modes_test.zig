@@ -2710,6 +2710,75 @@ test "XTGETTCAP reports pinned rendition controls through native SGR state" {
     );
 }
 
+test "XTGETTCAP advertises pinned fixed input, tab and cursor controls" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 16);
+    defer terminal.deinit();
+    // Pinned Kitty terminfo.py:get_capabilities, not a guessed terminfo
+    // database or a reference-dependent runtime profile.
+    try std.testing.expect(!(try terminal.feed("\x1bP+q736d6b78;726d6b78;736d6972;")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed(
+        "726d6972;736d616d;726d616d;687473;636274;6b636274;63757531;63756631;626f677573\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r736d6b78=1b5b3f3168\x1b\\" ++
+            "\x1bP1+r726d6b78=1b5b3f316c\x1b\\" ++
+            "\x1bP1+r736d6972=1b5b3468\x1b\\" ++
+            "\x1bP1+r726d6972=1b5b346c\x1b\\" ++
+            "\x1bP1+r736d616d=1b5b3f3768\x1b\\" ++
+            "\x1bP1+r726d616d=1b5b3f376c\x1b\\" ++
+            "\x1bP1+r687473=1b48\x1b\\" ++
+            "\x1bP1+r636274=1b5b5a\x1b\\" ++
+            "\x1bP1+r6b636274=1b5b5a\x1b\\" ++
+            "\x1bP1+r63757531=1b5b41\x1b\\" ++
+            "\x1bP1+r63756631=1b5b43\x1b\\" ++
+            "\x1bP0+r626f677573\x1b\\",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    // In the same native terminal, the two DECCKM values select different
+    // encoding for a real Up key. This is fixed capability, not mode query.
+    try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
+    write(&terminal, "\x1b[?1h");
+    try std.testing.expectEqualStrings("\x1bOA", encodeKey(&terminal, .{ .named = .up }, .{}));
+    write(&terminal, "\x1b[?1l\x1b[?7l\x1b[?7$p");
+    try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
+    try std.testing.expectEqualStrings("\x1b[?7;2$y", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    write(&terminal, "\x1b[?7h\x1b[?7$p");
+    try std.testing.expectEqualStrings("\x1b[?7;1$y", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // IRM owns actual character insertion rather than just a mode bit.
+    write(&terminal, "\x1b[HABC\x1b[1;2H\x1b[4hX\x1b[4lY");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(0, 3));
+
+    // An exact HTS creates the only stop after all defaults are cleared;
+    // both pinned back-tab aliases then land on the same owned stop.
+    write(&terminal, "\x1b[3g\x1b[1;5H\x1bH\x1b[1;1H\t");
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+    write(&terminal, "\x1b[1;14H\x1b[Z");
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+    write(&terminal, "\x1b[1;14H\x1b[Z");
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+    write(&terminal, "\x1b[3;5H\x1b[A\x1b[C");
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+
+    // Preserve the spelling of the query and honor selected C1 framing.
+    write(&terminal, "\x1b G\x90+q736D6B78;6B636274\x9c");
+    try std.testing.expectEqualStrings(
+        "\x901+r736D6B78=1b5b3f3168\x9c" ++
+            "\x901+r6B636274=1b5b5a\x9c",
+        pendingOutput(&terminal),
+    );
+}
+
 test "XTGETTCAP response capacity failure rolls back every requested reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
