@@ -3327,6 +3327,11 @@ fn semanticMutationSet(
 fn routeParserEvent(event: parser_mod.Event) ?SemanticEvent {
     switch (event) {
         .style_change => |sc| {
+            // Pinned Kitty CSI-u rejects signed-negative operands after C
+            // integer narrowing. Keep that admission separate from the
+            // shared saturated coordinate and count grammar.
+            if (sc.numeric_overflow and sc.final == 'u' and
+                (sc.leader == '=' or sc.leader == '>' or sc.leader == '<')) return null;
             const params = sc.params[0..sc.param_count];
             const intermediates = sc.intermediates[0..sc.intermediates_len];
             return csiProcess(sc.final, params, sc.separators, sc.leader, sc.private, intermediates);
@@ -4533,6 +4538,7 @@ const TerminalStream = struct {
                 .private = csi.private,
                 .intermediates = csi.intermediates[0..csi.intermediates_len],
                 .intermediates_len = csi.intermediates_len,
+                .numeric_overflow = csi.numeric_overflow,
             } }),
             .osc_dispatch => |osc| try self.applyEvent(.{ .osc = osc }),
             .screen_title => |title| try self.applyEvent(.{ .screen_title = title }),

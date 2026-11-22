@@ -216,6 +216,7 @@ pub const CsiAction = struct {
     private: bool,
     intermediates: []const u8,
     intermediates_len: u8,
+    numeric_overflow: bool = false,
 };
 
 /// Carries one ordered parser phase action with parser-borrowed slices.
@@ -269,6 +270,7 @@ pub const Parser = struct {
     csi_params: [csi_max_params]i32,
     csi_separators: CsiSeparatorList,
     csi_count: u8,
+    csi_numeric_overflow: bool,
     intermediates: [csi_max_intermediates]u8,
     intermediates_len: u8,
     csi_in_param: bool,
@@ -300,6 +302,7 @@ pub const Parser = struct {
             .csi_params = @as([csi_max_params]i32, @splat(0)),
             .csi_separators = CsiSeparatorList.empty,
             .csi_count = 0,
+            .csi_numeric_overflow = false,
             .intermediates = @as([csi_max_intermediates]u8, @splat(0)),
             .intermediates_len = 0,
             .csi_in_param = false,
@@ -890,6 +893,7 @@ pub const Parser = struct {
     fn clear(self: *Parser) void {
         self.csi_params[0] = 0;
         self.csi_count = 0;
+        self.csi_numeric_overflow = false;
         self.csi_separators = CsiSeparatorList.empty;
         self.intermediates_len = 0;
         self.csi_in_param = false;
@@ -927,7 +931,13 @@ pub const Parser = struct {
                 self.csi_params[self.csi_count] = digit;
                 self.csi_in_param = true;
             } else {
-                self.csi_params[self.csi_count] = self.csi_params[self.csi_count] *| 10 +| digit;
+                const previous = self.csi_params[self.csi_count];
+                // Ordinary CSI continues to saturate bounded geometry. Retain
+                // only a parsing fact for strict Kitty CSI-u admission; do
+                // not let its overflow policy change other CSI/DCS families.
+                if (kind == .csi and previous > @divTrunc(std.math.maxInt(i32) - digit, 10))
+                    self.csi_numeric_overflow = true;
+                self.csi_params[self.csi_count] = previous *| 10 +| digit;
             }
             return;
         }
@@ -967,6 +977,7 @@ pub const Parser = struct {
             .private = private,
             .intermediates = self.intermediates[intermediate_start .. intermediate_start + intermediates_len],
             .intermediates_len = intermediates_len,
+            .numeric_overflow = self.csi_numeric_overflow,
         };
         return action;
     }
@@ -1126,6 +1137,31 @@ test "parser keeps active string controls exclusive" {
     try std.testing.expect(parser.apc.active());
     try std.testing.expect(!parser.dcs.active());
     try std.testing.expect(!parser.pm.active());
+}
+
+test "CSI numeric overflow witness distinguishes the exact signed bound and resets per sequence" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+
+    const cases = [_]struct { sequence: []const u8, overflow: bool, value: i32 }{
+        .{ .sequence = "\x1b[>2147483647u", .overflow = false, .value = std.math.maxInt(i32) },
+        .{ .sequence = "\x1b[>2147483648u", .overflow = true, .value = std.math.maxInt(i32) },
+        .{ .sequence = "\x1b[>999999999999u", .overflow = true, .value = std.math.maxInt(i32) },
+        .{ .sequence = "\x1b[>8u", .overflow = false, .value = 8 },
+        .{ .sequence = "\x9b>2147483648u", .overflow = true, .value = std.math.maxInt(i32) },
+        .{ .sequence = "\x1b[>7u", .overflow = false, .value = 7 },
+    };
+    for (cases) |case| {
+        for (case.sequence[0 .. case.sequence.len - 1]) |byte|
+            try expectPhaseTags(parser.next(byte), null, null, null);
+        const actions = parser.next('u');
+        try expectPhaseTags(actions, null, .csi_dispatch, null);
+        const csi = actions[1].?.csi_dispatch;
+        try std.testing.expectEqual(@as(u8, '>'), csi.leader);
+        try std.testing.expectEqual(@as(u8, 1), csi.count);
+        try std.testing.expectEqual(case.value, csi.params[0]);
+        try std.testing.expectEqual(case.overflow, csi.numeric_overflow);
+    }
 }
 
 test "parser assembles CSI params and separators" {
@@ -1353,6 +1389,7 @@ const StyleChange = struct {
     private: bool,
     intermediates: []const u8,
     intermediates_len: u8,
+    numeric_overflow: bool = false,
 };
 
 const DcsEvent = struct {

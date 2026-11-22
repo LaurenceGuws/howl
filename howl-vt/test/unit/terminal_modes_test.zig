@@ -562,6 +562,56 @@ test "CSI keyboard and version leader commands reject unexpected intermediates" 
     try std.testing.expectEqualStrings("\x1b[?8u\x1b[>4;2m", pendingOutput(&terminal));
 }
 
+test "pinned Kitty keyboard CSI rejects signed i32 overflow without losing subsequent commands" {
+    // Pinned Kitty vt-parser.c narrows the parsed long value to a signed
+    // C int and CALL_CSI_HANDLER1/2 rejects negative operands. The first
+    // value outside signed i32 therefore cannot silently become flags 127
+    // or a saturated positive stack-pop count.
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        write(&terminal, "\x1b[=3u");
+        try std.testing.expect(!(try terminal.feed("\x1b[=2147483")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("648u")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b[=4294967295u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[=2147483647u\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?127u", pendingOutput(&terminal));
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        write(&terminal, "\x1b[=3u\x1b[>8u");
+        try std.testing.expect(!(try terminal.feed("\x1b[>2147483648u")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b[<2147483648u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?8u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        write(&terminal, "\x1b[<1u\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+    }
+}
+
+test "ordinary CSI geometry still saturates while Kitty rejects overflow" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    // The new overflow witness does not turn a common saturated cursor move
+    // into a Kitty-only protocol rejection or create a shadow CSI parser.
+    write(&terminal, "\x1b[999999999999C");
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_col);
+    write(&terminal, "\x1b[=3u");
+    try std.testing.expect(!(try terminal.feed("\x1b[=2147483648u")).stateChanged());
+    write(&terminal, "\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_col);
+    try consumeReplies(&terminal);
+    write(&terminal, "\x1b[1G\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?3u", pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+}
+
 test "invalid Kitty keyboard set mode preserves state" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

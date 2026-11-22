@@ -4314,27 +4314,27 @@ references:
           kitty.csi.kitty_set: {raw: "CSI = flags ; [mode=1] u", effect: "set keyboard flags",
             conditions: "Pinned Kitty vt-parser.c::dispatch_csi '=' u uses CALL_CSI_HANDLER2 to admit at most two nonnegative fields (zero flags, mode one by default). Howl now rejects excess operands, retains seven-bit flag mask, and preserves valid replace/or/and-not semantics across banks and reset.",
             howl: {support: partial, disposition: excluded,
-              rationale: "The bounded common CSI-u stack grammar now matches the pinned handler for represented operands, but the native parser saturates oversized CSI decimal values where Kitty's signed-parameter admission rejects negative overflow; qualify that boundary before full sign-off.",
-              residual: "Out-of-signed-i32 CSI numeric overflow and corresponding Kitty negative admission semantics remain to be proved and corrected; no known ordinary flags/mode/depth discrepancy remains.",
+              rationale: "The CSI parser retains an overflow witness, and Kitty keyboard admission rejects values above signed i32 without changing ordinary CSI geometry. Pinned Kitty instead accumulates decimal digits in uint64 and narrows to a C int, whose later wrap-to-nonnegative outcomes are not represented by this bounded policy.",
+              residual: "Signed-i32 max is admitted and 2147483648/4294967295 are rejected without changing flags. Pinned Kitty's much larger unsigned digit/narrowing domain may admit some wrapping values such as 4294967296; this and other extreme numerical equivalence remain a precise partial exception.",
               source: howl-vt/src/modes.zig, symbol: KittyKeyStack.set, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "pinned Kitty keyboard CSI u rejects excess operands and pop zero"}}}
+                symbol: "pinned Kitty keyboard CSI rejects signed i32 overflow without losing subsequent commands"}}}
           kitty.csi.kitty_push: {raw: "CSI > [flags=0] u", effect: "push keyboard flags",
             conditions: "Pinned Kitty vt-parser.c::dispatch_csi '>' u uses CALL_CSI_HANDLER1 for at most one nonnegative field with zero default. Howl now rejects trailing operands and unexpected intermediates while retaining Kitty's eight-slot bank-local stack, seven-bit flags and exact saturation/pop behavior.",
             howl: {support: partial, disposition: excluded,
-              rationale: "Common push and bounded stack lifetime are source-proven. Oversized signed CSI decimal values may still saturate to a valid native flag rather than receive pinned Kitty's negative-operand rejection.",
-              residual: "Exact signed-i32 numeric overflow admission remains unqualified for Kitty CSI-u flags; other observed push/depth behavior matches pinned eight-slot semantics.",
+              rationale: "A borrowed parser overflow witness prevents a signed-i32 overrange flag from saturating into a valid Kitty push. Pinned Kitty's uint64 accumulation and C-int narrowing may wrap some much larger values to positive or zero; the portable bounded policy rejects them instead.",
+              residual: "2147483648/4294967295 no longer push, with exact max and subsequent recovery proved. Extreme wrap-to-nonnegative behavior of pinned Kitty's uint64-to-int conversion is unrepresented; retained stack semantics match for ordinary nonnegative operands.",
               source: howl-vt/src/modes.zig, symbol: KittyKeyStack.push, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "pinned Kitty keyboard CSI u rejects excess operands and pop zero"}}}
+                symbol: "pinned Kitty keyboard CSI rejects signed i32 overflow without losing subsequent commands"}}}
           kitty.csi.kitty_pop: {raw: "CSI < [count=1] u", effect: "pop keyboard flags",
             conditions: "Pinned Kitty vt-parser.c::dispatch_csi '<' u calls screen_pop_key_encoding_flags through CALL_CSI_HANDLER1 (one nonnegative count, default one). Howl now rejects additional operands and preserves explicit zero as no-op, default one, bank-local stack rewind, and high-count clearing.",
             howl: {support: partial, disposition: excluded,
-              rationale: "The common stack rewind path matches Kitty's eight-slot semantics, but unrepresentable signed CSI counts are saturated by the shared parser rather than carrying pinned rejection provenance.",
-              residual: "Pinned negative-on-signed-overflow CSI count admission is not yet represented; ordinary bounded pop, zero, default and depth behavior are proved.",
+              rationale: "Kitty keyboard pop now refuses parser-proven signed-i32 overflow rather than interpreting it as a saturated positive count. This is safe and independent of ordinary CSI geometry; extreme pinned Kitty uint64-to-int wrap-to-positive behavior still differs.",
+              residual: "The signed-i32 limit and first overrange value are handled correctly for pinned rejection, but pinned Kitty can narrow larger unsigned decimals back to nonnegative C ints. Those pathological pop-count results remain unqualified against native bounded rejection.",
               source: howl-vt/src/modes.zig, symbol: KittyKeyStack.pop, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "pinned Kitty keyboard CSI u rejects excess operands and pop zero"}}}
+                symbol: "pinned Kitty keyboard CSI rejects signed i32 overflow without losing subsequent commands"}}}
           kitty.csi.decstbm: {raw: "CSI [top] ; [bottom] r", effect: "set vertical margins",
             conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi DECSTBM invokes CALL_CSI_HANDLER2 rejecting more than two params. Howl accepts CSI 2;3;4r, setting scroll region from the first two; a following DECOM homes to its top.",
             howl: {support: partial, disposition: excluded,
