@@ -24,7 +24,6 @@ fn byteCount(bytes: []const u8) u32 {
 
 /// Applies one xterm/Kitty color command transactionally and reports mutation.
 pub fn apply(
-    allocator: std.mem.Allocator,
     colors: *properties.ColorState,
     defaults: *const properties.ColorState,
     output: *replies.Buffer,
@@ -46,10 +45,9 @@ pub fn apply(
     }
     switch (osc.command) {
         21 => try handleKittyControl(colors, output, osc.payload, defaults),
-        4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, osc.payload, osc.reply_bel),
-        5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, osc.payload, osc.reply_bel),
+        4 => try handleXtermPaletteControl(colors, output, encode_buf, osc.payload, osc.reply_bel),
+        5 => try handleXtermSpecialPaletteControl(colors, output, encode_buf, osc.payload, osc.reply_bel),
         10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
-            allocator,
             colors,
             output,
             encode_buf,
@@ -198,7 +196,6 @@ const DynamicKey = enum {
 };
 // Applies or answers one OSC 4 palette request transactionally.
 fn handleXtermPaletteControl(
-    allocator: std.mem.Allocator,
     colors: *TerminalColorState,
     output: *replies.Buffer,
     encode_buf: []u8,
@@ -223,7 +220,7 @@ fn handleXtermPaletteControl(
             errdefer output.truncate(start);
             try output.appendControl(.terminal, .osc);
             try output.append(text);
-            if (paletteTargetColor(colors, idx)) |color| try appendColorOsc(allocator, output, color);
+            if (paletteTargetColor(colors, idx)) |color| try appendColorOsc(output, color);
             try appendColorReplyTerminator(output, reply_bel);
         } else if (parseColor(value)) |color| {
             setPaletteTarget(colors, idx, color);
@@ -233,7 +230,6 @@ fn handleXtermPaletteControl(
 
 // Applies or answers one OSC 5 special-palette request transactionally.
 fn handleXtermSpecialPaletteControl(
-    allocator: std.mem.Allocator,
     colors: *TerminalColorState,
     output: *replies.Buffer,
     encode_buf: []u8,
@@ -252,7 +248,7 @@ fn handleXtermSpecialPaletteControl(
             errdefer output.truncate(start);
             try output.appendControl(.terminal, .osc);
             try output.append(text);
-            if (colors.special_palette[idx]) |color| try appendColorOsc(allocator, output, color);
+            if (colors.special_palette[idx]) |color| try appendColorOsc(output, color);
             try appendColorReplyTerminator(output, reply_bel);
         } else if (parseColor(value)) |color| {
             colors.special_palette[idx] = color;
@@ -262,7 +258,6 @@ fn handleXtermSpecialPaletteControl(
 
 // Applies or answers one dynamic-color command transactionally.
 fn handleXtermDynamicColor(
-    allocator: std.mem.Allocator,
     colors: *TerminalColorState,
     output: *replies.Buffer,
     encode_buf: []u8,
@@ -274,7 +269,7 @@ fn handleXtermDynamicColor(
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |value| {
         if (std.mem.eql(u8, value, "?")) {
-            try appendXtermDynamicColorReply(allocator, output, encode_buf, colors, key, reply_bel);
+            try appendXtermDynamicColorReply(output, encode_buf, colors, key, reply_bel);
         } else if (parseColor(value)) |color| {
             setDynamicColor(colors, key, color);
         }
@@ -324,6 +319,7 @@ fn parseColor(value: []const u8) ?Rgb {
     if (color_text.len == 0) return null;
     if (std.mem.startsWith(u8, color_text, "#")) return parseHashColor(color_text[1..]);
     if (std.mem.startsWith(u8, color_text, "rgb:")) return parseRgbColor(color_text[4..]);
+    if (std.mem.startsWith(u8, color_text, "rgbi:")) return parseRgbiColor(color_text[5..]);
     if (std.ascii.eqlIgnoreCase(color_text, "black")) return .{ .r = 0, .g = 0, .b = 0 };
     if (std.ascii.eqlIgnoreCase(color_text, "red")) return .{ .r = 255, .g = 0, .b = 0 };
     if (std.ascii.eqlIgnoreCase(color_text, "green")) return .{ .r = 0, .g = 255, .b = 0 };
@@ -596,11 +592,31 @@ fn appendColorReplyTerminator(output: *replies.Buffer, reply_bel: bool) replies.
     }
 }
 
-// Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
-fn appendColorOsc(_: std.mem.Allocator, output: *replies.Buffer, color: Rgb) replies.AppendError!void {
-    var buf: [32]u8 = undefined;
-    const text = formatColorOsc(buf[0..], color);
-    try output.append(text);
+// Append exactly RGB8 or replicated RGB16 component spelling as selected by
+// the host. No allocation and no second canonical color representation.
+fn appendColorOsc(output: *replies.Buffer, color: Rgb) replies.AppendError!void {
+    const hex = "0123456789abcdef";
+    var text: [color_osc_max_bytes]u8 = undefined;
+    @memcpy(text[0..4], "rgb:");
+    var len: usize = 4;
+    for ([_]u8{ color.r, color.g, color.b }, 0..) |component, index| {
+        if (index != 0) {
+            text[len] = '/';
+            len += 1;
+        }
+        const high = hex[component >> 4];
+        const low = hex[component & 0x0f];
+        text[len] = high;
+        text[len + 1] = low;
+        len += 2;
+        if (output.color_reply_width == .bits16) {
+            text[len] = high;
+            text[len + 1] = low;
+            len += 2;
+        }
+    }
+    std.debug.assert(len <= text.len);
+    try output.append(text[0..len]);
 }
 
 // Parses and applies a recognized Kitty color key, ignoring invalid values.
@@ -633,7 +649,6 @@ fn resetColorKey(colors: *TerminalColorState, key: []const u8, defaults: *const 
 }
 
 fn appendXtermDynamicColorReply(
-    allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     colors: *const TerminalColorState,
@@ -652,7 +667,7 @@ fn appendXtermDynamicColorReply(
     errdefer output.truncate(start);
     try output.appendControl(.terminal, .osc);
     try output.append(text);
-    try appendColorOsc(allocator, output, color);
+    try appendColorOsc(output, color);
     try appendColorReplyTerminator(output, reply_bel);
 }
 
@@ -676,17 +691,6 @@ fn setSpecialColorDynamic(colors: *TerminalColorState, key: []const u8) void {
         .selection_background => colors.selection_background = null,
         .selection_foreground => colors.selection_foreground = null,
     };
-}
-
-fn formatColorOsc(buf: []u8, color: Rgb) []const u8 {
-    std.debug.assert(buf.len >= color_osc_max_bytes);
-    return std.fmt.bufPrint(buf, "rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
-        @as(u16, color.r) * 0x101,
-        @as(u16, color.g) * 0x101,
-        @as(u16, color.b) * 0x101,
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    }) catch unreachable;
 }
 
 fn stripAlpha(value: []const u8) []const u8 {
@@ -730,6 +734,25 @@ fn parseRgbColor(text: []const u8) ?Rgb {
     return .{ .r = r, .g = g, .b = b };
 }
 
+// xterm XParseColor intensity components are finite fractions in [0, 1].
+// Kitty rounds each accepted channel to RGB8; do not let malformed floats,
+// infinities or negative values wrap or mutate a prior valid color.
+fn parseRgbiColor(text: []const u8) ?Rgb {
+    var parts = std.mem.splitScalar(u8, text, '/');
+    const r = parseIntensity(parts.next() orelse return null) orelse return null;
+    const g = parseIntensity(parts.next() orelse return null) orelse return null;
+    const b = parseIntensity(parts.next() orelse return null) orelse return null;
+    if (parts.next() != null) return null;
+    return .{ .r = r, .g = g, .b = b };
+}
+
+fn parseIntensity(text: []const u8) ?u8 {
+    if (text.len == 0 or text.len > 32) return null;
+    const intensity = std.fmt.parseFloat(f64, text) catch return null;
+    if (!std.math.isFinite(intensity) or intensity < 0 or intensity > 1) return null;
+    return @intFromFloat(@round(intensity * 255.0));
+}
+
 fn parseRgbComponent(text: []const u8) ?u8 {
     if (text.len == 0 or text.len > 4) return null;
     const value = std.fmt.parseUnsigned(u16, text, 16) catch return null;
@@ -771,7 +794,6 @@ test "unset dynamic RGB query at reply capacity preserves bounded queue" {
     // No known RGB means no reply is created, even at hard capacity.
     for ([_]u16{ 12, 13, 17, 19 }) |command| {
         try std.testing.expect(!(try apply(
-            std.testing.allocator,
             &colors,
             &defaults,
             &output,
@@ -785,7 +807,6 @@ test "unset dynamic RGB query at reply capacity preserves bounded queue" {
     colors.cursor = .{ .r = 0x12, .g = 0x34, .b = 0x56 };
     const before = colors;
     try std.testing.expectError(error.ReplyLimit, apply(
-        std.testing.allocator,
         &colors,
         &defaults,
         &output,
@@ -803,7 +824,6 @@ test "color control set query and transaction rollback are exact" {
     var scratch: [64]u8 = undefined;
 
     try std.testing.expect(try apply(
-        std.testing.allocator,
         &colors,
         &.{},
         &output,
@@ -822,7 +842,6 @@ test "color control set query and transaction rollback are exact" {
     try std.testing.expectError(
         error.ReplyLimit,
         apply(
-            std.testing.allocator,
             &colors,
             &.{},
             &output,
@@ -832,6 +851,42 @@ test "color control set query and transaction rollback are exact" {
     );
     try std.testing.expectEqual(before, colors);
     try std.testing.expectEqual(@as(u32, replies.max_bytes - 1), output.len());
+}
+
+test "eight-bit OSC color reply limit rolls back palette mutation and exact queued bytes" {
+    var colors: properties.ColorState = .{};
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    output.setColorReplyWidth(.bits8);
+    var scratch: [64]u8 = undefined;
+    const reply = "\x1b]4;1;rgb:12/34/56\x07";
+    const filler = try std.testing.allocator.alloc(u8, replies.max_bytes - reply.len + 1);
+    defer std.testing.allocator.free(filler);
+    @memset(filler, 'p');
+    try output.append(filler);
+    const before = colors.palette[1];
+
+    try std.testing.expectError(error.ReplyLimit, apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 4, .payload = "1;#123456;1;?", .reply_bel = true } },
+    ));
+    try std.testing.expectEqual(before, colors.palette[1]);
+    try std.testing.expectEqualSlices(u8, filler, output.bytes());
+
+    output.truncate(output.len() - 1);
+    try std.testing.expect(try apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 4, .payload = "1;#123456;1;?", .reply_bel = true } },
+    ));
+    try std.testing.expectEqual(Rgb{ .r = 0x12, .g = 0x34, .b = 0x56 }, colors.palette[1]);
+    try std.testing.expectEqual(@as(u32, replies.max_bytes), output.len());
+    try std.testing.expectEqualStrings(reply, output.bytes()[filler.len - 1 ..]);
 }
 
 test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
@@ -845,7 +900,6 @@ test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
     try output.append("retained reply");
 
     try std.testing.expect(try apply(
-        std.testing.allocator,
         &colors,
         &defaults,
         &output,
@@ -857,7 +911,6 @@ test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
     try std.testing.expectEqualStrings("retained reply", output.bytes());
 
     try std.testing.expect(!(try apply(
-        std.testing.allocator,
         &colors,
         &defaults,
         &output,
@@ -865,7 +918,6 @@ test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
         .{ .osc = .{ .command = 104, .payload = "1junk" } },
     )));
     try std.testing.expect(try apply(
-        std.testing.allocator,
         &colors,
         &defaults,
         &output,
@@ -874,7 +926,6 @@ test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
     ));
     try std.testing.expectEqualDeep(defaults.palette, colors.palette);
     try std.testing.expect(!(try apply(
-        std.testing.allocator,
         &colors,
         &defaults,
         &output,
@@ -898,7 +949,6 @@ test "Kitty OSC 21 multi-query reply capacity failure rolls back colors and all 
     try std.testing.expectError(
         error.ReplyLimit,
         apply(
-            std.testing.allocator,
             &colors,
             &.{},
             &output,

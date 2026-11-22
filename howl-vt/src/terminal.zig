@@ -2163,7 +2163,6 @@ fn visitTextRange(
 // Apply one caller-directed semantic event and retain its bounded consequence.
 fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
     var scratch: input.Scratch = .{};
-    const allocator = vt.allocator;
     switch (event) {
         .bell => try vt.consequences.ringBell(),
         .title_and_icon_set => |value| return vt.properties.replaceTitleAndIcon(value),
@@ -2186,7 +2185,6 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .container_request => |request| try vt.consequences.retainContainerRequest(request),
         .color_preference_query => try vt.consequences.retainColorPreferenceQuery(),
         .color_control => |cmd| return color_control.apply(
-            allocator,
             &vt.properties.colors,
             &vt.properties.color_defaults,
             &vt.reply_buffer,
@@ -5728,6 +5726,9 @@ pub const Terminal = struct {
     /// Complete copied host-configured color baseline, separate from program changes and stacks.
     pub const ColorDefaults = properties.ColorState;
 
+    /// Host-selected OSC color-query precision; defaults to xterm's 16 bits.
+    pub const ColorReplyWidth = replies.ColorReplyWidth;
+
     /// Provides the canonical default terminal cell attributes.
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.
@@ -6769,7 +6770,7 @@ pub const Terminal = struct {
         const report_len = self.prepareResizeReport(rows, cols, cell_pixels, &report_bytes);
         var prepared_replies = replies.Buffer.init(self.allocator);
         errdefer prepared_replies.deinit();
-        prepared_replies.copyFramingFrom(&self.reply_buffer);
+        prepared_replies.copyEncodingFrom(&self.reply_buffer);
         try prepared_replies.append(self.reply_buffer.bytes());
         try prepared_replies.append(report_bytes[0..report_len]);
         const state = try self.allocator.create(PreparedResizeState);
@@ -6868,6 +6869,13 @@ pub const Terminal = struct {
         self.screen_state.alternate.cursor.cursor_text_color = null;
         advanceIdentity(&self.semantic_sequence);
         self.content_sequence = self.semantic_sequence;
+    }
+
+    /// Sets future OSC color-query precision without changing terminal colors,
+    /// pending replies, or canonical identity. The setting survives RIS.
+    pub fn setColorReplyWidth(self: *Terminal, width: ColorReplyWidth) void {
+        self.requireNoPreparedResize();
+        self.reply_buffer.setColorReplyWidth(width);
     }
 
     /// Replaces both screen defaults without disturbing program overrides or content.
@@ -8172,7 +8180,7 @@ pub const Terminal = struct {
         allocator: std.mem.Allocator,
     ) DragDropEventError![]u8 {
         var output = replies.Buffer.init(allocator);
-        output.copyFramingFrom(&self.reply_buffer);
+        output.copyEncodingFrom(&self.reply_buffer);
         errdefer output.deinit();
         try output.appendControl(.terminal, .osc);
         try output.append("72;");

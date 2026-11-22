@@ -2265,6 +2265,134 @@ test "OSC color grammar scales short components and rejects trailing components"
     );
 }
 
+test "xterm rgbi intensities support split commands and reject malformed values without mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]4;7;rgbi:0.5/0.25/")).stateChanged());
+    try std.testing.expect((try terminal.feed("1\x1b\\")).stateChanged());
+    try feed(&terminal, "\x1b]10;rgbi:1e-1/0/0.75\x07");
+    const before = terminal.presentation();
+    try std.testing.expectEqual(Rgb{ .r = 128, .g = 64, .b = 255 }, before.palette[7]);
+    try std.testing.expectEqual(Rgb{ .r = 26, .g = 0, .b = 191 }, before.foreground);
+
+    // Invalid intensities must not mutate an earlier accepted palette or
+    // dynamic color, and an independent valid pair must still commit.
+    for ([_][]const u8{
+        "rgbi:1.01/0/0", "rgbi:-0.1/0/0",  "rgbi:nan/0/0",
+        "rgbi:inf/0/0",  "rgbi:1//0",      "rgbi:1/0/0/0",
+        "rgbi:1/blah/0", "rgbi:1e999/0/0",
+    }) |invalid| {
+        var sequence: [96]u8 = undefined;
+        const command = try std.fmt.bufPrint(&sequence, "\x1b]4;7;{s}\x07", .{invalid});
+        try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+        try std.testing.expectEqualDeep(before, terminal.presentation());
+    }
+
+    try feed(&terminal, "\x1b]4;7;rgbi:nan/0/0;8;rgbi:0/0.5/1\x1b\\");
+    try std.testing.expectEqual(before.palette[7], terminal.presentation().palette[7]);
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 128, .b = 255 }, terminal.presentation().palette[8]);
+    try std.testing.expectEqual(before.foreground, terminal.presentation().foreground);
+
+    try feed(&terminal, "\x1b]4;7;?\x1b\\\x1b]10;?\x07");
+    try std.testing.expectEqualStrings(
+        "\x1b]4;7;rgb:8080/4040/ffff\x1b\\" ++
+            "\x1b]10;rgb:1a1a/0000/bfbf\x07",
+        terminal.replyBytes(),
+    );
+}
+
+test "rgbi grammar reaches all represented palette and dynamic color controls" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const color = Rgb{ .r = 0, .g = 128, .b = 255 };
+
+    for ([_]u16{ 11, 12, 17, 19 }) |command| {
+        var bytes: [64]u8 = undefined;
+        const osc = try std.fmt.bufPrint(&bytes, "\x1b]{d};rgbi:0/0.5/1\x1b\\", .{command});
+        try feed(&terminal, osc);
+    }
+    try feed(&terminal, "\x1b]5;0;rgbi:0/0.5/1\x1b\\" ++
+        "\x1b]21;foreground=rgbi:0/0.5/1;7=rgbi:0/0.5/1;selection_foreground=rgbi:0/0.5/1\x1b\\");
+    const actual = terminal.presentation();
+    try std.testing.expectEqual(color, actual.foreground);
+    try std.testing.expectEqual(color, actual.background);
+    try std.testing.expectEqual(@as(?Rgb, color), actual.cursor);
+    try std.testing.expectEqual(@as(?Rgb, color), actual.selection_background);
+    try std.testing.expectEqual(@as(?Rgb, color), actual.selection_foreground);
+    try std.testing.expectEqual(color, actual.palette[7]);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    try feed(&terminal, "\x1b]5;0;?\x1b\\\x1b]21;foreground=?;7=?;selection_foreground=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]5;0;rgb:0000/8080/ffff\x1b\\" ++
+            "\x1b]21;foreground=rgb:00/80/ff;7=rgb:00/80/ff;selection_foreground=rgb:00/80/ff\x1b\\",
+        terminal.replyBytes(),
+    );
+}
+
+test "OSC reply RGB precision is an explicit host setting and Kitty 21 remains fixed" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]4;1;#123456\x1b\\\x1b]5;0;#667788\x1b\\" ++
+        "\x1b]10;#abcdef\x1b\\\x1b]11;#112233\x1b\\" ++
+        "\x1b]12;#445566\x1b\\\x1b]17;#789abc\x1b\\\x1b]19;#778899\x1b\\");
+    const colors = terminal.presentation();
+
+    terminal.setColorReplyWidth(.bits8);
+    try std.testing.expectEqualDeep(colors, terminal.presentation());
+    try feed(&terminal, "\x1b]4;1;?\x1b\\\x1b]5;0;?\x07\x1b]10;?\x07\x1b]11;?\x1b\\" ++
+        "\x1b]12;?\x1b\\\x1b]17;?\x1b\\\x1b]19;?\x1b\\\x1b]21;foreground=?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:12/34/56\x1b\\" ++
+            "\x1b]5;0;rgb:66/77/88\x07" ++
+            "\x1b]10;rgb:ab/cd/ef\x07" ++
+            "\x1b]11;rgb:11/22/33\x1b\\" ++
+            "\x1b]12;rgb:44/55/66\x1b\\" ++
+            "\x1b]17;rgb:78/9a/bc\x1b\\" ++
+            "\x1b]19;rgb:77/88/99\x1b\\" ++
+            "\x1b]21;foreground=rgb:ab/cd/ef\x1b\\",
+        terminal.replyBytes(),
+    );
+    try consumeReplies(&terminal);
+
+    terminal.setColorReplyWidth(.bits16);
+    try feed(&terminal, "\x1b]4;1;?\x07\x1b]10;?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:1212/3434/5656\x07" ++
+            "\x1b]10;rgb:abab/cdcd/efef\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqualDeep(colors, terminal.presentation());
+    try consumeReplies(&terminal);
+
+    // Changing future encoding may not rewrite responses already queued.
+    try feed(&terminal, "\x1b]4;1;?\x1b\\");
+    terminal.setColorReplyWidth(.bits8);
+    try feed(&terminal, "\x1b]4;1;?\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:1212/3434/5656\x1b\\" ++
+            "\x1b]4;1;rgb:12/34/56\x1b\\",
+        terminal.replyBytes(),
+    );
+    try consumeReplies(&terminal);
+
+    // Resizing prepares an independent reply owner. Its commit must carry
+    // caller encoding policy, not silently revert RGB width to 16 bits.
+    terminal.setColorReplyWidth(.bits8);
+    try terminal.resize(4, 12);
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b]11;?\x07");
+    try std.testing.expectEqualStrings("\x1b]11;rgb:11/22/33\x07", terminal.replyBytes());
+    try consumeReplies(&terminal);
+
+    // Host output policy survives RIS even though the existing canonical
+    // color override remains owned by VT. Set 8-bit precision before RIS.
+    terminal.setColorReplyWidth(.bits8);
+    try feed(&terminal, "\x1bc\x1b]10;?\x1b\\");
+    try std.testing.expectEqualStrings("\x1b]10;rgb:ab/cd/ef\x1b\\", terminal.replyBytes());
+}
+
 test "xterm extra dynamic colors set query and reset caller-neutral state" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

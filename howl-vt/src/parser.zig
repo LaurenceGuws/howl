@@ -38,10 +38,12 @@ const control_init_capacity = 256;
 // in 2 KiB. Howl uses that scale for controls whose complete value is metadata.
 const metadata_control_max_bytes = 2 * 1024;
 // One OSC 4 can update every color Howl represents: 256 ordinary palette
-// entries plus five xterm special-palette slots. The longest canonical color
-// spelling accepted here is rgb:RRRR/GGGG/BBBB (18 bytes). Three decimal index
-// bytes, one separator before the color, and one separator between pairs bound
-// a complete useful palette transaction to 6002 payload bytes.
+// entries plus five xterm special-palette slots. An entire canonical RGB16
+// palette uses at most 18 bytes per color. Three decimal index bytes, one
+// separator before the color, and one separator between pairs bound that
+// complete useful transaction to 6002 payload bytes. Longer rgbi: fractional
+// spelling is accepted per entry within this same fixed transport ceiling;
+// it does not implicitly enlarge retained input for a giant palette burst.
 const palette_control_max_bytes: u32 =
     261 * (3 + 1 + 18) + (261 - 1);
 // OSC 52 is an unchunked clipboard protocol, so parser acceptance remains

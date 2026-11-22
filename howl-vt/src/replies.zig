@@ -1,4 +1,4 @@
-//! Bounded child-directed reply bytes and framing.
+//! Bounded child-directed reply bytes and formatting policy.
 
 const std = @import("std");
 
@@ -14,14 +14,19 @@ pub const StringControl = enum { dcs, osc };
 /// Exact failures while retaining bounded reply bytes.
 pub const AppendError = error{ OutOfMemory, ReplyLimit };
 
+/// Caller-selected RGB component precision for xterm OSC color reports.
+/// The canonical color state is always RGB8, independently of reply spelling.
+pub const ColorReplyWidth = enum { bits8, bits16 };
+
 /// Maximum bytes retained for child-directed replies.
 pub const max_bytes: u32 = 64 * 1024;
 
-/// Owns one bounded reply byte queue and its framing selection.
+/// Owns one bounded reply byte queue and its caller-selected encoding policy.
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
     bytes_storage: std.ArrayList(u8) = .empty,
     eight_bit_controls: bool = false,
+    color_reply_width: ColorReplyWidth = .bits16,
 
     /// Initializes an empty reply queue.
     pub fn init(allocator: std.mem.Allocator) Buffer {
@@ -56,6 +61,11 @@ pub const Buffer = struct {
         return true;
     }
 
+    /// Changes future color report encoding without touching queued bytes.
+    pub fn setColorReplyWidth(self: *Buffer, width: ColorReplyWidth) void {
+        self.color_reply_width = width;
+    }
+
     /// Returns the current terminal-family framing selection.
     fn usesEightBitControls(self: *const Buffer) bool {
         return self.eight_bit_controls;
@@ -66,9 +76,10 @@ pub const Buffer = struct {
         self.eight_bit_controls = false;
     }
 
-    /// Copies only the framing selection from another reply buffer.
-    pub fn copyFramingFrom(self: *Buffer, other: *const Buffer) void {
+    /// Copies encoding policy, never queued bytes or allocation ownership.
+    pub fn copyEncodingFrom(self: *Buffer, other: *const Buffer) void {
         self.eight_bit_controls = other.eight_bit_controls;
+        self.color_reply_width = other.color_reply_width;
     }
 
     /// Reserves capacity owned by this buffer without changing retained bytes.
