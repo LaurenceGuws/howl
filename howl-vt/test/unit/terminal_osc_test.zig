@@ -1999,6 +1999,79 @@ test "Kitty OSC 21 multiple cursor keys refresh both banks from committed colors
     try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
 }
 
+test "unset dynamic cursor and selection queries never invent RGB or empty OSC replies" {
+    // VT has no configured RGB to report for an automatic cursor or
+    // unset selection. Do not send a malformed empty color field or
+    // pretend that the visual auto-contrast cursor is always black.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    for ([_]u16{ 12, 17, 19 }) |command| {
+        var buffer: [64]u8 = undefined;
+        const query = try std.fmt.bufPrint(&buffer, "\x1b]{d};?\x1b\\", .{command});
+        try std.testing.expect(!(try terminal.feed(query)).stateChanged());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+
+    // A missing cursor or selection value must not block neighboring
+    // known colors, change retained presentation or emit ghost replies.
+    const before = terminal.presentation();
+    try std.testing.expect((try terminal.feed("\x1b]10;?;?;?;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1b]10;rgb:dcdc/dcdc/dcdc\x1b\\" ++
+            "\x1b]11;rgb:1818/1919/2121\x1b\\",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "configured cursor and selection colors query exactly and reset to host baseline" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.cursor = .{ .r = 0x12, .g = 0x34, .b = 0x56 };
+    defaults.selection_background = .{ .r = 0x23, .g = 0x45, .b = 0x67 };
+    defaults.selection_foreground = .{ .r = 0x34, .g = 0x56, .b = 0x78 };
+    terminal.setColorDefaults(defaults);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b]12;?\x1b\\\x1b]17;?\x07\x1b]19;?\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1b]12;rgb:1212/3434/5656\x1b\\" ++
+            "\x1b]17;rgb:2323/4545/6767\x07" ++
+            "\x1b]19;rgb:3434/5656/7878\x1b\\",
+        terminal.replyBytes(),
+    );
+    try consumeReplies(&terminal);
+
+    // Programs override the configured baseline, and resets restore
+    // it without a second synthetic selection/default color owner.
+    try std.testing.expect((try terminal.feed(
+        "\x1b]12;#aabbcc\x1b\\\x1b]17;#ccddee\x1b\\\x1b]19;#ddeeff\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b]112\x1b\\\x1b]117\x07\x1b]119\x1b\\",
+    )).stateChanged());
+    const presentation = terminal.presentation();
+    try std.testing.expectEqual(defaults.cursor, presentation.cursor);
+    try std.testing.expectEqual(defaults.selection_background, presentation.selection_background);
+    try std.testing.expectEqual(defaults.selection_foreground, presentation.selection_foreground);
+
+    // A host preference replacement takes effect in the same owner.
+    defaults.cursor = null;
+    defaults.selection_background = null;
+    defaults.selection_foreground = null;
+    terminal.setColorDefaults(defaults);
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b]12;?\x1b\\\x1b]17;?\x1b\\\x1b]19;?\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().selection_background);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().selection_foreground);
+}
+
 test "Kitty invalid dynamic color clears override but Howl preserves last valid color" {
     for ([_]u16{ 10, 11, 12, 17, 19 }) |command| {
         var terminal = try Terminal.init(std.testing.allocator, 2, 8);
@@ -2023,15 +2096,15 @@ test "Kitty invalid dynamic color clears override but Howl preserves last valid 
     }
 
     // Pinned Kitty sends rgb:0000/0000/0000 when a nullable override
-    // has no value. Howl replies with an empty color field instead.
+    // has no value. Howl cannot truthfully report an auto-derived
+    // host color as a known RGB, so an unset query emits no response.
     for ([_]u16{ 12, 17, 19 }) |command| {
         var terminal = try Terminal.init(std.testing.allocator, 2, 8);
         defer terminal.deinit();
         var buf: [48]u8 = undefined;
         const query = try std.fmt.bufPrint(&buf, "\x1b]{d};?\x1b\\", .{command});
-        try std.testing.expect((try terminal.feed(query)).stateChanged());
-        const expected = try std.fmt.bufPrint(&buf, "\x1b]{d};\x1b\\", .{command});
-        try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+        try std.testing.expect(!(try terminal.feed(query)).stateChanged());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
     }
 }
 
@@ -2216,15 +2289,13 @@ test "xterm extra dynamic colors set query and reset caller-neutral state" {
         "\x1b]113\x1b\\\x1b]114\x1b\\\x1b]115\x1b\\\x1b]116\x1b\\" ++
             "\x1b]117\x1b\\\x1b]118\x1b\\\x1b]119\x1b\\",
     )).stateChanged());
-    try std.testing.expect((try terminal.feed(
+    try std.testing.expect(!(try terminal.feed(
         "\x1b]13;?\x1b\\\x1b]14;?\x1b\\\x1b]15;?\x1b\\\x1b]16;?\x1b\\" ++
             "\x1b]17;?\x1b\\\x1b]18;?\x1b\\\x1b]19;?\x1b\\",
     )).stateChanged());
-    try std.testing.expectEqualStrings(
-        "\x1b]13;\x1b\\\x1b]14;\x1b\\\x1b]15;\x1b\\\x1b]16;\x1b\\" ++
-            "\x1b]17;\x1b\\\x1b]18;\x1b\\\x1b]19;\x1b\\",
-        terminal.replyBytes(),
-    );
+    // An unset host-neutral pointer, Tektronix or selection color
+    // cannot truthfully answer rgb:..., including an empty color field.
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
 test "xterm special colors via OSC 5 and OSC 4 special offsets" {
@@ -2388,7 +2459,9 @@ test "OSC color set and query failure rolls back the complete command" {
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
     try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 
-    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b]12;#010203;?\x1b\\"));
+    // Query the known default background after a foreground set.
+    // A null cursor/selection query is not a valid reply-overflow probe.
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b]10;#010203;?\x1b\\"));
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
 }
 

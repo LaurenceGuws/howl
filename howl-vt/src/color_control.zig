@@ -640,6 +640,11 @@ fn appendXtermDynamicColorReply(
     key: DynamicKey,
     reply_bel: bool,
 ) replies.AppendError!void {
+    // An absent optional color is *not* an RGB value. The host may
+    // supply a configured baseline, but a contrast-derived cursor and
+    // unimplemented selection presentation have no stable RGB to report.
+    // Never fabricate black or an invalid empty-color OSC reply.
+    const color = dynamicColor(colors, key) orelse return;
     // zig-audit: acknowledge catch_unreachable
     // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const text = std.fmt.bufPrint(encode_buf, "{d};", .{dynamicCommandForKey(key)}) catch unreachable;
@@ -647,7 +652,7 @@ fn appendXtermDynamicColorReply(
     errdefer output.truncate(start);
     try output.appendControl(.terminal, .osc);
     try output.append(text);
-    if (dynamicColor(colors, key)) |color| try appendColorOsc(allocator, output, color);
+    try appendColorOsc(allocator, output, color);
     try appendColorReplyTerminator(output, reply_bel);
 }
 
@@ -749,6 +754,46 @@ fn parseHexNibble(byte: u8) ?u8 {
         'A'...'F' => byte - 'A' + 10,
         else => null,
     };
+}
+
+test "unset dynamic RGB query at reply capacity preserves bounded queue" {
+    var colors: properties.ColorState = .{};
+    const defaults: properties.ColorState = .{};
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    var scratch: [64]u8 = undefined;
+
+    const filled = try std.testing.allocator.alloc(u8, replies.max_bytes);
+    defer std.testing.allocator.free(filled);
+    @memset(filled, 'q');
+    try output.append(filled);
+
+    // No known RGB means no reply is created, even at hard capacity.
+    for ([_]u16{ 12, 13, 17, 19 }) |command| {
+        try std.testing.expect(!(try apply(
+            std.testing.allocator,
+            &colors,
+            &defaults,
+            &output,
+            &scratch,
+            .{ .osc = .{ .command = command, .payload = "?" } },
+        )));
+        try std.testing.expectEqualSlices(u8, filled, output.bytes());
+    }
+    // An explicitly supplied RGB must obey the same queue limit and
+    // roll back completely rather than pretending it is unavailable.
+    colors.cursor = .{ .r = 0x12, .g = 0x34, .b = 0x56 };
+    const before = colors;
+    try std.testing.expectError(error.ReplyLimit, apply(
+        std.testing.allocator,
+        &colors,
+        &defaults,
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 12, .payload = "?" } },
+    ));
+    try std.testing.expectEqual(before, colors);
+    try std.testing.expectEqualSlices(u8, filled, output.bytes());
 }
 
 test "color control set query and transaction rollback are exact" {

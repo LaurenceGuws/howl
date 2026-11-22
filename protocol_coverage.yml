@@ -2113,24 +2113,29 @@ references:
           iterm2.osc.cursor:
             raw: OSC 12 ; color (BEL|ST)
             effect: set or query cursor color
-            conditions: Howl retains host-neutral RGB state and emits fixed 16-bit replies but omits iTerm2 selectable
-              8-bit replies and its broader platform color parser. Originating xterm replies with the input BEL byte,
-              while iterm2 serializes the same query reply with fixed ST. Additional reference color-name, alpha, preferred-color-space,
-              configured host/report policy and null-color behavior remain fixable separate obligations.
+            conditions: Howl retains host-neutral RGB state and emits fixed 16-bit replies but omits iTerm2 selectable 8-bit
+              replies and its broader platform color parser. Originating xterm replies with the input BEL byte, while iterm2
+              serializes the same query reply with fixed ST. Additional reference color-name, alpha, preferred-color-space,
+              configured host/report policy and null-color behavior remain fixable separate obligations. Howl now answers
+              from its existing host-configured RGB if present, and does not construct an empty-color OSC response when
+              cursor/selection RGB is genuinely unset; native tests prove host preference change, program override, reset
+              and query bytes.
             howl:
               support: partial
               disposition: adjudicated
               residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser. Additional reference
-                color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain
-                fixable separate obligations.
+                color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain fixable
+                separate obligations. The host-configured cursor and selection RGB reply and reset path is now proven; for
+                absent adaptive values Howl sends no synthetic RGB. Exact selection pixels, iTerm2 report policy and configured
+                reply width remain open.
               rationale: 'Origin-first exact-wire adjudication: Originating xterm replies with the input BEL byte, while
-                iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern
-                usage is not quantified and implementation preference does not transfer protocol ownership.'
+                iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern usage
+                is not quantified and implementation preference does not transfer protocol ownership.'
               source: howl-vt/src/color_control.zig
               symbol: apply
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: xterm color query replies preserve BEL or ST request termination
+                symbol: configured cursor and selection colors query exactly and reset to host baseline
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 12 ; ? BEL
@@ -2153,8 +2158,8 @@ references:
                 recency: Kitty and iTerm2 implement the already originating xterm OSC color family; a later implementation-specific
                   behavior is not evidence of a new independent protocol.
                 reason: 'Captain priority: identify the actual protocol owner first, compare exact input/output effects,
-                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC
-                  12 and specifies Answer a BEL-terminated color query with a BEL-terminated exact RGB response, preserving
+                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC 12
+                  and specifies Answer a BEL-terminated color query with a BEL-terminated exact RGB response, preserving
                   the originating request final. Originating xterm replies with the input BEL byte, while iterm2 serializes
                   the same query reply with fixed ST. No implicit emulation profile is introduced.'
                 proof:
@@ -2163,24 +2168,29 @@ references:
           iterm2.osc.highlight_bg:
             raw: OSC 17 ; color (BEL|ST)
             effect: set or query highlight background
-            conditions: Howl retains host-neutral RGB state and emits fixed 16-bit replies but omits iTerm2 selectable
-              8-bit replies and its broader platform color parser. Originating xterm replies with the input BEL byte,
-              while iterm2 serializes the same query reply with fixed ST. Additional reference color-name, alpha, preferred-color-space,
-              configured host/report policy and null-color behavior remain fixable separate obligations.
+            conditions: Howl retains host-neutral RGB state and emits fixed 16-bit replies but omits iTerm2 selectable 8-bit
+              replies and its broader platform color parser. Originating xterm replies with the input BEL byte, while iterm2
+              serializes the same query reply with fixed ST. Additional reference color-name, alpha, preferred-color-space,
+              configured host/report policy and null-color behavior remain fixable separate obligations. Howl now answers
+              from its existing host-configured RGB if present, and does not construct an empty-color OSC response when
+              cursor/selection RGB is genuinely unset; native tests prove host preference change, program override, reset
+              and query bytes.
             howl:
               support: partial
               disposition: adjudicated
               residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser. Additional reference
-                color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain
-                fixable separate obligations.
+                color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain fixable
+                separate obligations. The host-configured cursor and selection RGB reply and reset path is now proven; for
+                absent adaptive values Howl sends no synthetic RGB. Exact selection pixels, iTerm2 report policy and configured
+                reply width remain open.
               rationale: 'Origin-first exact-wire adjudication: Originating xterm replies with the input BEL byte, while
-                iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern
-                usage is not quantified and implementation preference does not transfer protocol ownership.'
+                iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern usage
+                is not quantified and implementation preference does not transfer protocol ownership.'
               source: howl-vt/src/color_control.zig
               symbol: apply
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: xterm color query replies preserve BEL or ST request termination
+                symbol: configured cursor and selection colors query exactly and reset to host baseline
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 17 ; ? BEL
@@ -2203,8 +2213,8 @@ references:
                 recency: Kitty and iTerm2 implement the already originating xterm OSC color family; a later implementation-specific
                   behavior is not evidence of a new independent protocol.
                 reason: 'Captain priority: identify the actual protocol owner first, compare exact input/output effects,
-                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC
-                  17 and specifies Answer a BEL-terminated color query with a BEL-terminated exact RGB response, preserving
+                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC 17
+                  and specifies Answer a BEL-terminated color query with a BEL-terminated exact RGB response, preserving
                   the originating request final. Originating xterm replies with the input BEL byte, while iterm2 serializes
                   the same query reply with fixed ST. No implicit emulation profile is introduced.'
                 proof:
@@ -2213,24 +2223,29 @@ references:
           iterm2.osc.highlight_fg:
             raw: OSC 19 ; color (BEL|ST)
             effect: set or query highlight foreground
-            conditions: Howl retains host-neutral RGB state and emits fixed 16-bit replies but omits iTerm2 selectable
-              8-bit replies and its broader platform color parser. Originating xterm replies with the input BEL byte,
-              while iterm2 serializes the same query reply with fixed ST. Additional reference color-name, alpha, preferred-color-space,
-              configured host/report policy and null-color behavior remain fixable separate obligations.
+            conditions: Howl retains host-neutral RGB state and emits fixed 16-bit replies but omits iTerm2 selectable 8-bit
+              replies and its broader platform color parser. Originating xterm replies with the input BEL byte, while iterm2
+              serializes the same query reply with fixed ST. Additional reference color-name, alpha, preferred-color-space,
+              configured host/report policy and null-color behavior remain fixable separate obligations. Howl now answers
+              from its existing host-configured RGB if present, and does not construct an empty-color OSC response when
+              cursor/selection RGB is genuinely unset; native tests prove host preference change, program override, reset
+              and query bytes.
             howl:
               support: partial
               disposition: adjudicated
               residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser. Additional reference
-                color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain
-                fixable separate obligations.
+                color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain fixable
+                separate obligations. The host-configured cursor and selection RGB reply and reset path is now proven; for
+                absent adaptive values Howl sends no synthetic RGB. Exact selection pixels, iTerm2 report policy and configured
+                reply width remain open.
               rationale: 'Origin-first exact-wire adjudication: Originating xterm replies with the input BEL byte, while
-                iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern
-                usage is not quantified and implementation preference does not transfer protocol ownership.'
+                iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern usage
+                is not quantified and implementation preference does not transfer protocol ownership.'
               source: howl-vt/src/color_control.zig
               symbol: apply
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: xterm color query replies preserve BEL or ST request termination
+                symbol: configured cursor and selection colors query exactly and reset to host baseline
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 19 ; ? BEL
@@ -2253,8 +2268,8 @@ references:
                 recency: Kitty and iTerm2 implement the already originating xterm OSC color family; a later implementation-specific
                   behavior is not evidence of a new independent protocol.
                 reason: 'Captain priority: identify the actual protocol owner first, compare exact input/output effects,
-                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC
-                  19 and specifies Answer a BEL-terminated color query with a BEL-terminated exact RGB response, preserving
+                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC 19
+                  and specifies Answer a BEL-terminated color query with a BEL-terminated exact RGB response, preserving
                   the originating request final. Originating xterm replies with the input BEL byte, while iterm2 serializes
                   the same query reply with fixed ST. No implicit emulation profile is introduced.'
                 proof:
@@ -4696,25 +4711,30 @@ references:
             raw: OSC 12 ; color (BEL|ST)
             effect: set or query cursor color
             conditions: Pinned Kitty clears invalid cursor override and replies black for an absent effective cursor color;
-              Howl preserves invalid input unchanged and emits an empty nullable query field. Pinned Kitty removes the
-              override on invalid input while xterm and pinned iTerm2 leave the prior value intact. Remaining compatible
-              named/rgbi/LAB color grammar, host notifications and unset-query answers still require independent review,
-              not blanket exemption.
+              Howl preserves invalid input unchanged; without a host-configured RGB it now emits no malformed empty query
+              reply, while configured cursor RGB reports exactly. Pinned Kitty removes the override on invalid input while
+              xterm and pinned iTerm2 leave the prior value intact. Remaining compatible named/rgbi/LAB color grammar, host
+              notifications and unset-query answers still require independent review, not blanket exemption. Verified native
+              query test unset dynamic cursor and selection queries never invent RGB or empty OSC replies and host baseline/reset
+              test configured cursor and selection colors query exactly and reset to host baseline.
             howl:
               support: partial
               disposition: adjudicated
               rationale: 'Origin-first exact-wire adjudication: Pinned Kitty removes the override on invalid input while
-                xterm and pinned iTerm2 leave the prior value intact. Xterm owns the original OSC color family; modern
-                usage is not quantified and implementation preference does not transfer protocol ownership.'
+                xterm and pinned iTerm2 leave the prior value intact. Xterm owns the original OSC color family; modern usage
+                is not quantified and implementation preference does not transfer protocol ownership.'
               source: howl-vt/src/color_control.zig
               symbol: handleXtermDynamicColor
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty
+                symbol: unset dynamic cursor and selection queries never invent RGB or empty OSC replies
               residual: Howl retains bounded host-neutral palette and terminal-color state with fixed exact replies; reference-specific
                 parser breadth, reply formatting, logging, opacity, and presentation policy are outside the complete Howl
-                family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers
-                still require independent review, not blanket exemption.
+                family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers still
+                require independent review, not blanket exemption. Kitty reports black for an absent configured cursor or
+                selection override, while Howl does not manufacture a universal black value; fixed nonempty host colors
+                report truthfully. The app selection overlay currently uses its own gray tint, so pixel parity is still
+                unproven.
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 12 ; not-a-color BEL
@@ -4734,10 +4754,10 @@ references:
                 recency: Kitty and iTerm2 implement the already originating xterm OSC color family; a later implementation-specific
                   behavior is not evidence of a new independent protocol.
                 reason: 'Captain priority: identify the actual protocol owner first, compare exact input/output effects,
-                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC
-                  12 and specifies Reject unparseable color and retain the previously configured cursor color without
-                  a reply. Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2 leave the
-                  prior value intact. No implicit emulation profile is introduced.'
+                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC 12
+                  and specifies Reject unparseable color and retain the previously configured cursor color without a reply.
+                  Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2 leave the prior value
+                  intact. No implicit emulation profile is introduced.'
                 proof:
                   path: howl-vt/test/unit/terminal_osc_test.zig
                   symbol: xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty
@@ -4745,33 +4765,38 @@ references:
             raw: OSC 17 ; color (BEL|ST)
             effect: set or query highlight background
             conditions: Pinned Kitty clears invalid selection background overrides and reports black for null; Howl retains
-              the prior valid value and emits an empty query field for unset selection color. Pinned Kitty removes the
-              override on invalid input while xterm and pinned iTerm2 leave the prior value intact. Remaining compatible
-              named/rgbi/LAB color grammar, host notifications and unset-query answers still require independent review,
-              not blanket exemption.
+              the prior valid value and avoids an empty query reply if the host has no configured selection RGB; configured
+              color queries report exactly. Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2
+              leave the prior value intact. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query
+              answers still require independent review, not blanket exemption. Verified native query test unset dynamic
+              cursor and selection queries never invent RGB or empty OSC replies and host baseline/reset test configured
+              cursor and selection colors query exactly and reset to host baseline.
             howl:
               support: partial
               disposition: adjudicated
               rationale: 'Origin-first exact-wire adjudication: Pinned Kitty removes the override on invalid input while
-                xterm and pinned iTerm2 leave the prior value intact. Xterm owns the original OSC color family; modern
-                usage is not quantified and implementation preference does not transfer protocol ownership.'
+                xterm and pinned iTerm2 leave the prior value intact. Xterm owns the original OSC color family; modern usage
+                is not quantified and implementation preference does not transfer protocol ownership.'
               source: howl-vt/src/color_control.zig
               symbol: handleXtermDynamicColor
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty
+                symbol: unset dynamic cursor and selection queries never invent RGB or empty OSC replies
               residual: Howl retains bounded host-neutral palette and terminal-color state with fixed exact replies; reference-specific
                 parser breadth, reply formatting, logging, opacity, and presentation policy are outside the complete Howl
-                family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers
-                still require independent review, not blanket exemption.
+                family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers still
+                require independent review, not blanket exemption. Kitty reports black for an absent configured cursor or
+                selection override, while Howl does not manufacture a universal black value; fixed nonempty host colors
+                report truthfully. The app selection overlay currently uses its own gray tint, so pixel parity is still
+                unproven.
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 17 ; not-a-color ST
                 winner:
                   owner: xterm
                   protocol: xterm OSC 17 color control
-                  behavior: Reject unparseable color and retain the previously configured selection background without
-                    a reply.
+                  behavior: Reject unparseable color and retain the previously configured selection background without a
+                    reply.
                   evidence: dev_references/terminals/xterm_snapshots at 5afc76e089167da6d07c49334d0bf350377f6c0a misc.c:3661-3713,6443-6477
                 loser:
                   owner: kitty
@@ -4784,10 +4809,10 @@ references:
                 recency: Kitty and iTerm2 implement the already originating xterm OSC color family; a later implementation-specific
                   behavior is not evidence of a new independent protocol.
                 reason: 'Captain priority: identify the actual protocol owner first, compare exact input/output effects,
-                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC
-                  17 and specifies Reject unparseable color and retain the previously configured selection background
-                  without a reply. Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2 leave
-                  the prior value intact. No implicit emulation profile is introduced.'
+                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC 17
+                  and specifies Reject unparseable color and retain the previously configured selection background without
+                  a reply. Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2 leave the prior
+                  value intact. No implicit emulation profile is introduced.'
                 proof:
                   path: howl-vt/test/unit/terminal_osc_test.zig
                   symbol: xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty
@@ -4795,33 +4820,38 @@ references:
             raw: OSC 19 ; color (BEL|ST)
             effect: set or query highlight foreground
             conditions: Pinned Kitty clears invalid selection foreground overrides and reports black for null; Howl retains
-              valid values on invalid input and uses an empty nullable query field. Pinned Kitty removes the override
-              on invalid input while xterm and pinned iTerm2 leave the prior value intact. Remaining compatible named/rgbi/LAB
-              color grammar, host notifications and unset-query answers still require independent review, not blanket
-              exemption.
+              valid values on invalid input and suppresses an empty-color reply when host configuration lacks selection
+              RGB; configured color queries report exactly. Pinned Kitty removes the override on invalid input while xterm
+              and pinned iTerm2 leave the prior value intact. Remaining compatible named/rgbi/LAB color grammar, host notifications
+              and unset-query answers still require independent review, not blanket exemption. Verified native query test
+              unset dynamic cursor and selection queries never invent RGB or empty OSC replies and host baseline/reset test
+              configured cursor and selection colors query exactly and reset to host baseline.
             howl:
               support: partial
               disposition: adjudicated
               rationale: 'Origin-first exact-wire adjudication: Pinned Kitty removes the override on invalid input while
-                xterm and pinned iTerm2 leave the prior value intact. Xterm owns the original OSC color family; modern
-                usage is not quantified and implementation preference does not transfer protocol ownership.'
+                xterm and pinned iTerm2 leave the prior value intact. Xterm owns the original OSC color family; modern usage
+                is not quantified and implementation preference does not transfer protocol ownership.'
               source: howl-vt/src/color_control.zig
               symbol: handleXtermDynamicColor
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty
+                symbol: unset dynamic cursor and selection queries never invent RGB or empty OSC replies
               residual: Howl retains bounded host-neutral palette and terminal-color state with fixed exact replies; reference-specific
                 parser breadth, reply formatting, logging, opacity, and presentation policy are outside the complete Howl
-                family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers
-                still require independent review, not blanket exemption.
+                family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers still
+                require independent review, not blanket exemption. Kitty reports black for an absent configured cursor or
+                selection override, while Howl does not manufacture a universal black value; fixed nonempty host colors
+                report truthfully. The app selection overlay currently uses its own gray tint, so pixel parity is still
+                unproven.
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 19 ; not-a-color BEL
                 winner:
                   owner: xterm
                   protocol: xterm OSC 19 color control
-                  behavior: Reject unparseable color and retain the previously configured selection foreground without
-                    a reply.
+                  behavior: Reject unparseable color and retain the previously configured selection foreground without a
+                    reply.
                   evidence: dev_references/terminals/xterm_snapshots at 5afc76e089167da6d07c49334d0bf350377f6c0a misc.c:3661-3713,6443-6477
                 loser:
                   owner: kitty
@@ -4834,10 +4864,10 @@ references:
                 recency: Kitty and iTerm2 implement the already originating xterm OSC color family; a later implementation-specific
                   behavior is not evidence of a new independent protocol.
                 reason: 'Captain priority: identify the actual protocol owner first, compare exact input/output effects,
-                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC
-                  19 and specifies Reject unparseable color and retain the previously configured selection foreground
-                  without a reply. Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2 leave
-                  the prior value intact. No implicit emulation profile is introduced.'
+                  then current use, Kitty/xterm/iTerm2/Ghostty implementation weight, and protocol age. Xterm owns OSC 19
+                  and specifies Reject unparseable color and retain the previously configured selection foreground without
+                  a reply. Pinned Kitty removes the override on invalid input while xterm and pinned iTerm2 leave the prior
+                  value intact. No implicit emulation profile is introduced.'
                 proof:
                   path: howl-vt/test/unit/terminal_osc_test.zig
                   symbol: xterm dynamic OSC 10 11 12 17 19 ignores invalid colors unlike Kitty
