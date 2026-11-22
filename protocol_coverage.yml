@@ -5994,26 +5994,35 @@ references:
               Source Kitty a79f376 kitty/vt-parser.c:603-614 and
               kitty/screen.c:3974-3991 accept the 9;9 subcommand and optional
               enclosing quotes, ignore nonabsolute paths, and retain the
-              resulting working directory as a kitty-shell-cwd URI. Howl's
-              OSC 9 path sends a caller-owned notification instead; only
-              its separate OSC 7 and iTerm CurrentDir mutate CWD.
+              resulting working directory as a kitty-shell-cwd URI. Howl now
+              dispatches the same valid path into its existing canonical
+              working-directory state without a spurious OSC 9 notification,
+              and preserves ordinary OSC 9/9;4 consequences. Split input,
+              BEL/ST, quoted/unquoted paths, invalid values, reset and bounds
+              have native proofs. A real Kitty 0.51.0 private KWin horse applied
+              the quoted form and reported the correct directory to a new
+              --cwd=last_reported child, including after an invalid update.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               owner: howl-vt
               milestone: working_directory
               rationale: >-
-                The existing canonical working-directory owner can admit
-                bounded absolute paths without mixing untrusted notification
-                text into URI state, but that specific OSC 9;9 dispatch is absent.
+                The wire-visible ConEmu path is now accepted through one
+                canonical bounded CWD owner. Keep its neutral path type rather
+                than pretending to own Kitty's synthetic host URI or allowing
+                an unbounded callback payload.
               residual: >-
-                OSC 9;9 is classified as a host notification and does not
-                update the retained CWD, unlike current Kitty.
+                Howl stores an absolute path (kind path) with a 1024-byte
+                retained metadata ceiling, whereas Kitty projects a
+                kitty-shell-cwd:// URI and can retain longer host-owned paths.
+                Full reference-specific host serialization and length policy
+                remain unqualified; basic ConEmu CWD reporting is implemented.
               source: howl-vt/src/terminal.zig
               symbol: oscProcess
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: "newer Kitty ConEmu OSC 9;9 current directory is not a Howl directory report"
+                symbol: "newer Kitty ConEmu OSC 9;9 reports bounded canonical paths without notification"
       kitty_dcs_color_scheme:
         source: vt-parser.c
         symbol: parse_kitty_dcs

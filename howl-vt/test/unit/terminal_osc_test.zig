@@ -168,23 +168,90 @@ test "GNU Screen title retains bounded title and icon with exact mutation" {
     try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.icon().?.len);
 }
 
-test "newer Kitty ConEmu OSC 9;9 current directory is not a Howl directory report" {
+test "newer Kitty ConEmu OSC 9;9 reports bounded canonical paths without notification" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
     try std.testing.expect(terminal.workingDirectory() == null);
 
-    // Kitty a79f376 dispatch_osc routes OSC 9;9;path to its CWD owner,
-    // with optional surrounding quotes and an absolute-path requirement.
-    // Howl currently treats this as an OSC 9 host notification, not CWD.
-    try feed(&terminal, "\x1b]9;9;\"/var/test\"\x07");
-    try std.testing.expect(terminal.workingDirectory() == null);
+    // Kitty a79f376 vt-parser.c:603-614 routes the 9;9 subcommand to CWD;
+    // screen.c:3974-3993 strips one enclosing quote pair, then admits only
+    // nonempty absolute paths. Howl keeps the path in its existing CWD owner.
+    try std.testing.expect(!(try terminal.feed("\x1b]9;9;\"/var/tes")).stateChanged());
+    try std.testing.expect((try terminal.feed("t\"\x07")).stateChanged());
+    try std.testing.expect(terminal.workingDirectory() != null);
+    var cwd = terminal.workingDirectory().?;
+    try std.testing.expect(cwd.kind == .path);
+    try std.testing.expectEqualStrings("/var/test", cwd.value);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 
-    // The already-supported OSC 7 still performs an actual directory update.
-    try feed(&terminal, "\x1b]7;file://host/work\x1b\\");
+    // A repeated CWD is not a semantic change, and both OSC terminators work.
+    try std.testing.expect(!(try terminal.feed("\x1b]9;9;/var/test\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b]9;9;/another/dir\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("/another/dir", terminal.workingDirectory().?.value);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+
+    // Malformed ConEmu CWD reports must not fall through as notifications or
+    // replace the previous complete directory. A plain OSC 9 still notifies.
+    for ([_][]const u8{
+        "\x1b]9;9;\x07",                  "\x1b]9;9;relative/path\x1b\\",
+        "\x1b]9;9;\"relative/path\"\x07", "\x1b]9;9;\"\"\x07",
+    }) |invalid| {
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        cwd = terminal.workingDirectory().?;
+        try std.testing.expectEqualStrings("/another/dir", cwd.value);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+    try std.testing.expect((try terminal.feed("\x1b]9;regular notification\x07")).stateChanged());
+    const notification = terminal.consequenceHead().?.notification;
+    try std.testing.expectEqual(@as(u16, 9), notification.command);
+    try std.testing.expectEqualStrings("regular notification", notification.payload);
+    try terminal.consumeConsequence(notification.generation);
+
+    // The existing OSC 7 URI still updates the same canonical directory.
+    try std.testing.expect((try terminal.feed("\x1b]7;file://host/work\x1b\\")).stateChanged());
+    cwd = terminal.workingDirectory().?;
+    try std.testing.expect(cwd.kind == .uri);
+    try std.testing.expectEqualStrings("file://host/work", cwd.value);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l")).stateChanged());
     try std.testing.expectEqualStrings("file://host/work", terminal.workingDirectory().?.value);
-    try feed(&terminal, "\x1b]9;9;/another/dir\x1b\\");
-    try std.testing.expectEqualStrings("file://host/work", terminal.workingDirectory().?.value);
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+    try std.testing.expect(terminal.workingDirectory() == null);
+}
+
+test "ConEmu OSC 9;9 directory quota preserves prior path and subsequent recovery" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]9;9;/stable\x07");
+    try std.testing.expectEqualStrings("/stable", terminal.workingDirectory().?.value);
+
+    // One slash plus 1023 bytes is the largest canonical retained metadata
+    // path. The parser's larger input ceiling must not bypass that bound.
+    const filler = try allocator.alloc(u8, expected_metadata_bytes);
+    defer allocator.free(filler);
+    @memset(filler, 'p');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]9;9;/");
+    try sequence.appendSlice(allocator, filler[0 .. expected_metadata_bytes - 1]);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expect((try terminal.feed(sequence.items)).stateChanged());
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.workingDirectory().?.value.len);
+    try std.testing.expectEqual(@as(u8, '/'), terminal.workingDirectory().?.value[0]);
+
+    // Over-quota admission is typed and cannot replace the last complete path.
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]9;9;/");
+    try sequence.appendSlice(allocator, filler);
+    try sequence.appendSlice(allocator, "\x07");
+    try std.testing.expectError(error.PropertyLimit, terminal.feed(sequence.items));
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.workingDirectory().?.value.len);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+
+    // The next complete control works, without a stale parser or directory.
+    try std.testing.expect((try terminal.feed("\x1b]9;9;/recovered\x07")).stateChanged());
+    try std.testing.expectEqualStrings("/recovered", terminal.workingDirectory().?.value);
 }
 
 test "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation" {

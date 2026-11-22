@@ -1565,6 +1565,19 @@ test "esc maps low legacy controls and ignores unsupported finals" {
 // OSC decoding and borrowed protocol payloads
 // =============================================================================
 
+// Interprets ConEmu OSC 9;9 without allowing the embedded path to become
+// an unrelated OSC 9 desktop notification. Kitty strips one enclosing quote
+// pair and admits only nonempty absolute paths. Keep the existing host-neutral
+// path owner rather than manufacturing a Kitty-specific URI scheme.
+fn conEmuCwd(raw: []const u8) ?SemanticEvent {
+    const path = if (raw.len > 1 and raw[0] == '"' and raw[raw.len - 1] == '"')
+        raw[1 .. raw.len - 1]
+    else
+        raw;
+    if (path.len == 0 or path[0] != '/') return null;
+    return .{ .working_directory_report = .{ .kind = .path, .value = path } };
+}
+
 // Decodes one complete borrowed OSC action into a canonical semantic event.
 fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
@@ -1584,7 +1597,9 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload, .reply_bel = v.term == .bel } } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (iterm_control.parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
-        .notification => |v| if (v.command == 9 and
+        .notification => |v| if (v.command == 9 and std.mem.startsWith(u8, v.payload, "9;"))
+            conEmuCwd(v.payload[2..])
+        else if (v.command == 9 and
             (std.mem.startsWith(u8, v.payload, "4;") or std.mem.eql(u8, v.payload, "4")))
             if (progress_mod.parse(v.payload)) |value| .{ .task_progress = value } else null
         else
