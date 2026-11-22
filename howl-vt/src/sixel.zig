@@ -197,6 +197,9 @@ fn paintColumns(
     extent.width = @max(extent.width, end_x);
     extent.height = @max(extent.height, bottom);
     if (canvas) |target| {
+        // The zero-bit glyph advances geometry but never paints any pixel.
+        // Leave the caller-selected transparent/opaque background untouched.
+        if (bits == 0) return end_x;
         var column = x;
         while (column < end_x) : (column += pad)
             paintColumnPixels(target, column, y, bits, color, pan, pad);
@@ -401,6 +404,23 @@ test "Sixel repeat measure and paint passes conserve declared and implicit exten
         defer image.deinit(std.testing.allocator);
         try std.testing.expectEqual(measured.width, image.width);
         try std.testing.expectEqual(measured.height, image.height);
+    }
+}
+
+test "Sixel maximum blank repeats never alter the initialized RGBA background" {
+    const options = Options{ .pan = 1, .pad = 1, .transparent = false };
+    for ([_]bool{ false, true }) |transparent| {
+        const image = try decode(std.testing.allocator, "!4096?", .{
+            .pan = options.pan,
+            .pad = options.pad,
+            .transparent = transparent,
+        });
+        defer image.deinit(std.testing.allocator);
+        try std.testing.expectEqual(@as(u32, 4096), image.width);
+        try std.testing.expectEqual(@as(u32, 6), image.height);
+        const expected: [4]u8 = if (transparent) .{ 0, 0, 0, 0 } else .{ 0, 0, 0, 255 };
+        const pixels = std.mem.bytesAsSlice([4]u8, image.pixels);
+        for (pixels) |pixel| try std.testing.expectEqualDeep(expected, pixel);
     }
 }
 
