@@ -4,6 +4,7 @@ const app_presentation = @import("presentation.zig");
 const pty_vt = @import("pty_vt.zig");
 const projection = @import("projection.zig");
 const consequences = @import("consequences.zig");
+const host_status = @import("program_status.zig");
 const vt_output = @import("howl_vt_output");
 const vt = @import("howl_vt");
 const pty = @import("howl_pty");
@@ -88,6 +89,8 @@ fn sharedConfig(config: app_presentation.Config, history_rows: u16) @import("out
 pub const Status = struct {
     title: [1024]u8 = undefined,
     title_len: usize = 0,
+    /// Copied, bounded program-status summary, never a borrowed VT event.
+    program_status: host_status.Summary = .{},
     failure: ?Failure = null,
     presentation_failure: ?PresentationFailure = null,
     revision: u64 = 0,
@@ -303,6 +306,11 @@ const State = struct {
     write_closed_payload_bytes: usize = 0,
     stopping: bool = false,
     status: Status = .{},
+    /// One host-owned per-pane OSC 7501 index, not a second VT database.
+    program_status_index: host_status.Index = .{},
+    /// A user-input acknowledgment may change the header without changing VT.
+    program_status_changed_pending: bool = false,
+    shell_mark_seen: u64 = 0,
     pending_colors: ?vt.Terminal.ColorDefaults = null,
     pending_cursor: ?vt.Terminal.CursorStyle = null,
     color_preference: vt.Terminal.ColorSchemePreference = .dark,
@@ -357,6 +365,9 @@ const State = struct {
         errdefer allocator.destroy(core);
         try core.initInto(allocator, environ, launch, .{ .width = cell.width, .height = cell.height });
         errdefer core.deinit();
+        // Register the real per-pane consumer before PTY read admission,
+        // otherwise an early OSC 7501 query would be falsely ignored.
+        core.terminal.setProgramStatusConsumer(true);
         const output_owner = try projection.Projection.create(allocator, &core.terminal, store, sharedConfig(presentation, launch.history_rows));
         errdefer output_owner.destroy();
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
@@ -803,8 +814,11 @@ const State = struct {
             },
             .input => |input| {
                 try self.core.input(input);
-                // Committed input returns this pane to live; focus/mouse do not.
+                // Explicit user input acknowledges unseen completed/failed
+                // statuses, but must not remove a still-blocked request.
                 if (input == .bytes or input == .paste or input == .key) {
+                    if (self.program_status_index.seenByUser())
+                        self.program_status_changed_pending = true;
                     if (self.viewport.offset != 0) self.output_gate.pending = true;
                     self.viewport.reset();
                     if (self.selected != null) {
@@ -841,9 +855,15 @@ const State = struct {
 
     fn service(self: *State, readable: bool, writable: bool, now: u64) !pty_vt.Service {
         const result = try self.core.service(readable, writable, now);
-        var host = try consequences.drain(&self.core.terminal, self.allocator, self.color_preference);
+        var host = try consequences.drain(&self.core.terminal, self.allocator, self.color_preference, &self.program_status_index);
         defer host.deinit(self.allocator);
         self.consequence_worked = host.worked;
+        var program_status_dirty = host.status_changed or self.program_status_changed_pending;
+        self.program_status_changed_pending = false;
+        // The child exit and new shell prompt clear transient work only.
+        // Finished and failed status remains until acknowledged by user input.
+        if (result.child_exit != null and self.program_status_index.processExited())
+            program_status_dirty = true;
         var host_notify = false;
         if (host.clipboard) |bytes| {
             self.mutex.lockUncancelable(self.io);
@@ -857,6 +877,12 @@ const State = struct {
         if (host.attention and !self.attention.swap(true, .acq_rel)) host_notify = true;
         if (host_notify) self.notify();
         const observation = self.observe();
+        const mark = observation.shellMark();
+        if (mark.generation != self.shell_mark_seen) {
+            self.shell_mark_seen = mark.generation;
+            if (mark.kind == 'A' and self.program_status_index.processExited())
+                program_status_dirty = true;
+        }
         const live = observation.semanticView(0);
         self.viewport.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
@@ -875,6 +901,10 @@ const State = struct {
         }
         self.mutex.lockUncancelable(self.io);
         self.status.search = self.search.status;
+        const next_program_status = self.program_status_index.summary();
+        const program_status_changed = program_status_dirty or
+            !std.meta.eql(self.status.program_status, next_program_status);
+        self.status.program_status = next_program_status;
         self.status.selected = self.selected;
         self.status.selection_serial = self.selection_serial;
         self.status.selection_failure = self.selection_failure;
@@ -893,7 +923,7 @@ const State = struct {
         self.status.title_len = title_len;
         @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
         self.mutex.unlock(self.io);
-        if (lifecycle_changed or title_changed or search_changed) self.notify();
+        if (lifecycle_changed or title_changed or program_status_changed or search_changed) self.notify();
         // Only this turn's failed text claim earns a retry deadline.
         self.store_busy = false;
         var published = false;
@@ -1496,6 +1526,54 @@ test "paused PTY reader eventually consumes every accepted input chunk" {
     for (0..3) |_| try owner.submit(.{ .input = .{ .bytes = &chunk } });
     try waitTitle(owner, "DRAINED");
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+}
+
+test "actual PTY child program status advances through live pane UI and user acknowledgment" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;JOB\\007\\033]7501;state=working:id=job:progress=40\\033\\\\'; read step; printf '\\033]7501;state=blocked:id=job:kind=auth\\033\\\\'; read step; printf '\\033]7501;state=done:id=job\\033\\\\'; read step; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+
+    const Check = struct {
+        fn wait(owner_value: *Terminal, wanted: ?vt.Terminal.ProgramStatus.State) !Status {
+            for (0..5000) |_| {
+                const current = owner_value.snapshot();
+                if (current.failure) |failure| return failure;
+                if (current.program_status.state == wanted) return current;
+                try std.Io.sleep(owner_value.state().io, .fromMilliseconds(1), .awake);
+            }
+            return error.Timeout;
+        }
+    };
+
+    const working = try Check.wait(owner, .working);
+    try std.testing.expectEqual(@as(?u8, 40), working.program_status.progress);
+    try std.testing.expectEqual(@as(u8, 1), working.program_status.count);
+    try std.testing.expectEqualStrings("JOB", working.title[0..working.title_len]);
+
+    try owner.submit(.{ .input = .{ .bytes = "next\n" } });
+    const blocked = try Check.wait(owner, .blocked);
+    try std.testing.expect(blocked.program_status.kind.? == .auth);
+    try std.testing.expectEqual(@as(u8, 1), blocked.program_status.count);
+
+    try owner.submit(.{ .input = .{ .bytes = "next\n" } });
+    const finished = try Check.wait(owner, .done);
+    try std.testing.expect(finished.program_status.state.? == .done);
+
+    // A third explicit input acknowledges the completed status before the
+    // child exits. A GUI never borrows this worker's internal id records.
+    try owner.submit(.{ .input = .{ .bytes = "ack\n" } });
+    const acknowledged = try Check.wait(owner, null);
+    try std.testing.expectEqual(@as(?vt.Terminal.ProgramStatus.State, null), acknowledged.program_status.state);
+    try std.testing.expectEqual(@as(?Failure, null), acknowledged.failure);
 }
 
 test "sustained PTY write pressure cannot hide a fresh child output marker" {

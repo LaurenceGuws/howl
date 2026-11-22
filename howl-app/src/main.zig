@@ -18,6 +18,7 @@ const composition = @import("composition.zig");
 const config = @import("config.zig");
 const widgets = @import("widgets.zig");
 const tab_title = @import("tab_title.zig");
+const host_status = @import("program_status.zig");
 const settings = @import("settings.zig");
 const pages = @import("settings_pages.zig");
 const settings_input = @import("settings_input.zig");
@@ -115,6 +116,25 @@ const HeaderLabel = struct {
     fn text(self: *const HeaderLabel) []const u8 {
         return self.bytes[0..self.len];
     }
+
+    // The short status prefix is always visible, even if the program's
+    // automatic or manually named title must be clipped. Never mutate the
+    // actual tab title, SDL font cache, or canonical VT state.
+    fn setWithProgramStatus(self: *HeaderLabel, title: []const u8, summary: host_status.Summary) void {
+        var scratch: [32]u8 = undefined;
+        const prefix = host_status.label(summary, &scratch);
+        std.debug.assert(prefix.len <= self.bytes.len);
+        @memcpy(self.bytes[0..prefix.len], prefix);
+        const available = self.bytes.len - prefix.len;
+        var count = @min(title.len, available);
+        // Don't split a valid UTF-8 scalar at the bound. In all other cases
+        // use the existing title bytes exactly, without reinterpretation.
+        if (count < title.len) {
+            while (count != 0 and title[count] & 0xc0 == 0x80) count -= 1;
+        }
+        @memcpy(self.bytes[prefix.len..][0..count], title[0..count]);
+        self.len = prefix.len + count;
+    }
 };
 
 /// Exact current chrome paint inputs; terminal content changes are deliberately
@@ -144,6 +164,25 @@ const HeaderPicture = struct {
         return true;
     }
 };
+
+test "program status prefix stays visible without changing manually named tabs" {
+    var label: HeaderLabel = .{};
+    label.setWithProgramStatus("AUTOMATIC", .{});
+    try std.testing.expectEqualStrings("AUTOMATIC", label.text());
+    label.setWithProgramStatus("MANUAL", .{ .state = .working, .progress = 42, .count = 1 });
+    try std.testing.expectEqualStrings("[RUN 42%] MANUAL", label.text());
+    label.setWithProgramStatus("MANUAL", .{ .state = .blocked, .kind = .auth, .count = 1 });
+    try std.testing.expectEqualStrings("[WAIT AUTH] MANUAL", label.text());
+    label.setWithProgramStatus("MANUAL", .{ .state = .@"error", .count = 1 });
+    try std.testing.expectEqualStrings("[FAIL] MANUAL", label.text());
+    var full: [1024]u8 = @splat('x');
+    // The last scalar is multi-byte and must never be split by the prefix.
+    @memcpy(full[1021..1024], "界");
+    label.setWithProgramStatus(&full, .{ .state = .done, .count = 1 });
+    try std.testing.expect(label.text().len <= label.bytes.len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(label.text()));
+    try std.testing.expect(std.mem.startsWith(u8, label.text(), "[DONE] "));
+}
 
 const HeaderCache = struct {
     texture: ?*c.SDL_Texture = null,
@@ -2200,12 +2239,13 @@ pub const App = struct {
         };
         for (0..self.tab_count) |index| {
             const value = self.tabs[index].?;
-            if (value.title.len != 0) {
-                picture.labels[index].set(value.title.bytes[0..value.title.len]);
-            } else {
-                const status = value.panes[value.tree.active].?.snapshot();
-                picture.labels[index].set(status.title[0..status.title_len]);
-            }
+            // A tab with a manually supplied display name need not yet
+            // have an attached pane (e.g. during initial UI construction).
+            const status = if (value.panes[value.tree.active]) |owned_pane| owned_pane.snapshot() else terminal.Status{};
+            picture.labels[index].setWithProgramStatus(
+                value.title.resolve(status.title[0..status.title_len]),
+                status.program_status,
+            );
         }
         return picture;
     }
