@@ -2982,7 +2982,8 @@ references:
           iterm2.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
             conditions: "Pinned iTerm2 resolves terminfo through an xterm or screen host profile, dynamic key
               mappings and asynchronous host promises. Howl answers only an explicitly owned bounded subset,
-              now including Kitty-pinned am, ccc, XF, BE and BD alongside Co, colors, RGB, Tc and Su.",
+              now including Kitty-pinned am, ccc, XF, BE, BD and seven fixed SGR/cursor control
+              strings (smul, rmul, sitm, ritm, civis, cnorm, cvvis), alongside Co, colors, RGB, Tc and Su.",
             howl: {support: partial, disposition: excluded,
               rationale: "Pinned iTerm2 obtains runtime terminfo strings, host key mappings, terminal identity
                 and profile name through its embedding application. VT cannot derive those values from
@@ -5197,18 +5198,20 @@ references:
         records:
           kitty.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap values, relevance: query,
             conditions: "Pinned Kitty dispatches DCS +q to Python get_capabilities. Howl now answers pinned
-              am, ccc and XF booleans and exact BE/BD bracketed-paste control strings alongside Co, colors,
-              RGB, Tc and Su; it does not expose TERM identity, OS/window queries or arbitrary terminfo.",
+              am, ccc and XF booleans, BE/BD bracketed-paste strings and seven exact native
+              SGR/cursor controls (smul, rmul, sitm, ritm, civis, cnorm, cvvis), alongside Co,
+              colors, RGB, Tc and Su; TERM identity and OS/window/host queries remain delegated.",
             howl: {support: partial, disposition: excluded,
               rationale: "The pinned Kitty resolver has a much broader terminfo inventory plus dynamic
                 terminal, OS, window and application query values. VT must not invent a selected TERM,
                 host configuration, platform identity or host-dependent key mapping.",
-              residual: "Five new capability names match executable pinned Kitty get_capabilities results
-                and pass fragmented, C1, ordered and rollback tests. Kitty's broader dynamic and static
-                string/numeric inventory remains unqualified.",
+              residual: "Twelve pinned Kitty names gained exact native responses across the 2026-11-20
+                and 2026-11-22 source cuts, including seven SGR/cursor strings with pixel-independent
+                semantic-state proofs. Kitty's broader dynamic/static terminfo and host identity
+                inventory remain unqualified, not silently mapped onto VT.",
               source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "XTGETTCAP answers pinned Kitty owned wrap palette focus and bracketed paste capabilities"}}}
+              symbol: "XTGETTCAP reports pinned style and cursor controls already owned by VT"}}}
           kitty.dcs.decrqss: {raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
             conditions: "Howl recognizes Kitty's four requests; retained SGR fields, hidden cursor mapping, and
               DECSACE report value differ",

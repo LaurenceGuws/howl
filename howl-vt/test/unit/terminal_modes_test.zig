@@ -2403,6 +2403,55 @@ test "XTGETTCAP answers pinned Kitty owned wrap palette focus and bracketed past
     );
 }
 
+test "XTGETTCAP reports pinned style and cursor controls already owned by VT" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 12);
+    defer terminal.deinit();
+
+    // Exact replies from the immutable pinned Kitty get_capabilities oracle.
+    // An unfinished DCS cannot publish partial replies or alter terminal state.
+    try std.testing.expect(!(try terminal.feed("\x1bP+q736d756c;726d756c;7369746d")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed(
+        ";7269746d;6369766973;636e6f726d;6376766973;626f677573\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r736d756c=1b5b346d\x1b\\" ++
+            "\x1bP1+r726d756c=1b5b32346d\x1b\\" ++
+            "\x1bP1+r7369746d=1b5b336d\x1b\\" ++
+            "\x1bP1+r7269746d=1b5b32336d\x1b\\" ++
+            "\x1bP1+r6369766973=1b5b3f32356c\x1b\\" ++
+            "\x1bP1+r636e6f726d=1b5b3f3132681b5b3f323568\x1b\\" ++
+            "\x1bP1+r6376766973=1b5b3f31323b323568\x1b\\" ++
+            "\x1bP0+r626f677573\x1b\\",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    // Every reported value has a concrete existing terminal behavior.
+    write(&terminal, "\x1b[4mU\x1b[24mN\x1b[3mI\x1b[23mR");
+    const view = terminal.semanticView(0);
+    try std.testing.expect(view.cellInfoAt(0, 0).attrs.underline);
+    try std.testing.expect(!view.cellInfoAt(0, 1).attrs.underline);
+    try std.testing.expect(view.cellInfoAt(0, 2).attrs.italic);
+    try std.testing.expect(!view.cellInfoAt(0, 3).attrs.italic);
+    write(&terminal, "\x1b[?25l");
+    try std.testing.expect(!terminal.semanticView(0).cursor_visible);
+    write(&terminal, "\x1b[?12h\x1b[?25h");
+    try std.testing.expect(terminal.semanticView(0).cursor_visible);
+    try std.testing.expect(terminal.semanticView(0).cursor_blink);
+    write(&terminal, "\x1b[?12;25h");
+    try std.testing.expect(terminal.semanticView(0).cursor_visible);
+    try std.testing.expect(terminal.semanticView(0).cursor_blink);
+
+    // The borrowed spelling of each query name and C1 framing are retained.
+    write(&terminal, "\x1b G\x90+q736D756C;6369766973\x9c");
+    try std.testing.expectEqualStrings(
+        "\x901+r736D756C=1b5b346d\x9c" ++
+            "\x901+r6369766973=1b5b3f32356c\x9c",
+        pendingOutput(&terminal),
+    );
+}
+
 test "XTGETTCAP response capacity failure rolls back every requested reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

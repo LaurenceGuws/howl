@@ -2536,6 +2536,16 @@ fn termcapValue(encoded_name: []const u8) ?TermcapValue {
     // The value is the exact control sequence encoded as lowercase hex.
     if (hexNameEquals(encoded_name, "BE")) return .{ .encoded = "1b5b3f3230303468" };
     if (hexNameEquals(encoded_name, "BD")) return .{ .encoded = "1b5b3f323030346c" };
+    // Pinned Kitty advertises these fixed SGR and DEC cursor controls.
+    // Each action already has one Screen/Terminal owner; no capability
+    // registry, host setting, or unrepresented terminal identity is needed.
+    if (hexNameEquals(encoded_name, "smul")) return .{ .encoded = "1b5b346d" };
+    if (hexNameEquals(encoded_name, "rmul")) return .{ .encoded = "1b5b32346d" };
+    if (hexNameEquals(encoded_name, "sitm")) return .{ .encoded = "1b5b336d" };
+    if (hexNameEquals(encoded_name, "ritm")) return .{ .encoded = "1b5b32336d" };
+    if (hexNameEquals(encoded_name, "civis")) return .{ .encoded = "1b5b3f32356c" };
+    if (hexNameEquals(encoded_name, "cnorm")) return .{ .encoded = "1b5b3f3132681b5b3f323568" };
+    if (hexNameEquals(encoded_name, "cvvis")) return .{ .encoded = "1b5b3f31323b323568" };
     if (hexNameEquals(encoded_name, "Tc") or hexNameEquals(encoded_name, "Su")) return .flag;
     return null;
 }
@@ -2585,7 +2595,7 @@ test "XTGETTCAP reply allocation failure rolls back the complete ordered respons
 fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
     var output = replies.Buffer.init(allocator);
     defer output.deinit();
-    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;626F677573") catch |failure| {
+    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;736d756c;6369766973;626F677573") catch |failure| {
         try std.testing.expectEqual(@as(usize, 0), output.bytes().len);
         return failure;
     };
@@ -2593,7 +2603,10 @@ fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
         "\x1bP1+r436F=323536\x1b\\\x1bP1+r5463\x1b\\" ++
             "\x1bP1+r4245=1b5b3f3230303468\x1b\\" ++
             "\x1bP1+r4244=1b5b3f323030346c\x1b\\" ++
-            "\x1bP1+r5846\x1b\\\x1bP0+r626F677573\x1b\\",
+            "\x1bP1+r5846\x1b\\" ++
+            "\x1bP1+r736d756c=1b5b346d\x1b\\" ++
+            "\x1bP1+r6369766973=1b5b3f32356c\x1b\\" ++
+            "\x1bP0+r626F677573\x1b\\",
         output.bytes(),
     );
 }
