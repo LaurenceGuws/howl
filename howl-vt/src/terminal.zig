@@ -5964,6 +5964,8 @@ pub const Terminal = struct {
         };
     }
 
+    /// One VT-owned RGB/opacity color-match entry; the host owns its pixels.
+    pub const TransparentBackgroundColor = properties.TransparentBackgroundColor;
     /// Complete copied host-configured color baseline, separate from program changes and stacks.
     pub const ColorDefaults = properties.ColorState;
 

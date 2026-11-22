@@ -5066,7 +5066,19 @@ references:
               In private managed KWin, installed Kitty 0.51.0 and staged
               ReleaseFast Howl produced eight of eight byte-identical raw
               transparent-color replies, including alpha, invalid values
-              and stack restoration. No SDL or Wayland blend policy changed.
+              and stack restoration. The accepted output Snapshot now copies
+              those eight fixed RGB/opacity entries at its immutable frame
+              publication boundary, independent of future terminal mutations.
+              Native owner-lease tests prove a held old cut preserves color and
+              opacity after new OSC 21 input and flush; the next accepted frame
+              carries the updated color with a newer content revision. A host
+              SDL software-renderer pixel test proves the currently opaque
+              canvas leaves background, selected cells and clipped glyph ink
+              unchanged even when a frame contains matching 20%-opacity
+              metadata. Howl's normal SDL window does not request a transparent
+              surface and its cached content texture uses nonblending copy;
+              per-cell alpha blending cannot safely activate until those
+              host-owned policies have independent pixel/window proofs.
               Frozen Kitty's duplicate-key coalescing and direct unknown-key
               echo remain historical revision-specific facts.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
@@ -5074,9 +5086,11 @@ references:
                 unpadded base64 unknown-field replies and eight opacity-aware
                 transparent background color slots now have native and live
                 wire-level evidence. The fixed VT state and query/stack lifecycle
-                are implemented, but Howl's SDL host does not yet blend matching
-                cell backgrounds against the window or support dynamic configured
-                background_opacity. The current opaque fallback is 1.0; other host
+                and immutable frame copy are implemented, but Howl's SDL host
+                still uses an opaque window and content texture, and therefore
+                cannot safely blend matching cell backgrounds against the desktop
+                or support dynamic configured background_opacity. The current
+                opaque fallback is 1.0; other host
                 opacity policies remain unqualified. Visual-bell RGB, additional
                 color names and presentation refresh are separate incomplete
                 obligations. Frozen Kitty d4106ef uses different duplicate and

@@ -54,6 +54,49 @@ test "public owner holds exact bytes across placeholder input and font replaceme
     try std.testing.expectEqualDeep(commands, held.snapshot.glyphs[0]);
 }
 
+test "accepted output cut freezes transparent color opacity across canonical mutations" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b]21;transparent_background_color2=#112233@0.5\x1b\\");
+    try owner.flush();
+
+    const old = try owner.hold();
+    var old_held = true;
+    defer if (old_held) release(owner, old);
+    const held = old.snapshot.transparent_background[1].?;
+    try std.testing.expectEqualDeep(
+        @import("howl_vt").Terminal.Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 },
+        held.rgb,
+    );
+    try std.testing.expectEqual(@as(?f32, 0.5), held.opacity);
+    const revision = old.snapshot.content_revision;
+
+    // The host can retain this frame while VT continues receiving controls.
+    // The old cut must not read the live canonical color owner.
+    try owner.feed("\x1b]21;transparent_background_color2=#aabbcc@0.2\x1b\\");
+    try std.testing.expectEqualDeep(held, old.snapshot.transparent_background[1].?);
+    try owner.flush();
+    try std.testing.expectEqualDeep(held, old.snapshot.transparent_background[1].?);
+
+    // The newer accepted frame cannot be leased while the old one is pinned.
+    try std.testing.expectError(error.LeaseBusy, owner.hold());
+    try std.testing.expect(owner.observation().presentation().transparent_background[1] != null);
+    try std.testing.expectEqual(revision, old.snapshot.content_revision);
+
+    release(owner, old);
+    old_held = false;
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expect(next.snapshot.content_revision > revision);
+    try std.testing.expectEqualDeep(
+        @import("howl_vt").Terminal.Rgb{ .r = 0xaa, .g = 0xbb, .b = 0xcc },
+        next.snapshot.transparent_background[1].?.rgb,
+    );
+    try std.testing.expectEqual(@as(?f32, 0.2), next.snapshot.transparent_background[1].?.opacity);
+}
+
 test "public output OOM preserves held output and retries newer canonical input" {
     const f = try font(12);
     defer f.deinit();

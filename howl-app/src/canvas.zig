@@ -1430,6 +1430,14 @@ test "configured selection colors paint real background and readable clipped gly
     snapshot.cols = 4;
     snapshot.selection_background = .{ .r = 60, .g = 80, .b = 100 };
     snapshot.selection_foreground = .{ .r = 250, .g = 160, .b = 20 };
+    // A protocol-controlled transparent-color match is only metadata in
+    // the normal opaque SDL host. Until the window explicitly supports
+    // composited transparency, it must not dim these cell backgrounds or
+    // accidentally change the selected glyph/selection RGB pixels.
+    snapshot.transparent_background[0] = .{
+        .rgb = .{ .r = 20, .g = 30, .b = 40 },
+        .opacity = 0.2,
+    };
     const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = 40, .h = 20 };
     backend.selection_paint = .{ .rows = 1 };
     backend.selection_paint.add(0, 0, 0);
