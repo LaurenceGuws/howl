@@ -86,8 +86,7 @@ fn walk(payload: []const u8, options: Options, canvas: ?Canvas) Error!Extent {
         const byte = payload[index];
         switch (byte) {
             '?'...'~' => {
-                try paintColumn(canvas, x, y, byte - '?', palette[color], pan, pad, &extent);
-                x = std.math.add(u32, x, pad) catch return error.Quota;
+                x = try paintColumns(canvas, x, y, 1, byte - '?', palette[color], pan, pad, &extent);
                 painted = true;
                 index += 1;
             },
@@ -97,18 +96,7 @@ fn walk(payload: []const u8, options: Options, canvas: ?Canvas) Error!Extent {
                 if (repeat == 0 or index >= payload.len or payload[index] < '?' or payload[index] > '~')
                     return error.Invalid;
                 const bits = payload[index] - '?';
-                // Reject the complete expanded width before visiting any
-                // columns. An untrusted ten-byte count must not force billions
-                // of iterations, even for an all-empty Sixel column.
-                const expanded_width = std.math.mul(u32, repeat, pad) catch return error.Quota;
-                const end_x = std.math.add(u32, x, expanded_width) catch return error.Quota;
-                if (end_x > graphics.max_dimension) return error.Quota;
-                var count: u32 = 0;
-                while (count < repeat) : (count += 1) {
-                    try paintColumn(canvas, x, y, bits, palette[color], pan, pad, &extent);
-                    x += pad;
-                }
-                std.debug.assert(x == end_x);
+                x = try paintColumns(canvas, x, y, repeat, bits, palette[color], pan, pad, &extent);
                 painted = true;
                 index += 1;
             },
@@ -188,33 +176,56 @@ fn walk(payload: []const u8, options: Options, canvas: ?Canvas) Error!Extent {
     return extent;
 }
 
-fn paintColumn(
+// Admit the complete run and update its extent before visiting any pixels.
+// The measurement pass is constant work even for a maximum-width repeat.
+fn paintColumns(
     canvas: ?Canvas,
+    x: u32,
+    y: u32,
+    repeat: u32,
+    bits: u8,
+    color: [4]u8,
+    pan: u3,
+    pad: u3,
+    extent: *Extent,
+) Error!u32 {
+    std.debug.assert(repeat > 0);
+    const width = std.math.mul(u32, repeat, pad) catch return error.Quota;
+    const end_x = std.math.add(u32, x, width) catch return error.Quota;
+    const bottom = std.math.add(u32, y, @as(u32, pan) * 6) catch return error.Quota;
+    if (end_x > graphics.max_dimension or bottom > graphics.max_dimension) return error.Quota;
+    extent.width = @max(extent.width, end_x);
+    extent.height = @max(extent.height, bottom);
+    if (canvas) |target| {
+        var column = x;
+        while (column < end_x) : (column += pad)
+            paintColumnPixels(target, column, y, bits, color, pan, pad);
+        std.debug.assert(column == end_x);
+    }
+    return end_x;
+}
+
+fn paintColumnPixels(
+    target: Canvas,
     x: u32,
     y: u32,
     bits: u8,
     color: [4]u8,
     pan: u3,
     pad: u3,
-    extent: *Extent,
-) Error!void {
-    const bottom = std.math.add(u32, y, @as(u32, pan) * 6) catch return error.Quota;
-    extent.width = @max(extent.width, std.math.add(u32, x, pad) catch return error.Quota);
-    extent.height = @max(extent.height, bottom);
-    if (canvas) |target| {
-        var bit: u3 = 0;
-        while (bit < 6) : (bit += 1) {
-            if (bits & (@as(u8, 1) << bit) == 0) continue;
-            var dy: u3 = 0;
-            while (dy < pan) : (dy += 1) {
-                const py = y + @as(u32, bit) * pan + dy;
-                var dx: u3 = 0;
-                while (dx < pad) : (dx += 1) {
-                    const px = x + dx;
-                    if (px >= target.width or py >= target.height) continue;
-                    const offset = (@as(usize, py) * target.width + px) * 4;
-                    @memcpy(target.pixels[offset..][0..4], &color);
-                }
+) void {
+    var bit: u3 = 0;
+    while (bit < 6) : (bit += 1) {
+        if (bits & (@as(u8, 1) << bit) == 0) continue;
+        var dy: u3 = 0;
+        while (dy < pan) : (dy += 1) {
+            const py = y + @as(u32, bit) * pan + dy;
+            var dx: u3 = 0;
+            while (dx < pad) : (dx += 1) {
+                const px = x + dx;
+                if (px >= target.width or py >= target.height) continue;
+                const offset = (@as(usize, py) * target.width + px) * 4;
+                @memcpy(target.pixels[offset..][0..4], &color);
             }
         }
     }
@@ -369,6 +380,28 @@ test "Sixel repeats reject oversized geometry before expanding columns" {
     }));
     try std.testing.expectError(error.Invalid, decode(allocator, "!0~", opts));
     try std.testing.expectError(error.Invalid, decode(allocator, "!99999999999~", opts));
+}
+
+test "Sixel repeat measure and paint passes conserve declared and implicit extents" {
+    const cases = [_]struct {
+        payload: []const u8,
+        options: Options,
+        width: u32,
+        height: u32,
+    }{
+        .{ .payload = "#1;2;100;0;0!7?$!4~-#2;2;0;100;0!2~", .options = .{ .pan = 1, .pad = 1, .transparent = true }, .width = 7, .height = 12 },
+        .{ .payload = "\"2;3;5;30!2?-$!3~", .options = .{ .pan = 1, .pad = 1, .transparent = false }, .width = 15, .height = 60 },
+        .{ .payload = "!4096?", .options = .{ .pan = 1, .pad = 1, .transparent = true }, .width = 4096, .height = 6 },
+    };
+    for (cases) |case| {
+        const measured = try walk(case.payload, case.options, null);
+        try std.testing.expectEqual(case.width, measured.width);
+        try std.testing.expectEqual(case.height, measured.height);
+        const image = try decode(std.testing.allocator, case.payload, case.options);
+        defer image.deinit(std.testing.allocator);
+        try std.testing.expectEqual(measured.width, image.width);
+        try std.testing.expectEqual(measured.height, image.height);
+    }
 }
 
 test "Sixel opaque and transparent canvas initialization remains exact at every pixel" {
