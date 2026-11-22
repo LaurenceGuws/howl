@@ -2397,23 +2397,20 @@ fn appendTitleReport(vt: *Terminal) replies.AppendError!void {
 fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) replies.AppendError!bool {
     const active = vt.screen_state.activeConst();
     const payload = switch (kind) {
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-        .text_cells => std.fmt.bufPrint(scratch, "8;{d};{d}t", .{ active.rows, active.cols }) catch unreachable,
+        .text_cells => std.fmt.bufPrint(scratch, "8;{d};{d}t", .{ active.rows, active.cols }) catch
+            return error.ReplyLimit,
         .cell_pixels => blk: {
             const cell = active.cellPixelSize() orelse return false;
-            // zig-audit: acknowledge catch_unreachable
-            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-            break :blk std.fmt.bufPrint(scratch, "6;{d};{d}t", .{ cell.height, cell.width }) catch unreachable;
+            break :blk std.fmt.bufPrint(scratch, "6;{d};{d}t", .{ cell.height, cell.width }) catch
+                return error.ReplyLimit;
         },
         .pixel_size_report => blk: {
             // Without distinct caller frame dimensions, Ps=2 retains the text-area fallback.
             const cell = active.cellPixelSize() orelse return false;
             const height = @as(u64, cell.height) * @as(u64, active.rows);
             const width = @as(u64, cell.width) * @as(u64, active.cols);
-            // zig-audit: acknowledge catch_unreachable
-            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-            break :blk std.fmt.bufPrint(scratch, "4;{d};{d}t", .{ height, width }) catch unreachable;
+            break :blk std.fmt.bufPrint(scratch, "4;{d};{d}t", .{ height, width }) catch
+                return error.ReplyLimit;
         },
     };
     try vt.reply_buffer.appendCsi(.terminal, payload);
@@ -2428,10 +2425,32 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) replies.AppendError!v
         scratch,
         "1337;ReportCellSize={d};{d};1",
         .{ cell.height, cell.width },
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    ) catch unreachable;
+    ) catch return error.ReplyLimit;
     try vt.reply_buffer.appendString(.iterm, .osc, payload);
+}
+
+test "size reports reject short borrowed scratch without touching queued output" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(9, 18);
+    try terminal.reply_buffer.append("held");
+    var tiny: [0]u8 = .{};
+    for ([_]SizeReport{ .text_cells, .cell_pixels, .pixel_size_report }) |kind| {
+        try std.testing.expectError(error.ReplyLimit, appendSizeReport(&terminal, &tiny, kind));
+        try std.testing.expectEqualStrings("held", terminal.reply_buffer.bytes());
+    }
+    try std.testing.expectError(error.ReplyLimit, appendItermCellSizeReport(&terminal, &tiny));
+    try std.testing.expectEqualStrings("held", terminal.reply_buffer.bytes());
+
+    var enough: [64]u8 = undefined;
+    try std.testing.expect(try appendSizeReport(&terminal, &enough, .text_cells));
+    try std.testing.expect(try appendSizeReport(&terminal, &enough, .cell_pixels));
+    try std.testing.expect(try appendSizeReport(&terminal, &enough, .pixel_size_report));
+    try appendItermCellSizeReport(&terminal, &enough);
+    try std.testing.expectEqualStrings(
+        "held\x1b[8;2;3t\x1b[6;18;9t\x1b[4;36;27t\x1b]1337;ReportCellSize=18;9;1\x1b\\",
+        terminal.reply_buffer.bytes(),
+    );
 }
 
 fn appendDecrqssReply(
