@@ -335,16 +335,17 @@ pub const App = struct {
             .blocked => appearance.hover(colors.title),
             .notice, .running, .done => colors.title,
         };
-        // A 1px outline makes the floating surface readable over both
-        // dark and light TUIs. Every pixel remains window-clipped.
-        try drawing.fillRounded(self.renderer, rect, colors.border, 12);
+        // Follow the same four-pixel corners as the tab chips and Settings
+        // cards. The prior 12px pill looked foreign to the chrome theme.
+        const radius = chrome.Geometry.chip_radius;
+        try drawing.fillRounded(self.renderer, rect, colors.border, radius);
         const inner: layout.Rect = .{
             .x = rect.x + 1,
             .y = rect.y + 1,
             .width = @max(0, rect.width - 2),
             .height = @max(0, rect.height - 2),
         };
-        try drawing.fillRounded(self.renderer, inner, surface, 11);
+        try drawing.fillRounded(self.renderer, inner, surface, radius - 1);
         const label: layout.Rect = .{
             .x = inner.x + 12,
             .y = inner.y,
@@ -3709,6 +3710,13 @@ test "top-right toast paints only a compact corner and reuses the notice surface
         surface,
         @intFromFloat(right.x + 8),
         @intFromFloat(right.y + 15),
+    )));
+    // At x+5,y+1 a 4px chrome corner is filled. The old 12px pill
+    // would leave this pixel at the untouched sentinel background.
+    try std.testing.expect(!std.meta.eql(sentinel, try testPixel(
+        surface,
+        @intFromFloat(right.x + 5),
+        @intFromFloat(right.y + 1),
     )));
     configuration.value.status_toast_position = .top_left;
     try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, sentinel.r, sentinel.g, sentinel.b, sentinel.a));
