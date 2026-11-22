@@ -101,11 +101,18 @@ fn walk(payload: []const u8, options: Options, canvas: ?Canvas) Error!Extent {
                 if (repeat == 0 or index >= payload.len or payload[index] < '?' or payload[index] > '~')
                     return error.Invalid;
                 const bits = payload[index] - '?';
+                // Reject the complete expanded width before visiting any
+                // columns. An untrusted ten-byte count must not force billions
+                // of iterations, even for an all-empty Sixel column.
+                const expanded_width = std.math.mul(u32, repeat, pad) catch return error.Quota;
+                const end_x = std.math.add(u32, x, expanded_width) catch return error.Quota;
+                if (end_x > graphics.max_dimension) return error.Quota;
                 var count: u32 = 0;
                 while (count < repeat) : (count += 1) {
                     try paintColumn(canvas, x, y, bits, palette[color], pan, pad, &extent);
-                    x = std.math.add(u32, x, pad) catch return error.Quota;
+                    x += pad;
                 }
+                std.debug.assert(x == end_x);
                 painted = true;
                 index += 1;
             },
@@ -341,6 +348,31 @@ test "Sixel color register bound matches both available and rejected indices" {
     defer image.deinit(allocator);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, image.pixels[0..4]);
     try std.testing.expectError(error.Unsupported, decode(allocator, "#256~", options));
+}
+
+test "Sixel repeats reject oversized geometry before expanding columns" {
+    const allocator = std.testing.allocator;
+    const opts: Options = .{ .pan = 1, .pad = 1, .transparent = true };
+    // A ten-byte repeat count can otherwise ask the first pass to do
+    // billions of per-column operations before observing the width quota.
+    try std.testing.expectError(error.Quota, decode(allocator, "!4294967295~", opts));
+    try std.testing.expectError(error.Quota, decode(allocator, "!4294967295?", opts));
+    try std.testing.expectError(error.Quota, decode(allocator, "!4097~", opts));
+
+    // A repeat ending exactly at the admitted 4096-column edge works,
+    // including a repeated column after a prior literal and panning.
+    const edge = try decode(allocator, "!4096~", opts);
+    defer edge.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 4096), edge.width);
+    try std.testing.expectEqual(@as(u32, 6), edge.height);
+    try std.testing.expectError(error.Quota, decode(allocator, "~!4096~", opts));
+    try std.testing.expectError(error.Quota, decode(allocator, "!2049~", .{
+        .pan = 1,
+        .pad = 2,
+        .transparent = true,
+    }));
+    try std.testing.expectError(error.Invalid, decode(allocator, "!0~", opts));
+    try std.testing.expectError(error.Invalid, decode(allocator, "!99999999999~", opts));
 }
 
 test "Sixel decoder releases every allocation failure boundary" {
