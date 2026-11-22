@@ -2529,6 +2529,7 @@ const TermcapValue = union(enum) {
 };
 
 const TermcapEntry = struct { name: []const u8, value: TermcapValue };
+const max_fixed_termcap_name_bytes: usize = 6;
 
 // Fixed Kitty capabilities only when VT already owns the exact behavior.
 // Values are pre-encoded hex reply bytes; there is no host/TERM discovery here.
@@ -2581,7 +2582,8 @@ const fixed_termcaps = [_]TermcapEntry{
 
 comptime {
     for (fixed_termcaps, 0..) |entry, index| {
-        if (entry.name.len == 0) @compileError("empty fixed termcap name");
+        if (entry.name.len == 0 or entry.name.len > max_fixed_termcap_name_bytes)
+            @compileError("fixed termcap name exceeds bounded lookup");
         if (index > 0 and std.mem.order(u8, fixed_termcaps[index - 1].name, entry.name) != .lt)
             @compileError("fixed termcaps must be strictly sorted and unique");
         switch (entry.value) {
@@ -2598,23 +2600,43 @@ comptime {
     }
 }
 
-// Keep the original byte-for-byte matching and response ownership; constant
-// expansion preserves the old straight-line lookup with no runtime allocation.
+// Decode one bounded query exactly once; the immutable table preserves the
+// caller-independent fixed response and case-sensitive capability names.
 fn termcapValue(encoded_name: []const u8) ?TermcapValue {
+    if (encoded_name.len % 2 != 0 or encoded_name.len > max_fixed_termcap_name_bytes * 2)
+        return null;
+    var name: [max_fixed_termcap_name_bytes]u8 = undefined;
+    const count = encoded_name.len / 2;
+    for (name[0..count], 0..) |*byte, index| {
+        const high = std.fmt.charToDigit(encoded_name[index * 2], 16) catch return null;
+        const low = std.fmt.charToDigit(encoded_name[index * 2 + 1], 16) catch return null;
+        byte.* = (high << 4) | low;
+    }
     inline for (fixed_termcaps) |entry| {
-        if (hexNameEquals(encoded_name, entry.name)) return entry.value;
+        if (std.mem.eql(u8, name[0..count], entry.name)) return entry.value;
     }
     return null;
 }
 
-fn hexNameEquals(encoded: []const u8, name: []const u8) bool {
-    if (encoded.len % 2 != 0 or encoded.len / 2 != name.len) return false;
-    for (name, 0..) |byte, index| {
-        const high = std.fmt.charToDigit(encoded[index * 2], 16) catch return false;
-        const low = std.fmt.charToDigit(encoded[index * 2 + 1], 16) catch return false;
-        if (((high << 4) | low) != byte) return false;
+test "fixed termcap name lookup preserves case and rejects malformed hex" {
+    const hex = "0123456789abcdef";
+    for (fixed_termcaps) |entry| {
+        var encoded: [max_fixed_termcap_name_bytes * 2]u8 = undefined;
+        for (entry.name, 0..) |byte, index| {
+            encoded[index * 2] = hex[byte >> 4];
+            encoded[index * 2 + 1] = hex[byte & 15];
+        }
+        const key = encoded[0 .. entry.name.len * 2];
+        const lower = termcapValue(key) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqualDeep(entry.value, lower);
+        for (key) |*digit| {
+            if (digit.* >= 'a' and digit.* <= 'f') digit.* -= 'a' - 'A';
+        }
+        const upper = termcapValue(key) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqualDeep(entry.value, upper);
     }
-    return true;
+    for ([_][]const u8{ "", "7", "zz", "736x", "0000", "73737373737373" }) |invalid|
+        try std.testing.expectEqual(@as(?TermcapValue, null), termcapValue(invalid));
 }
 
 fn appendTermcapReports(
