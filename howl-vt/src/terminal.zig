@@ -5063,6 +5063,27 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         if (cell) |value| value.width else 1,
         if (cell) |value| value.height else 1,
     );
+    if (result.feature_query) |query| {
+        if (result.quiet != 0) return false;
+        // Feature reports are read-only and their complete reply is reserved
+        // *after* computing its precise length, before appending any bytes.
+        // The ordinary image path keeps its separate 96-byte reservation.
+        var features_buf: [128]u8 = undefined;
+        const features = try graphics_mod.formatFeatureQuery(query, &features_buf);
+        var id_buf: [16]u8 = undefined;
+        const id_text = std.fmt.bufPrint(&id_buf, "i={d}", .{result.response_id.?}) catch
+            return error.ReplyLimit;
+        const required: usize = "\x1b_G".len + id_text.len + features.len + ";OK\x1b\\".len;
+        if (required > replies.max_bytes -| terminal.reply_buffer.bytes().len) return error.ReplyLimit;
+        try terminal.reply_buffer.ensureUnusedCapacity(@intCast(required));
+        const before = terminal.reply_buffer.len();
+        errdefer terminal.reply_buffer.truncate(before);
+        try terminal.reply_buffer.append("\x1b_G");
+        try terminal.reply_buffer.append(id_text);
+        try terminal.reply_buffer.append(features);
+        try terminal.reply_buffer.append(";OK\x1b\\");
+        return true;
+    }
     const respond = result.failure != null or result.response_id != null or
         result.response_number != null or result.response_frame != null;
     const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);

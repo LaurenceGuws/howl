@@ -6085,24 +6085,39 @@ references:
               nonzero image id for a feature query, echo supported non-default
               key/value pairs plus e=ACTION, and do not transmit data or
               disturb chunked uploads. docs/graphics-protocol.rst:548-593
-              specifies this feature introduced with Kitty 0.50.0.
+              specifies this feature introduced with Kitty 0.50.0. Howl now
+              accepts a=q,i=ID,e=t|T and reports a bounded, truthful subset:
+              direct transmission, zlib, RGB/RGBA/PNG formats, represented
+              dimensions, advisory N=1, and for T, Unicode placements,
+              cursor no-move and z-index. All other e actions omit their
+              capability claim; q=1/2 remain quiet. Red-to-green exact-byte,
+              unsupported-value, full reply quota and ongoing-chunk tests pass.
+              In one Fleet-managed private KWin, installed Kitty 0.51.0 and
+              staged ReleaseFast Howl produced identical replies for four
+              positive/negative raw PTY feature queries.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               owner: howl-vt
               milestone: graphics
               rationale: >-
-                Howl's bounded parser rejects the new e flag. Advertising
-                actions and key combinations needs a precise capability
-                catalogue and zero-mutation reply proof, not a generic OK.
+                Only feature meanings with already proved native graphics
+                implementation are advertised. The current helper formats
+                from canonical parsed Command fields into bounded caller
+                scratch, and a read-only query cannot cancel pending chunks.
+                Avoid claiming unspecified actions or unimplemented media.
               residual: >-
-                Feature queries containing e are rejected with EINVAL by
-                Plane.command; no supported-action/key reply is produced.
+                Action capability negotiation for p/d/f/a/c and the remaining
+                field combinations is not yet advertised, despite several
+                corresponding underlying graphics effects being supported.
+                Unrepresented external media, palette-indexed f=8/16,
+                relative-parent placement and other host presentation options
+                remain outside full Kitty feature-query parity.
               source: howl-vt/src/graphics.zig
-              symbol: Plane.command
+              symbol: formatFeatureQuery
               proof:
-                path: howl-vt/src/graphics.zig
-                symbol: "newer Kitty graphics feature query e is not advertised by Howl"
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: Kitty graphics feature query reports only bounded supported actions"
       transient_usage_hint:
         source: parse-graphics-command.h
         symbol: parse_graphics_code

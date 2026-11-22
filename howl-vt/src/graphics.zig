@@ -175,6 +175,9 @@ const Result = struct {
     cursor_advance: ?CursorAdvance = null,
     /// Suppresses success or all responses according to `q`.
     quiet: u2 = 0,
+    /// Borrows a completed feature query for reply formatting. No graphics
+    /// mutation occurs, and the borrowed bytes outlive the synchronous reply.
+    feature_query: ?[]const u8 = null,
 };
 
 /// Names one bounded terminal-graphics rejection.
@@ -231,6 +234,10 @@ const Command = struct {
     /// Advisory Kitty usage-hint bitmask. Howl intentionally owns no cache
     /// policy here; accepting and ignoring hints is protocol-compliant.
     usage_hints: u32 = 0,
+    /// Kitty 0.50+ e=ACTION is meaningful only on a=q feature queries.
+    feature_action: u8 = 0,
+    /// Presence bits prevent reporting default values never queried.
+    present: u32 = 0,
     x: u32 = 0,
     y: u32 = 0,
     payload: []const u8 = "",
@@ -239,6 +246,10 @@ const Command = struct {
 /// Returns whether one command can emit a Kitty protocol response.
 pub fn mayRespond(bytes: []const u8) bool {
     const command_value = parseCommand(bytes) orelse return true;
+    // Feature queries have a separate exact-byte reply reservation. Do not
+    // reject them using the ordinary 96-byte image-reply headroom.
+    if (command_value.action == 'q' and command_value.feature_action != 0 and
+        command_value.id != 0 and command_value.image_number == 0) return false;
     return command_value.action != 'd';
 }
 
@@ -313,6 +324,21 @@ pub const Plane = struct {
             self.cancel();
             return .{ .failure = .invalid };
         };
+        if (command_value.feature_action != 0) {
+            // Kitty feature queries are observations. They must not cancel
+            // an ongoing chunked image upload, even if they carry a payload.
+            if (command_value.action != 'q' or command_value.id == 0 or
+                command_value.image_number != 0) return .{
+                .response_id = nonzero(command_value.id),
+                .failure = .invalid,
+                .quiet = command_value.quiet,
+            };
+            return .{
+                .response_id = command_value.id,
+                .feature_query = bytes,
+                .quiet = command_value.quiet,
+            };
+        }
         if (command_value.medium != 'd') {
             self.cancel();
             return .{
@@ -2299,6 +2325,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'o' => 1 << 22,
             'U' => 1 << 23,
             'S' => 1 << 24,
+            'e' => 1 << 25,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -2353,10 +2380,77 @@ fn parseCommand(bytes: []const u8) ?Command {
                 result.unicode_placement = placement == 1;
             },
             'S' => result.uncompressed_bytes = std.fmt.parseInt(usize, value, 10) catch return null,
+            'e' => if (value.len == 1 and std.ascii.isAlphabetic(value[0])) {
+                result.feature_action = value[0];
+            } else return null,
             else => return null,
         }
     }
+    result.present = seen;
     return result;
+}
+
+// The feature-query encoder uses the same canonical command grammar as the
+// Plane. Only this rare read-only path decodes twice, avoiding a retained full
+// Command in every ordinary graphics Result. All output uses caller scratch.
+const FeatureWriter = struct {
+    bytes: []u8,
+    used: usize = 0,
+
+    fn text(self: *FeatureWriter, part: []const u8) error{ReplyLimit}!void {
+        if (part.len > self.bytes.len - self.used) return error.ReplyLimit;
+        @memcpy(self.bytes[self.used..][0..part.len], part);
+        self.used += part.len;
+    }
+
+    fn number(self: *FeatureWriter, comptime key: u8, value: i64) error{ReplyLimit}!void {
+        var local: [32]u8 = undefined;
+        const part = std.fmt.bufPrint(&local, ",{c}={d}", .{ key, value }) catch return error.ReplyLimit;
+        try self.text(part);
+    }
+
+    fn flag(self: *FeatureWriter, comptime key: u8, value: u8) error{ReplyLimit}!void {
+        const part: [4]u8 = .{ ',', key, '=', value };
+        try self.text(&part);
+    }
+};
+
+/// Encodes only confirmed Kitty 0.50+ graphics feature-query keys into borrowed
+/// scratch. Unsupported actions and values are deliberately not advertised.
+/// The caller has already received Plane.command's read-only feature result;
+/// this repeated decode does not admit image data or alter Plane state.
+pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![]const u8 {
+    const command_value = parseCommand(packet) orelse return error.ReplyLimit;
+    if (command_value.action != 'q' or command_value.feature_action == 0) return error.ReplyLimit;
+    var out: FeatureWriter = .{ .bytes = scratch };
+    if (command_value.feature_action != 't' and command_value.feature_action != 'T') return scratch[0..0];
+    try out.flag('e', command_value.feature_action);
+
+    // These presence bits are owned by parseCommand. Do not advertise a
+    // default setting that the client never requested to test.
+    const present = command_value.present;
+    if (present & (1 << 1) != 0 and command_value.medium == 'd') try out.flag('t', 'd');
+    if (present & (1 << 22) != 0 and command_value.compression == 'z') try out.flag('o', 'z');
+    if (present & (1 << 2) != 0 and
+        (command_value.format == 24 or command_value.format == 32 or command_value.format == 100))
+        try out.number('f', command_value.format);
+    if (present & (1 << 4) != 0 and command_value.width > 0 and command_value.width <= max_dimension)
+        try out.number('s', command_value.width);
+    if (present & (1 << 5) != 0 and command_value.height > 0 and command_value.height <= max_dimension)
+        try out.number('v', command_value.height);
+    // The N=1 transient hint may be ignored by design. All other N bits have
+    // no claimed capability. This is the same bounded advisory rule as normal
+    // image commands, not a promise of a distinct cache-eviction scheduler.
+    if (present & (1 << 21) != 0 and command_value.usage_hints == 1) try out.number('N', 1);
+
+    if (command_value.feature_action == 'T') {
+        // C=1 leaves the terminal cursor in place; U=1 owns virtual Unicode
+        // placements. Both paths have existing retained graphics proofs.
+        if (present & (1 << 20) != 0 and command_value.compose_mode == 1) try out.number('C', 1);
+        if (present & (1 << 23) != 0 and command_value.unicode_placement) try out.number('U', 1);
+        if (present & (1 << 18) != 0 and command_value.z != 0) try out.number('z', command_value.z);
+    }
+    return scratch[0..out.used];
 }
 
 fn compressedInputCapacity(raw_bytes: usize) ?usize {
@@ -4371,19 +4465,35 @@ test "Kitty PNG grows bounded chunk storage without admitting a partial image" {
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, plane.image(0).?.pixels);
 }
 
-test "newer Kitty graphics feature query e is not advertised by Howl" {
-    // Kitty 0.50+ uses APC G a=q,i=31,e=T,U=1,C=1 to report exact
-    // supported action/key capabilities without mutating image state.
-    // Howl currently rejects the new e selector instead of claiming parity.
-    try std.testing.expect(parseCommand("a=q,i=31") != null);
-    try std.testing.expect(parseCommand("a=q,i=31,e=T,U=1,C=1") == null);
-    try std.testing.expect(parseCommand("a=q,i=31,e=f,r=1,X=1") == null);
+test "Kitty graphics feature queries return exact advertised keys without changing the plane" {
+    const request = parseCommand("a=q,i=31,e=T,U=1,C=1") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 'T'), request.feature_action);
+    var output: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(",e=T,C=1,U=1", try formatFeatureQuery("a=q,i=31,e=T,U=1,C=1", &output));
+    try std.testing.expectEqualStrings(",e=t,f=24,s=1,v=1", try formatFeatureQuery("a=q,i=31,e=t,f=24,s=1,v=1", &output));
+    try std.testing.expectEqualStrings(",e=T", try formatFeatureQuery("a=q,i=31,e=T,f=8,t=f,N=6", &output));
+    try std.testing.expectEqualStrings("", try formatFeatureQuery("a=q,i=31,e=Z", &output));
+    var tiny: [3]u8 = undefined;
+    try std.testing.expectError(error.ReplyLimit, formatFeatureQuery("a=q,i=31,e=T", &tiny));
+    try std.testing.expect(parseCommand("a=q,i=31,e=TT") == null);
+    try std.testing.expect(parseCommand("a=q,i=31,e=3") == null);
+    try std.testing.expect(parseCommand("a=q,i=31,e=T,e=t") == null);
 
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
     const generation = plane.generation();
-    const result = try plane.command("a=q,i=31,e=T,U=1,C=1", .primary, 0, 0, 0, 1, 1);
-    try std.testing.expectEqual(Failure.invalid, result.failure.?);
+    const selected = try plane.command("a=q,i=31,e=T,U=1,C=1", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(@as(?Failure, null), selected.failure);
+    try std.testing.expectEqualStrings("a=q,i=31,e=T,U=1,C=1", selected.feature_query.?);
+    try std.testing.expectEqual(@as(?u32, 31), selected.response_id);
+    try std.testing.expect(!selected.changed);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+
+    // An e key on a mutating action is not a license to execute that action.
+    const invalid = try plane.command("a=T,i=31,e=T,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.invalid, invalid.failure.?);
     try std.testing.expectEqual(generation, plane.generation());
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
 }
