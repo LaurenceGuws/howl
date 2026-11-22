@@ -1060,6 +1060,9 @@ fn decodeCsi(
     separators: parser_mod.CsiSeparatorList,
     intermediates: []const u8,
 ) ?SemanticEvent {
+    // Pinned Kitty VPA and CBT each admit at most one parameter. Preserve
+    // their existing zero-as-one semantics after admission.
+    if (params.len > 1 and (final == 'd' or final == 'Z')) return null;
     switch (final) {
         '@' => return SemanticEvent{ .insert_chars = paramAtOrDefault1(params, 0) },
         'A' => return SemanticEvent{ .cursor_up = paramAtOrDefault1(params, 0) },

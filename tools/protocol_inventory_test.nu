@@ -71,6 +71,8 @@ if ($ruling.id != "libvterm.csi.decsgr"
 }
 let indexed_rulings = (protocol decisions)
 let expected_rulings = [
+  iterm2.csi.cbt
+  iterm2.csi.vpa
   iterm2.osc.bg
   iterm2.osc.cursor
   iterm2.osc.fg
@@ -85,10 +87,32 @@ let expected_rulings = [
   kitty.osc.highlight_fg
   kitty.osc.palette
   kitty.osc.palette_reset
+  libvterm.csi.cbt
   libvterm.csi.decsgr
+  libvterm.csi.vpa
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Kitty rejects surplus operands on VPA and CBT, while pinned libvterm
+# and iTerm2 use the first count and move. Keep each losing source and
+# the one native no-mutation regression independently machine-checkable.
+for reference in [libvterm iterm2] {
+  for command in [
+    {name: cbt, wire: "CSI 1 ; 2 Z"}
+    {name: vpa, wire: "CSI 3 ; 2 d"}
+  ] {
+    let id = ($reference + ".csi." + $command.name)
+    let decision = (protocol decision $id)
+    if ($decision.disposition != adjudicated
+        or $decision.adjudication.kind != wire_collision
+        or $decision.adjudication.wire != $command.wire
+        or $decision.adjudication.winner.owner != kitty
+        or $decision.adjudication.loser.owner != $reference
+        or $decision.adjudication.proof.symbol != "terminal: pinned Kitty VPA CBT reject excess operands and preserve cursor and graphics") {
+      error make {msg: $"pinned cursor admission decision is not source-backed: ($id)"}
+    }
+  }
 }
 # Dynamic invalid-color and BEL reply conflicts each have a real winner
 # and a separate exact named source-level Zig regression.

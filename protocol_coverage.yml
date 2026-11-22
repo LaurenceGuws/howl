@@ -631,16 +631,59 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
-          libvterm.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs,
-            conditions: "libvterm backtab traversal shares one global stop table with primary and alternate
-              screens; Howl and pinned Kitty traverse the active bank's own set.",
-            howl: {support: partial, disposition: excluded,
-            rationale: *howl_libvterm_global_tabs_difference,
-            residual: "Single-bank counts and clamps are implemented; switches between banks with custom
-              tab stops yield different target columns.",
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
+          libvterm.csi.cbt:
+            raw: "CSI [Ps=1] Z"
+            effect: backward tabs
+            conditions: >-
+              Pinned libvterm src/state.c:1243-1246 accepts CSI CBT with surplus parameters,
+              using args[0] and ignoring the rest. It also shares one tab-stop table across
+              both screen banks; Howl follows frozen Kitty's strict one-operand admission
+              and bank-local tab stops.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: >-
+                Same-wire malformed-count collision resolved in favor of frozen Kitty's
+                bounded single-operand admission. Independently, libvterm owns global tab
+                stops while Howl and Kitty have bank-local stops.
+              residual: >-
+                Valid single-bank count/zero/clamp semantics work, but extra CSI CBT
+                operands are rejected instead of moving; custom tab stops also differ
+                across screen-bank switches.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 1 ; 2 Z"
+                winner: &kitty_cbt_arity_winner
+                  owner: kitty
+                  protocol: Kitty CBT one-count admission
+                  behavior: Reject surplus operands without moving the cursor or consuming pending wrap.
+                  evidence: Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1140,1216-1217
+                loser:
+                  owner: libvterm
+                  protocol: libvterm permissive CBT first-operand admission
+                  behavior: Traverse one preceding tab stop using the first parameter despite a second.
+                  evidence: Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1006,1243-1246
+                current_usage: &cursor_arity_usage >-
+                  VPA and CBT are established cursor commands; no contemporary application
+                  depending on malformed surplus count operands was established. Valid
+                  zero/default/single-count forms remain supported.
+                recency: &cursor_arity_recency >-
+                  The commands originate in the ECMA-48 cursor-control family, not a newer
+                  vendor extension. Different parser leniency in these pinned revisions
+                  does not establish a newer protocol origin.
+                reason: &cursor_arity_reason >-
+                  Identical malformed CSI input cannot both move the cursor and leave it
+                  untouched. After checking protocol origin, actual effects and unquantified
+                  usage, retain safe Kitty rejection under the recorded implementation
+                  preference. Do not add terminal-flavor emulation.
+                proof: &cursor_arity_collision_proof
+                  path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                  symbol: "terminal: pinned Kitty VPA CBT reject excess operands and preserve cursor and graphics"
           libvterm.csi.hpa: {raw: "CSI [Ps=1] `", effect: absolute column,
             conditions: clamps to the current logical row width, howl: {support: full,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
@@ -667,11 +710,41 @@ references:
               source: howl-vt/src/fixed_report.zig, symbol: appendSecondaryDeviceAttributes, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
-          libvterm.csi.vpa: {raw: "CSI [Ps=1] d", effect: absolute row,
-            conditions: DECOM resolves against vertical margins, howl: {support: full,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds"}}}
+          libvterm.csi.vpa:
+            raw: "CSI [Ps=1] d"
+            effect: absolute row
+            conditions: >-
+              Pinned libvterm src/state.c:1289-1295 ignores surplus VPA parameters and
+              positions from args[0], including DECOM-relative rows. Howl now follows
+              frozen Kitty's strict one-operand admission while retaining normal origin
+              and margin semantics for valid VPA.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: Kitty strict malformed-operand rejection conflicts with libvterm's first-operand movement for the same CSI bytes.
+              residual: Well-formed VPA and DECOM-relative movement work; extra numeric operands now leave the cursor unchanged rather than moving it.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 3 ; 2 d"
+                winner: &kitty_vpa_arity_winner
+                  owner: kitty
+                  protocol: Kitty VPA one-count admission
+                  behavior: Reject surplus operands without changing cursor row or consuming pending wrap.
+                  evidence: Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1140,1214-1215
+                loser:
+                  owner: libvterm
+                  protocol: libvterm permissive VPA first-operand admission
+                  behavior: Position the cursor from the first numeric value (3), ignoring the surplus second operand.
+                  evidence: Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1006,1289-1295
+                current_usage: *cursor_arity_usage
+                recency: *cursor_arity_recency
+                reason: *cursor_arity_reason
+                proof: *cursor_arity_collision_proof
           libvterm.csi.vpr: {raw: "CSI [Ps=1] e", effect: cursor down,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -1656,16 +1729,43 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.scrollDownRegion, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned iTerm2 CSI T extra-operand rejection now matches Howl"}}}
-          iterm2.csi.cbt: {raw: "CSI [Ps=1] Z", effect: backward tabs,
-            conditions: "Pinned iTerm2 backTab walks one shared tabStops set after screen changes,
-              while Howl's Screen tab-stop array is bank-local.",
-            howl: {support: partial, disposition: excluded,
-            rationale: *howl_iterm2_global_tabs_difference,
-            residual: "Backward movement/count handling works within a bank but differs after
-              bank-specific stop edits; iTerm2 custom offscreen stop retention also differs on resize.",
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"}}}
+          iterm2.csi.cbt:
+            raw: "CSI [Ps=1] Z"
+            effect: backward tabs
+            conditions: >-
+              Pinned iTerm2 VT100CSIParser.m:811-814 recognizes CBT without an operand-count
+              guard; VT100Terminal.m:2565-2567 passes only p[0] to its backtab delegate.
+              iTerm2 also retains global cross-bank tab stops and can keep offscreen stops
+              through resize, unlike Howl's Kitty-aligned bank-local tables.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: >-
+                Kitty's strict malformed-count admission wins the identical CSI input
+                over iTerm2's permissive first-operand handling; shared global tab stops
+                and offscreen resize behavior remain separate existing differences.
+              residual: >-
+                Valid single-bank backward counts are implemented, but malformed
+                surplus-operand CBT is rejected rather than moving. iTerm2 custom
+                cross-bank and offscreen tab-stop states also differ.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: bank-local stops differ from pinned libvterm and iTerm2 global stop owners"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 1 ; 2 Z"
+                winner: *kitty_cbt_arity_winner
+                loser:
+                  owner: iterm2
+                  protocol: iTerm2 permissive CBT first-operand admission
+                  behavior: Pass the first count to backtab and move to the previous tab stop despite an extra parameter.
+                  evidence: Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:811-814 and VT100Terminal.m:2565-2567
+                current_usage: *cursor_arity_usage
+                recency: *cursor_arity_recency
+                reason: *cursor_arity_reason
+                proof: *cursor_arity_collision_proof
           iterm2.csi.cha: {raw: "CSI [Ps=1] G", effect: absolute column,
             conditions: double-width current-line column addressing, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -1678,11 +1778,37 @@ references:
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
-          iterm2.csi.vpa: {raw: "CSI [Ps=1] d", effect: absolute row,
-            conditions: DECOM resolves against vertical margins, howl: {support: full,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds"}}}
+          iterm2.csi.vpa:
+            raw: "CSI [Ps=1] d"
+            effect: absolute row
+            conditions: >-
+              Pinned iTerm2 VT100CSIParser.m:824-827 recognizes VPA without an extra-operand
+              gate; VT100Terminal.m:2571-2573 forwards only p[0] to terminalSetCursorY.
+              Howl follows frozen Kitty's strict one-operand rule and preserves valid
+              DECOM-relative VPA positioning.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: Kitty strict malformed-operand rejection conflicts with iTerm2's first-operand VPA movement for identical CSI input.
+              residual: Well-formed VPA and DECOM-relative row positioning remain supported; extra numeric operands are rejected instead of changing the cursor row.
+              source: howl-vt/src/terminal.zig
+              symbol: decodeCsi
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 3 ; 2 d"
+                winner: *kitty_vpa_arity_winner
+                loser:
+                  owner: iterm2
+                  protocol: iTerm2 permissive VPA first-operand admission
+                  behavior: Send the first row count to terminalSetCursorY and ignore the second numeric operand.
+                  evidence: Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:824-827 and VT100Terminal.m:2571-2573
+                current_usage: *cursor_arity_usage
+                recency: *cursor_arity_recency
+                reason: *cursor_arity_reason
+                proof: *cursor_arity_collision_proof
           iterm2.csi.vpr: {raw: "CSI [Ps=1] e", effect: cursor down,
             conditions: clamps from above the vertical region into its bottom, howl: {support: full,
               source: howl-vt/src/screen.zig, symbol: Screen.moveCursor, proof: {
@@ -4089,19 +4215,19 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: exact-fill cursor movement resolves canonical pending wrap"}}}
           kitty.csi.vpa: {raw: "CSI [Ps=1] d", effect: "absolute row",
-            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi VPA invokes CALL_CSI_HANDLER1 with AT_MOST_ONE_PARAMETER and rejects CSI 3;2d. Howl decodeCsi accepts the leading row, ignoring the extra operand.",
-            howl: {support: partial, disposition: excluded,
-              rationale: "Ordinary VPA and DECOM work; excess-operand admission conflicts.",
+            conditions: "Pinned Kitty vt-parser.c CALL_CSI_HANDLER1 rejects additional VPA operands before cursor mutation. Howl now rejects malformed 7-bit/C1/colon/empty variants; omitted, zero and trailing-semicolon forms retain ordinary DECOM-relative positioning and valid recovery.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: cursor,
+              residual: "The source-pinned one-operand admission is now proven, including pending-wrap preservation. Full reference cursor-position policy under exotic geometry, margins and phantom-edge states remains unqualified.",
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "pinned Kitty VPA CBT reject excess operands unlike Howl"}}}
+                symbol: "terminal: pinned Kitty VPA CBT reject excess operands and preserve cursor and graphics"}}}
           kitty.csi.cbt: {raw: "CSI [Ps=1] Z", effect: "backward tabs",
-            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi CBT invokes CALL_CSI_HANDLER1 and rejects CSI 1;2Z. Howl accepts and moves backward one tab.",
-            howl: {support: partial, disposition: excluded,
-              rationale: "Ordinary backward-tab motion works; excess-operand admission conflicts.",
+            conditions: "Pinned Kitty vt-parser.c CALL_CSI_HANDLER1 rejects additional CBT operands; screen_backtab treats count zero as one. Howl now rejects malformed 7-bit/C1/colon/empty variants, preserves pending wrap on rejection, and retains normal active-bank tab traversal.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: cursor,
+              residual: "Strict single-operand admission, zero-as-one counts and active-bank stop traversal now have native proofs. Full phantom-edge, nonstandard-row-geometry and cursor-presentation parity remain unqualified.",
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "pinned Kitty VPA CBT reject excess operands unlike Howl"}}}
+                symbol: "terminal: pinned Kitty VPA CBT reject excess operands and preserve cursor and graphics"}}}
           kitty.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
             conditions: "Pinned Kitty screen_tabn calls screen_tab repeatedly and can preserve an internal
               tab marker in the source cell on blank intervals. Howl moves the cursor but never stores
