@@ -628,6 +628,9 @@ fn csiProcess(
     is_private: bool,
     intermediates: []const u8,
 ) ?SemanticEvent {
+    // Pinned Kitty dispatch_csi routes both J/K variants through
+    // CALL_CSI_HANDLER1P: malformed arity must not erase terminal state.
+    if ((final == 'J' or final == 'K') and params.len > 1) return null;
     if (is_private) return decodePrivateCsi(final, params, leader_byte, intermediates);
     if (leader_byte != 0) return decodeCsiLeader(final, params, leader_byte, intermediates);
     if (intermediates.len != 0) {

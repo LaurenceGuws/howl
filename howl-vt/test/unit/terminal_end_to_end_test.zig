@@ -332,6 +332,61 @@ test "terminal: Kitty ED3 clears visible display but Howl clears only history" {
     try std.testing.expect(!(try terminal.feed("\x1b[3J")).stateChanged());
 }
 
+test "terminal: pinned Kitty ED EL reject extra operands before text or graphics mutation" {
+    // Pinned Kitty d4106ef kitty/vt-parser.c dispatch_csi uses
+    // CALL_CSI_HANDLER1P for J and K, rejecting num_params > 1 before
+    // invoking either ordinary or private screen_erase_in_* owner.
+    for ([_][]const u8{
+        "\x1b[2;1J", "\x1b[2;1K",  "\x1b[?2;1J", "\x1b[?2;1K",
+        "\x1b[0;;J", "\x1b[?0;;K", "\x1b[3;1J",  "\x1b[1;2K",
+        "\x1b[2:1J", "\x1b[?1:2K", "\x9b2;1J",   "\x9b?2;1K",
+    }) |invalid| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HHELLO\x1b[2;1HWORLD\x1b[1;1H");
+        try feed(&terminal, "\x1b_Ga=T,f=32,s=1,v=1,i=91,C=1;AQIDBA==\x1b\\");
+        try consumeReplies(&terminal);
+        const before = terminal.semanticSequence();
+        const cursor = terminal.semanticView(0);
+        const first = cursor.cellInfoAt(0, 0);
+        const second = cursor.cellInfoAt(1, 0);
+        const placements = terminal.images(0).placementCount();
+        const image_content = terminal.images(0).content_generation;
+        try std.testing.expectEqual(@as(usize, 1), placements);
+        // A split CSI must leave both the original grid and images untouched.
+        try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqualDeep(first, after.cellInfoAt(0, 0));
+        try std.testing.expectEqualDeep(second, after.cellInfoAt(1, 0));
+        try std.testing.expectEqual(cursor.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(cursor.cursor_col, after.cursor_col);
+        try std.testing.expectEqual(placements, terminal.images(0).placementCount());
+        try std.testing.expectEqual(image_content, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+        // The malformed command cannot poison the next valid erase.
+        try std.testing.expect((try terminal.feed("\x1b[2J")).stateChanged());
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+    }
+
+    // Kitty commit_csi_param ignores an absent last operand at the final
+    // byte. Thus "0;J" and "0;K" remain one-parameter commands, not invalid.
+    for ([_][]const u8{
+        "\x1b[0;J", "\x1b[0;K", "\x1b[?0;J", "\x1b[?0;K",
+    }) |valid| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "abc\x1b[1;1H");
+        try std.testing.expect((try terminal.feed(valid)).stateChanged());
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
 test "terminal: Kitty ordinary blank EL dirties selection while Howl keeps an exact noop" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

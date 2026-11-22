@@ -119,7 +119,7 @@ classifications:
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
   kitty_erase_display_graphics: &howl_kitty_erase_display_graphics {support: partial, disposition: deferred,
     owner: howl-vt, milestone: graphics,
-    residual: Howl already erases intersecting image placements during ordinary and selective display erasure; exact Kitty protection-sensitive placement and stored-image lifetime remain to be qualified.,
+    residual: "Howl erases ordinary ED 0/1/2 cell spans and overlapping physical placements, but ED 3 clears only scrollback rather than pinned Kitty visible display plus history, and ED 22 is intentionally unsupported. Exact Kitty selection, protected-cell and image-resource lifetime remain incomplete; single-operand admission does not resolve these separate differences.",
     rationale: *howl_erase_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.eraseDisplay,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
@@ -131,7 +131,7 @@ classifications:
       symbol: "terminal: DEC selective ED clears placeholder projection without erasing unrelated physical images"}}
   kitty_erase_line_graphics: &howl_kitty_erase_line_graphics {support: partial, disposition: deferred,
     owner: howl-vt, milestone: graphics,
-    residual: Howl already removes intersecting image placements during ordinary line erasure; exact Kitty erase modes and stored-image lifetime remain to be qualified.,
+    residual: "Howl erases ordinary EL 0/1/2 cells and overlapping physical placements and now rejects excessive operands, but unlike pinned Kitty it preserves an exact no-op for admitted erasure of already blank cells rather than invalidating intersecting selections. Multicell and stored-image lifetime still require verification.",
     rationale: *howl_erase_policy_difference, source: howl-vt/src/screen.zig, symbol: Screen.eraseLine,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
@@ -4126,16 +4126,16 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: Kitty cursor excess parameters retain shared permissive CSI policy"}}}
           kitty.csi.ed: {raw: "CSI [Ps=0] J", effect: erase display,
-            conditions: "Pinned Kitty ED 3 clears visible display and scrollback, and ED 22 moves visible content into history before clearing; Howl ED 3 clears scrollback only and ignores 22. Ordinary ED also has reference-specific selection/multicell consequences.",
+            conditions: "Pinned Kitty CALL_CSI_HANDLER1P rejects more than one J operand before mutation, while a trailing empty semicolon is not a second operand; Howl now matches both admissions in ordinary and private CSI. Kitty ED 3 clears visible display and scrollback, and ED 22 moves visible content into history first; Howl ED 3 clears scrollback only and ignores 22. Selection/multicell differences remain.",
             howl: *howl_kitty_erase_display_graphics}
           kitty.csi.decsed: {raw: "CSI ? [Ps=0] J", effect: selective erase display,
-            conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
+            conditions: "Pinned Kitty private ED shares the one-parameter J admission and accepts a trailing blank delimiter. Howl matches this arity but preserves DEC-protected cells; pinned Kitty instead clears protected text while retaining attributes, with distinct multicell and selection consequences.",
             howl: *howl_kitty_selective_erase_display_graphics}
           kitty.csi.el: {raw: "CSI [Ps=0] K", effect: erase line,
-            conditions: "Pinned Kitty dirties an admitted EL region and clears intersecting selection even on already blank cells; Howl preserves exact no-mutation blank EL. Other multiline, image and selection consequences remain partial.",
+            conditions: "Pinned Kitty CALL_CSI_HANDLER1P rejects more than one K operand before mutation, including the private variant, but a trailing empty semicolon is allowed; Howl now matches this exact admission. Kitty dirties admitted EL and clears intersecting selection even on blank cells; Howl preserves a no-mutation blank EL. Other multicell and graphics consequences remain partial.",
             howl: *howl_kitty_erase_line_graphics}
           kitty.csi.decsel: {raw: "CSI ? [Ps=0] K", effect: selective erase line,
-            conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
+            conditions: "Pinned Kitty private EL shares the one-parameter K admission and accepts a trailing blank delimiter; Howl matches that boundary while DEC-protected text, preserved attributes, multicell edits and selection invalidation remain divergent.",
             howl: *howl_kitty_selective_erase_line_graphics}
           kitty.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: "Pinned Kitty ignores private mode 69 and inserts complete physical rows; Howl supports DECSLRM and inserts only inside horizontal margins. Multiline and selection behavior has independent bounded proofs.", howl: {support: partial,
