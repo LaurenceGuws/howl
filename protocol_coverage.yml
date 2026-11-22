@@ -4403,13 +4403,13 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.scrollback_fill: {raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
-            conditions: "Pinned Kitty vt-parser.c::dispatch_csi CSI +T calls screen_reverse_scroll_and_fill_from_scrollback, whose _reverse_scroll uses historybuf_pop_line, INDEX_DOWN, and primary/alternate dispatch. Howl Screen.scrollDownFromHistory restores bounded primary history text and row attributes, but Terminal.applyScreenEvent does not restore graphics-plane placements on this path.",
+            conditions: "Pinned Kitty vt-parser.c::dispatch_csi CSI +T invokes screen_reverse_scroll_and_fill_from_scrollback. Kitty screen.c::_reverse_scroll pops each available primary history row and calls INDEX_DOWN, which moves physical image references through grman_scroll_images even after history is exhausted and on the alternate screen. Howl Screen.scrollDownFromHistory now returns actual admitted restored/ordinary step counts; Terminal uses the ordinary count for image movement while the restored count changes the primary absolute history origin without double-moving images.",
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
-              rationale: "Text and history restoration works; full parity needs a separate proof for scrollback graphics placement lifetime and presentation on +T.",
-              residual: "Pinned CSI +T graphics placement and retained primary history projection are not yet fully verified.",
+              rationale: "VT owns the exact committed history/scroll count and physical image consequences without renderer callbacks. The tested common full-screen and vertical-margin cases work, but pinned Kitty retains additional selection, margin and relative-image presentation policies.",
+              residual: "Primary retained-history images reappear by absolute-origin projection and move on admitted post-history blank scrolls; no-history, alternate-bank, split controls, failed scalar preflight and fixed vertical-margin image cases have native proofs. Exact Kitty relative/virtual placements, clipped crossing images, horizontal margin policy and selection invalidation remain unqualified.",
               source: howl-vt/src/screen.zig,
-              symbol: Screen.scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_test.zig,
-                symbol: "terminal Kitty unscroll consumes primary history in row order"}}}
+              symbol: Screen.scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: Kitty CSI plus T moves graphics after retained history runs out"}}}
           kitty.csi.decstr: {raw: "CSI ! p", effect: reject unrecognized soft-reset spelling,
             recognition: rejected_known,
             conditions: "The pinned Kitty revision rejects this CSI spelling; a later Kitty revision implements it.

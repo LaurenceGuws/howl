@@ -3924,6 +3924,68 @@ test "terminal: wide printing boundaries reject REP on a one-column row" {
     try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
 }
 
+test "terminal: Kitty CSI plus T moves graphics after retained history runs out" {
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=97,C=1;AQIDBA==\x1b\\";
+    for ([_]u16{ 0, 4 }) |history_capacity| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, history_capacity);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1H" ++ image);
+        try consumeReplies(&terminal);
+        const image_data_generation = terminal.images(0).content_generation;
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+
+        if (history_capacity != 0) {
+            // The image belongs to the newest projected history row after
+            // the full-screen LF and is expected to return by absolute origin.
+            try feed(&terminal, "\x1b[3;1H\n");
+            try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+            try std.testing.expect(terminal.images(0).placement(0) == null);
+            try std.testing.expectEqual(@as(u16, 0), terminal.images(1).placement(0).?.row);
+        }
+
+        // With one retained row, the first +T consumes history and the
+        // second +T is a plain downward scroll. With no history both moves
+        // are ordinary downward scrolls.
+        try feed(&terminal, "\x1b[2+T");
+        try std.testing.expectEqual(@as(u16, if (history_capacity != 0) 1 else 2), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+        try std.testing.expectEqual(image_data_generation, terminal.images(0).content_generation);
+    }
+}
+
+test "terminal: Kitty CSI plus T preserves graphics outside the vertical margin" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,C=1,q=2;AQIDBA==\x1b\\";
+    try feed(&terminal, "\x1b[1;1H" ++ image ++ "\x1b[2;1H" ++ image);
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(1).?.row);
+    const pixels = terminal.images(0).content_generation;
+
+    try feed(&terminal, "\x1b[2;4r\x1b[+T");
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(1).?.row);
+    try std.testing.expectEqual(pixels, terminal.images(0).content_generation);
+}
+
+test "terminal: Kitty CSI plus T moves alternate graphics without consuming primary history" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[3;1H\n");
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try feed(&terminal, "\x1b[?1049h\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=98,C=1;AQIDBA==\x1b\\");
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
+    try feed(&terminal, "\x1b[+T");
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(0).?.row);
+    try feed(&terminal, "\x1b[?1049l");
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+}
+
 test "terminal: bulk and sequential scrolling retain identical graphics" {
     var bulk = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer bulk.deinit();

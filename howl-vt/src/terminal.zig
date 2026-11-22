@@ -3843,7 +3843,22 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             if (!scrolls) return changed;
             return scrollGraphicsRegion(vt, screen, screen.scroll_top, screen.scrollBottom(), 1, false) or changed;
         },
-        .scroll_down_from_history => |count| return vt.screen_state.active().scrollDownFromHistory(count),
+        .scroll_down_from_history => |count| {
+            const screen = vt.screen_state.active();
+            const result = screen.scrollDownFromHistory(count);
+            // A restored history row moves the primary viewport origin: its
+            // absolute image anchors are already correct. Only the admitted
+            // steps after history is exhausted move physical placements.
+            if (result.without_history == 0) return result.changed;
+            return scrollGraphicsRegion(
+                vt,
+                screen,
+                screen.scroll_top,
+                screen.scrollBottom(),
+                result.without_history,
+                false,
+            ) or result.changed;
+        },
         .cursor_up,
         .cursor_down,
         .cursor_forward,

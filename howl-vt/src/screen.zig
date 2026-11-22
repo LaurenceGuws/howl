@@ -4364,11 +4364,20 @@ pub const Screen = struct {
         store.popNewest();
     }
 
+    /// Returns only admitted reverse-scroll facts from the canonical Screen.
+    /// The terminal may compose graphics for ordinary steps without guessing
+    /// whether a history row was successfully restored or preflight blocked.
+    pub const HistoryScrollResult = struct {
+        changed: bool = false,
+        restored: u16 = 0,
+        without_history: u16 = 0,
+    };
+
     /// Reverse-scroll and restore newest primary scrollback rows when available.
     /// Restores up to `count` retained rows into the visible grid.
-    pub fn scrollDownFromHistory(self: *Screen, count: u16) bool {
-        var changed = self.cancelPendingWrap();
-        if (self.rows == 0 or self.cols == 0 or count == 0) return changed;
+    pub fn scrollDownFromHistory(self: *Screen, count: u16) HistoryScrollResult {
+        var result: HistoryScrollResult = .{ .changed = self.cancelPendingWrap() };
+        if (self.rows == 0 or self.cols == 0 or count == 0) return result;
         const limit = @max(@as(u32, self.rows), self.historyCount());
         var remaining: u32 = @min(@as(u32, count), limit);
         while (remaining > 0) : (remaining -= 1) {
@@ -4378,7 +4387,7 @@ pub const Screen = struct {
             else
                 0;
             if (has_history and !self.preflightHistoryRestore()) break;
-            changed = self.scrollDownRegionRestoring(self.scroll_top, self.scrollBottom(), 1, has_history) or changed;
+            result.changed = self.scrollDownRegionRestoring(self.scroll_top, self.scrollBottom(), 1, has_history) or result.changed;
             if (has_history) {
                 const destination = self.rowStart(self.scroll_top);
                 self.commitHistoryRestore(destination);
@@ -4387,10 +4396,14 @@ pub const Screen = struct {
                     self.cells.?[@intCast(destination + col)] = self.historyCellAt(0, col);
                 self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = restored_flags;
                 self.consumeNewestHistoryRow();
-                changed = true;
+                result.restored += 1;
+                result.changed = true;
+            } else {
+                result.without_history += 1;
             }
         }
-        return self.noteAllRowsChange(changed);
+        result.changed = self.noteAllRowsChange(result.changed);
+        return result;
     }
 
     fn preflightHistoryRestore(self: *Screen) bool {
@@ -6162,7 +6175,7 @@ test "VS16 semantic width survives history restoration reflow and resize" {
 
     try std.testing.expectEqual(@as(u8, 2), screen.historyCellAt(0, 0).width);
     try std.testing.expect(screen.historyCellAt(0, 0).semantic_width);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     var lead: usize = 0;
     while (lead < screen.cells.?.len and screen.cells.?[lead].codepoint != 0x263a) : (lead += 1) {}
     try std.testing.expect(lead < screen.cells.?.len);
@@ -6220,7 +6233,7 @@ test "Unicode semantic occupancy and scalars survive history restoration" {
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqual(@as(u8, 2), screen.historyCellAt(0, 0).width);
     try std.testing.expectEqual(@as(u8, 1), screen.historyCellAt(0, 1).x);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     try std.testing.expectEqual(@as(u32, 0x754c), screen.cellInfoAt(0, 0).codepoint);
     try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(0, 0).width);
     try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(0, 1).x);
@@ -6623,7 +6636,7 @@ test "inline combining history round trips without external scalar payload" {
     );
 
     screen.clearRowRange(0, 0, screen.cols);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqualDeep(inline_cell, screen.cellInfoAt(0, 0));
 }
@@ -6665,7 +6678,7 @@ test "twenty four scalars cross projected history and reflow page boundaries" {
         projected[4..],
     );
     screen.clearRowRange(0, 0, old_cols);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     const restored_lead = screen.rowStart(0) + @as(u32, @intCast(lead));
     try std.testing.expectEqualSlices(
         u32,
@@ -7903,7 +7916,7 @@ test "styled blank state survives projected history and newest restore" {
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqualDeep(before, screen.historyCellAt(0, 5));
 
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqualDeep(before, screen.cellInfoAt(0, 5));
 }
@@ -7959,7 +7972,7 @@ test "OSC 66 long cluster round trips through compact history" {
     // zig-audit: acknowledge discard
     // reason: This test invokes the structural cleanup only to establish a blank restore target; its mutation boolean is not under test.
     _ = screen.clearNonSemanticClustersIntersecting(0, 2, 0, screen.cols, false);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqualDeep(lead, screen.cellInfoAt(0, 0));
     try std.testing.expectEqualDeep(continuation, screen.cellInfoAt(0, 3));
@@ -7992,7 +8005,7 @@ test "DEC row geometry round trips through compact history" {
     // zig-audit: acknowledge discard
     // reason: This test only needs to replace the live row geometry before proving compact-history restoration; the setter's change boolean is not under test.
     _ = screen.setLineGeometry(0, .single_width);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(0));
     try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
@@ -8904,6 +8917,29 @@ test "growing OSC 66 resumes at the first uncommitted cluster" {
     for (0..450) |col| try std.testing.expectEqualSlices(u32, &expected, screen.cellScalarsAt(0, @intCast(col), &actual));
 }
 
+test "history scroll returns only committed restore and ordinary step counts" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 4, 4);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeText("held");
+    try screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+
+    const mixed = screen.scrollDownFromHistory(3);
+    try std.testing.expect(mixed.changed);
+    try std.testing.expectEqual(@as(u16, 1), mixed.restored);
+    try std.testing.expectEqual(@as(u16, 2), mixed.without_history);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+
+    const empty = screen.scrollDownFromHistory(2);
+    try std.testing.expect(empty.changed);
+    try std.testing.expectEqual(@as(u16, 0), empty.restored);
+    try std.testing.expectEqual(@as(u16, 2), empty.without_history);
+
+    const no_op = screen.scrollDownFromHistory(0);
+    try std.testing.expectEqual(@as(u16, 0), no_op.restored);
+    try std.testing.expectEqual(@as(u16, 0), no_op.without_history);
+}
+
 test "history restore grows scalar storage for accepted dense row" {
     const cols: u16 = 102;
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
@@ -8928,7 +8964,10 @@ test "history restore grows scalar storage for accepted dense row" {
         screen.cells.?[retained + col] = value;
     }
     failing.fail_index = failing.alloc_index;
-    try std.testing.expect(!screen.scrollDownFromHistory(1));
+    const blocked = screen.scrollDownFromHistory(1);
+    try std.testing.expect(!blocked.changed);
+    try std.testing.expectEqual(@as(u16, 0), blocked.restored);
+    try std.testing.expectEqual(@as(u16, 0), blocked.without_history);
     try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     for (0..100) |col| {
         var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
@@ -8938,7 +8977,10 @@ test "history restore grows scalar storage for accepted dense row" {
         for (actual[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x301), scalar);
     }
     failing.fail_index = std.math.maxInt(usize);
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    const restored = screen.scrollDownFromHistory(1);
+    try std.testing.expect(restored.changed);
+    try std.testing.expectEqual(@as(u16, 1), restored.restored);
+    try std.testing.expectEqual(@as(u16, 0), restored.without_history);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     for (0..cols) |col| {
         var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
@@ -8973,7 +9015,7 @@ test "history restore reuses all outgoing row scalar ranges without allocating" 
     try screen.scalars.?.setGrowing(bottom + 101, 0, &tail);
     screen.cells.?[bottom + 101] = value;
     failing.fail_index = failing.alloc_index;
-    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     var actual: [scalar_storage.maximum_scalars]u32 = undefined;
     const restored = screen.cellScalarsAt(0, 0, &actual);
@@ -9429,7 +9471,7 @@ test "reverse history scroll restores the whole crossing cluster" {
         try std.testing.expect(screen.writeSizedText("s=2;X"));
         try std.testing.expect(try screen.tryScrollUpRegionOne(0, 2));
         try std.testing.expectEqual(@as(u32, 'X'), screen.historyCellAt(0, 0).codepoint);
-        try std.testing.expect(screen.scrollDownFromHistory(1));
+        try std.testing.expect(screen.scrollDownFromHistory(1).changed);
         try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
         try std.testing.expectEqual(@as(u32, 'X'), screen.cellInfoAt(0, 0).codepoint);
         for (0..2) |y| for (0..2) |x| {
@@ -9449,7 +9491,7 @@ test "reverse history scroll reassembles a three-row crossing cluster" {
     try std.testing.expect(try screen.tryScrollUpRegionOne(0, 3));
     try std.testing.expect(try screen.tryScrollUpRegionOne(0, 3));
     try std.testing.expectEqual(@as(u32, 2), screen.historyCount());
-    try std.testing.expect(screen.scrollDownFromHistory(2));
+    try std.testing.expect(screen.scrollDownFromHistory(2).changed);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqual(@as(u32, 'X'), screen.cellInfoAt(0, 0).codepoint);
     for (0..3) |y| for (0..3) |x| {
