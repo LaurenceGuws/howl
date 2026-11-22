@@ -1848,6 +1848,42 @@ test "ANSI mode queries and XTREPORTCOLORS append caller output" {
     try std.testing.expectEqualStrings("\x1b[2;1$y\x1b[4;1$y\x1b[12;1$y\x1b[20;1$y\x1b[0;1#Q", pendingOutput(&terminal));
 }
 
+test "terminal: DEC 69 95 1004 and 1007 retain explicit unprofiled mode values" {
+    var terminal = try Terminal.init(std.testing.allocator, 5, 12);
+    defer terminal.deinit();
+
+    // Pinned iTerm2 gates mode 69 on VT level 400, mode 95 on level 500,
+    // focus reporting on host consent, and alternate wheel on a host gate.
+    // Howl has no hidden vendor emulation level or host admission callback.
+    write(&terminal, "\x1b[?69$p\x1b[?95$p\x1b[?1004$p\x1b[?1007$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?69;2$y\x1b[?95;2$y\x1b[?1004;2$y\x1b[?1007;2$y",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    // A fragmented group commits each supported mode to its one owner.
+    try std.testing.expect(!(try terminal.feed("\x1b[?69;95;1004;")).stateChanged());
+    try std.testing.expect((try terminal.feed("1007h")).stateChanged());
+    write(&terminal, "\x1b[?69$p\x1b[?95$p\x1b[?1004$p\x1b[?1007$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?69;1$y\x1b[?95;1$y\x1b[?1004;1$y\x1b[?1007;1$y",
+        pendingOutput(&terminal),
+    );
+    try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
+    try std.testing.expect(terminal.alternateScroll());
+    try consumeReplies(&terminal);
+
+    write(&terminal, "\x1b[?69;95;1004;1007l");
+    write(&terminal, "\x1b[?69$p\x1b[?95$p\x1b[?1004$p\x1b[?1007$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?69;2$y\x1b[?95;2$y\x1b[?1004;2$y\x1b[?1007;2$y",
+        pendingOutput(&terminal),
+    );
+    try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
+    try std.testing.expect(!terminal.alternateScroll());
+}
+
 test "XTREPORTSGR reports common rectangle attrs conservatively" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 4);

@@ -1699,8 +1699,36 @@ references:
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: Terminal.restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
-          iterm2.csi.decset: {raw: "CSI ? Pm h", effect: set DEC modes, howl: *howl_dec_mode_dispatch_excluded}
-          iterm2.csi.decrst: {raw: "CSI ? Pm l", effect: reset DEC modes, howl: *howl_dec_mode_dispatch_excluded}
+          iterm2.csi.decset: {raw: "CSI ? Pm h", effect: set DEC modes,
+            conditions: "Pinned iTerm2 VT100Terminal.m:821-838 requires emulation level 400 for DEC 69 and
+              level 500 for DEC 95; lines 853-876 additionally gate enabling focus 1004 and wheel
+              1007 on host callbacks. Howl toggles these independently retained modes without a VT-level
+              or host-permission profile.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "An independently usable VT cannot import iTerm2's chosen emulation level or
+                platform-specific focus/wheel consent as canonical mode state. The exact differentials
+                remain explicit review obligations, not a blanket excuse for missing DEC semantics.",
+              residual: "DECSET 69/95 lack iTerm2's emulation-level admission gates; enabling 1004/1007
+                lacks iTerm2's host-allowance gates. Further reference-specific DEC mode behavior has
+                not been signed off as full.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "terminal: DEC 69 95 1004 and 1007 retain explicit unprofiled mode values"}}}
+          iterm2.csi.decrst: {raw: "CSI ? Pm l", effect: reset DEC modes,
+            conditions: "Pinned iTerm2 VT100Terminal.m:821-838 requires level 400/500 to reset modes
+              69/95 as well as set them. Its disabling of focus 1004 and wheel 1007 is unconditional,
+              unlike their host-gated enablement. Howl resets all four retained flags independently
+              of an iTerm2 emulation profile.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Terminal mode state is host-neutral; importing iTerm2's emulation-level gates
+                into VT would introduce vendor profile authority. Reset-specific behavior needs its own
+                signed-off differential, separate from the host-gated enabling direction.",
+              residual: "DECRST 69 and 95 lack iTerm2's emulation-level admission gates. Resetting
+                focus 1004 and alternate wheel 1007 is already admitted in both, but other DEC mode
+                behavior and host lifecycle consequences remain unqualified.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "terminal: DEC 69 95 1004 and 1007 retain explicit unprofiled mode values"}}}
           iterm2.csi.decdsr: {raw: "CSI ? Ps n", effect: DEC status report,
             conditions: iTerm2 gates a wider status set by emulation level, howl: {support: partial,
               disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,
