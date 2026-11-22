@@ -278,8 +278,11 @@ publication/presentation counts in app and Odin; switching app code generation
 reduced worker CPU substantially. Standalone core package build policies remain
 unchanged. ReleaseSafe retains bounds and safety checks.
 
-Build with the repository's exact compiler pin:
+For additional safety-checking qualification, use the repository's exact compiler pin:
 zig build install check test -Doptimize=ReleaseSafe
+
+This is a qualification mode, not Home's accepted interactive dogfood mode.
+See the Home dogfood rule under desktop installation below.
 
 For a native Linux build with pinned, statically linked SDL3 (3.4.20),
 SDL3_ttf (3.2.2), and the howl-text-owned FreeType/HarfBuzz engines:
@@ -308,6 +311,35 @@ to occupy the canonical cell; font changes resize that cell rather than its ink.
 
 
 ## User desktop installation (Linux)
+
+### Home dogfood optimization policy (accepted 22 November 2026)
+
+**ReleaseFast is the accepted build mode for interactive Howl dogfood on Home**
+until Captain explicitly revises this policy with a measured reason. This is
+not a claim that ReleaseSafe is incorrect: keep ReleaseSafe for supplementary
+safety-checking tests and controlled diagnostics, but do not silently promote a
+ReleaseSafe executable as the normal Home dogfood candidate.
+
+From `howl-app/`, qualify and stage the actual candidate in its intended mode:
+
+```sh
+zig build install check test -Doptimize=ReleaseFast --prefix /absolute/staging
+```
+
+Also run the maintained root check/test/audit and protocol gates as required.
+Record the exact source commit, optimization mode and executable SHA-256 in the
+rollout receipt, verify an independent candidate before replacing any daily
+binary, and preserve a rollback path. **Compare memory and CPU only at matched
+optimization modes** when attributing differences to source. A proposed mode
+change needs a same-source, same-workload A/B, an explicit cost/benefit, Captain's
+acceptance, and an update to this operational rule.
+
+Why this matters: Home's 22 November `8dd51ab` versus `69d778f` KWin/btop
+control found only **+491 KiB** anonymous memory from source changes with both
+binaries built ReleaseFast, but **+7640 KiB** when changing only the new build
+to ReleaseSafe. Full evidence is retained in the `howl-protocol-coverage`
+workstream at `GUI_MEMORY_CONTROL_20261122.md`. Do not turn a cross-mode
+measurement into an unfounded source-memory regression.
 
 Normal `zig build install` keeps Zig's prefix/staging semantics and does not
 register a launcher in your desktop. **Run the `install` build step for the
