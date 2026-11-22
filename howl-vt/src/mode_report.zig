@@ -111,9 +111,8 @@ pub fn appendDec(
     mode: u16,
     state: u8,
 ) replies.AppendError!void {
-    // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-    const payload = std.fmt.bufPrint(encode_buffer, "?{d};{d}$y", .{ mode, state }) catch unreachable;
+    const payload = std.fmt.bufPrint(encode_buffer, "?{d};{d}$y", .{ mode, state }) catch
+        return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -124,9 +123,8 @@ pub fn appendAnsi(
     mode: u16,
     state: u8,
 ) replies.AppendError!void {
-    // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-    const payload = std.fmt.bufPrint(encode_buffer, "{d};{d}$y", .{ mode, state }) catch unreachable;
+    const payload = std.fmt.bufPrint(encode_buffer, "{d};{d}$y", .{ mode, state }) catch
+        return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -232,6 +230,22 @@ test "ANSI report inventory is closed and exact" {
     };
     for (modes) |mode| try std.testing.expectEqual(@as(u8, 1), ansiState(enabled, mode));
     try std.testing.expectEqual(@as(u8, 0), ansiState(enabled, 1));
+}
+
+test "mode reports reject undersized scratch without touching queued replies" {
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    try output.append("kept");
+    var too_small: [3]u8 = undefined;
+    try std.testing.expectError(error.ReplyLimit, appendAnsi(&output, &too_small, 4, 1));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendDec(&output, &too_small, 2004, 2));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+
+    var enough: [32]u8 = undefined;
+    try appendAnsi(&output, &enough, 4, 1);
+    try appendDec(&output, &enough, 2004, 2);
+    try std.testing.expectEqualStrings("kept\x1b[4;1$y\x1b[?2004;2$y", output.bytes());
 }
 
 test "ANSI and DEC serialization follows terminal C1 framing" {
