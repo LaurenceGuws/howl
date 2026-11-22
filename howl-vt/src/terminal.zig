@@ -2559,6 +2559,17 @@ fn termcapValue(encoded_name: []const u8) ?TermcapValue {
     if (hexNameEquals(encoded_name, "civis")) return .{ .encoded = "1b5b3f32356c" };
     if (hexNameEquals(encoded_name, "cnorm")) return .{ .encoded = "1b5b3f3132681b5b3f323568" };
     if (hexNameEquals(encoded_name, "cvvis")) return .{ .encoded = "1b5b3f31323b323568" };
+    // Existing Screen and Terminal owners already implement this exact
+    // pinned Kitty fixed screen lifecycle/erase subset; no host dimensions
+    // or product-specific terminal identity are reported.
+    if (hexNameEquals(encoded_name, "smcup")) return .{ .encoded = "1b5b3f3130343968" };
+    if (hexNameEquals(encoded_name, "rmcup")) return .{ .encoded = "1b5b3f313034396c" };
+    if (hexNameEquals(encoded_name, "sc")) return .{ .encoded = "1b37" };
+    if (hexNameEquals(encoded_name, "rc")) return .{ .encoded = "1b38" };
+    if (hexNameEquals(encoded_name, "clear")) return .{ .encoded = "1b5b481b5b324a" };
+    if (hexNameEquals(encoded_name, "home")) return .{ .encoded = "1b5b48" };
+    if (hexNameEquals(encoded_name, "el")) return .{ .encoded = "1b5b4b" };
+    if (hexNameEquals(encoded_name, "ed")) return .{ .encoded = "1b5b4a" };
     if (hexNameEquals(encoded_name, "Tc") or hexNameEquals(encoded_name, "Su")) return .flag;
     return null;
 }
@@ -2608,7 +2619,7 @@ test "XTGETTCAP reply allocation failure rolls back the complete ordered respons
 fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
     var output = replies.Buffer.init(allocator);
     defer output.deinit();
-    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;736d756c;6369766973;626F677573") catch |failure| {
+    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;736d756c;6369766973;736d637570;636c656172;626F677573") catch |failure| {
         try std.testing.expectEqual(@as(usize, 0), output.bytes().len);
         return failure;
     };
@@ -2619,6 +2630,8 @@ fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
             "\x1bP1+r5846\x1b\\" ++
             "\x1bP1+r736d756c=1b5b346d\x1b\\" ++
             "\x1bP1+r6369766973=1b5b3f32356c\x1b\\" ++
+            "\x1bP1+r736d637570=1b5b3f3130343968\x1b\\" ++
+            "\x1bP1+r636c656172=1b5b481b5b324a\x1b\\" ++
             "\x1bP0+r626F677573\x1b\\",
         output.bytes(),
     );

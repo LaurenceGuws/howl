@@ -2570,6 +2570,58 @@ test "XTGETTCAP reports pinned style and cursor controls already owned by VT" {
     );
 }
 
+test "XTGETTCAP reports pinned alternate screen cursor save and erase controls" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 10);
+    defer terminal.deinit();
+
+    // Pinned Kitty terminfo.py get_capabilities supplies these fixed bytes.
+    // Caller-selected theme, geometry and TERM identity remain unrepresented.
+    try std.testing.expect(!(try terminal.feed("\x1bP+q736d637570;726d637570;7363")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed(
+        ";7263;636c656172;686f6d65;656c;6564;626f677573\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r736d637570=1b5b3f3130343968\x1b\\" ++
+            "\x1bP1+r726d637570=1b5b3f313034396c\x1b\\" ++
+            "\x1bP1+r7363=1b37\x1b\\" ++
+            "\x1bP1+r7263=1b38\x1b\\" ++
+            "\x1bP1+r636c656172=1b5b481b5b324a\x1b\\" ++
+            "\x1bP1+r686f6d65=1b5b48\x1b\\" ++
+            "\x1bP1+r656c=1b5b4b\x1b\\" ++
+            "\x1bP1+r6564=1b5b4a\x1b\\" ++
+            "\x1bP0+r626f677573\x1b\\",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    write(&terminal, "MAIN\x1b[?1049hALT");
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    write(&terminal, "\x1b[?1049l");
+    try std.testing.expectEqual(@as(u21, 'M'), terminal.semanticView(0).cellAt(0, 0));
+
+    write(&terminal, "\x1b[2;4H\x1b7\x1b[H\x1b8");
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+    write(&terminal, "\x1b[H\x1b[2J");
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+    write(&terminal, "ABCD\x1b[1;2H\x1b[K");
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
+    write(&terminal, "\x1b[2;1HBELOW\x1b[1;2H\x1b[J");
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
+
+    // Preserve the caller's exact hex spelling and active C1 control form.
+    write(&terminal, "\x1b G\x90+q736D637570;636C656172\x9c");
+    try std.testing.expectEqualStrings(
+        "\x901+r736D637570=1b5b3f3130343968\x9c" ++
+            "\x901+r636C656172=1b5b481b5b324a\x9c",
+        pendingOutput(&terminal),
+    );
+}
+
 test "XTGETTCAP response capacity failure rolls back every requested reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
