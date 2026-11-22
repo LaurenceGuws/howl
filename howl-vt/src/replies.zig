@@ -97,14 +97,9 @@ pub const Buffer = struct {
         self.bytes_storage.appendSlice(self.allocator, data) catch return error.OutOfMemory;
     }
 
-    /// Appends one protocol framing control through the selected C1 policy.
-    pub fn appendControl(
-        self: *Buffer,
-        protocol: Protocol,
-        control: Control,
-    ) AppendError!void {
-        const eight_bit = protocol == .terminal and self.eight_bit_controls;
-        const framed = if (eight_bit) switch (control) {
+    /// Select the exact borrowed C1 framing bytes without mutating output.
+    fn controlBytes(self: *const Buffer, protocol: Protocol, control: Control) []const u8 {
+        return if (protocol == .terminal and self.eight_bit_controls) switch (control) {
             .csi => "\x9b",
             .dcs => "\x90",
             .osc => "\x9d",
@@ -115,7 +110,31 @@ pub const Buffer = struct {
             .osc => "\x1b]",
             .st => "\x1b\\",
         };
-        try self.append(framed);
+    }
+
+    /// Appends one protocol framing control through the selected C1 policy.
+    pub fn appendControl(self: *Buffer, protocol: Protocol, control: Control) AppendError!void {
+        try self.append(self.controlBytes(protocol, control));
+    }
+
+    // Reserve the *whole* reply before appending any bytes. No subsequent
+    // operation allocates or fails, and capacity/overflow policy stays here.
+    fn appendFramed(
+        self: *Buffer,
+        protocol: Protocol,
+        start: Control,
+        payload: []const u8,
+        end: ?Control,
+    ) AppendError!void {
+        const prefix = self.controlBytes(protocol, start);
+        const suffix = if (end) |control| self.controlBytes(protocol, control) else "";
+        const payload_len = std.math.cast(u32, payload.len) orelse return error.ReplyLimit;
+        const additional = std.math.add(u32, payload_len, @intCast(prefix.len + suffix.len)) catch
+            return error.ReplyLimit;
+        try self.ensureUnusedCapacity(additional);
+        self.bytes_storage.appendSliceAssumeCapacity(prefix);
+        self.bytes_storage.appendSliceAssumeCapacity(payload);
+        self.bytes_storage.appendSliceAssumeCapacity(suffix);
     }
 
     /// Appends one complete CSI reply transactionally.
@@ -124,10 +143,7 @@ pub const Buffer = struct {
         protocol: Protocol,
         payload: []const u8,
     ) AppendError!void {
-        const start = self.len();
-        errdefer self.truncate(start);
-        try self.appendControl(protocol, .csi);
-        try self.append(payload);
+        try self.appendFramed(protocol, .csi, payload, null);
     }
 
     /// Appends one complete DCS or OSC reply transactionally.
@@ -137,14 +153,10 @@ pub const Buffer = struct {
         control: StringControl,
         payload: []const u8,
     ) AppendError!void {
-        const start = self.len();
-        errdefer self.truncate(start);
-        try self.appendControl(protocol, switch (control) {
+        try self.appendFramed(protocol, switch (control) {
             .dcs => .dcs,
             .osc => .osc,
-        });
-        try self.append(payload);
-        try self.appendControl(protocol, .st);
+        }, payload, .st);
     }
 
     /// Restores a previously retained prefix length after a failed transaction.
@@ -186,6 +198,55 @@ test "reply buffer framing, bounds, and prefix consumption are exact" {
         buffer.append(oversized),
     );
     try std.testing.expectEqual(before, buffer.bytes().len);
+}
+
+test "framed replies accept exact queue capacity and reject the next byte atomically" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct {
+        eight_bit: bool,
+        string: bool,
+        protocol: Protocol,
+        frame: []const u8,
+    }{
+        .{ .eight_bit = false, .string = false, .protocol = .terminal, .frame = "\x1b[Q" },
+        .{ .eight_bit = true, .string = false, .protocol = .terminal, .frame = "\x9bQ" },
+        .{ .eight_bit = false, .string = true, .protocol = .kitty, .frame = "\x1bPZ\x1b\\" },
+        .{ .eight_bit = true, .string = true, .protocol = .terminal, .frame = "\x90Z\x9c" },
+    };
+    for (cases) |case| {
+        var buffer = Buffer.init(allocator);
+        defer buffer.deinit();
+        try std.testing.expectEqual(case.eight_bit, buffer.setEightBitControls(case.eight_bit));
+        const fill = try allocator.alloc(u8, max_bytes - case.frame.len);
+        defer allocator.free(fill);
+        @memset(fill, 'F');
+        try buffer.append(fill);
+        if (case.string)
+            try buffer.appendString(case.protocol, .dcs, "Z")
+        else
+            try buffer.appendCsi(case.protocol, "Q");
+        try std.testing.expectEqual(@as(u32, max_bytes), buffer.len());
+        try std.testing.expectEqualSlices(u8, case.frame, buffer.bytes()[fill.len..]);
+        try std.testing.expectError(error.ReplyLimit, buffer.append("!"));
+        try std.testing.expectEqualSlices(u8, case.frame, buffer.bytes()[fill.len..]);
+    }
+}
+
+test "framed reply capacity rejection leaves the exact original prefix" {
+    const allocator = std.testing.allocator;
+    var buffer = Buffer.init(allocator);
+    defer buffer.deinit();
+    const fill = try allocator.alloc(u8, max_bytes - 2);
+    defer allocator.free(fill);
+    @memset(fill, 'k');
+    try buffer.append(fill);
+    try std.testing.expectError(error.ReplyLimit, buffer.appendCsi(.terminal, "X"));
+    try std.testing.expectEqualSlices(u8, fill, buffer.bytes());
+    try std.testing.expectError(error.ReplyLimit, buffer.appendString(.kitty, .osc, "X"));
+    try std.testing.expectEqualSlices(u8, fill, buffer.bytes());
+    try buffer.appendCsi(.terminal, "");
+    try std.testing.expectEqual(@as(u32, max_bytes), buffer.len());
+    try std.testing.expectEqualStrings("\x1b[", buffer.bytes()[fill.len..]);
 }
 
 test "reply buffer uses C1 controls only for terminal protocol" {
