@@ -201,12 +201,6 @@ classifications:
     source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
       path: howl-vt/test/unit/terminal_end_to_end_test.zig,
       symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}
-  dec_mode_dispatch_excluded: &howl_dec_mode_dispatch_excluded {support: partial, disposition: excluded,
-    rationale: *howl_mode_policy_difference,
-    residual: Howl implements its reviewed bounded DEC mode set rather than every mode recognized by the reference.,
-    source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-      path: howl-vt/test/unit/terminal_modes_test.zig,
-      symbol: "individual DEC mode saves retain every implemented mode without saturation"}}
   ignored_color_full: &howl_ignored_color_full {support: full,
     source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
       path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -713,7 +707,20 @@ references:
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
             howl: *howl_ansi_first_parameter_excluded}
           libvterm.csi.decset: {raw: "CSI ? Pm h", effect: set DEC private modes,
-            conditions: Howl implements only the individually indexed DEC modes., howl: *howl_dec_mode_dispatch_excluded}
+            conditions: "Pinned libvterm state.c::set_dec_mode recognizes its own DEC set but has
+              no cases for modern 1007 alternate-scroll, 1016 SGR-pixel mouse or 5522 typed
+              paste-events. Howl implements all three in its host-neutral mode owner, so those
+              exact bytes change canonical state rather than remaining ignored.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl deliberately supports later useful DEC extensions absent from pinned
+                libvterm. Their additional state is not a missing libvterm feature, and removing
+                it would break independently supported xterm/Kitty behavior.",
+              residual: "Pinned libvterm ignores DECSET 1007/1016/5522, while Howl admits and
+                reports their typed state. Common DEC mode subset is implemented, but broader
+                exact source-specific mode recognition remains partial.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Howl"}}}
           libvterm.csi.hpb: {raw: "CSI [Ps=1] j", effect: cursor backward, relevance: compatibility,
             conditions: libvterm honors the left margin only under DECOM while Howl uses its directional margin policy,
             howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -730,7 +737,19 @@ references:
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
             howl: *howl_ansi_first_parameter_excluded}
           libvterm.csi.decrst: {raw: "CSI ? Pm l", effect: reset DEC private modes,
-            conditions: Howl implements only the individually indexed DEC modes., howl: *howl_dec_mode_dispatch_excluded}
+            conditions: "Pinned libvterm state.c::set_dec_mode ignores DEC resets of 1007,
+              1016 and 5522 as unknown. Howl explicitly clears those modes and reports the
+              cleared state, restoring its own xterm/Kitty-compatible host input policy.",
+            howl: {support: partial, disposition: excluded,
+              rationale: "Howl keeps one bounded interoperable DEC mode inventory. Resetting the
+                same modern modes that Howl accepts is required for exact state lifetime;
+                libvterm's smaller recognition set is not the portable limit.",
+              residual: "Pinned libvterm discards DECRST 1007/1016/5522, while Howl resets the
+                corresponding previously enabled canonical modes; no attempt to implement a
+                hidden libvterm compatibility profile is justified.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Howl"}}}
           libvterm.csi.sgr: {raw: "CSI Pm m", effect: select graphic rendition, bounds: indexed and RGB forms,
             howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
               residual: Howl implements the indexed bounded rendition subset proved below.,

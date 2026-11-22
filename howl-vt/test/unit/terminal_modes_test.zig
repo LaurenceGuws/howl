@@ -1930,6 +1930,42 @@ test "ANSI mode queries and XTREPORTCOLORS append caller output" {
     try std.testing.expectEqualStrings("\x1b[2;1$y\x1b[4;1$y\x1b[12;1$y\x1b[20;1$y\x1b[0;1#Q", pendingOutput(&terminal));
 }
 
+test "terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Howl" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 10);
+    defer terminal.deinit();
+
+    // Pinned libvterm state.c::set_dec_mode has no case for these numbers,
+    // while Howl deliberately implements xterm alternate-wheel, SGR-pixel
+    // mouse and typed paste-event modes for its independent VT embedders.
+    write(&terminal, "\x1b[?1007$p\x1b[?1016$p\x1b[?5522$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?1007;2$y\x1b[?1016;2$y\x1b[?5522;2$y",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+    try std.testing.expect(!terminal.alternateScroll());
+    try std.testing.expect(!terminal.pasteEvents());
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?1007;1016;")).stateChanged());
+    try std.testing.expect((try terminal.feed("5522h")).stateChanged());
+    try std.testing.expect(terminal.alternateScroll());
+    try std.testing.expect(terminal.pasteEvents());
+    write(&terminal, "\x1b[?1007$p\x1b[?1016$p\x1b[?5522$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?1007;1$y\x1b[?1016;1$y\x1b[?5522;1$y",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    write(&terminal, "\x1b[?1007;1016;5522l\x1b[?1007$p\x1b[?1016$p\x1b[?5522$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?1007;2$y\x1b[?1016;2$y\x1b[?5522;2$y",
+        pendingOutput(&terminal),
+    );
+    try std.testing.expect(!terminal.alternateScroll());
+    try std.testing.expect(!terminal.pasteEvents());
+}
+
 test "terminal: DEC 69 95 1004 and 1007 retain explicit unprofiled mode values" {
     var terminal = try Terminal.init(std.testing.allocator, 5, 12);
     defer terminal.deinit();
