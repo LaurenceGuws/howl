@@ -1156,13 +1156,60 @@ references:
               source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "libvterm device identity and status query grammar is deliberately nonparity"}}}
-          libvterm.csi.decscusr: {raw: "CSI [Ps=0] SP q", effect: set cursor shape and blink,
-            conditions: parameter 0 selects a blinking block while Howl restores the configured host default,
-            howl: {support: partial, disposition: excluded,
-              rationale: *howl_cursor_compatibility_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
-              path: howl-vt/test/unit/terminal_cursor_test.zig,
-              symbol: "terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values"}}}
+          libvterm.csi.decscusr:
+            raw: "CSI [Ps=0] SP q"
+            effect: set cursor shape and blink
+            conditions: >-
+              Pinned libvterm src/state.c:1435-1465 admits extra DECSCUSR
+              operands and applies the first, while frozen Kitty rejects
+              surplus fields. Libvterm parameter zero explicitly selects a
+              blinking block, unlike Howl's caller-configured default.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: >-
+                Pinned libvterm changes cursor presentation for CSI 3;6 SP q,
+                while frozen Kitty rejects the malformed extra operand.
+                Existing parameter-zero/default differences remain separate.
+              residual: >-
+                Valid DECSCUSR style and blink updates work, but excess
+                operands now leave presentation and pending wrap untouched.
+                Libvterm's explicit blinking-block zero differs from Howl's
+                caller-owned cursor default.
+              source: howl-vt/src/terminal.zig
+              symbol: cursorStyle
+              proof:
+                path: howl-vt/test/unit/terminal_cursor_test.zig
+                symbol: "terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 3 ; 6 SP q"
+                winner: &kitty_cursor_style_arity_winner
+                  owner: kitty
+                  protocol: Kitty DECSCUSR one-operand admission
+                  behavior: Reject excess cursor-style operands without changing presentation, cursor or pending wrap.
+                  evidence: Pinned Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8 kitty/vt-parser.c:1121-1165,1359-1369
+                loser:
+                  owner: libvterm
+                  protocol: libvterm permissive DECSCUSR first-operand admission
+                  behavior: Apply style 3 (blinking underline) despite a second numeric operand.
+                  evidence: Pinned libvterm 934bc2fbf21800ac3458a499df8820ca5fb45fd3 src/state.c:954-1006,1435-1465
+                current_usage: &cursor_style_arity_usage >-
+                  DECSCUSR is established cursor presentation control; no
+                  contemporary application dependency on malformed extra
+                  style operands was established. Valid styles remain accepted.
+                recency: &cursor_style_arity_recency >-
+                  DECSCUSR has DEC terminal-control origins, not a later
+                  vendor-specific protocol. These pins differ in parser
+                  leniency, not command-origin priority.
+                reason: &cursor_style_arity_reason >-
+                  A malformed CSI cannot both change cursor presentation and
+                  leave it unchanged. The accepted origin, exact-effects,
+                  usage, implementation-preference and recency policy chooses
+                  frozen Kitty strict admission without an emulation profile.
+                proof: &cursor_style_arity_proof
+                  path: howl-vt/test/unit/terminal_cursor_test.zig
+                  symbol: "terminal cursor: pinned Kitty DECSCUSR rejects excess operands before changing appearance"
           libvterm.csi.decsca: {raw: "CSI [Ps=0] \" q", effect: set character protection, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: processQuote, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2362,11 +2409,45 @@ references:
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: Terminal.softReset, proof: {
               path: howl-vt/test/unit/terminal_test.zig,
               symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
-          iterm2.csi.decscusr: {raw: "CSI [Ps=0] SP q", effect: set cursor style,
-            conditions: parameter 0 restores the configured host default and values above 6 are ignored,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
-              path: howl-vt/test/unit/terminal_cursor_test.zig,
-              symbol: "terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values"}}}
+          iterm2.csi.decscusr:
+            raw: "CSI [Ps=0] SP q"
+            effect: set cursor style
+            conditions: >-
+              Pinned iTerm2 VT100CSIParser.m:650-653 recognizes DECSCUSR
+              without rejecting extra operands, and VT100Terminal.m:2288-2310
+              applies only p[0]. Valid parameter zero restores the configured
+              host default and unsupported styles above six are ignored.
+              Howl now follows frozen Kitty strict over-arity admission.
+            howl:
+              support: partial
+              disposition: adjudicated
+              rationale: >-
+                Original full proof remains valid for legal styles and
+                caller-owned zero/default handling. Over-arity admission is a
+                separate same-wire conflict: iTerm2 applies the first style,
+                while frozen Kitty and Howl reject the entire command.
+              residual: >-
+                Valid styles, blink and configured defaults remain supported;
+                malformed extra operands now leave cursor presentation
+                untouched instead of applying the first style as iTerm2 does.
+              source: howl-vt/src/terminal.zig
+              symbol: cursorStyle
+              proof:
+                path: howl-vt/test/unit/terminal_cursor_test.zig
+                symbol: "terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values"
+              adjudication:
+                kind: wire_collision
+                wire: "CSI 3 ; 6 SP q"
+                winner: *kitty_cursor_style_arity_winner
+                loser:
+                  owner: iterm2
+                  protocol: iTerm2 permissive DECSCUSR first-operand admission
+                  behavior: Apply style 3 (blinking underline) using p[0] despite a second numeric operand.
+                  evidence: Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 sources/VT100/VT100CSIParser.m:650-653 and VT100Terminal.m:2288-2310
+                current_usage: *cursor_style_arity_usage
+                recency: *cursor_style_arity_recency
+                reason: *cursor_style_arity_reason
+                proof: *cursor_style_arity_proof
           iterm2.csi.decsca: {raw: "CSI [Ps=0] \" q", effect: select character protection,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: processQuote, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -4997,13 +5078,13 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           kitty.csi.decscusr: {raw: "CSI [Ps=0] SP q", effect: set cursor style,
-            conditions: Kitty maps values above 6 to host-default shape with parameter-selected blink while Howl
-              rejects them,
+            conditions: "Frozen Kitty vt-parser.c:1359-1369 uses CALL_CSI_HANDLER1M for ordinary CSI Ps SP q and rejects excess operands before changing cursor appearance. Howl now matches this admission, while Kitty screen.c:2954-2969 maps styles above 6 to host-default shape with parameter-selected blink and Howl rejects them.",
             howl: {support: partial, disposition: excluded,
               rationale: *howl_cursor_compatibility_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
+              residual: "Strict one-count admission, trailing-empty values, fragmented/C1/colon rejection and unchanged cursor/graphics/reply state are proven. Unsupported styles above six still differ; multi-cursor CSI > Pm SP q is independently excluded.",
+              source: howl-vt/src/terminal.zig, symbol: processSpace, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
-              symbol: "terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values"}}}
+              symbol: "terminal cursor: pinned Kitty DECSCUSR rejects excess operands before changing appearance"}}}
           kitty.csi.multi_cursor: {raw: "CSI > Pm SP q", effect: "set multiple cursor shapes", relevance: "extension",
             conditions: "Pinned Kitty kitty/vt-parser.c::_parse_multi_cursors dispatches CSI > Pm SP q into screen_multi_cursor for extra cursor placement and shape changes. Howl decodeCsiLeader rejects the leader/space combination without any cursor mutation or reply because its VT has only one canonical cursor.",
             howl: {support: missing, disposition: excluded,

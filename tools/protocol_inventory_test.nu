@@ -82,6 +82,7 @@ let expected_rulings = [
   iterm2.csi.cuu
   iterm2.csi.cht
   iterm2.csi.dch
+  iterm2.csi.decscusr
   iterm2.csi.ech
   iterm2.csi.hpr
   iterm2.csi.hvp
@@ -114,6 +115,7 @@ let expected_rulings = [
   libvterm.csi.cuu
   libvterm.csi.cht
   libvterm.csi.decsgr
+  libvterm.csi.decscusr
   libvterm.csi.dch
   libvterm.csi.ech
   libvterm.csi.hpa
@@ -127,6 +129,21 @@ let expected_rulings = [
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Frozen Kitty ordinary DECSCUSR rejects a second cursor-style operand.
+# Pinned libvterm/iTerm2 apply the first style. Exact presentation and
+# reply-queue no-mutation evidence must remain linked to each loser.
+for reference in [libvterm iterm2] {
+  let id = ($reference + ".csi.decscusr")
+  let decision = (protocol decision $id)
+  if ($decision.disposition != adjudicated
+      or $decision.adjudication.kind != wire_collision
+      or $decision.adjudication.wire != "CSI 3 ; 6 SP q"
+      or $decision.adjudication.winner.owner != kitty
+      or $decision.adjudication.loser.owner != $reference
+      or $decision.adjudication.proof.symbol != "terminal cursor: pinned Kitty DECSCUSR rejects excess operands before changing appearance") {
+    error make {msg: $"pinned cursor-style admission ruling is not source-backed: ($id)"}
+  }
 }
 # Frozen Kitty's HPR/VPR cursor aliases reject a second numeric operand.
 # Both pinned comparators accept extras and move from the first count.

@@ -101,6 +101,105 @@ test "terminal cursor: DECSCUSR restores the canonical default and rejects unsup
     try std.testing.expect(!view(&configured).cursor_blink);
 }
 
+test "terminal cursor: pinned Kitty DECSCUSR rejects excess operands before changing appearance" {
+    // Frozen Kitty vt-parser.c::dispatch_csi uses CALL_CSI_HANDLER1M for
+    // ordinary CSI Ps SP q, refusing more than one committed parameter.
+    // Pinned libvterm/iTerm2 instead apply the first. This proof does not
+    // change Kitty CSI > Pm SP q multi-cursor admission or default policy.
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=97,C=1;AQIDBA==\x1b\\";
+    for ([_][]const u8{
+        "\x1b[3;6 q", "\x1b[3;0 q", "\x1b[3;; q",   "\x1b[3:6 q",
+        "\x9b3;6 q",  "\x1b[;4 q",  "\x1b[3;6;1 q",
+    }) |invalid| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 4);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HABCDEFGH\x1b[2;1HIJKLMNOP\x1b[3;3H" ++ image ++ "\x1b[2;3H\x1b[6 q");
+        // The graphics upload has its own acknowledged reply. Drain only
+        // that acknowledgement, then retain DSR 5 as the FIFO sentinel.
+        try terminal.consumeReplyBytes(terminal.replyBytes().len);
+        try feed(&terminal, "\x1b[5n");
+        const before = view(&terminal);
+        try std.testing.expectEqual(.bar, before.cursor_shape);
+        try std.testing.expect(!before.cursor_blink);
+        try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
+        const seq = terminal.semanticSequence();
+        const edit = terminal.observation().structuralEditGeneration();
+        const cells = [_]@TypeOf(before.cellInfoAt(0, 0)){
+            before.cellInfoAt(0, 0), before.cellInfoAt(1, 1),
+            before.cellInfoAt(1, 4), before.cellInfoAt(2, 0),
+        };
+        const graphics = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), graphics.placementCount());
+        const placement = graphics.placement(0).?;
+        const image_count = graphics.imageCount();
+        const generation = graphics.generation;
+        const content_generation = graphics.content_generation;
+
+        try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+        const after = view(&terminal);
+        try std.testing.expectEqual(seq, terminal.semanticSequence());
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        try std.testing.expectEqual(before.cursor_shape, after.cursor_shape);
+        try std.testing.expectEqual(before.cursor_blink, after.cursor_blink);
+        try std.testing.expectEqual(before.history_count, after.history_count);
+        try std.testing.expectEqual(edit, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqualDeep(cells[0], after.cellInfoAt(0, 0));
+        try std.testing.expectEqualDeep(cells[1], after.cellInfoAt(1, 1));
+        try std.testing.expectEqualDeep(cells[2], after.cellInfoAt(1, 4));
+        try std.testing.expectEqualDeep(cells[3], after.cellInfoAt(2, 0));
+        try std.testing.expectEqual(image_count, terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(placement.col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(generation, terminal.images(0).generation);
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
+
+        // The invalid control cannot poison the next valid style change
+        // or consume the already staged status reply.
+        try std.testing.expect((try terminal.feed("\x1b[3 q")).stateChanged());
+        try std.testing.expectEqual(.underline, view(&terminal).cursor_shape);
+        try std.testing.expect(view(&terminal).cursor_blink);
+        try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
+    }
+
+    // Legal one-count and final-empty forms still admit Kitty's ordinary
+    // style values, including the caller-selected default for zero.
+    for ([_]struct { bytes: []const u8, shape: Terminal.CursorShape, blink: bool }{
+        .{ .bytes = "\x1b[ q", .shape = .block, .blink = true },
+        .{ .bytes = "\x1b[0 q", .shape = .block, .blink = true },
+        .{ .bytes = "\x1b[0; q", .shape = .block, .blink = true },
+        .{ .bytes = "\x1b[3 q", .shape = .underline, .blink = true },
+        .{ .bytes = "\x1b[3; q", .shape = .underline, .blink = true },
+        .{ .bytes = "\x9b4 q", .shape = .underline, .blink = false },
+        .{ .bytes = "\x1b[5 q", .shape = .bar, .blink = true },
+        .{ .bytes = "\x1b[6 q", .shape = .bar, .blink = false },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[6 q");
+        try feed(&terminal, case.bytes);
+        try std.testing.expectEqual(case.shape, view(&terminal).cursor_shape);
+        try std.testing.expectEqual(case.blink, view(&terminal).cursor_blink);
+    }
+
+    // A rejected style control must not consume pending right-edge wrap.
+    for ([_][]const u8{ "\x1b[3;6 q", "\x9b3;6 q" }) |invalid| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;8H!");
+        const seq = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqual(seq, terminal.semanticSequence());
+        try feed(&terminal, "X");
+        try std.testing.expectEqual(@as(u21, '!'), view(&terminal).cellAt(0, 7));
+        try std.testing.expectEqual(@as(u21, 'X'), view(&terminal).cellAt(1, 0));
+    }
+}
+
 test "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

@@ -763,9 +763,11 @@ fn processTick(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'q' => SemanticEvent{
+        // Pinned Kitty admits one DECSCUSR operand, independently of the
+        // unsupported multi-cursor leader and other space intermediates.
+        'q' => if (params.len <= 1) SemanticEvent{
             .cursor_style = cursorStyle(paramAtOrDefault0(params, 0)) orelse return null,
-        },
+        } else null,
         '@' => SemanticEvent{ .shift_left_columns = paramAtOrDefault1(params, 0) },
         'A' => SemanticEvent{ .shift_right_columns = paramAtOrDefault1(params, 0) },
         else => null,
