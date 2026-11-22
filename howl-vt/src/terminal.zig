@@ -2280,7 +2280,6 @@ fn decModeReportView(vt: *const Terminal) mode_report_mod.DecView {
 // Apply one report-directed semantic event to bounded caller output.
 fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!void {
     var scratch: input.Scratch = .{};
-    const allocator = vt.allocator;
     const reply_buffer = &vt.reply_buffer;
     const encode_buf = scratch.buf[0..];
     const active = vt.screen_state.activeConst();
@@ -2330,7 +2329,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             encode_buf,
             sixel.color_register_count,
         ),
-        .dcs_request_status => |request| try appendDecrqssReply(allocator, reply_buffer, encode_buf, active, request),
+        .dcs_request_status => |request| try appendDecrqssReply(reply_buffer, encode_buf, active, request),
         .dcs_request_termcap => |request| try appendTermcapReports(reply_buffer, request),
         .dcs_request_resource => |request| try appendResourceInvalidReport(reply_buffer, request),
         .device_status_report => try fixed_report_mod.appendDeviceStatus(reply_buffer),
@@ -2361,7 +2360,6 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             computeRectChecksum(active, vt.xtchecksum_flags, req.page, req.area),
         ),
         .selected_graphic_rendition_report => |area| try appendSelectedGraphicRenditionReport(
-            allocator,
             reply_buffer,
             encode_buf,
             active,
@@ -2437,7 +2435,6 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) replies.AppendError!v
 }
 
 fn appendDecrqssReply(
-    allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     screen: *const Screen,
@@ -2448,7 +2445,7 @@ fn appendDecrqssReply(
     try output.appendControl(.terminal, .dcs);
     if (std.mem.eql(u8, request, "m")) {
         try output.append("1$r");
-        try appendSgrAttrs(allocator, output, encode_buf, currentAttrs(screen));
+        try appendSgrAttrs(output, encode_buf, currentAttrs(screen));
         try output.appendControl(.terminal, .st);
         return;
     }
@@ -2702,7 +2699,6 @@ fn appendColorStackReport(
 }
 
 fn appendSelectedGraphicRenditionReport(
-    allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     screen: *const Screen,
@@ -2716,41 +2712,40 @@ fn appendSelectedGraphicRenditionReport(
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     try output.appendControl(.terminal, .csi);
-    try appendSgrAttrs(allocator, output, encode_buf, common);
+    try appendSgrAttrs(output, encode_buf, common);
 }
 
 // Appends one complete SGR parameter payload for retained terminal attributes.
 fn appendSgrAttrs(
-    allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     attrs: CommonAttrs,
 ) replies.AppendError!void {
     var first = true;
-    try appendSgrParam(allocator, output, &first, "0");
-    if (attrs.bold) try appendSgrParam(allocator, output, &first, "1");
-    if (attrs.dim) try appendSgrParam(allocator, output, &first, "2");
-    if (attrs.italic) try appendSgrParam(allocator, output, &first, "3");
-    if (attrs.underline) try appendSgrParam(allocator, output, &first, underlineStyleParam(attrs.underline_style));
-    if (attrs.blink) try appendSgrParam(allocator, output, &first, "5");
-    if (attrs.reverse) try appendSgrParam(allocator, output, &first, "7");
-    if (attrs.invisible) try appendSgrParam(allocator, output, &first, "8");
-    if (attrs.strikethrough) try appendSgrParam(allocator, output, &first, "9");
+    try appendSgrParam(output, &first, "0");
+    if (attrs.bold) try appendSgrParam(output, &first, "1");
+    if (attrs.dim) try appendSgrParam(output, &first, "2");
+    if (attrs.italic) try appendSgrParam(output, &first, "3");
+    if (attrs.underline) try appendSgrParam(output, &first, underlineStyleParam(attrs.underline_style));
+    if (attrs.blink) try appendSgrParam(output, &first, "5");
+    if (attrs.reverse) try appendSgrParam(output, &first, "7");
+    if (attrs.invisible) try appendSgrParam(output, &first, "8");
+    if (attrs.strikethrough) try appendSgrParam(output, &first, "9");
     if (attrs.font != 0) {
         // zig-audit: acknowledge catch_unreachable
         // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         const font = std.fmt.bufPrint(encode_buf, "{d}", .{@as(u8, 10) + attrs.font}) catch unreachable;
-        try appendSgrParam(allocator, output, &first, font);
+        try appendSgrParam(output, &first, font);
     }
-    try appendColorParam(allocator, output, encode_buf, &first, true, attrs.fg, Screen.default_cell_attrs.fg);
-    try appendColorParam(allocator, output, encode_buf, &first, false, attrs.bg, Screen.default_cell_attrs.bg);
+    try appendColorParam(output, encode_buf, &first, true, attrs.fg, Screen.default_cell_attrs.fg);
+    try appendColorParam(output, encode_buf, &first, false, attrs.bg, Screen.default_cell_attrs.bg);
     if (attrs.underline and !colorEq(attrs.underline_color, Screen.default_underline_color)) {
-        try appendExtendedColorParam(allocator, output, encode_buf, &first, 58, attrs.underline_color);
+        try appendExtendedColorParam(output, encode_buf, &first, 58, attrs.underline_color);
     }
     switch (attrs.baseline) {
         .normal => {},
-        .raised => try appendSgrParam(allocator, output, &first, "73"),
-        .lowered => try appendSgrParam(allocator, output, &first, "74"),
+        .raised => try appendSgrParam(output, &first, "73"),
+        .lowered => try appendSgrParam(output, &first, "74"),
     }
     try output.append("m");
 }
@@ -2870,7 +2865,6 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
 }
 
 fn appendSgrParam(
-    _: std.mem.Allocator,
     output: *replies.Buffer,
     first: *bool,
     text: []const u8,
@@ -2891,7 +2885,6 @@ fn underlineStyleParam(style: Screen.UnderlineStyle) []const u8 {
 }
 
 fn appendColorParam(
-    allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     first: *bool,
@@ -2912,17 +2905,16 @@ fn appendColorParam(
                 // zig-audit: acknowledge catch_unreachable
                 // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
                 const text = std.fmt.bufPrint(encode_buf, "{d}", .{code}) catch unreachable;
-                try appendSgrParam(allocator, output, first, text);
+                try appendSgrParam(output, first, text);
                 return;
             }
-            try appendExtendedColorParam(allocator, output, encode_buf, first, if (is_fg) 38 else 48, color);
+            try appendExtendedColorParam(output, encode_buf, first, if (is_fg) 38 else 48, color);
         },
-        .rgb => try appendExtendedColorParam(allocator, output, encode_buf, first, if (is_fg) 38 else 48, color),
+        .rgb => try appendExtendedColorParam(output, encode_buf, first, if (is_fg) 38 else 48, color),
     }
 }
 
 fn appendExtendedColorParam(
-    allocator: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     first: *bool,
@@ -2935,7 +2927,7 @@ fn appendExtendedColorParam(
             // zig-audit: acknowledge catch_unreachable
             // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             const text = std.fmt.bufPrint(encode_buf, "{d};5;{d}", .{ prefix, color.value }) catch unreachable;
-            try appendSgrParam(allocator, output, first, text);
+            try appendSgrParam(output, first, text);
         },
         .rgb => {
             const text = std.fmt.bufPrint(encode_buf, "{d};2;{d};{d};{d}", .{
@@ -2946,7 +2938,7 @@ fn appendExtendedColorParam(
                 // zig-audit: acknowledge catch_unreachable
                 // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
             }) catch unreachable;
-            try appendSgrParam(allocator, output, first, text);
+            try appendSgrParam(output, first, text);
         },
     }
 }
@@ -2988,7 +2980,7 @@ fn appendDecrqssReplyAllocation(allocator: std.mem.Allocator) !void {
 
     const screen = Screen.init(30, 80);
     var encode_buf: [terminal_report_max_bytes]u8 = undefined;
-    appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t") catch |failure| {
+    appendDecrqssReply(&output, encode_buf[0..], &screen, "t") catch |failure| {
         try std.testing.expectEqualStrings("kept", output.bytes());
         return failure;
     };
@@ -3008,7 +3000,7 @@ test "DECRQSS reply capacity failure preserves the complete prior output" {
     var encode_buf: [terminal_report_max_bytes]u8 = undefined;
     try std.testing.expectError(
         error.ReplyLimit,
-        appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t"),
+        appendDecrqssReply(&output, encode_buf[0..], &screen, "t"),
     );
     try std.testing.expectEqualSlices(u8, retained, output.bytes());
 }
