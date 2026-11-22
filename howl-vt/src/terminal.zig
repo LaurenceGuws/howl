@@ -362,6 +362,7 @@ const SemanticEvent = union(enum) {
     file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
     drag_drop: ParsedDragDrop,
     dec_mode_query: u16,
+    sixel_register_count_query,
     dec_mode_set: ModeParams,
     dec_mode_reset: ModeParams,
     dec_mode_save: ModeParams,
@@ -1226,6 +1227,11 @@ fn directQuery(final: u8, params: []const i32, intermediates: []const u8) ?Seman
             .selective_erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,
         },
         'W' => if (params.len == 1 and params[0] == 5) return SemanticEvent.reset_default_tab_stops,
+        // xterm-origin XTSMGRAPHICS requires exactly three operands; only
+        // read/current and read/maximum of our 256-register Sixel palette
+        // can be answered without inventing host geometry or mutable policy.
+        'S' => if (params.len == 3 and params[0] == 1 and (params[1] == 1 or params[1] == 4))
+            return SemanticEvent.sixel_register_count_query,
         else => {},
     }
     return null;
@@ -2318,6 +2324,11 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             encode_buf,
             mode,
             mode_report_mod.decState(dec_modes, mode),
+        ),
+        .sixel_register_count_query => try fixed_report_mod.appendSixelRegisterCount(
+            reply_buffer,
+            encode_buf,
+            sixel.color_register_count,
         ),
         .dcs_request_status => |request| try appendDecrqssReply(allocator, reply_buffer, encode_buf, active, request),
         .dcs_request_termcap => |request| try appendTermcapReports(allocator, reply_buffer, request),
@@ -3476,6 +3487,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .modify_other_keys_query,
         .key_format_query,
         .dec_mode_query,
+        .sixel_register_count_query,
         .dcs_request_status,
         .dcs_request_termcap,
         .dcs_request_resource,

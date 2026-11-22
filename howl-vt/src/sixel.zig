@@ -5,6 +5,8 @@ const graphics = @import("graphics.zig");
 
 /// Bounds one retained encoded Sixel command independently of generic DCS.
 pub const max_encoded_bytes: usize = 16 * 1024 * 1024;
+/// The canonical Sixel decoder owns 256 color-register slots.
+pub const color_register_count: u16 = 256;
 
 /// Owns one decoded image until transferred to the terminal image plane.
 pub const Image = struct {
@@ -119,7 +121,7 @@ fn walk(payload: []const u8, options: Options, canvas: ?Canvas) Error!Extent {
             '#' => {
                 index += 1;
                 const selected = parseNumber(payload, &index) orelse return error.Invalid;
-                if (selected > 255) return error.Unsupported;
+                if (selected >= color_register_count) return error.Unsupported;
                 color = @intCast(selected);
                 if (index < payload.len and payload[index] == ';') {
                     index += 1;
@@ -253,8 +255,8 @@ fn hueChannel(min_value: i32, max_value: i32, hue_value: i32) u8 {
     return @intCast(@divTrunc(value * 255, 100));
 }
 
-fn defaultPalette() [256][4]u8 {
-    var palette: [256][4]u8 = @splat(.{ 0, 0, 0, 255 });
+fn defaultPalette() [color_register_count][4]u8 {
+    var palette: [color_register_count][4]u8 = @splat(.{ 0, 0, 0, 255 });
     palette[0..16].* = .{
         .{ 0x00, 0x00, 0x00, 0xff }, .{ 0x33, 0x33, 0xcc, 0xff },
         .{ 0xcc, 0x21, 0x21, 0xff }, .{ 0x33, 0xcc, 0x33, 0xff },
@@ -329,6 +331,16 @@ fn allocationFailure(allocator: std.mem.Allocator) !void {
         .{ .pan = 1, .pad = 1, .transparent = false },
     );
     image.deinit(allocator);
+}
+
+test "Sixel color register bound matches both available and rejected indices" {
+    try std.testing.expectEqual(@as(usize, color_register_count), defaultPalette().len);
+    const allocator = std.testing.allocator;
+    const options = Options{ .pan = 1, .pad = 1, .transparent = false };
+    const image = try decode(allocator, "#255;2;100;0;0~", options);
+    defer image.deinit(allocator);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, image.pixels[0..4]);
+    try std.testing.expectError(error.Unsupported, decode(allocator, "#256~", options));
 }
 
 test "Sixel decoder releases every allocation failure boundary" {

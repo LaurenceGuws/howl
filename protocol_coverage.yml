@@ -1857,11 +1857,13 @@ references:
                 symbol: "terminal: XTPUSHSGR restores selected rendition with bounded stack truth"
           iterm2.csi.xtsmgraphics: {raw: "CSI ? Pm S", effect: set or query graphics attributes,
             relevance: host consequence,
-            conditions: "Pinned iTerm2 VT100CSIParser.m recognizes XTERMCC_XTSMGRAPHICS and VT100Terminal.m::executeSetRequestGraphics can answer register-count, Sixel-geometry and unknown-property requests, subject to its host reporting policy. Howl decodePrivateCsi does not handle private CSI ?S; the bounded native parser ignores complete requests without replies or state mutation.",
-            howl: {support: missing, disposition: deferred, owner: howl-vt, milestone: graphics,
+            conditions: "Pinned iTerm2 VT100CSIParser.m accepts private CSI ?S and VT100Terminal.m::executeSetRequestGraphics replies with a host-gated palette count, pixel geometry, error status or unsupported set/reset result. The earlier originating xterm ctlseqs grammar requires exactly three parameters where iTerm2 also accepts two-parameter read requests. Howl admits only common three-parameter 1;1 and 1;4 reads of its own bounded Sixel 256-register palette.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Exact bounded three-parameter current/maximum Sixel register-count replies, split input, C1 serialization and queue rollback are now supported. iTerm2's two-operand reads, changing register count, ReGIS/status replies, host-gated pixel geometry and configurable host-report policy remain unsupported; no false geometry is reported.",
+              rationale: "Canonical VT can report its own Sixel register count but must not fabricate host pixel dimensions or silently adopt iTerm2's conflicting two-parameter extension to xterm's three-parameter grammar. Keep the unrepresented behavior visible for separate owner/policy review.",
               source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported"}}}
+                symbol: "terminal: XTSMGRAPHICS reads only its owned Sixel register count"}}}
           iterm2.csi.kitty_set: {raw: "CSI = flags ; [mode=1] u", effect: set Kitty keyboard flags,
             conditions: iTerm2 clears the active stack and retains unbounded integer flags while Howl mutates the
               active eight-slot stack entry and retains seven protocol bits,

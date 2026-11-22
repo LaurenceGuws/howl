@@ -3207,12 +3207,11 @@ test "pinned Kitty ESC keypad handlers are GUI-owned while Howl changes VT mode"
     try std.testing.expectEqualStrings("\x1b[?66;2$y", pendingOutput(&terminal));
 }
 
-test "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported" {
-    // Pinned iTerm2 VT100CSIParser.m recognizes CSI ?Pm S as
-    // XTERMCC_XTSMGRAPHICS. VT100Terminal.m::executeSetRequestGraphics
-    // routes color-register and Sixel geometry queries, set/reset
-    // requests, and unknown-property error replies to its host owner.
-    // Native Howl VT intentionally has no private CSI ?S handler.
+test "terminal: iTerm2 two-operand graphics and host controls remain unsupported" {
+    // Pinned iTerm2 accepts two-operand XTSMGRAPHICS read queries, host
+    // Sixel geometry, set/reset, ReGIS and unknown-property status reports.
+    // Howl answers only common xterm-origin three-operand register reads
+    // from its actual Sixel capacity, without introducing a host interface.
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("AB")).stateChanged());
@@ -3238,6 +3237,53 @@ test "terminal: pinned iTerm2 graphics CSI S query and set remain unsupported" {
     const cell = terminal.semanticView(0).cellInfoAt(0, 2);
     try std.testing.expectEqual(@as(u21, 'C'), cell.codepoint);
     try std.testing.expectEqual(Terminal.Color.indexed(1), cell.attrs.fg);
+}
+
+test "terminal: XTSMGRAPHICS reads only its owned Sixel register count" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    // The xterm-origin three-operand grammar shares a register count with
+    // iTerm2, but not its permissive two-operand admission or host geometry.
+    try std.testing.expect(!(try terminal.feed("\x1b[?1;1")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expect((try terminal.feed(";0S")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?1;0;256S", terminal.replyBytes());
+    try consumeReplies(&terminal);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1;4;0S")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?1;0;256S", terminal.replyBytes());
+    try consumeReplies(&terminal);
+
+    // No false promise of mutable palette size, ReGIS, or host pixel size.
+    for ([_][]const u8{
+        "\x1b[?1;1S",   "\x1b[?1;3;32S", "\x1b[?2;1;0S",
+        "\x1b[?3;1;0S", "\x1b[?1;5;0S",  "\x1b[?1;1;0;0S",
+    }) |unsupported| {
+        try std.testing.expect(!(try terminal.feed(unsupported)).stateChanged());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+
+    // The host-selected C1 framing applies to this reply like every other
+    // fixed terminal status; the query never mutates screen or image state.
+    const before_cell = terminal.semanticView(0).cellInfoAt(0, 0);
+    const before_colors = terminal.presentation();
+    write(&terminal, "\x1b G\x9b?1;1;0S");
+    try std.testing.expectEqualStrings("\x9b?1;0;256S", terminal.replyBytes());
+    try std.testing.expectEqualDeep(before_cell, terminal.semanticView(0).cellInfoAt(0, 0));
+    try std.testing.expectEqualDeep(before_colors, terminal.presentation());
+}
+
+test "terminal: XTSMGRAPHICS full reply queue rolls back without mutation" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes, false);
+    defer allocator.free(fill);
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b[?1;1;0S"));
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
 }
 
 test "xterm XTQMODKEYS wins the DEC printer CSI question-mark 4 m collision" {

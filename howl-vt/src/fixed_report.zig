@@ -48,6 +48,17 @@ pub fn appendTertiaryDeviceAttributes(output: *replies.Buffer) replies.AppendErr
     try output.appendString(.terminal, .dcs, "!|00000000");
 }
 
+/// Replies to an xterm XTSMGRAPHICS color-register read using the Sixel
+/// decoder's actual bounded count, not host pixel geometry or policy.
+pub fn appendSixelRegisterCount(
+    output: *replies.Buffer,
+    encode_buffer: []u8,
+    count: u16,
+) replies.AppendError!void {
+    const payload = std.fmt.bufPrint(encode_buffer, "?1;0;{d}S", .{count}) catch return error.ReplyLimit;
+    try output.appendCsi(.terminal, payload);
+}
+
 /// Appends one XTerm title-stack position report.
 pub fn appendTitleStackPosition(
     output: *replies.Buffer,
@@ -241,6 +252,8 @@ test "short report scratch rejects every encoder without changing prior replies"
         .cursor_col = std.math.maxInt(u16),
     };
 
+    try std.testing.expectError(error.ReplyLimit, appendSixelRegisterCount(&output, &scratch, 256));
+    try std.testing.expectEqualStrings("kept", output.bytes());
     try std.testing.expectError(error.ReplyLimit, appendPrimaryDeviceAttributes(&output, &scratch));
     try std.testing.expectEqualStrings("kept", output.bytes());
     try std.testing.expectError(error.ReplyLimit, appendTitleStackPosition(&output, &scratch, 65535, 65535));
