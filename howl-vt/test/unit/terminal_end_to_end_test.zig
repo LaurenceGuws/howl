@@ -2049,10 +2049,9 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
 }
 
-test "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl" {
+test "pinned Kitty VPA CBT reject excess operands unlike Howl" {
     // Frozen kitty/vt-parser.c::dispatch_csi uses AT_MOST_ONE_PARAMETER
-    // for VPA/CBT and CALL_CSI_HANDLER2 for DECSTBM. Howl's shared
-    // decoder accepts the needed leading fields and ignores surplus.
+    // for VPA/CBT. Howl's shared decoder still accepts the leading fields.
     {
         var terminal = try Terminal.init(std.testing.allocator, 4, 20);
         defer terminal.deinit();
@@ -2067,14 +2066,86 @@ test "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl" {
         try std.testing.expect((try terminal.feed("\x1b[1;2Z")).stateChanged());
         try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
     }
-    {
-        var terminal = try Terminal.init(std.testing.allocator, 4, 20);
+}
+
+test "terminal: pinned Kitty DECSTBM rejects extra operands without changing margins" {
+    // Pinned Kitty d4106ef vt-parser.c::dispatch_csi uses
+    // CALL_CSI_HANDLER2 for DECSTBM. A third numeric operand must not
+    // reach Screen.setScrollRegion or disturb DECOM's existing origin.
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=95,C=1;AQIDBA==\x1b\\";
+    for ([_][]const u8{
+        "\x1b[3;4;5r",
+        "\x1b[3;4;0r",
+        "\x1b[3;4;5;r",
+        "\x9b3;4;5r",
+        "\x1b[1;6;2r",
+        "\x1b[2;5;4;3r",
+    }) |invalid| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 6, 8, 4);
         defer terminal.deinit();
-        try std.testing.expect((try terminal.feed("\x1b[2;3;4r")).stateChanged());
-        try std.testing.expect((try terminal.feed("\x1b[?6h")).stateChanged());
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBBBBBB\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[5;1HEEEEEEEE\x1b[6;1HFFFFFFFF");
+        try feed(&terminal, "\x1b[3;2H" ++ image ++ "\x1b[2;5r\x1b[?6h\x1b[3;2H");
+        try consumeReplies(&terminal);
+        const before = terminal.semanticView(0);
+        const cells = [_]@TypeOf(before.cellInfoAt(0, 0)){
+            before.cellInfoAt(0, 0),
+            before.cellInfoAt(1, 0),
+            before.cellInfoAt(2, 0),
+            before.cellInfoAt(3, 0),
+            before.cellInfoAt(4, 0),
+            before.cellInfoAt(5, 0),
+        };
+        const sequence = terminal.semanticSequence();
+        const edit_generation = terminal.observation().structuralEditGeneration();
+        const graphics = terminal.images(0);
+        const placement = graphics.placement(0).?;
+        const image_generation = graphics.generation;
+        const content_generation = graphics.content_generation;
+        try std.testing.expectEqual(@as(usize, 1), graphics.placementCount());
+
+        try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(before.history_count, after.history_count);
+        try std.testing.expectEqual(edit_generation, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        for (cells, 0..) |cell, row| try std.testing.expectEqualDeep(cell, after.cellInfoAt(@intCast(row), 0));
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(placement.col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(image_generation, terminal.images(0).generation);
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+        // A subsequent origin-relative CUP must still use the previous
+        // top margin, and a valid DECSTBM must remain accepted.
+        try feed(&terminal, "\x1b[1;1H");
         try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
-        try std.testing.expect((try terminal.feed("Q")).stateChanged());
-        try std.testing.expectEqual(@as(u21, 'Q'), terminal.semanticView(0).cellAt(1, 0));
+        try std.testing.expect((try terminal.feed("\x1b[3;6r")).stateChanged());
+        try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    }
+
+    // Kitty commits only supplied digits, so a trailing empty delimiter
+    // is not a third parameter. Zero and omitted margins remain legal.
+    for ([_]struct { valid: []const u8, top: u16 }{
+        .{ .valid = "\x1b[r", .top = 0 },
+        .{ .valid = "\x1b[;r", .top = 0 },
+        .{ .valid = "\x1b[0;0r", .top = 0 },
+        .{ .valid = "\x1b[2r", .top = 1 },
+        .{ .valid = "\x1b[2;r", .top = 1 },
+        .{ .valid = "\x1b[2;5r", .top = 1 },
+        .{ .valid = "\x1b[2;5;r", .top = 1 },
+        .{ .valid = "\x9b2;5r", .top = 1 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 6, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;5r\x1b[?6h\x1b[3;3H");
+        try std.testing.expect((try terminal.feed(case.valid)).stateChanged());
+        try std.testing.expectEqual(case.top, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     }
 }
 

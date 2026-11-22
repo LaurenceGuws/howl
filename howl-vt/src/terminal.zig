@@ -1104,10 +1104,15 @@ fn decodeCsi(
             const col = paramAtOrDefault1(params, 1);
             return SemanticEvent{ .cursor_position = .{ .row = row - 1, .col = col - 1 } };
         },
-        'r' => return SemanticEvent{ .set_scroll_region = .{
-            .top = paramAtOrDefault1(params, 0) - 1,
-            .bottom = if (params.len >= 2 and params[1] > 0) paramAtOrDefault1(params, 1) - 1 else null,
-        } },
+        'r' => {
+            // Kitty DECSTBM is a two-operand control. Private mode
+            // restoration and $r rendition retain their own grammar.
+            if (params.len > 2) return null;
+            return SemanticEvent{ .set_scroll_region = .{
+                .top = paramAtOrDefault1(params, 0) - 1,
+                .bottom = if (params.len >= 2 and params[1] > 0) paramAtOrDefault1(params, 1) - 1 else null,
+            } };
+        },
         'J' => return decodeEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)) orelse return null, false),
         'K' => return SemanticEvent{
             .erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,

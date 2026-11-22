@@ -4094,14 +4094,14 @@ references:
               rationale: "Ordinary VPA and DECOM work; excess-operand admission conflicts.",
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl"}}}
+                symbol: "pinned Kitty VPA CBT reject excess operands unlike Howl"}}}
           kitty.csi.cbt: {raw: "CSI [Ps=1] Z", effect: "backward tabs",
             conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi CBT invokes CALL_CSI_HANDLER1 and rejects CSI 1;2Z. Howl accepts and moves backward one tab.",
             howl: {support: partial, disposition: excluded,
               rationale: "Ordinary backward-tab motion works; excess-operand admission conflicts.",
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl"}}}
+                symbol: "pinned Kitty VPA CBT reject excess operands unlike Howl"}}}
           kitty.csi.cht: {raw: "CSI [Ps=1] I", effect: forward tabs,
             conditions: "Pinned Kitty screen_tabn calls screen_tab repeatedly and can preserve an internal
               tab marker in the source cell on blank intervals. Howl moves the cursor but never stores
@@ -4348,12 +4348,12 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "pinned Kitty keyboard CSI rejects signed i32 overflow without losing subsequent commands"}}}
           kitty.csi.decstbm: {raw: "CSI [top] ; [bottom] r", effect: "set vertical margins",
-            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi DECSTBM invokes CALL_CSI_HANDLER2 rejecting more than two params. Howl accepts CSI 2;3;4r, setting scroll region from the first two; a following DECOM homes to its top.",
-            howl: {support: partial, disposition: excluded,
-              rationale: "Ordinary two-operand margins work; trailing-operand rejection differs.",
-              source: howl-vt/src/screen.zig, symbol: Screen.setScrollRegion, proof: {
+            conditions: "Pinned Kitty kitty/vt-parser.c dispatch_csi DECSTBM uses CALL_CSI_HANDLER2, rejecting a third numeric operand before Screen mutation. Howl now rejects the same malformed margins, including fragmented C1 input, while keeping zero, omitted and trailing-empty forms legal. Private CSI ? r and rectangle $ r have independent decoders.",
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
+              residual: "Common vertical margins and the two-operand admission are now proven; full cross-reference margin clipping, origin-mode transitions and graphics/selection consequences remain unqualified.",
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "pinned Kitty VPA CBT and DECSTBM reject excess operands unlike Howl"}}}
+                symbol: "terminal: pinned Kitty DECSTBM rejects extra operands without changing margins"}}}
           kitty.csi.restore_modes:
             raw: "CSI ? Pm r"
             effect: restore DEC modes
