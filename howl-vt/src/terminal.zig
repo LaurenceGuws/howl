@@ -2768,9 +2768,7 @@ fn appendSgrAttrs(
     if (attrs.invisible) try appendSgrParam(output, &first, "8");
     if (attrs.strikethrough) try appendSgrParam(output, &first, "9");
     if (attrs.font != 0) {
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-        const font = std.fmt.bufPrint(encode_buf, "{d}", .{@as(u8, 10) + attrs.font}) catch unreachable;
+        const font = std.fmt.bufPrint(encode_buf, "{d}", .{@as(u8, 10) + attrs.font}) catch return error.ReplyLimit;
         try appendSgrParam(output, &first, font);
     }
     try appendColorParam(output, encode_buf, &first, true, attrs.fg, Screen.default_cell_attrs.fg);
@@ -2958,9 +2956,7 @@ fn appendColorParam(
                     (if (idx < 8) 30 + idx else 90 + (idx - 8))
                 else
                     (if (idx < 8) 40 + idx else 100 + (idx - 8));
-                // zig-audit: acknowledge catch_unreachable
-                // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-                const text = std.fmt.bufPrint(encode_buf, "{d}", .{code}) catch unreachable;
+                const text = std.fmt.bufPrint(encode_buf, "{d}", .{code}) catch return error.ReplyLimit;
                 try appendSgrParam(output, first, text);
                 return;
             }
@@ -2980,9 +2976,7 @@ fn appendExtendedColorParam(
     switch (color.kind) {
         .default => return,
         .indexed => {
-            // zig-audit: acknowledge catch_unreachable
-            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-            const text = std.fmt.bufPrint(encode_buf, "{d};5;{d}", .{ prefix, color.value }) catch unreachable;
+            const text = std.fmt.bufPrint(encode_buf, "{d};5;{d}", .{ prefix, color.value }) catch return error.ReplyLimit;
             try appendSgrParam(output, first, text);
         },
         .rgb => {
@@ -2991,9 +2985,7 @@ fn appendExtendedColorParam(
                 (color.value >> 16) & 0xFF,
                 (color.value >> 8) & 0xFF,
                 color.value & 0xFF,
-                // zig-audit: acknowledge catch_unreachable
-                // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-            }) catch unreachable;
+            }) catch return error.ReplyLimit;
             try appendSgrParam(output, first, text);
         },
     }
@@ -3019,6 +3011,49 @@ test "cursor style report payload reads semantic cursor owner" {
     screen.applyScreen(.{ .cursor_style = .{ .program_override = .{ .shape = .none, .blink = false } } });
     const no_shape = decrqssPayload(encode_buf[0..], &screen, " q").?;
     try std.testing.expectEqualStrings("1 q", no_shape);
+}
+
+test "SGR reports reject undersized formatting scratch without partial replies" {
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    try output.append("held");
+    var scratch: [0]u8 = .{};
+    var screen = Screen.init(1, 1);
+
+    // Every string-formatting branch is fallible independently of reply
+    // ownership. Preserve the previously retained output on each failure.
+    for ([_]Screen.Color{
+        Screen.Color.indexed(1),                Screen.Color.indexed(42),
+        Screen.Color.rgbComponents(11, 22, 33),
+    }) |color| {
+        screen.current_attrs = Screen.default_cell_attrs;
+        screen.current_attrs.fg = color;
+        try std.testing.expectError(error.ReplyLimit, appendDecrqssReply(&output, &scratch, &screen, "m"));
+        try std.testing.expectEqualStrings("held", output.bytes());
+    }
+    screen.current_attrs = Screen.default_cell_attrs;
+    screen.current_attrs.font = 3;
+    try std.testing.expectError(error.ReplyLimit, appendDecrqssReply(&output, &scratch, &screen, "m"));
+    try std.testing.expectEqualStrings("held", output.bytes());
+
+    screen.current_attrs = Screen.default_cell_attrs;
+    screen.current_attrs.underline = true;
+    screen.current_attrs.underline_color = Screen.Color.rgbComponents(4, 5, 6);
+    try std.testing.expectError(error.ReplyLimit, appendDecrqssReply(&output, &scratch, &screen, "m"));
+    try std.testing.expectEqualStrings("held", output.bytes());
+
+    // XTREPORTSGR shares the same formatting, but has a separate rollback
+    // boundary after it selects concrete retained cell attributes.
+    var retained = try Screen.initWithCells(std.testing.allocator, 1, 1);
+    defer retained.deinit(std.testing.allocator);
+    retained.current_attrs.fg = Screen.Color.rgbComponents(1, 2, 3);
+    retained.writeText("X");
+    try std.testing.expectError(error.ReplyLimit, appendSelectedGraphicRenditionReport(&output, &scratch, &retained, .{ .top = 0, .left = 0, .bottom = 0, .right = 0 }));
+    try std.testing.expectEqualStrings("held", output.bytes());
+
+    var enough: [64]u8 = undefined;
+    try appendDecrqssReply(&output, &enough, &screen, "m");
+    try std.testing.expectEqualStrings("held\x1bP1$r0;4;58;2;4;5;6m\x1b\\", output.bytes());
 }
 
 test "DECRQSS reply allocation failure preserves prior pending output" {
