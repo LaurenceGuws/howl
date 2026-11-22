@@ -1935,6 +1935,20 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
 }
 
+test "Kitty OSC 21 strips non-ASCII across split VT input before replying" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Both pinned and newer Kitty remove nonprintable bytes before OSC 21
+    // interpretation. The VT transport must preserve enough input for the
+    // single ColorControl owner to sanitize even across separate writes.
+    try std.testing.expect(!(try terminal.feed("\x1b]21;fore\xc3")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try feed(&terminal, "\xa9ground=#112233;fore\xc3\xa9ground=?\x1b\\");
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, terminal.presentation().foreground);
+    try std.testing.expectEqualStrings("\x1b]21;foreground=rgb:11/22/33\x1b\\", terminal.replyBytes());
+}
+
 test "kitty OSC 21 groups ordered queries with eight bit RGB and one reply" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 12);
     defer terminal.deinit();

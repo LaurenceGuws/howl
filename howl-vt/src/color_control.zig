@@ -128,10 +128,29 @@ fn handleKittyControl(
     payload: []const u8,
     defaults: *const properties.ColorState,
 ) replies.AppendError!void {
+    // Both pinned Kitty and installed newer Kitty remove nonprintable and
+    // non-ASCII bytes *before* interpreting OSC 21 fields. The payload is
+    // echoed in replies, so never let untrusted control bytes pass through.
+    // The normal printable-ASCII path borrows the parser's input directly.
+    const max_bytes = @import("parser.zig").max_metadata_control_bytes;
+    if (payload.len > max_bytes) return error.ReplyLimit;
+    var cleaned: [max_bytes]u8 = undefined;
+    var ascii = payload;
+    for (payload) |byte| {
+        if (byte >= 0x20 and byte <= 0x7e) continue;
+        var count: usize = 0;
+        for (payload) |candidate| {
+            if (candidate < 0x20 or candidate > 0x7e) continue;
+            cleaned[count] = candidate;
+            count += 1;
+        }
+        ascii = cleaned[0..count];
+        break;
+    }
     // Kitty collects every queried key into one OSC 21 response, in input
     // order. The outer apply transaction owns both colour and reply rollback.
     var replying = false;
-    var parts = std.mem.splitScalar(u8, payload, ';');
+    var parts = std.mem.splitScalar(u8, ascii, ';');
     while (parts.next()) |raw_part| {
         const part = std.mem.trim(u8, raw_part, " \t\r\n");
         if (part.len == 0) continue;
@@ -940,6 +959,56 @@ test "OSC 104 exact slot reset preserves unrelated palette and queued replies" {
         .{ .osc = .{ .command = 104, .payload = "" } },
     )));
     try std.testing.expectEqualStrings("retained reply", output.bytes());
+}
+
+test "Kitty OSC 21 strips nonprintable input before echo and interpretation" {
+    var colors: properties.ColorState = .{};
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    var scratch: [64]u8 = undefined;
+
+    // Both frozen and installed Kitty strip Unicode/nonprintable characters
+    // before splitting OSC 21 fields. Without this, Howl may echo raw bytes
+    // in an unknown-key reply and miss a legitimate, sanitized color key.
+    try std.testing.expect(try apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 21, .payload = "fore\xc3\xa9ground=#112233;fore\xc3\xa9ground=?;ba\x7fd=?;cursor=?\x01" } },
+    ));
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.foreground);
+    try std.testing.expectEqualStrings(
+        "\x1b]21;foreground=rgb:11/22/33;bad=?;cursor=\x1b\\",
+        output.bytes(),
+    );
+    try output.consumePrefix(output.bytes().len);
+
+    // The raw garbage does not synthesize a reply, mutate color or leave
+    // non-ASCII/control bytes available for later output framing.
+    const before = colors;
+    try std.testing.expect(!(try apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 21, .payload = "\xff\xfe\x00\x7f" } },
+    )));
+    try std.testing.expectEqualDeep(before, colors);
+    try std.testing.expectEqualStrings("", output.bytes());
+
+    // Direct callers cannot bypass the bounded OSC 21 parser's input limit.
+    // Failure leaves the same canonical state and queued reply prefix intact.
+    const overlong: [@import("parser.zig").max_metadata_control_bytes + 1]u8 = @splat('x');
+    try std.testing.expectError(error.ReplyLimit, apply(
+        &colors,
+        &.{},
+        &output,
+        &scratch,
+        .{ .osc = .{ .command = 21, .payload = &overlong } },
+    ));
+    try std.testing.expectEqualDeep(before, colors);
+    try std.testing.expectEqualStrings("", output.bytes());
 }
 
 test "Kitty OSC 21 multi-query reply capacity failure rolls back colors and all replies" {
