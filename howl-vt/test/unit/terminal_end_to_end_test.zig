@@ -3924,6 +3924,46 @@ test "terminal: wide printing boundaries reject REP on a one-column row" {
     try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
 }
 
+test "terminal: Kitty CSI plus T rejects extra operands and honors zero count" {
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=98,C=1;AQIDBA==\x1b\\";
+    const malformed = [_][]const u8{
+        "\x1b[2;3+T",
+        "\x1b[1;2;3+T",
+        "\x1b[;3+T",
+        "\x1b[0+T",
+        "\x1b[1#T",
+        "\x1b[1+A",
+    };
+    for (malformed) |bytes| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1H" ++ image);
+        try consumeReplies(&terminal);
+        const pixel_generation = terminal.images(0).content_generation;
+        const baseline = terminal.semanticView(0).cellInfoAt(0, 0);
+        try std.testing.expect(!(try terminal.feed(bytes)).stateChanged());
+        try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(pixel_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualDeep(baseline, terminal.semanticView(0).cellInfoAt(0, 0));
+    }
+
+    // Kitty permits one explicit positive operand and default-one on a
+    // missing operand, with normal clipping of the admitted scroll extent.
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[1;1H" ++ image);
+    try consumeReplies(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("3+T")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
+    try feed(&terminal, "\x1b[+T");
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
+    try feed(&terminal, "\x1b[1+T");
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(0).?.row);
+}
+
 test "terminal: Kitty CSI plus T moves graphics after retained history runs out" {
     const image = "\x1b_Ga=T,f=32,s=1,v=1,i=97,C=1;AQIDBA==\x1b\\";
     for ([_]u16{ 0, 4 }) |history_capacity| {

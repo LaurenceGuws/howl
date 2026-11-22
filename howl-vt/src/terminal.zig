@@ -628,7 +628,12 @@ fn csiProcess(
 ) ?SemanticEvent {
     if (is_private) return decodePrivateCsi(final, params, leader_byte, intermediates);
     if (leader_byte != 0) return decodeCsiLeader(final, params, leader_byte, intermediates);
-    if (decodeCsiIntermediate(final, params, intermediates)) |event| return event;
+    if (intermediates.len != 0) {
+        if (decodeCsiIntermediate(final, params, intermediates)) |event| return event;
+        // An unsupported intermediate does not turn its final byte into an
+        // ordinary CSI operation. DECSTR (CSI ! p) remains its own exact route.
+        if (intermediates.len != 1 or intermediates[0] != '!' or final != 'p') return null;
+    }
     return decodeCsi(final, params, separators, intermediates);
 }
 
@@ -706,10 +711,12 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
 }
 
 fn processPlus(final: u8, params: []const i32) ?SemanticEvent {
-    return switch (final) {
-        'T' => SemanticEvent{ .scroll_down_from_history = paramAtOrDefault1(params, 0) },
-        else => null,
-    };
+    // Pinned Kitty admits at most one nonnegative CSI +T operand. An
+    // omitted operand means one step; an explicit zero does no work.
+    if (final != 'T' or params.len > 1) return null;
+    if (params.len == 0) return .{ .scroll_down_from_history = 1 };
+    if (params[0] <= 0) return null;
+    return .{ .scroll_down_from_history = paramAtOrDefault0(params, 0) };
 }
 
 fn processHash(final: u8, params: []const i32) ?SemanticEvent {
