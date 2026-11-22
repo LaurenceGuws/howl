@@ -5896,13 +5896,18 @@ references:
               in private Fleet-managed KWin returned the source-identical
               capability bytes to its real child-side raw PTY query, then
               visibly showed working, blocked, done and acknowledgment states.
+              The standalone native C artifact now has an additive v2
+              hvt_set_program_status_consumer(0|1) entrypoint. Its default
+              stays silent; an explicit C host opt-in returns the exact source
+              capability reply without a GUI or status database. Real C and
+              Zig native Debug/ReleaseFast tests prove the opt-in boundary.
             howl:
               support: partial
               disposition: deferred
               milestone: program_status
               owner: howl-vt
               rationale: "The shared VT grammar and typed FIFO remain host-neutral; the Howl SDL app now explicitly opts in at worker construction, advertises query support and presents a compact source-backed per-pane status label."
-              residual: "Standalone VT without an opted-in consumer remains silent, matching pinned Ghostty policy. The native C request ABI has no status descriptor or opt-in operation. The full 4096-byte reference transport and complete host integration remain unqualified despite exact live SDL app query bytes."
+              residual: "Standalone VT without an opted-in Zig or C consumer remains silent, matching Ghostty's optional host policy. The native C ABI can now opt in and receive typed status, but per-host record storage/UI remain caller-owned. The shared 2043-byte report limit is below the full 4096-byte source protocol and full external reset-clear behavior remains unqualified."
               source: howl-vt/src/terminal.zig
               symbol: oscProcess
               proof:
@@ -5937,13 +5942,21 @@ references:
               into the retained GUI tab label; no raw encoded message or live
               mutable VT pointer enters SDL. A real PTY child and private KWin
               qualify the visible working, blocked, done and acknowledged UI.
+              The additive native C v2 request kind 13 now carries explicit
+              state/action/kind/progress, reset generation and validated
+              offsets for ID, app name and encoded title/message in the
+              same exact-head copied OSC payload. The native request union
+              remains 32 bytes, the descriptor 56 bytes and earlier enum
+              values are unchanged. Real C tests prove default silence,
+              opt-in query, typed payload copy, shortage/stale identity
+              rejection, clear/exit/reset lifetimes and disable behavior.
             howl:
               support: partial
               disposition: deferred
               milestone: program_status
               owner: howl-vt
               rationale: "One canonical VT grammar and opt-in typed event transport are now consumed by an app-worker-owned bounded status index; the GUI receives copied summaries and a tab indicator, never protocol data ownership."
-              residual: "Howl's host index holds 32 compact per-id status/priority facts, not Ghostty/Kitty's full record and decoded title/msg content; the visible tab is a small summary, not a full status pane. Full 4096-byte source reports, a stable native C ABI and Ghostty's external hard-reset synthetic clear callback remain unqualified. The host observes reset generations and clears itself instead of injecting that callback."
+              residual: "The SDL host index holds 32 compact status/priority facts but not source-current rich title/msg content or a full status pane. The stable native C v2 request projection and explicit opt-in are now qualified, but a C embedder must maintain its own status/index/presentation and decode copied base64 titles/messages. Full 4096-byte source reports and Ghostty's external synthetic hard-reset clear callback remain unimplemented; reset generations allow caller-driven clearing."
               source: howl-vt/src/program_status.zig
               symbol: parse
               proof:
@@ -5998,14 +6011,20 @@ references:
               into the tab header without mutating titles or leaking raw text.
               Real PTY and staged private KWin tests show working 42 percent,
               blocked on authentication, done and user acknowledgment, with a
-              source-exact child-side feature query reply.
+              source-exact child-side feature query reply. An independent
+              C embedding now opts in through the same VT owner without
+              acquiring SDL or a second Kitty parser. Exact-head copied
+              records expose typed state/kind/progress/reset and in-payload
+              offsets for ID/app/title/msg; the C ABI retains all previous
+              v2 struct sizes and tag values, as proven by C/C++ and Zig
+              tests in Debug and ReleaseFast.
             howl:
               support: partial
               disposition: deferred
               milestone: program_status
               owner: howl-vt
               rationale: "One Ghostty/Kitty shared bounded protocol owner feeds a real opt-in SDL host index and visible status label. Statuses remain per pane, while the original VT and native C embedding boundaries stay explicitly separate."
-              residual: "Modern Kitty retains up to 256 rich records per window, up to 263-byte ids and full 4096-byte controls with combined per-tab presentation. Howl maintains a compact 32-record per-pane index, only eight pending VT events, <=128-byte ids and <=2043-byte bodies, no decoded title/msg in the GUI model and no native C status ABI. The accepted source is useful partial parity, not full modern Kitty status capability."
+              residual: "Modern Kitty retains up to 256 rich status records per window, up to 263-byte IDs and 4096-byte controls with combined presentation. Howl's SDL index is 32 records per pane, the VT FIFO eight pending events, IDs <=128 bytes and bodies <=2043 bytes. Native C now receives opt-in typed/copied status requests but owns its own storage, decoding and UI; SDL still displays only a compact summary, not decoded title/message. This remains partial parity."
               source: howl-vt/src/program_status.zig
               symbol: parse
               proof:

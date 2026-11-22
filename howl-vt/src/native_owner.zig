@@ -227,6 +227,12 @@ pub fn copySelection(value: *const Owner, start_row: i32, start_column: u16, end
     return queries.copySelection(observation(value), stateConst(value).allocator, start_row, start_column, end_row, end_column, columns, alternate, output);
 }
 
+/// Explicitly installs/removes this owner's OSC 7501 status consumer.
+/// No app policy or persistent status record is created in standalone VT.
+pub fn setProgramStatusConsumer(value: *Owner, enabled: bool) void {
+    state(value).terminal.setProgramStatusConsumer(enabled);
+}
+
 /// Acknowledges only a consumable exact FIFO head.
 pub fn consumeRequest(value: *Owner, id: u64) Error!void {
     try state(value).terminal.consumeConsequence(id);

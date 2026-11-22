@@ -116,6 +116,9 @@ pub const ProgramStatusOccurrence = struct {
     generation: u64,
     reset_generation: u64,
     action: program_status.Action,
+    /// Complete validated original OSC 7501 body, borrowed only until
+    /// terminal mutation or matching consumption. C copies it by exact ID.
+    payload: []const u8,
 };
 
 const ProgramStatusOwned = struct {
@@ -130,6 +133,7 @@ const ProgramStatusOwned = struct {
             .generation = self.generation,
             .reset_generation = self.reset_generation,
             .action = program_status.parse(self.payload).?,
+            .payload = self.payload,
         };
     }
 };

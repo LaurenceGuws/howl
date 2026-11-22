@@ -9,6 +9,24 @@ pub const Info = c.hvt_request;
 pub const Error = error{ StaleRequest, RequestLimit, BufferTooSmall };
 const Projection = struct { info: Info, payload: []const u8 };
 
+// All native slices must refer into the same owned, already validated OSC
+// body; never publish a pointer or silently narrow foreign offset lengths.
+fn statusSpan(
+    payload: []const u8,
+    field: []const u8,
+    offset: *u16,
+    length: *u16,
+) Error!void {
+    if (field.len == 0) return;
+    const start = @intFromPtr(payload.ptr);
+    const pos = @intFromPtr(field.ptr);
+    const diff = std.math.sub(usize, pos, start) catch return error.RequestLimit;
+    const end = std.math.add(usize, diff, field.len) catch return error.RequestLimit;
+    if (end > payload.len or end > std.math.maxInt(u16)) return error.RequestLimit;
+    offset.* = @intCast(diff);
+    length.* = @intCast(field.len);
+}
+
 fn project(value: Terminal.Consequence, revision: u64) Error!Projection {
     var result = Projection{ .info = std.mem.zeroes(Info), .payload = &.{} };
     result.info.occurrence_id = value.id();
@@ -40,10 +58,45 @@ fn project(value: Terminal.Consequence, revision: u64) Error!Projection {
             };
             result.payload = request.payload;
         },
-        // This opt-in Zig embedding consequence has no stable C request ABI
-        // yet. Fail explicitly instead of misclassifying untrusted status
-        // metadata as a notification or inventing a native enum value.
-        .program_status => return error.RequestLimit,
+        .program_status => |request| {
+            result.info.kind = c.HVT_REQUEST_PROGRAM_STATUS;
+            result.payload = request.payload;
+            const out = &result.info.data.program_status;
+            out.reset_generation = request.reset_generation;
+            switch (request.action) {
+                .report => |report| {
+                    out.action = c.HVT_PROGRAM_STATUS_REPORT;
+                    out.state = switch (report.state) {
+                        .idle => c.HVT_PROGRAM_STATE_IDLE,
+                        .working => c.HVT_PROGRAM_STATE_WORKING,
+                        .done => c.HVT_PROGRAM_STATE_DONE,
+                        .blocked => c.HVT_PROGRAM_STATE_BLOCKED,
+                        .@"error" => c.HVT_PROGRAM_STATE_ERROR,
+                    };
+                    out.kind = if (report.kind) |kind| switch (kind) {
+                        .permission => c.HVT_PROGRAM_KIND_PERMISSION,
+                        .question => c.HVT_PROGRAM_KIND_QUESTION,
+                        .auth => c.HVT_PROGRAM_KIND_AUTH,
+                    } else c.HVT_PROGRAM_KIND_NONE;
+                    if (report.progress) |progress| {
+                        out.has_progress = 1;
+                        out.progress = progress;
+                    }
+                    try statusSpan(result.payload, report.id, &out.id_offset, &out.id_len);
+                    try statusSpan(result.payload, report.title, &out.title_offset, &out.title_len);
+                    try statusSpan(result.payload, report.msg, &out.msg_offset, &out.msg_len);
+                    try statusSpan(result.payload, report.app, &out.app_offset, &out.app_len);
+                },
+                .clear => |id| {
+                    out.action = c.HVT_PROGRAM_STATUS_CLEAR;
+                    try statusSpan(result.payload, id, &out.id_offset, &out.id_len);
+                },
+                .process_exited => out.action = c.HVT_PROGRAM_STATUS_PROCESS_EXITED,
+                // Query is answered immediately; it never enters the
+                // consequence FIFO and must not be fabricated as a request.
+                .query => return error.RequestLimit,
+            }
+        },
         .pointer_shape => |request| {
             result.info.kind = c.HVT_REQUEST_POINTER_SHAPE;
             result.info.data.pointer_shape.reset_generation = request.reset_generation;
@@ -235,13 +288,85 @@ test "native request projection covers every canonical family with native typed 
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(c.hvt_request_data));
 }
 
-test "optional program status requires an explicit native ABI before projection" {
+test "optional program status projects validated typed fields without new union bytes" {
+    const body = "state=blocked:id=tf/plan:kind=auth:progress=42:title=UGxhbg==:msg=QXBwbHk=:app=terraform";
     const value: Terminal.Consequence = .{ .program_status = .{
         .generation = 7,
         .reset_generation = 3,
-        .action = .{ .clear = "tf/plan" },
+        .action = Terminal.ProgramStatus.parse(body).?,
+        .payload = body,
     } };
-    try std.testing.expectError(error.RequestLimit, project(value, 9));
+    const projected = try project(value, 9);
+    try std.testing.expectEqual(@as(u8, c.HVT_REQUEST_PROGRAM_STATUS), projected.info.kind);
+    try std.testing.expectEqual(@as(u64, 7), projected.info.occurrence_id);
+    try std.testing.expectEqual(@as(u64, 3), projected.info.data.program_status.reset_generation);
+    try std.testing.expectEqual(@as(u8, c.HVT_PROGRAM_STATUS_REPORT), projected.info.data.program_status.action);
+    try std.testing.expectEqual(@as(u8, c.HVT_PROGRAM_STATE_BLOCKED), projected.info.data.program_status.state);
+    try std.testing.expectEqual(@as(u8, c.HVT_PROGRAM_KIND_AUTH), projected.info.data.program_status.kind);
+    try std.testing.expectEqual(@as(u8, 42), projected.info.data.program_status.progress);
+    try std.testing.expectEqual(@as(u8, 1), projected.info.data.program_status.has_progress);
+    const record = projected.info.data.program_status;
+    try std.testing.expectEqualStrings("tf/plan", projected.payload[record.id_offset..][0..record.id_len]);
+    try std.testing.expectEqualStrings("UGxhbg==", projected.payload[record.title_offset..][0..record.title_len]);
+    try std.testing.expectEqualStrings("QXBwbHk=", projected.payload[record.msg_offset..][0..record.msg_len]);
+    try std.testing.expectEqualStrings("terraform", projected.payload[record.app_offset..][0..record.app_len]);
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(c.hvt_request_program_status));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(c.hvt_request_data));
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(Info));
+    for (record.reserved) |b| try std.testing.expectEqual(@as(u8, 0), b);
+    const invalid: Terminal.Consequence = .{ .program_status = .{
+        .generation = 8,
+        .reset_generation = 3,
+        .action = .{ .clear = "outside" },
+        .payload = "state=clear:id=inside",
+    } };
+    try std.testing.expectError(error.RequestLimit, project(invalid, 9));
+}
+
+test "native OSC 7501 offsets track last admitted fields and no empty bytes leak" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    const body = "state=working:id=older:id=newer:progress=10:progress=70:app=builder:title=UGxhbg==";
+    try std.testing.expect((try terminal.feed("\x1b]7501;" ++ body ++ "\x07")).stateChanged());
+    var native_request: Info = undefined;
+    try head(terminal.observation(), &native_request);
+    try std.testing.expectEqual(@as(u8, c.HVT_REQUEST_PROGRAM_STATUS), native_request.kind);
+    try std.testing.expectEqual(@as(u8, c.HVT_PROGRAM_STATE_WORKING), native_request.data.program_status.state);
+    try std.testing.expectEqual(@as(u8, c.HVT_PROGRAM_STATUS_REPORT), native_request.data.program_status.action);
+    try std.testing.expectEqual(@as(u8, 70), native_request.data.program_status.progress);
+    try std.testing.expectEqual(@as(u8, 1), native_request.data.program_status.has_progress);
+    const descriptor = native_request.data.program_status;
+    var buffer: [256]u8 = @splat(0xa5);
+    var needed: usize = 5;
+    try std.testing.expectError(error.StaleRequest, copyPayload(
+        terminal.observation(),
+        native_request.occurrence_id + 1,
+        &buffer,
+        &needed,
+    ));
+    try std.testing.expectEqual(@as(usize, 0), needed);
+    try std.testing.expectEqual(@as(u8, 0xa5), buffer[0]);
+    try copyPayload(terminal.observation(), native_request.occurrence_id, &buffer, &needed);
+    try std.testing.expectEqualStrings(body, buffer[0..needed]);
+    try std.testing.expectEqualStrings("newer", buffer[descriptor.id_offset..][0..descriptor.id_len]);
+    try std.testing.expectEqualStrings("builder", buffer[descriptor.app_offset..][0..descriptor.app_len]);
+    try std.testing.expectEqualStrings("UGxhbg==", buffer[descriptor.title_offset..][0..descriptor.title_len]);
+    try std.testing.expectEqual(@as(u16, 0), descriptor.msg_len);
+    try std.testing.expectEqual(@as(u16, 0), descriptor.msg_offset);
+    try std.testing.expectEqual(@as(u8, c.HVT_PROGRAM_KIND_NONE), descriptor.kind);
+    try std.testing.expectEqual(@as(u8, 0), native_request.reply_required);
+    for (descriptor.reserved) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+    const copied_len = needed;
+    try terminal.consumeConsequence(native_request.occurrence_id);
+    try std.testing.expectError(error.StaleRequest, copyPayload(
+        terminal.observation(),
+        native_request.occurrence_id,
+        &buffer,
+        &needed,
+    ));
+    try std.testing.expectEqual(@as(usize, 0), needed);
+    try std.testing.expectEqual(@as(u8, 0xa5), buffer[copied_len]);
 }
 
 test "native request copies preserve FIFO identity and distinguish mandatory from requested replies" {

@@ -117,7 +117,7 @@ typedef struct hvt_interaction {
  * separately permits caller policy to reply or consume. Payload copies are
  * complete-or-untouched and checked against the exact current occurrence. */
 #define HVT_MAX_REQUEST_PAYLOAD_BYTES 1048576u
-enum hvt_request_kind { HVT_REQUEST_NONE=0, HVT_REQUEST_CLIPBOARD=1, HVT_REQUEST_NOTIFICATION=2, HVT_REQUEST_POINTER_SHAPE=3, HVT_REQUEST_FILE_TRANSFER=4, HVT_REQUEST_DRAG_DROP=5, HVT_REQUEST_CONTAINER=6, HVT_REQUEST_COLOR_PREFERENCE=7, HVT_REQUEST_MEDIA_COPY=8, HVT_REQUEST_BELL=9, HVT_REQUEST_LEGACY_CONTROL=10, HVT_REQUEST_DCS=11, HVT_REQUEST_STRING_CONTROL=12 };
+enum hvt_request_kind { HVT_REQUEST_NONE=0, HVT_REQUEST_CLIPBOARD=1, HVT_REQUEST_NOTIFICATION=2, HVT_REQUEST_POINTER_SHAPE=3, HVT_REQUEST_FILE_TRANSFER=4, HVT_REQUEST_DRAG_DROP=5, HVT_REQUEST_CONTAINER=6, HVT_REQUEST_COLOR_PREFERENCE=7, HVT_REQUEST_MEDIA_COPY=8, HVT_REQUEST_BELL=9, HVT_REQUEST_LEGACY_CONTROL=10, HVT_REQUEST_DCS=11, HVT_REQUEST_STRING_CONTROL=12, HVT_REQUEST_PROGRAM_STATUS=13 };
 enum hvt_clipboard_operation { HVT_CLIPBOARD_SET=1, HVT_CLIPBOARD_QUERY=2, HVT_CLIPBOARD_PACKET=3 };
 enum hvt_clipboard_protocol { HVT_CLIPBOARD_OSC52=1, HVT_CLIPBOARD_KITTY_5522=2 };
 enum hvt_notification_kind { HVT_NOTIFICATION_MESSAGE=1, HVT_NOTIFICATION_STEAL_FOCUS=2, HVT_NOTIFICATION_REQUEST_ATTENTION=3 };
@@ -127,6 +127,10 @@ enum hvt_container_operation { HVT_CONTAINER_DEICONIFY=1, HVT_CONTAINER_ICONIFY=
 enum hvt_legacy_operation { HVT_LEGACY_TEK_POINT_PLOT=1, HVT_LEGACY_TEK_GRAPH=2, HVT_LEGACY_TEK_INCREMENTAL_PLOT=3, HVT_LEGACY_TEK_ALPHA=4, HVT_LEGACY_TEK_COPY=5, HVT_LEGACY_TEK_SPECIAL_POINT_PLOT=6, HVT_LEGACY_TEK_WRITE_THRU_SHORT_DASHED=7, HVT_LEGACY_HP_MEMORY_LOCK=8 };
 enum hvt_dcs_operation { HVT_DCS_XTSETTCAP=1, HVT_DCS_DECUDK=2, HVT_DCS_DECAUPSS=3, HVT_DCS_ITERM_TMUX_HOOK=4, HVT_DCS_ITERM_SSH_HOOK=5, HVT_DCS_ITERM_TMUX_WRAP=6, HVT_DCS_KITTY_REMOTE_COMMAND=7, HVT_DCS_KITTY_OVERLAY_READY=8, HVT_DCS_KITTY_RESULT=9, HVT_DCS_KITTY_PRINT=10, HVT_DCS_KITTY_ECHO=11, HVT_DCS_KITTY_SSH=12, HVT_DCS_KITTY_ASKPASS=13, HVT_DCS_KITTY_CLONE=14, HVT_DCS_KITTY_EDIT=15 };
 enum hvt_string_operation { HVT_STRING_APC=1, HVT_STRING_PM=2, HVT_STRING_SOS=3 };
+/* OSC 7501: default-disabled host effect. These tags are additive to native v2. */
+enum hvt_program_status_action { HVT_PROGRAM_STATUS_NONE=0, HVT_PROGRAM_STATUS_REPORT=1, HVT_PROGRAM_STATUS_CLEAR=2, HVT_PROGRAM_STATUS_PROCESS_EXITED=3 };
+enum hvt_program_state { HVT_PROGRAM_STATE_NONE=0, HVT_PROGRAM_STATE_IDLE=1, HVT_PROGRAM_STATE_WORKING=2, HVT_PROGRAM_STATE_DONE=3, HVT_PROGRAM_STATE_BLOCKED=4, HVT_PROGRAM_STATE_ERROR=5 };
+enum hvt_program_kind { HVT_PROGRAM_KIND_NONE=0, HVT_PROGRAM_KIND_PERMISSION=1, HVT_PROGRAM_KIND_QUESTION=2, HVT_PROGRAM_KIND_AUTH=3 };
 enum hvt_color_preference { HVT_COLOR_DARK=1, HVT_COLOR_LIGHT=2 };
 enum hvt_container_state { HVT_CONTAINER_STATE_NORMAL=1, HVT_CONTAINER_STATE_ICONIFIED=2 };
 typedef struct hvt_request_clipboard {
@@ -152,6 +156,18 @@ typedef struct hvt_request_media { uint16_t parameter; uint8_t is_private, _rese
 typedef struct hvt_request_legacy { uint8_t operation, _reserved[7]; } hvt_request_legacy;
 typedef struct hvt_request_dcs { uint8_t operation, _reserved[7]; } hvt_request_dcs;
 typedef struct hvt_request_string { uint8_t operation, _reserved[7]; } hvt_request_string;
+/* Native status fields describe the exact copied OSC body, not a second
+ * parse/retained message. id/title/msg offsets and lengths index the bytes
+ * returned by hvt_copy_request_payload for the same occurrence_id. App is
+ * a validated ASCII name, title/msg are base64 encoded; UTF-8 decoding and
+ * presentation policy remain with the native caller.
+ * No pointer survives consume/reset; old queued reset_generation is retained.
+ * This arm fits the original 32-byte v2 union without changing its layout. */
+typedef struct hvt_request_program_status {
+    uint64_t reset_generation;
+    uint16_t id_offset, id_len, title_offset, title_len, msg_offset, msg_len, app_offset, app_len;
+    uint8_t action, state, kind, progress, has_progress, reserved[3];
+} hvt_request_program_status;
 typedef union hvt_request_data {
     hvt_request_clipboard clipboard;
     hvt_request_notification notification;
@@ -163,6 +179,7 @@ typedef union hvt_request_data {
     hvt_request_legacy legacy_control;
     hvt_request_dcs dcs;
     hvt_request_string string_control;
+    hvt_request_program_status program_status;
 } hvt_request_data;
 typedef struct hvt_request {
     uint64_t occurrence_id, terminal_revision;
@@ -438,6 +455,11 @@ uint32_t hvt_get_interaction(const hvt_terminal *, hvt_interaction *);
  * Payload copy is complete-or-untouched with exact required<=MAX_REQUEST_PAYLOAD_BYTES.
  * IDs are scoped to one terminal lifetime; stale/type/required-reply rejection preserves head.
  * Pointer query_requested remains distinct from canonical reply_required. */
+/* Enabled must be 0 or 1. Enabling explicitly opts the VT owner into OSC
+ * 7501 capability replies and typed status events; the default is disabled.
+ * Disabling affects future input, not pending exact-head requests. A host
+ * must still apply policy and consume already queued status events. */
+uint32_t hvt_set_program_status_consumer(hvt_terminal *, uint8_t enabled);
 uint32_t hvt_request_head(const hvt_terminal *, hvt_request *);
 uint32_t hvt_copy_request_payload(const hvt_terminal *, uint64_t id,
     uint8_t *, size_t capacity, size_t *required);

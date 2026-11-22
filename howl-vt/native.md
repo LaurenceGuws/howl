@@ -23,7 +23,7 @@ process lifetime, time, scheduling, request policy and UI.
 | Queries | `hvt_copy_cell`, `hvt_search`, `hvt_expand_selection`, `hvt_copy_selection`, `hvt_copy_hyperlink`, `hvt_copy_row_shapes`, `hvt_get_interaction` |
 | Logical output | `hvt_output_open`, `hvt_output_read`, `hvt_output_release` |
 | Graphics | `hvt_copy_graphics`, `hvt_copy_image_pixels` |
-| Requests | `hvt_request_head`, `hvt_copy_request_payload`, `hvt_consume_request` |
+| Requests | `hvt_request_head`, `hvt_copy_request_payload`, `hvt_consume_request`, `hvt_set_program_status_consumer` |
 | Named responses | `hvt_reply_clipboard`, `hvt_reply_pointer_shape`, `hvt_reply_color_preference`, `hvt_reply_container_state`, `hvt_reply_container_position`, `hvt_reply_container_screen_cells`, `hvt_reply_container_icon_title`, `hvt_decline_container` |
 
 One serialized caller owns each handle. Copying its pointer creates no owner.
@@ -227,6 +227,41 @@ consume it. Other families are consumable. Stale/wrong-kind, required-reply,
 allocation and queue-limit failures preserve the head. Native descriptors reuse
 VT schemas; no Server packet vocabulary enters this contract.
 
+### Opt-in native OSC 7501 program status
+
+The native owner's hvt_set_program_status_consumer(owner, enabled) accepts
+only 0 or 1. By default it is 0: VT ignores OSC 7501 reports and
+does not answer status capability queries. Enabling it registers the
+real native host consumer before input, and the source-pinned five-state,
+three-kind capability reply becomes truthful. Disabling affects only
+future input and preserves pending exact-head events.
+
+The additive HVT_REQUEST_PROGRAM_STATUS=13 uses the existing 32-byte
+hvt_request_data union arm hvt_request_program_status. Its copied fields
+contain reset generation, typed REPORT/CLEAR/PROCESS_EXITED action, state,
+blocked kind, optional 0..100 progress and checked offsets/lengths for the
+validated program ID, application name, title and message. Offsets refer
+to the same complete original OSC body returned by hvt_copy_request_payload
+for the exact occurrence ID. Title/message remain base64 encoded: native
+callers own decoding and host policy. No raw Zig pointer or status database
+crosses this ABI.
+
+The normal request-head, payload-copy and exact consume semantics apply.
+Stale IDs or short caller buffers cannot change the request or scribble
+into output. The typed reset generation distinguishes retained events
+from before a terminal hard reset. Queries are answered directly and
+never become status requests.
+
+This adds one symbol and an opt-in request kind without changing
+HVT_NATIVE_VERSION=2, earlier tag values or binary layouts:
+sizeof(hvt_request)==56, data offset 24, request union 32, status arm 32.
+Existing native consumers are unaffected until they opt in. The parser
+continues to bound status bodies to 2043 bytes, IDs to 128 bytes and
+pending events to eight. Full per-window storage, decoded message
+presentation, native client policy and expanded protocol limits remain
+caller-owned or deferred. The SDL app has its own 32-record per-pane index,
+not an alternative VT status store.
+
 Named reply bodies are at most 65,536 bytes at this boundary, with canonical queue,
 pointer and title limits potentially smaller. Platform permissions and truthful
 clipboard/window values belong to the caller. No automatic headless policy is added.
@@ -235,8 +270,8 @@ clipboard/window values belong to the caller. No automatic headless policy is ad
 
 Linux/x86_64 is the initial native target. Package proofs include a real standalone
 C/C++ lifecycle, every new record field/constant/function-signature, allocation
-prefixes and hostile boundaries. The distribution consumer resolves all 35 symbols
-through the exact artifact/header.
+prefixes and hostile boundaries. Distribution consumers resolve the
+source-qualified exported symbol set from matching artifact/header versions.
 
 `zig build check test:native test:terminal test:foreign -Doptimize=ReleaseSafe`
 qualifies affected owners, canonical units and actual foreign callers. Default

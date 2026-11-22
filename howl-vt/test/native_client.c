@@ -195,7 +195,104 @@ cleanup:
     return failed;
 }
 
+/* The native status contract is opt-in, has typed fields and a borrowed-to-
+ * owned complete payload copy, and leaves all pre-existing v2 layouts intact. */
+static int program_status_proof(void) {
+    int failed=0;
+    hvt_terminal *value=NULL;
+    const hvt_config config={2,8,4,0,8,16};
+    const char *query="\033]7501;?\033\\";
+    const char *reply="\033]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\033\\";
+    const char *body="state=blocked:id=task/child:kind=auth:progress=42:title=UGxhbg==:msg=QXBwbHk=:app=builder";
+    char wire[192];
+    uint8_t bytes[256];
+    hvt_request current={0};
+    size_t required=0;
+    CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_OK);
+    CHECK(hvt_set_program_status_consumer(NULL,1)==HVT_INVALID_ARGUMENT);
+    CHECK(hvt_set_program_status_consumer(value,2)==HVT_INVALID_ARGUMENT);
+    CHECK(feed_all(value,query)==HVT_OK);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&required)==HVT_OK && !required);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_NONE);
+
+    CHECK(hvt_set_program_status_consumer(value,1)==HVT_OK);
+    CHECK(feed_all(value,query)==HVT_OK);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&required)==HVT_OK
+        && required==strlen(reply) && memcmp(bytes,reply,required)==0);
+    CHECK(hvt_consume_replies(value,required)==HVT_OK);
+
+    CHECK(snprintf(wire,sizeof wire,"\033]7501;%s\033\\",body)>0);
+    CHECK(feed_all(value,wire)==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK
+        && current.kind==HVT_REQUEST_PROGRAM_STATUS && !current.reply_required);
+    CHECK(current.data.program_status.action==HVT_PROGRAM_STATUS_REPORT);
+    CHECK(current.data.program_status.state==HVT_PROGRAM_STATE_BLOCKED);
+    CHECK(current.data.program_status.kind==HVT_PROGRAM_KIND_AUTH);
+    CHECK(current.data.program_status.has_progress==1 && current.data.program_status.progress==42);
+    CHECK(current.payload_len==strlen(body));
+    for (size_t i=0;i<sizeof current.data.program_status.reserved;++i)
+        CHECK(!current.data.program_status.reserved[i]);
+    const uint64_t occurrence=current.occurrence_id;
+    memset(bytes,0xa5,sizeof bytes);
+    CHECK(hvt_copy_request_payload(value,occurrence+1,bytes,sizeof bytes,&required)==HVT_STALE_REQUEST
+        && required==0 && bytes[0]==0xa5);
+    CHECK(hvt_copy_request_payload(value,occurrence,bytes,strlen(body)-1,&required)==HVT_BUFFER_TOO_SMALL
+        && required==strlen(body) && bytes[0]==0xa5);
+    CHECK(hvt_copy_request_payload(value,occurrence,bytes,sizeof bytes,&required)==HVT_OK
+        && required==strlen(body) && memcmp(bytes,body,required)==0);
+    const hvt_request_program_status report=current.data.program_status;
+    CHECK(report.id_len==strlen("task/child") && report.id_offset+report.id_len<=required
+        && memcmp(bytes+report.id_offset,"task/child",report.id_len)==0);
+    CHECK(report.title_len==strlen("UGxhbg==") && report.title_offset+report.title_len<=required
+        && memcmp(bytes+report.title_offset,"UGxhbg==",report.title_len)==0);
+    CHECK(report.msg_len==strlen("QXBwbHk=") && report.msg_offset+report.msg_len<=required
+        && memcmp(bytes+report.msg_offset,"QXBwbHk=",report.msg_len)==0);
+    CHECK(report.app_len==strlen("builder") && report.app_offset+report.app_len<=required
+        && memcmp(bytes+report.app_offset,"builder",report.app_len)==0);
+    CHECK(hvt_consume_request(value,occurrence+1)==HVT_STALE_REQUEST);
+    CHECK(hvt_consume_request(value,occurrence)==HVT_OK);
+    CHECK(hvt_consume_request(value,occurrence)==HVT_STALE_REQUEST);
+
+    CHECK(feed_all(value,"\033]7501;state=clear:id=task\033\\")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
+        && current.data.program_status.action==HVT_PROGRAM_STATUS_CLEAR
+        && current.data.program_status.state==HVT_PROGRAM_STATE_NONE
+        && current.data.program_status.id_len==4
+        && !current.data.program_status.title_len && !current.data.program_status.msg_len);
+    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+
+    CHECK(feed_all(value,"\033]7501;process-exited\033\\")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
+        && current.data.program_status.action==HVT_PROGRAM_STATUS_PROCESS_EXITED
+        && !current.data.program_status.id_len
+        && !current.data.program_status.has_progress);
+    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+
+    CHECK(feed_all(value,"\033]7501;state=working:id=prior\033\\")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS);
+    const uint64_t reset=current.data.program_status.reset_generation;
+    const uint64_t prior_id=current.occurrence_id;
+    CHECK(hvt_reset(value)==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK
+        && current.occurrence_id==prior_id
+        && current.data.program_status.reset_generation==reset);
+    CHECK(hvt_consume_request(value,prior_id)==HVT_OK);
+    CHECK(feed_all(value,"\033]7501;state=working:id=after\033\\")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK
+        && current.kind==HVT_REQUEST_PROGRAM_STATUS
+        && current.data.program_status.reset_generation>reset);
+    CHECK(hvt_set_program_status_consumer(value,0)==HVT_OK);
+    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+    CHECK(feed_all(value,query)==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_NONE);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&required)==HVT_OK && required==0);
+cleanup:
+    hvt_release(&value);
+    return failed;
+}
+
 int main(void) {
+    if (program_status_proof()!=0) return 1;
     int failed=0;
     hvt_terminal *value=NULL,*fresh=NULL;
     hvt_observation *source=NULL,*peer=NULL;
@@ -467,6 +564,20 @@ _Static_assert(HVT_MAX_IMAGE_PLACEMENTS==16384,"HVT_MAX_IMAGE_PLACEMENTS");
 _Static_assert(HVT_MAX_IMAGE_DIMENSION==4096,"HVT_MAX_IMAGE_DIMENSION");
 _Static_assert(HVT_MAX_IMAGE_BYTES==16777216,"HVT_MAX_IMAGE_BYTES");
 _Static_assert(HVT_MAX_IMAGE_STORAGE_BYTES==67108864,"HVT_MAX_IMAGE_STORAGE_BYTES");
+
+_Static_assert(HVT_REQUEST_PROGRAM_STATUS==13,"program status additive request kind");
+_Static_assert(HVT_PROGRAM_STATUS_REPORT==1 && HVT_PROGRAM_STATUS_CLEAR==2 &&
+    HVT_PROGRAM_STATUS_PROCESS_EXITED==3,"native action tags");
+_Static_assert(sizeof(hvt_request_program_status)==32 &&
+    _Alignof(hvt_request_program_status)==8,"native status descriptor layout");
+_Static_assert(offsetof(hvt_request_program_status,reset_generation)==0 &&
+    offsetof(hvt_request_program_status,id_offset)==8 &&
+    offsetof(hvt_request_program_status,msg_len)==18 &&
+    offsetof(hvt_request_program_status,app_offset)==20 &&
+    offsetof(hvt_request_program_status,action)==24 &&
+    offsetof(hvt_request_program_status,reserved)==29,"native status field offsets");
+_Static_assert(sizeof(hvt_request_data)==32 && sizeof(hvt_request)==56 &&
+    offsetof(hvt_request,data)==24,"previous v2 request layouts remain binary identical");
 
 _Static_assert(sizeof(hvt_output_loss)==24 && _Alignof(hvt_output_loss)==8,"hvt_output_loss layout");
 _Static_assert(offsetof(hvt_output_loss,id)==0,"hvt_output_loss.id");

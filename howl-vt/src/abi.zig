@@ -299,6 +299,15 @@ pub export fn hvt_get_interaction(raw: ?*const c.hvt_terminal, out: ?*c.hvt_inte
     result.* = native.queries.interaction(owner.observation(constant(value)));
     return c.HVT_OK;
 }
+/// Installs an explicit native OSC 7501 consumer, leaving existing
+/// exact-head consequences untouched when disabling future input.
+pub export fn hvt_set_program_status_consumer(raw: ?*c.hvt_terminal, enabled: u8) u32 {
+    if (enabled > 1) return c.HVT_INVALID_ARGUMENT;
+    const value = raw orelse return c.HVT_INVALID_ARGUMENT;
+    owner.setProgramStatusConsumer(mutable(value), enabled == 1);
+    return c.HVT_OK;
+}
+
 /// Copies exact-head facts only; observation does not apply host policy.
 pub export fn hvt_request_head(raw: ?*const c.hvt_terminal, out: ?*c.hvt_request) u32 {
     const result = out orelse return c.HVT_INVALID_ARGUMENT;
