@@ -2244,7 +2244,7 @@ test "terminal: pinned Kitty DECSTBM rejects extra operands without changing mar
     }
 }
 
-test "terminal: Kitty cursor excess parameters retain shared permissive CSI policy" {
+test "terminal: Kitty directional cursor excess parameters retain permissive CSI policy" {
     const cases = [_]struct {
         sequence: []const u8,
         row: u16,
@@ -2258,8 +2258,6 @@ test "terminal: Kitty cursor excess parameters retain shared permissive CSI poli
         .{ .sequence = "\x1b[1;9F", .row = 2, .col = 0 },
         .{ .sequence = "\x1b[1;9G", .row = 3, .col = 0 },
         .{ .sequence = "\x1b[1;9`", .row = 3, .col = 0 },
-        .{ .sequence = "\x1b[2;3;9H", .row = 1, .col = 2 },
-        .{ .sequence = "\x1b[2;3;9f", .row = 1, .col = 2 },
     };
     for (cases) |case| {
         var terminal = try Terminal.init(std.testing.allocator, 8, 8);
@@ -2268,8 +2266,8 @@ test "terminal: Kitty cursor excess parameters retain shared permissive CSI poli
         const before = terminal.semanticView(0);
         try std.testing.expectEqual(@as(u16, 3), before.cursor_row);
         try std.testing.expectEqual(@as(u16, 3), before.cursor_col);
-        // All ten match the shared Howl/libvterm ignore-trailing-args policy;
-        // pinned Kitty's bounded CSI handlers reject the entire cursor action.
+        // The remaining eight directional controls retain this known
+        // permissive policy. Absolute CUP/HVP have a separate strict cut.
         const prefix = case.sequence[0 .. case.sequence.len - 1];
         try std.testing.expect(!(try terminal.feed(prefix)).stateChanged());
         try std.testing.expectEqual(before.cursor_row, terminal.semanticView(0).cursor_row);
@@ -2279,6 +2277,105 @@ test "terminal: Kitty cursor excess parameters retain shared permissive CSI poli
         try std.testing.expectEqual(case.row, after.cursor_row);
         try std.testing.expectEqual(case.col, after.cursor_col);
         try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+}
+
+test "terminal: pinned Kitty CUP HVP reject surplus operands without cursor or graphics mutation" {
+    // Frozen Kitty vt-parser.c dispatches H/f through CALL_CSI_HANDLER2.
+    // A third supplied operand rejects the complete command. The direct
+    // hot path and generic CSI decoder must agree on that negative space.
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=99,C=1;AQIDBA==\x1b\\";
+    for ([_][]const u8{
+        "\x1b[3;4;5H",  "\x1b[3;4;5f",
+        "\x1b[3;4;0H",  "\x1b[3;4;0f",
+        "\x1b[3;4;;H",  "\x1b[3;4;;f",
+        "\x1b[3:4:5H",  "\x1b[3:4:5f",
+        "\x9b3;4;5H",   "\x9b3;4;5f",
+        "\x1b[;4;5H",   "\x1b[;4;5f",
+        "\x1b[3;4;5;H", "\x1b[3;4;5;f",
+    }) |invalid| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 6, 20, 4);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBBBBBB\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[5;1HEEEEEEEE\x1b[6;1HFFFFFFFF");
+        try feed(&terminal, "\x1b[3;2H" ++ image ++ "\x1b[2;5r\x1b[?6h\x1b[2;19H");
+        try consumeReplies(&terminal);
+        const before = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u16, 2), before.cursor_row);
+        try std.testing.expectEqual(@as(u16, 18), before.cursor_col);
+        const cells = [_]@TypeOf(before.cellInfoAt(0, 0)){
+            before.cellInfoAt(0, 0), before.cellInfoAt(1, 0), before.cellInfoAt(2, 0),
+            before.cellInfoAt(3, 0), before.cellInfoAt(4, 0), before.cellInfoAt(5, 0),
+        };
+        const seq = terminal.semanticSequence();
+        const edit_generation = terminal.observation().structuralEditGeneration();
+        const images = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+        const placement = images.placement(0).?;
+        const image_count = images.imageCount();
+        const image_generation = images.generation;
+        const content_generation = images.content_generation;
+
+        try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(seq, terminal.semanticSequence());
+        try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+        try std.testing.expectEqual(before.history_count, after.history_count);
+        try std.testing.expectEqual(edit_generation, terminal.observation().structuralEditGeneration());
+        for (cells, 0..) |cell, row| try std.testing.expectEqualDeep(cell, after.cellInfoAt(@intCast(row), 0));
+        try std.testing.expectEqual(image_count, terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(placement.col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(image_generation, terminal.images(0).generation);
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+        // Origin mode and both normal coordinates remain usable afterward.
+        try std.testing.expect((try terminal.feed("\x1b[3;4H")).stateChanged());
+        try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+    }
+
+    // Omitted/zero/one/two values and final empty delimiters remain legal;
+    // a final ';' is not an extra committed parameter in pinned Kitty.
+    for ([_]struct { valid: []const u8, row: u16, col: u16 }{
+        .{ .valid = "\x1b[H", .row = 1, .col = 0 },
+        .{ .valid = "\x1b[f", .row = 1, .col = 0 },
+        .{ .valid = "\x1b[0;0H", .row = 1, .col = 0 },
+        .{ .valid = "\x1b[0;0f", .row = 1, .col = 0 },
+        .{ .valid = "\x1b[;H", .row = 1, .col = 0 },
+        .{ .valid = "\x1b[;f", .row = 1, .col = 0 },
+        .{ .valid = "\x1b[3;4H", .row = 3, .col = 3 },
+        .{ .valid = "\x1b[3;4f", .row = 3, .col = 3 },
+        .{ .valid = "\x1b[3;4;H", .row = 3, .col = 3 },
+        .{ .valid = "\x1b[3;4;f", .row = 3, .col = 3 },
+        .{ .valid = "\x9b2;5H", .row = 2, .col = 4 },
+        .{ .valid = "\x9b2;5f", .row = 2, .col = 4 },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 6, 20);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[2;5r\x1b[?6h\x1b[2;19H");
+        try std.testing.expect((try terminal.feed(case.valid)).stateChanged());
+        try std.testing.expectEqual(case.row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(case.col, terminal.semanticView(0).cursor_col);
+    }
+
+    // Rejecting a cursor-position command cannot cancel last-column wrap.
+    for ([_][]const u8{
+        "\x1b[3;4;5H", "\x1b[3;4;5f", "\x9b3;4;5H", "\x9b3;4;5f",
+    }) |invalid| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;20H!");
+        const seq = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqual(seq, terminal.semanticSequence());
+        try feed(&terminal, "X");
+        try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 19));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 0));
     }
 }
 

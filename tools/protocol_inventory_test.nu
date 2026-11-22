@@ -72,6 +72,8 @@ if ($ruling.id != "libvterm.csi.decsgr"
 let indexed_rulings = (protocol decisions)
 let expected_rulings = [
   iterm2.csi.cbt
+  iterm2.csi.cup
+  iterm2.csi.hvp
   iterm2.csi.vpa
   iterm2.osc.bg
   iterm2.osc.cursor
@@ -88,11 +90,33 @@ let expected_rulings = [
   kitty.osc.palette
   kitty.osc.palette_reset
   libvterm.csi.cbt
+  libvterm.csi.cup
   libvterm.csi.decsgr
+  libvterm.csi.hvp
   libvterm.csi.vpa
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Kitty permits only two CUP/HVP operands. Pinned libvterm/iTerm2
+# instead act on the first two; both losers require explicit source pins
+# and an unchanged-cursor proof before a strict indexed ruling is accepted.
+for reference in [libvterm iterm2] {
+  for command in [
+    {name: cup, wire: "CSI 3 ; 4 ; 5 H"}
+    {name: hvp, wire: "CSI 3 ; 4 ; 5 f"}
+  ] {
+    let id = ($reference + ".csi." + $command.name)
+    let decision = (protocol decision $id)
+    if ($decision.disposition != adjudicated
+        or $decision.adjudication.kind != wire_collision
+        or $decision.adjudication.wire != $command.wire
+        or $decision.adjudication.winner.owner != kitty
+        or $decision.adjudication.loser.owner != $reference
+        or $decision.adjudication.proof.symbol != "terminal: pinned Kitty CUP HVP reject surplus operands without cursor or graphics mutation") {
+      error make {msg: $"pinned CUP/HVP arity decision is not source-backed: ($id)"}
+    }
+  }
 }
 # Kitty rejects surplus operands on VPA and CBT, while pinned libvterm
 # and iTerm2 use the first count and move. Keep each losing source and

@@ -1053,6 +1053,18 @@ fn paramOrDefault0(v: i32) u16 {
     return @intCast(v);
 }
 
+const CursorCoordinates = struct { row: u16, col: u16 };
+
+fn csiCursorCoordinates(params: []const i32) ?CursorCoordinates {
+    // Frozen Kitty admits at most two CUP/HVP operands. This decoder is
+    // shared by the direct stream path and generic semantic routing.
+    if (params.len > 2) return null;
+    return .{
+        .row = paramAtOrDefault1(params, 0) - 1,
+        .col = paramAtOrDefault1(params, 1) - 1,
+    };
+}
+
 // Decodes one ordinary CSI sequence; unsupported forms return null.
 fn decodeCsi(
     final: u8,
@@ -1103,9 +1115,8 @@ fn decodeCsi(
             } },
         'u' => return SemanticEvent.restore_cursor,
         'H', 'f' => {
-            const row = paramAtOrDefault1(params, 0);
-            const col = paramAtOrDefault1(params, 1);
-            return SemanticEvent{ .cursor_position = .{ .row = row - 1, .col = col - 1 } };
+            const pos = csiCursorCoordinates(params) orelse return null;
+            return SemanticEvent{ .cursor_position = .{ .row = pos.row, .col = pos.col } };
         },
         'r' => {
             // Kitty DECSTBM is a two-operand control. Private mode
@@ -4722,11 +4733,13 @@ const TerminalStream = struct {
         const params = csi.params[0..csi.count];
         switch (csi.final) {
             'H', 'f' => {
-                const row = paramAtOrDefault1(params, 0);
-                const col = paramAtOrDefault1(params, 1);
+                const pos = csiCursorCoordinates(params) orelse return .{
+                    .changed = false,
+                    .suppress_owner_fallback = true,
+                };
                 const changed = self.terminal.screen_state.active().moveCursorPosition(
-                    row - 1,
-                    col - 1,
+                    pos.row,
+                    pos.col,
                 );
                 return .{
                     .changed = changed,
@@ -9909,6 +9922,18 @@ const RouteOwnerTests = struct {
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.active().cursor.row);
         try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.active().cursor.col);
 
+        // The hot owner must reject the same malformed multi-operand CUP
+        // that the generic CSI decoder rejects. No fallback may run.
+        params[2] = 9;
+        var surplus = cup;
+        surplus.count = 3;
+        const ignored = stream.applyDirectOrdinaryCsi(surplus) orelse return error.NoEvent;
+        try std.testing.expect(!ignored.changed);
+        try std.testing.expect(ignored.suppress_owner_fallback);
+        try std.testing.expect(!ignored.mutations.stateChanged());
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.active().cursor.row);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.active().cursor.col);
+
         params[0] = 38;
         params[1] = 5;
         params[2] = 196;
@@ -10495,6 +10520,8 @@ const CsiMappingOwnerTests = struct {
         try std.testing.expectEqual(@as(?u16, null), routeParserEvent(makeStyleChange('r', 3, 0, 1)).?.set_scroll_region.bottom);
         try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('H', 3, 5, 2)).?.cursor_position.row);
         try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('H', 3, 5, 2)).?.cursor_position.col);
+        try std.testing.expect(routeParserEvent(makeStyleChange('H', 3, 5, 3)) == null);
+        try std.testing.expect(routeParserEvent(makeStyleChange('f', 3, 5, 3)) == null);
         try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('H', 0, 0, 0)).?.cursor_position.row);
         try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('H', 0, 0, 0)).?.cursor_position.col);
         try std.testing.expectEqual(@as(?SemanticEvent, null), routeParserEvent(makeStyleChange('Y', 1, 0, 1)));
