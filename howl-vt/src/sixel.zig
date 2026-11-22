@@ -53,14 +53,10 @@ pub fn decode(allocator: std.mem.Allocator, payload: []const u8, options: Option
     if (byte_count > graphics.max_image_bytes) return error.Quota;
     const pixels = try allocator.alloc(u8, byte_count);
     errdefer allocator.free(pixels);
-    if (options.transparent) {
-        @memset(pixels, 0);
-    } else {
-        const background = [4]u8{ 0, 0, 0, 255 };
-        var offset: usize = 0;
-        while (offset < pixels.len) : (offset += 4)
-            @memcpy(pixels[offset..][0..4], &background);
-    }
+    // Pixel count was checked before allocation: each RGBA slot is complete.
+    // Initialize the complete image as typed four-byte pixels, not one
+    // tiny memcpy per pixel. Preserve the caller-selected alpha precisely.
+    @memset(std.mem.bytesAsSlice([4]u8, pixels), if (options.transparent) .{ 0, 0, 0, 0 } else .{ 0, 0, 0, 255 });
     const painted = try walk(
         payload,
         options,
@@ -373,6 +369,29 @@ test "Sixel repeats reject oversized geometry before expanding columns" {
     }));
     try std.testing.expectError(error.Invalid, decode(allocator, "!0~", opts));
     try std.testing.expectError(error.Invalid, decode(allocator, "!99999999999~", opts));
+}
+
+test "Sixel opaque and transparent canvas initialization remains exact at every pixel" {
+    for ([_]bool{ false, true }) |transparent| {
+        const image = try decode(std.testing.allocator, "#2;2;100;0;0?~", .{
+            .pan = 2,
+            .pad = 3,
+            .transparent = transparent,
+        });
+        defer image.deinit(std.testing.allocator);
+        try std.testing.expectEqual(@as(u32, 6), image.width);
+        try std.testing.expectEqual(@as(u32, 12), image.height);
+        for (0..image.height) |row| {
+            for (0..image.width) |col| {
+                const pixel = image.pixels[(row * image.width + col) * 4 ..][0..4];
+                if (col < 3) {
+                    try std.testing.expectEqualSlices(u8, if (transparent) &.{ 0, 0, 0, 0 } else &.{ 0, 0, 0, 255 }, pixel);
+                } else {
+                    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, pixel);
+                }
+            }
+        }
+    }
 }
 
 test "Sixel decoder releases every allocation failure boundary" {
