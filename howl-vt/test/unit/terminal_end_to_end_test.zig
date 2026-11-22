@@ -4747,6 +4747,83 @@ test "terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M" {
     }
 }
 
+test "terminal: pinned Kitty IL DL reject excess operands without structural or graphics edits" {
+    // Frozen Kitty vt-parser.c CALL_CSI_HANDLER1 rejects more than one
+    // parameter for both L and M, before calling its Screen line owner.
+    // A final empty argument after ';' is not committed by Kitty.
+    for ([_]struct { invalid: []const u8, valid: []const u8 }{
+        .{ .invalid = "\x1b[2;1L", .valid = "\x1b[L" },
+        .{ .invalid = "\x1b[2;1M", .valid = "\x1b[M" },
+        .{ .invalid = "\x1b[0;;L", .valid = "\x1b[L" },
+        .{ .invalid = "\x1b[0;;M", .valid = "\x1b[M" },
+        .{ .invalid = "\x1b[2:1L", .valid = "\x1b[L" },
+        .{ .invalid = "\x1b[2:1M", .valid = "\x1b[M" },
+        .{ .invalid = "\x9b2;1L", .valid = "\x1b[L" },
+        .{ .invalid = "\x9b2;1M", .valid = "\x1b[M" },
+        .{ .invalid = "\x1b[1;2L", .valid = "\x1b[L" },
+        .{ .invalid = "\x1b[1;2M", .valid = "\x1b[M" },
+        .{ .invalid = "\x1b[;0;L", .valid = "\x1b[L" },
+        .{ .invalid = "\x1b[;0;M", .valid = "\x1b[M" },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBBBBBB\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD");
+        try feed(&terminal, "\x1b[2;2H\x1b_Ga=T,f=32,s=1,v=1,i=93,C=1;AQIDBA==\x1b\\");
+        try consumeReplies(&terminal);
+        const cursor_before = terminal.semanticView(0);
+        const row_before = cursor_before.cellInfoAt(1, 0);
+        const below_before = cursor_before.cellInfoAt(2, 0);
+        const above_before = cursor_before.cellInfoAt(0, 0);
+        const bottom_before = cursor_before.cellInfoAt(3, 0);
+        const sequence = terminal.semanticSequence();
+        const edit = terminal.observation().structuralEditGeneration();
+        const graphics = terminal.images(0);
+        const placement = graphics.placement(0).?;
+        const image_count = graphics.imageCount();
+        const placement_count = graphics.placementCount();
+        const image_generation = graphics.generation;
+        const content_generation = graphics.content_generation;
+        try std.testing.expectEqual(@as(usize, 1), placement_count);
+
+        try std.testing.expect(!(try terminal.feed(case.invalid[0 .. case.invalid.len - 1])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(case.invalid[case.invalid.len - 1 ..])).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(edit, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqualDeep(row_before, after.cellInfoAt(1, 0));
+        try std.testing.expectEqualDeep(below_before, after.cellInfoAt(2, 0));
+        try std.testing.expectEqualDeep(above_before, after.cellInfoAt(0, 0));
+        try std.testing.expectEqualDeep(bottom_before, after.cellInfoAt(3, 0));
+        try std.testing.expectEqual(cursor_before.cursor_row, after.cursor_row);
+        try std.testing.expectEqual(cursor_before.cursor_col, after.cursor_col);
+        try std.testing.expectEqual(image_count, terminal.images(0).imageCount());
+        try std.testing.expectEqual(placement_count, terminal.images(0).placementCount());
+        try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+        try std.testing.expectEqual(placement.col, terminal.images(0).placement(0).?.col);
+        try std.testing.expectEqual(image_generation, terminal.images(0).generation);
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+        // Invalid input cannot poison the next admitted edit.
+        try std.testing.expect((try terminal.feed(case.valid)).stateChanged());
+        try std.testing.expectEqual(edit + 1, terminal.observation().structuralEditGeneration());
+    }
+
+    // Kitty treats count zero as one for both screen_insert_lines and
+    // screen_delete_lines, even when the zero has a trailing empty ';'.
+    for ([_][]const u8{ "\x1b[0;L", "\x1b[0;M", "\x1b[;L", "\x1b[;M" }) |valid| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBBBBBB\x1b[3;1HCCCCCCCC\x1b[2;2H");
+        const edit = terminal.observation().structuralEditGeneration();
+        try std.testing.expect((try terminal.feed(valid)).stateChanged());
+        try std.testing.expectEqual(edit + 1, terminal.observation().structuralEditGeneration());
+        try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    }
+}
+
 test "terminal: structural line-edit generation distinguishes admission from ordinary output" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

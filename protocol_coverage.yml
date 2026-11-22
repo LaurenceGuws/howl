@@ -4138,16 +4138,16 @@ references:
             conditions: "Pinned Kitty private EL shares the one-parameter K admission and accepts a trailing blank delimiter; Howl matches that boundary while DEC-protected text, preserved attributes, multicell edits and selection invalidation remain divergent.",
             howl: *howl_kitty_selective_erase_line_graphics}
           kitty.csi.il: {raw: "CSI [Ps=1] L", effect: insert lines,
-            conditions: "Pinned Kitty ignores private mode 69 and inserts complete physical rows; Howl supports DECSLRM and inserts only inside horizontal margins. Multiline and selection behavior has independent bounded proofs.", howl: {support: partial,
+            conditions: "Pinned Kitty CALL_CSI_HANDLER1 rejects more than one IL operand before mutation, but ignores an absent trailing operand after semicolon and treats zero count as one. Howl now matches this exact admission, including fragmented C1 CSI and image safety. Kitty ignores private mode 69 and inserts complete physical rows; Howl supports DECSLRM and inserts inside horizontal margins, with separate multiline and selection proofs.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "A real pinned whole-row versus Howl DECSLRM compatibility difference is proven. Ordinary full-width/multiline editing still requires separate history, selection and projected graphics checks.",
+              residual: "The pinned one-operand IL/DL admission, zero count and trailing semicolon now agree, with a named native regression for actual image/resource nonmutation and valid recovery. Pinned Kitty ignores horizontal private mode 69 and edits complete rows; Howl deliberately retains DECSLRM column bounds. Ordinary full-width multiline, history, selection and relative image references still need separate proof.",
               source: howl-vt/src/screen.zig, symbol: Screen.editLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
           kitty.csi.dl: {raw: "CSI [Ps=1] M", effect: delete lines,
-            conditions: "Pinned Kitty ignores private mode 69 and deletes complete physical rows; Howl supports DECSLRM and deletes only inside horizontal margins. Multiline and selection behavior remains a separate owner.", howl: {support: partial,
+            conditions: "Pinned Kitty CALL_CSI_HANDLER1 rejects more than one DL operand before mutation, but ignores an absent trailing operand after semicolon and treats zero count as one. Howl now matches this exact admission, including fragmented C1 CSI and image safety. Kitty ignores private mode 69 and deletes complete physical rows; Howl supports DECSLRM and deletes inside horizontal margins, with separate multiline and selection proofs.", howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
-              residual: "A real pinned whole-row versus Howl DECSLRM compatibility difference is proven. Ordinary full-width/multiline editing still requires separate history, selection and projected graphics checks.",
+              residual: "The pinned one-operand IL/DL admission, zero count and trailing semicolon now agree, with a named native regression for actual image/resource nonmutation and valid recovery. Pinned Kitty ignores horizontal private mode 69 and edits complete rows; Howl deliberately retains DECSLRM column bounds. Ordinary full-width multiline, history, selection and relative image references still need separate proof.",
               source: howl-vt/src/screen.zig, symbol: Screen.editLines, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: pinned Kitty ignores DEC 69 while Howl bounds L M S T horizontally"}}}
