@@ -100,10 +100,15 @@ pub fn closeHover(base: c.SDL_Color) c.SDL_Color {
     const neutral = hover(base);
     return .{ .r = @intCast((@as(u16, neutral.r) * 7 + 216) / 8), .g = @intCast((@as(u16, neutral.g) * 7 + 64) / 8), .b = @intCast((@as(u16, neutral.b) * 7 + 120) / 8), .a = 255 };
 }
+/// Host-owned black/white fallback meets WCAG contrast for any opaque RGB,
+/// shared by application selected items and terminal selected text pixels.
+pub fn contrastingInk(background: c.SDL_Color) c.SDL_Color {
+    return if (luminance(background) > 0.179) rgb(0, 0, 0) else rgb(255, 255, 255);
+}
 /// Text selection has its own contrasting ink; list-active colors are not text-selection roles.
 pub fn selection(value: Palette) struct { background: c.SDL_Color, foreground: c.SDL_Color } {
     const background = value.accent;
-    return .{ .background = background, .foreground = if (luminance(background) > 0.179) rgb(0, 0, 0) else rgb(255, 255, 255) };
+    return .{ .background = background, .foreground = contrastingInk(background) };
 }
 fn luminance(color: c.SDL_Color) f64 {
     var result: f64 = 0;
@@ -125,6 +130,18 @@ test "every theme has contrasting selected text and a neutral brighter hover tin
         try std.testing.expect(luminance(tint) > luminance(value.idle));
     }
 }
+test "shared selected-text fallback keeps perceptual contrast for theme and RGB extremes" {
+    for ([_]c.SDL_Color{
+        rgb(0, 0, 0),     rgb(255, 255, 255), rgb(119, 119, 119),
+        rgb(255, 190, 0), rgb(40, 60, 100),   rgb(160, 60, 160),
+    }) |background| {
+        const ink = contrastingInk(background);
+        const a = luminance(background);
+        const b = luminance(ink);
+        try std.testing.expect((@max(a, b) + 0.05) / (@min(a, b) + 0.05) >= 4.5);
+    }
+}
+
 test "window close hover adds a subtle rose cast without changing neutral hover" {
     const base = (try palette("howl_dark")).title;
     try std.testing.expectEqual(rgb(35, 38, 43), hover(base));

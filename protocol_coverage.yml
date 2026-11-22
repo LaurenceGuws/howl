@@ -1903,6 +1903,8 @@ references:
               Howl now recognizes that fixed-length form without changing the title, retains all
               23 indexed and special colors through one canonical ColorState owner, projects
               bold text color through direct output, and rejects malformed values without mutation.
+              Linux OSC P special selection color selectors are also projected into the accepted output snapshot
+              and host Canvas, with pixel proof in configured selection colors paint real background and readable clipped glyph ink.
             howl:
               support: full
               source: howl-vt/src/color_control.zig
@@ -2181,8 +2183,10 @@ references:
               residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser. Additional reference
                 color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain fixable
                 separate obligations. The host-configured cursor and selection RGB reply and reset path is now proven; for
-                absent adaptive values Howl sends no synthetic RGB. Exact selection pixels, iTerm2 report policy and configured
-                reply width remain open.
+                absent adaptive values Howl sends no synthetic RGB. Accepted output snapshots and Canvas now paint
+                retained selection background/foreground RGB with readable high-contrast fallback when foreground is
+                unset and preserve intrinsic RGBA glyph colors. Native Canvas tests verify exact pixel colors,
+                clipping and no retained content repaint. iTerm2 report policy, color width and other host effects remain.
               rationale: 'Origin-first exact-wire adjudication: Originating xterm replies with the input BEL byte, while
                 iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern usage
                 is not quantified and implementation preference does not transfer protocol ownership.'
@@ -2236,8 +2240,10 @@ references:
               residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser. Additional reference
                 color-name, alpha, preferred-color-space, configured host/report policy and null-color behavior remain fixable
                 separate obligations. The host-configured cursor and selection RGB reply and reset path is now proven; for
-                absent adaptive values Howl sends no synthetic RGB. Exact selection pixels, iTerm2 report policy and configured
-                reply width remain open.
+                absent adaptive values Howl sends no synthetic RGB. Accepted output snapshots and Canvas now paint
+                retained selection background/foreground RGB with readable high-contrast fallback when foreground is
+                unset and preserve intrinsic RGBA glyph colors. Native Canvas tests verify exact pixel colors,
+                clipping and no retained content repaint. iTerm2 report policy, color width and other host effects remain.
               rationale: 'Origin-first exact-wire adjudication: Originating xterm replies with the input BEL byte, while
                 iterm2 serializes the same query reply with fixed ST. Xterm owns the original OSC color family; modern usage
                 is not quantified and implementation preference does not transfer protocol ownership.'
@@ -4787,8 +4793,12 @@ references:
                 family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers still
                 require independent review, not blanket exemption. Kitty reports black for an absent configured cursor or
                 selection override, while Howl does not manufacture a universal black value; fixed nonempty host colors
-                report truthfully. The app selection overlay currently uses its own gray tint, so pixel parity is still
-                unproven.
+                report truthfully. The accepted VT output snapshot now carries both selection RGB values into the
+                host Canvas, which paints configured background and clipped foreground ink while preserving intrinsic
+                RGBA glyph colors. Pixel proofs include configured selection colors paint real background and readable
+                clipped glyph ink; selected intrinsic RGBA glyphs keep their original pixels; selection-only RGB updates
+                repaint overlay without invalidating retained content texture. Other Kitty-specific presentation
+                policy remains to be proven.
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 17 ; not-a-color ST
@@ -4842,8 +4852,12 @@ references:
                 family. Remaining compatible named/rgbi/LAB color grammar, host notifications and unset-query answers still
                 require independent review, not blanket exemption. Kitty reports black for an absent configured cursor or
                 selection override, while Howl does not manufacture a universal black value; fixed nonempty host colors
-                report truthfully. The app selection overlay currently uses its own gray tint, so pixel parity is still
-                unproven.
+                report truthfully. The accepted VT output snapshot now carries both selection RGB values into the
+                host Canvas, which paints configured background and clipped foreground ink while preserving intrinsic
+                RGBA glyph colors. Pixel proofs include configured selection colors paint real background and readable
+                clipped glyph ink; selected intrinsic RGBA glyphs keep their original pixels; selection-only RGB updates
+                repaint overlay without invalidating retained content texture. Other Kitty-specific presentation
+                policy remains to be proven.
               adjudication:
                 kind: wire_collision
                 wire: ESC ] 19 ; not-a-color BEL
