@@ -807,8 +807,22 @@ pub const Plane = struct {
         else
             self.frameIndex(image_value.id, destination_number) orelse
                 return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
-        const copy_width = if (command_value.width == 0) image_value.width else command_value.width;
-        const copy_height = if (command_value.height == 0) image_value.height else command_value.height;
+        // Kitty a79f376 names the composition rectangle w/h. Keep the
+        // earlier Howl s/v spelling as a fallback, but documented w/h wins
+        // whenever both are supplied. This is the same canonical parser
+        // data used for a=c feature negotiation; no second rectangle owner.
+        const copy_width = if (command_value.source_width != 0)
+            command_value.source_width
+        else if (command_value.width != 0)
+            command_value.width
+        else
+            image_value.width;
+        const copy_height = if (command_value.source_height != 0)
+            command_value.source_height
+        else if (command_value.height != 0)
+            command_value.height
+        else
+            image_value.height;
         if (copy_width == 0 or copy_height == 0 or
             copy_width > image_value.width or copy_height > image_value.height or
             command_value.x > image_value.width -| copy_width or
@@ -2450,10 +2464,12 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         return scratch[0..0];
     var out: FeatureWriter = .{ .bytes = scratch };
     const action = command_value.feature_action;
-    const transmitting = action == 't' or action == 'T';
+    const transmitting = action == 't' or action == 'T' or action == 'f';
     const placing = action == 'T' or action == 'p';
     const deleting = action == 'd';
-    if (!transmitting and !placing and !deleting) return scratch[0..0];
+    const animating = action == 'a';
+    const composing = action == 'c';
+    if (!transmitting and !placing and !deleting and !animating and !composing) return scratch[0..0];
     try out.flag('e', action);
 
     // Both supported action families reuse the actual encoded command values;
@@ -2463,7 +2479,8 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         if (present & (1 << 1) != 0 and command_value.medium == 'd') try out.flag('t', 'd');
         if (present & (1 << 22) != 0 and command_value.compression == 'z') try out.flag('o', 'z');
         if (present & (1 << 2) != 0 and
-            (command_value.format == 24 or command_value.format == 32 or command_value.format == 100))
+            (command_value.format == 24 or command_value.format == 32 or
+                (action != 'f' and command_value.format == 100)))
             try out.number('f', command_value.format);
         if (present & (1 << 4) != 0 and command_value.width > 0 and command_value.width <= max_dimension)
             try out.number('s', command_value.width);
@@ -2471,6 +2488,22 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
             try out.number('v', command_value.height);
         // N=1 is a permitted advisory no-op; other N bits are not claimed.
         if (present & (1 << 21) != 0 and command_value.usage_hints == 1) try out.number('N', 1);
+    }
+    if (action == 'f') {
+        // Existing frame admissions own only RGBA/RGB, the current image
+        // dimensions, numbered frame bases/edits, overwrite X=1 and a full
+        // 32-bit RGBA Y background. PNG and indexed input remain unsupported.
+        if (present & (1 << 9) != 0 and command_value.x != 0 and command_value.x < max_dimension)
+            try out.number('x', command_value.x);
+        if (present & (1 << 10) != 0 and command_value.y != 0 and command_value.y < max_dimension)
+            try out.number('y', command_value.y);
+        if (present & (1 << 14) != 0 and command_value.columns != 0 and command_value.columns <= max_frames + 1)
+            try out.number('c', command_value.columns);
+        if (present & (1 << 15) != 0 and command_value.rows != 0 and command_value.rows <= max_frames + 1)
+            try out.number('r', command_value.rows);
+        if (present & (1 << 18) != 0 and command_value.z != 0) try out.number('z', command_value.z);
+        if (present & (1 << 16) != 0 and command_value.cell_x == 1) try out.number('X', 1);
+        if (present & (1 << 17) != 0 and command_value.cell_y != 0) try out.number('Y', command_value.cell_y);
     }
     if (placing) {
         // Kitty's source orders these independently of the query input. The
@@ -2521,6 +2554,40 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         }
         if ((mode == 'q' or mode == 'z') and present & (1 << 18) != 0 and command_value.z != 0)
             try out.number('z', command_value.z);
+    }
+    if (animating) {
+        // a=s switches the owned three-state animation machine, a=v sets
+        // loop count, and r/c/z select a frame, current frame and its gap.
+        if (present & (1 << 4) != 0 and command_value.width >= 1 and command_value.width <= 3)
+            try out.number('s', command_value.width);
+        if (present & (1 << 5) != 0 and command_value.height != 0)
+            try out.number('v', command_value.height);
+        if (present & (1 << 15) != 0 and command_value.rows != 0 and command_value.rows <= max_frames + 1)
+            try out.number('r', command_value.rows);
+        if (present & (1 << 14) != 0 and command_value.columns != 0 and command_value.columns <= max_frames + 1)
+            try out.number('c', command_value.columns);
+        if (present & (1 << 18) != 0 and command_value.z != 0) try out.number('z', command_value.z);
+    }
+    if (composing) {
+        // Composition C=1 is overwrite; unlike frame X=1, source X/Y are
+        // pixel coordinates in composeFrames. Keep their meanings separate.
+        if (present & (1 << 15) != 0 and command_value.rows != 0 and command_value.rows <= max_frames + 1)
+            try out.number('r', command_value.rows);
+        if (present & (1 << 14) != 0 and command_value.columns != 0 and command_value.columns <= max_frames + 1)
+            try out.number('c', command_value.columns);
+        if (present & (1 << 9) != 0 and command_value.x != 0 and command_value.x < max_dimension)
+            try out.number('x', command_value.x);
+        if (present & (1 << 10) != 0 and command_value.y != 0 and command_value.y < max_dimension)
+            try out.number('y', command_value.y);
+        if (present & (1 << 12) != 0 and command_value.source_width != 0 and command_value.source_width <= max_dimension)
+            try out.number('w', command_value.source_width);
+        if (present & (1 << 13) != 0 and command_value.source_height != 0 and command_value.source_height <= max_dimension)
+            try out.number('h', command_value.source_height);
+        if (present & (1 << 16) != 0 and command_value.cell_x != 0 and command_value.cell_x < max_dimension)
+            try out.number('X', command_value.cell_x);
+        if (present & (1 << 17) != 0 and command_value.cell_y != 0 and command_value.cell_y < max_dimension)
+            try out.number('Y', command_value.cell_y);
+        if (present & (1 << 20) != 0 and command_value.compose_mode == 1) try out.number('C', 1);
     }
     return scratch[0..out.used];
 }
@@ -4205,6 +4272,47 @@ test "Kitty composition owns root and nonoverlapping same-frame edits" {
     try std.testing.expectEqual(storage, plane.storage_bytes);
 }
 
+test "Kitty frame composition honors documented w/h rectangle without using s/v" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=2,v=1,i=30,q=2;AQAA/wIAAP8=",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=2,v=1,i=30,r=2,C=1,q=2;CgAA/xQAAP8=",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const before = plane.generation();
+    // Kitty a79f376 graphics.c::handle_compose_command uses w/h for its
+    // rectangle and x/y as destination, X/Y as source. The undocumented
+    // s/v aliases cannot override a specified documented rectangle.
+    const composed = try plane.command(
+        "a=c,i=30,r=2,c=1,x=1,X=0,w=1,h=1,s=2,v=1,C=1,q=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(@as(?Failure, null), composed.failure);
+    try std.testing.expect(composed.changed);
+    try std.testing.expect(plane.generation() > before);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 0, 0, 255, 10, 0, 0, 255 }, plane.image(0).?.pixels);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+}
+
 test "Kitty animation control compose and frame deletion retain Howl shared-plane bank policy" {
     // Pinned Kitty screen.c owns separate main_grman and alt_grman. The
     // same client ID in the other bank cannot resolve this primary image
@@ -4556,6 +4664,30 @@ test "Kitty graphics feature queries return exact advertised keys without changi
     try std.testing.expectEqualStrings("", try formatFeatureQuery("a=q,i=31,e=T,d=U", &output));
     try std.testing.expectEqualStrings(",e=d,d=F", try formatFeatureQuery("a=q,i=31,e=d,d=F", &output));
     try std.testing.expectEqualStrings(",e=d,d=Z,z=-3", try formatFeatureQuery("a=q,i=31,e=d,d=Z,z=-3", &output));
+    try std.testing.expectEqualStrings(
+        ",e=f,t=d,o=z,f=24,s=1,v=1,N=1,x=1,y=2,c=2,r=3,z=-40,X=1,Y=4278255615",
+        try formatFeatureQuery("a=q,i=31,e=f,t=d,o=z,f=24,s=1,v=1,N=1,x=1,y=2,c=2,r=3,z=-40,X=1,Y=4278255615", &output),
+    );
+    try std.testing.expectEqualStrings(
+        ",e=f",
+        try formatFeatureQuery("a=q,i=31,e=f,f=100,s=5000,v=5000,N=6,X=2,c=999,r=999", &output),
+    );
+    try std.testing.expectEqualStrings(
+        ",e=a,s=3,v=1,r=2,c=1,z=-1",
+        try formatFeatureQuery("a=q,i=31,e=a,s=3,v=1,r=2,c=1,z=-1", &output),
+    );
+    try std.testing.expectEqualStrings(
+        ",e=a,v=1",
+        try formatFeatureQuery("a=q,i=31,e=a,s=4,v=1,r=999,c=999", &output),
+    );
+    try std.testing.expectEqualStrings(
+        ",e=c,r=1,c=2,x=1,y=2,w=3,h=4,X=5,Y=6,C=1",
+        try formatFeatureQuery("a=q,i=31,e=c,r=1,c=2,x=1,y=2,w=3,h=4,X=5,Y=6,C=1,U=1", &output),
+    );
+    try std.testing.expectEqualStrings(
+        ",e=c,C=1",
+        try formatFeatureQuery("a=q,i=31,e=c,r=999,c=999,x=5000,y=5000,w=5000,h=5000,C=1", &output),
+    );
     try std.testing.expectEqualStrings(
         ",e=p,p=2,C=1",
         try formatFeatureQuery("a=q,i=31,e=p,p=2,P=123,Q=456,H=-8,V=7,C=1", &output),

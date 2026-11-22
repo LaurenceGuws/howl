@@ -3356,6 +3356,49 @@ test "terminal: Kitty deletion feature queries preflight bounded replies and sil
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
 }
 
+test "terminal: Kitty frame animation and composition feature queries are action typed" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const original = terminal.images(0).generation;
+    const cases = [_]struct { query: []const u8, reply: []const u8 }{
+        .{
+            .query = "\x1b_Ga=q,i=31,e=f,f=24,s=1,v=1,x=1,y=2,c=2,r=3,z=-40,X=1,Y=4278255615\x1b\\",
+            .reply = "\x1b_Gi=31,e=f,f=24,s=1,v=1,x=1,y=2,c=2,r=3,z=-40,X=1,Y=4278255615;OK\x1b\\",
+        },
+        .{
+            .query = "\x1b_Ga=q,i=31,e=f,f=100,s=5000,X=2,c=999,r=999\x1b\\",
+            .reply = "\x1b_Gi=31,e=f;OK\x1b\\",
+        },
+        .{
+            .query = "\x1b_Ga=q,i=31,e=a,s=3,v=1,r=2,c=1,z=-1\x1b\\",
+            .reply = "\x1b_Gi=31,e=a,s=3,v=1,r=2,c=1,z=-1;OK\x1b\\",
+        },
+        .{
+            .query = "\x1b_Ga=q,i=31,e=a,s=4,v=1,r=999,c=999\x1b\\",
+            .reply = "\x1b_Gi=31,e=a,v=1;OK\x1b\\",
+        },
+        .{
+            .query = "\x1b_Ga=q,i=31,e=c,r=1,c=2,x=1,y=2,w=3,h=4,X=5,Y=6,C=1,U=1\x1b\\",
+            .reply = "\x1b_Gi=31,e=c,r=1,c=2,x=1,y=2,w=3,h=4,X=5,Y=6,C=1;OK\x1b\\",
+        },
+        .{
+            .query = "\x1b_Ga=q,i=31,e=c,r=999,c=999,x=5000,y=5000,w=5000,h=5000,C=1\x1b\\",
+            .reply = "\x1b_Gi=31,e=c,C=1;OK\x1b\\",
+        },
+    };
+    for (cases) |tc| {
+        try std.testing.expect((try terminal.feed(tc.query)).stateChanged());
+        try std.testing.expectEqualStrings(tc.reply, terminal.replyBytes());
+        try std.testing.expectEqual(original, terminal.images(0).generation);
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+        try consumeReplies(&terminal);
+    }
+    try std.testing.expect(!(try terminal.feed("\x1b_Ga=q,i=31,e=f,s=1,v=1,q=1\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(original, terminal.images(0).generation);
+}
+
 test "terminal: Kitty graphics feature queries reserve exact reply bytes atomically" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 8);
@@ -3415,6 +3458,32 @@ test "terminal: Kitty graphics placement feature replies are atomically quota bo
     try std.testing.expectEqual(before, terminal.images(0).generation);
 }
 
+test "terminal: Kitty frame capability reply is atomic under saturated pressure" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    const query = "\x1b_Ga=q,i=31,e=f,f=24,s=1,v=1,c=2,r=3,z=-40,X=1,Y=4278255615\x1b\\";
+    const response = "\x1b_Gi=31,e=f,f=24,s=1,v=1,c=2,r=3,z=-40,X=1,Y=4278255615;OK\x1b\\";
+    const fill = try reply_fill.fill(&terminal, allocator, 64 * 1024 - response.len + 1, false);
+    defer allocator.free(fill);
+    const generation = terminal.images(0).generation;
+    try std.testing.expectError(error.ReplyLimit, terminal.feed(query));
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+    for ([_][]const u8{
+        "\x1b_Ga=q,i=31,e=f,f=24,c=2,r=3,q=1\x1b\\",
+        "\x1b_Ga=q,i=31,e=c,r=1,c=2,C=1,q=2\x1b\\",
+    }) |silent| {
+        try std.testing.expect(!(try terminal.feed(silent)).stateChanged());
+        try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    }
+    try consumeReplies(&terminal);
+    try std.testing.expect((try terminal.feed(query)).stateChanged());
+    try std.testing.expectEqualStrings(response, terminal.replyBytes());
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+}
+
 test "terminal: Kitty graphics feature query cannot cancel an unfinished image" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
@@ -3436,6 +3505,18 @@ test "terminal: Kitty graphics feature query cannot cancel an unfinished image" 
     try consumeReplies(&terminal);
     try std.testing.expect(!(try terminal.feed("\x1b_Ga=q,i=31,e=d,d=U,p=7\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings("", terminal.replyBytes());
+    // Neither frame editing nor animation/compose capability queries may
+    // interrupt the unrelated chunked image held by the graphics plane.
+    const pending_queries = [_]struct { bytes: []const u8, reply: []const u8 }{
+        .{ .bytes = "\x1b_Ga=q,i=31,e=f,f=24,s=1,v=1,c=2,r=2,X=1;ignored\x1b\\", .reply = "\x1b_Gi=31,e=f,f=24,s=1,v=1,c=2,r=2,X=1;OK\x1b\\" },
+        .{ .bytes = "\x1b_Ga=q,i=31,e=a,s=3,v=1,r=2,c=1,z=-1;ignored\x1b\\", .reply = "\x1b_Gi=31,e=a,s=3,v=1,r=2,c=1,z=-1;OK\x1b\\" },
+        .{ .bytes = "\x1b_Ga=q,i=31,e=c,r=1,c=2,w=1,h=1,C=1;ignored\x1b\\", .reply = "\x1b_Gi=31,e=c,r=1,c=2,w=1,h=1,C=1;OK\x1b\\" },
+    };
+    for (pending_queries) |tc| {
+        try std.testing.expect((try terminal.feed(tc.bytes)).stateChanged());
+        try std.testing.expectEqualStrings(tc.reply, terminal.replyBytes());
+        try consumeReplies(&terminal);
+    }
     try std.testing.expect((try terminal.feed("\x1b_Gm=0;BA==\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings("\x1b_Gi=99;OK\x1b\\", terminal.replyBytes());
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());

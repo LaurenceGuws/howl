@@ -6086,50 +6086,58 @@ references:
               key/value pairs plus e=ACTION, and do not transmit data or
               disturb chunked uploads. docs/graphics-protocol.rst:548-593
               specifies this feature introduced with Kitty 0.50.0. Howl now
-              accepts a=q,i=ID,e=t|T|p|d and advertises source-backed, bounded
-              capabilities: t/T direct/zlib/RGB/RGBA/PNG, represented dimensions,
-              advisory N=1. T/p share placement identity, crop, cell offsets,
-              destination geometry, no-cursor-move, Unicode and signed z layers.
-              d reuses the actual deletion selector vocabulary: image/number
-              selectors with placement IDs, point/layer/range selectors with
-              only the coordinates and z fields each uses, and frame deletion.
-              Kitty a79f376 parse-graphics-command.h:120-125 rejects invalid
-              delete-selector bytes; Howl similarly emits no feature reply for
-              such input, preserving any in-progress chunked upload. The query
-              parser also validates P/Q/H/V but omits unsupported parent-linked
-              placement capabilities. Actions f/a/c still do not claim support;
-              q=1/2 remain silent. Native red-to-green tests cover exact ordered
-              replies, invalid selectors, full-queue atomic error/recovery,
-              no image mutation and ongoing chunked uploads. Private KWin A/B
-              with installed Kitty 0.51.0 verifies 7/8 exact deletion replies;
-              the remaining difference is deliberate omission of unrelated
-              fields in cursor-cell deletion instead of overclaiming them.
+              accepts a=q,i=ID,e=t|T|p|d|f|a|c and advertises only proven
+              subsets. t/T: direct/zlib/RGB/RGBA/PNG and bounded dimensions,
+              advisory N=1; T/p: placement identity, crop/cell offsets, output
+              geometry, no cursor move, Unicode, signed z. d: actual deletion
+              selectors with only the p/x/y/z fields each uses. New frame
+              loading f advertises direct/zlib/RGB/RGBA input, bounded dimensions,
+              N=1, source offsets, frame selection/base, gap z, X=1 overwrite
+              and Y RGBA background. Animation a advertises its actual 1..3
+              run states, loop count, bounded current/edited frame indices and
+              signed gaps. Composition c advertises bounded frame numbers,
+              source/destination rectangles, documented w/h size and C=1
+              overwrite. The implementation also corrected the actual a=c
+              engine to honor documented w/h before the accepted legacy s/v
+              fallback, proven red-to-green using source-backed pixel tests.
+              Unsupported PNG frame uploads, 999-frame indices and oversize
+              composition geometry are deliberately omitted. Frame/animation/
+              compose feature probes remain read-only, preserve chunked uploads,
+              and share the exact bounded reply/quiet/rollback owner. Private
+              managed KWin Kitty 0.51.0 vs staged ReleaseFast Howl compared
+              ten matching raw PTY queries: seven replies byte-identical,
+              with three source-grounded capability differences for PNG frame
+              upload, frame-count ceiling and oversized compose geometry.
+              Current Kitty invalid deletion-selector rejection and query-only
+              parent P/Q/H/V omission stay enforced; q=1/2 remain silent.
             howl:
               support: partial
               disposition: deferred
               owner: howl-vt
               milestone: graphics
               rationale: >-
-                Only previously proved native graphics behavior is advertised.
-                Placement geometry and source-ordered wire keys match Kitty for
-                represented fields; e=d uses the same canonical delete selector
-                vocabulary as real Plane.delete and reports only selector-used
-                parameters. The bounded on-stack query formatter owns no new
-                graphics state and cannot mutate or cancel pending image data.
-                Avoid claiming unrelated delete fields, parent links or media.
+                Advertised keys are grounded in the existing Plane transmit,
+                placement, deletion, frame, animation and composition owners,
+                with action-dependent values rather than generic key echoing.
+                The new source-backed composition w/h execution test corrected
+                a real previous mismatch, retaining s/v as a compatibility
+                fallback only. Replies borrow the existing canonical parser,
+                bounded stack writer and atomic reply queue; no new retained
+                image/animation state or host presentation policy was added.
               residual: >-
-                Action negotiation e=f/a/c and their key/value matrices,
-                parent-relative P/Q/H/V placement links, external media and
-                unsupported large geometry remain unqualified. Kitty echoes
-                additional fields even for deletion selectors that do not
-                consume them; Howl intentionally does not advertise those
-                ineffective combinations. Indexed f=8/16 and host presentation
-                policy remain outside full modern Kitty feature-query parity.
+                Still partial: unlike current Kitty, Howl does not advertise
+                PNG frame loads, extra animation frame indices past its fixed
+                frame quota, geometry above native image bounds, external media,
+                indexed f=8/16 or parent-relative P/Q/H/V placements. The
+                earlier deliberate cursor-cell delete excess-field difference
+                also remains. Action e=q, host graphics presentation policy and
+                some additional field combinations remain unqualified. Scope
+                is truthful bounded feature negotiation, not full Kitty parity.
               source: howl-vt/src/graphics.zig
               symbol: formatFeatureQuery
               proof:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
-                symbol: "terminal: Kitty graphics deletion capability replies are selector honest"
+                symbol: "terminal: Kitty frame animation and composition feature queries are action typed"
       transient_usage_hint:
         source: parse-graphics-command.h
         symbol: parse_graphics_code
