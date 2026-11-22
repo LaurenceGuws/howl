@@ -2658,6 +2658,58 @@ test "XTGETTCAP reports pinned alternate screen cursor save and erase controls" 
     );
 }
 
+test "XTGETTCAP reports pinned rendition controls through native SGR state" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 12);
+    defer terminal.deinit();
+
+    // Execute the immutable pinned Kitty terminfo.py get_capabilities source
+    // independently. The response values must match actual retained VT state.
+    try std.testing.expect(!(try terminal.feed("\x1bP+q73677230;6f70;626f6c64;")).stateChanged());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed(
+        "736d736f;726d736f;64696d;726576;626c696e6b;696e766973\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r73677230=1b28421b5b6d\x1b\\" ++
+            "\x1bP1+r6f70=1b5b33393b34396d\x1b\\" ++
+            "\x1bP1+r626f6c64=1b5b316d\x1b\\" ++
+            "\x1bP1+r736d736f=1b5b376d\x1b\\" ++
+            "\x1bP1+r726d736f=1b5b32376d\x1b\\" ++
+            "\x1bP1+r64696d=1b5b326d\x1b\\" ++
+            "\x1bP1+r726576=1b5b376d\x1b\\" ++
+            "\x1bP1+r626c696e6b=1b5b356d\x1b\\" ++
+            "\x1bP0+r696e766973\x1b\\",
+        pendingOutput(&terminal),
+    );
+    try consumeReplies(&terminal);
+
+    write(&terminal, "\x1b[31;44;1;2;5;7mX\x1b[39;49mY\x1b[27mZ\x1b[mQ");
+    const view = terminal.semanticView(0);
+    const first = view.cellInfoAt(0, 0).attrs;
+    try std.testing.expect(first.bold and first.dim and first.blink and first.reverse);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), first.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(4), first.bg);
+    const after_op = view.cellInfoAt(0, 1).attrs;
+    try std.testing.expect(after_op.bold and after_op.reverse);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, after_op.fg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.bg, after_op.bg);
+    try std.testing.expect(!view.cellInfoAt(0, 2).attrs.reverse);
+    const reset = view.cellInfoAt(0, 3).attrs;
+    try std.testing.expect(!reset.bold and !reset.dim and !reset.blink and !reset.reverse);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, reset.fg);
+
+    // The pinned sgr0 sequence includes ESC ( B, not only a bare CSI m.
+    write(&terminal, "\x1b(0q\x1b(B\x1b[mq");
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 4));
+    try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 5));
+    write(&terminal, "\x1b G\x90+q73677230;6F70\x9c");
+    try std.testing.expectEqualStrings(
+        "\x901+r73677230=1b28421b5b6d\x9c" ++
+            "\x901+r6F70=1b5b33393b34396d\x9c",
+        pendingOutput(&terminal),
+    );
+}
+
 test "XTGETTCAP response capacity failure rolls back every requested reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

@@ -3030,9 +3030,10 @@ references:
           iterm2.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
             conditions: "Pinned iTerm2 resolves terminfo through an xterm or screen host profile, dynamic key
               mappings and asynchronous host promises. Howl answers only an explicitly owned bounded subset,
-              now including pinned Kitty wrap/focus/paste, seven SGR/cursor controls, and eight
-              exact screen lifecycle/erase strings (smcup, rmcup, sc, rc, clear, home, el, ed)
-              alongside the prior Co, colors, RGB, Tc and Su values.",
+              now including pinned Kitty wrap/focus/paste, seven SGR/cursor, eight screen
+              lifecycle/erase and eight fixed rendition controls (sgr0, op, bold, smso, rmso,
+              dim, rev, blink), alongside Co, colors, RGB, Tc and Su. These are Kitty-pinned
+              fixed values, not claims about iTerm2's host-selected profile responses.",
             howl: {support: partial, disposition: excluded,
               rationale: "Pinned iTerm2 obtains runtime terminfo strings, host key mappings, terminal identity
                 and profile name through its embedding application. VT cannot derive those values from
@@ -5251,21 +5252,22 @@ references:
           kitty.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap values, relevance: query,
             conditions: "Pinned Kitty dispatches DCS +q to Python get_capabilities. Howl now answers pinned
               am, ccc and XF booleans, BE/BD bracketed-paste strings, seven exact native
-              SGR/cursor controls (smul, rmul, sitm, ritm, civis, cnorm, cvvis), and eight fixed
-              alternate-screen, savepoint and erase strings (smcup, rmcup, sc, rc, clear, home,
-              el, ed), alongside Co, colors, RGB, Tc and Su. TERM identity and host queries remain delegated.",
+              SGR/cursor controls (smul, rmul, sitm, ritm, civis, cnorm, cvvis), eight fixed
+              alternate-screen/savepoint/erase controls (smcup, rmcup, sc, rc, clear, home, el, ed),
+              and eight fixed rendition controls (sgr0, op, bold, smso, rmso, dim, rev, blink).
+              sgr0 retains the pinned ESC ( B designation before SGR reset. Host queries remain delegated.",
             howl: {support: partial, disposition: excluded,
               rationale: "The pinned Kitty resolver has a much broader terminfo inventory plus dynamic
                 terminal, OS, window and application query values. VT must not invent a selected TERM,
                 host configuration, platform identity or host-dependent key mapping.",
-              residual: "Twenty pinned Kitty capability names gained exact native replies across
-                independently tested cuts, including seven SGR/cursor and eight screen-life-cycle
-                controls with real Screen/Terminal state proofs. Pinned Kitty's wider dynamic/static
-                terminfo inventory, host-selected TERM/OS/window and application key mapping remain
-                unrepresented and must not be invented by canonical VT.",
+              residual: "Twenty-eight pinned Kitty fixed capability names gained exact native
+                replies across separately tested source cuts, including eight rendition controls
+                with actual SGR/charset behavior, seven SGR/cursor and eight screen-life-cycle
+                controls. Kitty's wider dynamic/static terminfo, host TERM/OS/window and key
+                mapping remain unrepresented and must not be invented by canonical VT.",
               source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "XTGETTCAP reports pinned alternate screen cursor save and erase controls"}}}
+              symbol: "XTGETTCAP reports pinned rendition controls through native SGR state"}}}
           kitty.dcs.decrqss: {raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
             conditions: "Howl recognizes Kitty's four requests; retained SGR fields, hidden cursor mapping, and
               DECSACE report value differ",
