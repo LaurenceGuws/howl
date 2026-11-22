@@ -2308,14 +2308,12 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             mode_report_mod.ansiState(ansi_modes, mode),
         ),
         .modify_other_keys_query => try appendModifyOtherKeysReport(
-            allocator,
             reply_buffer,
             encode_buf,
             vt.modes.modify_other_keys,
         ),
         .key_format_query => |resource| if (isKeyFormatResource(resource))
             try appendKeyFormatReport(
-                allocator,
                 reply_buffer,
                 encode_buf,
                 resource,
@@ -2333,8 +2331,8 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             sixel.color_register_count,
         ),
         .dcs_request_status => |request| try appendDecrqssReply(allocator, reply_buffer, encode_buf, active, request),
-        .dcs_request_termcap => |request| try appendTermcapReports(allocator, reply_buffer, request),
-        .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, reply_buffer, request),
+        .dcs_request_termcap => |request| try appendTermcapReports(reply_buffer, request),
+        .dcs_request_resource => |request| try appendResourceInvalidReport(reply_buffer, request),
         .device_status_report => try fixed_report_mod.appendDeviceStatus(reply_buffer),
         .dec_device_status_report => |param| try locator_mod.appendDeviceStatusReport(reply_buffer, encode_buf, param),
         .cursor_position_report => try fixed_report_mod.appendCursorPosition(
@@ -2353,7 +2351,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         ),
         .secondary_device_attributes => try fixed_report_mod.appendSecondaryDeviceAttributes(reply_buffer),
         .tertiary_device_attributes => try fixed_report_mod.appendTertiaryDeviceAttributes(reply_buffer),
-        .xtversion => try appendXtVersionReport(allocator, reply_buffer),
+        .xtversion => try appendXtVersionReport(reply_buffer),
         .xttitlepos => try fixed_report_mod.appendTitleStackPosition(reply_buffer, encode_buf, 0, 0),
         .xtchecksum => |flags| vt.xtchecksum_flags = flags,
         .rect_checksum_request => |req| try fixed_report_mod.appendRectChecksum(
@@ -2372,7 +2370,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         .screen_extent_report => try fixed_report_mod.appendScreenExtent(reply_buffer, encode_buf, report_view),
         .parameters_report => |kind| try fixed_report_mod.appendTerminalParameters(reply_buffer, encode_buf, kind),
         .title_report => try appendTitleReport(vt),
-        .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.properties.color_stack),
+        .xtreportcolors => try appendColorStackReport(reply_buffer, encode_buf, &vt.properties.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         // zig-audit: acknowledge unreachable
         // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
@@ -2502,7 +2500,6 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
 }
 
 fn appendModifyOtherKeysReport(
-    _: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     value: i8,
@@ -2514,7 +2511,6 @@ fn appendModifyOtherKeysReport(
 }
 
 fn appendKeyFormatReport(
-    _: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     resource: u8,
@@ -2526,7 +2522,7 @@ fn appendKeyFormatReport(
     try output.appendCsi(.terminal, payload);
 }
 
-fn appendXtVersionReport(_: std.mem.Allocator, output: *replies.Buffer) replies.AppendError!void {
+fn appendXtVersionReport(output: *replies.Buffer) replies.AppendError!void {
     try output.appendString(.terminal, .dcs, ">|" ++ xtversion_text);
 }
 
@@ -2625,7 +2621,6 @@ fn hexNameEquals(encoded: []const u8, name: []const u8) bool {
 }
 
 fn appendTermcapReports(
-    _: std.mem.Allocator,
     output: *replies.Buffer,
     request: []const u8,
 ) replies.AppendError!void {
@@ -2659,7 +2654,7 @@ test "XTGETTCAP reply allocation failure rolls back the complete ordered respons
 fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
     var output = replies.Buffer.init(allocator);
     defer output.deinit();
-    appendTermcapReports(allocator, &output, "436F;5463;4245;4244;5846;736d756c;6369766973;736d637570;636c656172;73677230;6f70;736d6b78;687473;6b636274;626F677573") catch |failure| {
+    appendTermcapReports(&output, "436F;5463;4245;4244;5846;736d756c;6369766973;736d637570;636c656172;73677230;6f70;736d6b78;687473;6b636274;626F677573") catch |failure| {
         try std.testing.expectEqual(@as(usize, 0), output.bytes().len);
         return failure;
     };
@@ -2683,7 +2678,6 @@ fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
 }
 
 fn appendResourceInvalidReport(
-    _: std.mem.Allocator,
     output: *replies.Buffer,
     request: []const u8,
 ) replies.AppendError!void {
@@ -2696,7 +2690,6 @@ fn appendResourceInvalidReport(
 }
 
 fn appendColorStackReport(
-    _: std.mem.Allocator,
     output: *replies.Buffer,
     encode_buf: []u8,
     stack: *const KittyColorStack,
