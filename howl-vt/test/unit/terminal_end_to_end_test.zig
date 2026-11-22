@@ -2244,39 +2244,115 @@ test "terminal: pinned Kitty DECSTBM rejects extra operands without changing mar
     }
 }
 
-test "terminal: Kitty directional cursor excess parameters retain permissive CSI policy" {
-    const cases = [_]struct {
-        sequence: []const u8,
-        row: u16,
-        col: u16,
-    }{
-        .{ .sequence = "\x1b[1;9A", .row = 2, .col = 3 },
-        .{ .sequence = "\x1b[1;9B", .row = 4, .col = 3 },
-        .{ .sequence = "\x1b[1;9C", .row = 3, .col = 4 },
-        .{ .sequence = "\x1b[1;9D", .row = 3, .col = 2 },
-        .{ .sequence = "\x1b[1;9E", .row = 4, .col = 0 },
-        .{ .sequence = "\x1b[1;9F", .row = 2, .col = 0 },
-        .{ .sequence = "\x1b[1;9G", .row = 3, .col = 0 },
-        .{ .sequence = "\x1b[1;9`", .row = 3, .col = 0 },
+test "terminal: pinned Kitty directional CSI rejects surplus counts without cursor or graphics mutation" {
+    // Frozen Kitty vt-parser.c::dispatch_csi calls CALL_CSI_HANDLER1 for
+    // A/B/C/D/E/F/G/` and refuses more than one supplied operand.
+    // libvterm/iTerm2 instead act on the first; the catalogue owns their
+    // conflicting same-wire policy. Retain normal zero-as-one behavior.
+    const cases = [_]struct { final: u8, one_row: u16, one_col: u16, two_row: u16, two_col: u16 }{
+        .{ .final = 'A', .one_row = 2, .one_col = 3, .two_row = 1, .two_col = 3 },
+        .{ .final = 'B', .one_row = 4, .one_col = 3, .two_row = 5, .two_col = 3 },
+        .{ .final = 'C', .one_row = 3, .one_col = 4, .two_row = 3, .two_col = 5 },
+        .{ .final = 'D', .one_row = 3, .one_col = 2, .two_row = 3, .two_col = 1 },
+        .{ .final = 'E', .one_row = 4, .one_col = 0, .two_row = 5, .two_col = 0 },
+        .{ .final = 'F', .one_row = 2, .one_col = 0, .two_row = 1, .two_col = 0 },
+        .{ .final = 'G', .one_row = 3, .one_col = 0, .two_row = 3, .two_col = 1 },
+        .{ .final = '`', .one_row = 3, .one_col = 0, .two_row = 3, .two_col = 1 },
     };
+    const image = "\x1b_Ga=T,f=32,s=1,v=1,i=92,C=1;AQIDBA==\x1b\\";
+    const InvalidForm = enum { extra, extra_zero, colon, empty_middle, empty_first, c1, triple };
+    const ValidForm = enum { missing, zero, zero_trailing, positive, positive_trailing, c1 };
     for (cases) |case| {
-        var terminal = try Terminal.init(std.testing.allocator, 8, 8);
+        for ([_]InvalidForm{ .extra, .extra_zero, .colon, .empty_middle, .empty_first, .c1, .triple }) |form| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 6, 8, 4);
+            defer terminal.deinit();
+            try terminal.setCellPixelSize(1, 1);
+            try feed(&terminal, "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBBBBBB\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[5;1HEEEEEEEE\x1b[6;1HFFFFFFFF");
+            try feed(&terminal, "\x1b[3;2H" ++ image ++ "\x1b[4;4H");
+            try consumeReplies(&terminal);
+            const before = terminal.semanticView(0);
+            try std.testing.expectEqual(@as(u16, 3), before.cursor_row);
+            try std.testing.expectEqual(@as(u16, 3), before.cursor_col);
+            const cells = [_]@TypeOf(before.cellInfoAt(0, 0)){
+                before.cellInfoAt(0, 0), before.cellInfoAt(1, 0), before.cellInfoAt(2, 0),
+                before.cellInfoAt(3, 0), before.cellInfoAt(4, 0), before.cellInfoAt(5, 0),
+            };
+            const sequence = terminal.semanticSequence();
+            const edit = terminal.observation().structuralEditGeneration();
+            const images = terminal.images(0);
+            try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+            const placement = images.placement(0).?;
+            const image_count = images.imageCount();
+            const image_generation = images.generation;
+            const content_generation = images.content_generation;
+
+            var buffer: [32]u8 = undefined;
+            const invalid = switch (form) {
+                .extra => try std.fmt.bufPrint(&buffer, "\x1b[1;9{c}", .{case.final}),
+                .extra_zero => try std.fmt.bufPrint(&buffer, "\x1b[0;2{c}", .{case.final}),
+                .colon => try std.fmt.bufPrint(&buffer, "\x1b[1:9{c}", .{case.final}),
+                .empty_middle => try std.fmt.bufPrint(&buffer, "\x1b[1;;{c}", .{case.final}),
+                .empty_first => try std.fmt.bufPrint(&buffer, "\x1b[;2{c}", .{case.final}),
+                .c1 => try std.fmt.bufPrint(&buffer, "\x9b1;9{c}", .{case.final}),
+                .triple => try std.fmt.bufPrint(&buffer, "\x1b[1;2;3{c}", .{case.final}),
+            };
+            try std.testing.expect(!(try terminal.feed(invalid[0 .. invalid.len - 1])).stateChanged());
+            try std.testing.expect(!(try terminal.feed(invalid[invalid.len - 1 ..])).stateChanged());
+            const after = terminal.semanticView(0);
+            try std.testing.expectEqual(sequence, terminal.semanticSequence());
+            try std.testing.expectEqual(before.cursor_row, after.cursor_row);
+            try std.testing.expectEqual(before.cursor_col, after.cursor_col);
+            try std.testing.expectEqual(before.history_count, after.history_count);
+            try std.testing.expectEqual(edit, terminal.observation().structuralEditGeneration());
+            for (cells, 0..) |cell, row| try std.testing.expectEqualDeep(cell, after.cellInfoAt(@intCast(row), 0));
+            try std.testing.expectEqual(image_count, terminal.images(0).imageCount());
+            try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+            try std.testing.expectEqual(placement.row, terminal.images(0).placement(0).?.row);
+            try std.testing.expectEqual(placement.col, terminal.images(0).placement(0).?.col);
+            try std.testing.expectEqual(image_generation, terminal.images(0).generation);
+            try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+            try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+            const valid = try std.fmt.bufPrint(&buffer, "\x1b[2{c}", .{case.final});
+            try std.testing.expect((try terminal.feed(valid)).stateChanged());
+            try std.testing.expectEqual(case.two_row, terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(case.two_col, terminal.semanticView(0).cursor_col);
+        }
+
+        // Missing, explicit zero, legal final empty, positive and 8-bit
+        // forms retain their existing one- or two-step semantics.
+        for ([_]ValidForm{ .missing, .zero, .zero_trailing, .positive, .positive_trailing, .c1 }) |form| {
+            var terminal = try Terminal.init(std.testing.allocator, 6, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[4;4H");
+            var buffer: [32]u8 = undefined;
+            const valid = switch (form) {
+                .missing => try std.fmt.bufPrint(&buffer, "\x1b[{c}", .{case.final}),
+                .zero => try std.fmt.bufPrint(&buffer, "\x1b[0{c}", .{case.final}),
+                .zero_trailing => try std.fmt.bufPrint(&buffer, "\x1b[0;{c}", .{case.final}),
+                .positive => try std.fmt.bufPrint(&buffer, "\x1b[2{c}", .{case.final}),
+                .positive_trailing => try std.fmt.bufPrint(&buffer, "\x1b[2;{c}", .{case.final}),
+                .c1 => try std.fmt.bufPrint(&buffer, "\x9b2{c}", .{case.final}),
+            };
+            try std.testing.expect((try terminal.feed(valid)).stateChanged());
+            const two = form == .positive or form == .positive_trailing or form == .c1;
+            try std.testing.expectEqual(if (two) case.two_row else case.one_row, terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(if (two) case.two_col else case.one_col, terminal.semanticView(0).cursor_col);
+        }
+
+        // A rejected command must not clear pending wrap. The next glyph
+        // still advances past the last column instead of overwriting it.
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
         defer terminal.deinit();
-        try feed(&terminal, "\x1b[4;4H");
-        const before = terminal.semanticView(0);
-        try std.testing.expectEqual(@as(u16, 3), before.cursor_row);
-        try std.testing.expectEqual(@as(u16, 3), before.cursor_col);
-        // The remaining eight directional controls retain this known
-        // permissive policy. Absolute CUP/HVP have a separate strict cut.
-        const prefix = case.sequence[0 .. case.sequence.len - 1];
-        try std.testing.expect(!(try terminal.feed(prefix)).stateChanged());
-        try std.testing.expectEqual(before.cursor_row, terminal.semanticView(0).cursor_row);
-        try std.testing.expectEqual(before.cursor_col, terminal.semanticView(0).cursor_col);
-        try std.testing.expect((try terminal.feed(case.sequence[case.sequence.len - 1 ..])).stateChanged());
-        const after = terminal.semanticView(0);
-        try std.testing.expectEqual(case.row, after.cursor_row);
-        try std.testing.expectEqual(case.col, after.cursor_col);
-        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        try feed(&terminal, "\x1b[1;8H!");
+        const sequence = terminal.semanticSequence();
+        var buffer: [32]u8 = undefined;
+        const invalid = try std.fmt.bufPrint(&buffer, "\x1b[1;9{c}", .{case.final});
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try feed(&terminal, "X");
+        try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 7));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 0));
     }
 }
 

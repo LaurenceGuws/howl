@@ -72,7 +72,14 @@ if ($ruling.id != "libvterm.csi.decsgr"
 let indexed_rulings = (protocol decisions)
 let expected_rulings = [
   iterm2.csi.cbt
+  iterm2.csi.cha
+  iterm2.csi.cnl
+  iterm2.csi.cpl
   iterm2.csi.cup
+  iterm2.csi.cub
+  iterm2.csi.cud
+  iterm2.csi.cuf
+  iterm2.csi.cuu
   iterm2.csi.hvp
   iterm2.csi.vpa
   iterm2.osc.bg
@@ -90,13 +97,48 @@ let expected_rulings = [
   kitty.osc.palette
   kitty.osc.palette_reset
   libvterm.csi.cbt
+  libvterm.csi.cha
+  libvterm.csi.cnl
+  libvterm.csi.cpl
   libvterm.csi.cup
+  libvterm.csi.cub
+  libvterm.csi.cud
+  libvterm.csi.cuf
+  libvterm.csi.cuu
   libvterm.csi.decsgr
+  libvterm.csi.hpa
   libvterm.csi.hvp
   libvterm.csi.vpa
 ]
 if ($indexed_rulings | get id | sort) != ($expected_rulings | sort) {
   error make {msg: "indexed collision decision IDs differ from accepted source-backed rulings"}
+}
+# Frozen Kitty's eight single-operand directional commands reject extras;
+# pinned libvterm and iTerm2 consume the first. Each losing command must
+# retain exact evidence and the shared native negative-space proof.
+for reference in [libvterm iterm2] {
+  for command in [
+    {name: cuu, wire: "CSI 1 ; 9 A"}
+    {name: cud, wire: "CSI 1 ; 9 B"}
+    {name: cuf, wire: "CSI 1 ; 9 C"}
+    {name: cub, wire: "CSI 1 ; 9 D"}
+    {name: cnl, wire: "CSI 1 ; 9 E"}
+    {name: cpl, wire: "CSI 1 ; 9 F"}
+    {name: cha, wire: "CSI 1 ; 9 G"}
+    {name: hpa, wire: "CSI 1 ; 9 `"}
+  ] {
+    if $reference == iterm2 and $command.name == hpa { continue }
+    let id = ($reference + ".csi." + $command.name)
+    let decision = (protocol decision $id)
+    if ($decision.disposition != adjudicated
+        or $decision.adjudication.kind != wire_collision
+        or $decision.adjudication.wire != $command.wire
+        or $decision.adjudication.winner.owner != kitty
+        or $decision.adjudication.loser.owner != $reference
+        or $decision.adjudication.proof.symbol != "terminal: pinned Kitty directional CSI rejects surplus counts without cursor or graphics mutation") {
+      error make {msg: $"pinned directional cursor admission decision is not source-backed: ($id)"}
+    }
+  }
 }
 # Kitty permits only two CUP/HVP operands. Pinned libvterm/iTerm2
 # instead act on the first two; both losers require explicit source pins
