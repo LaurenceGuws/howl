@@ -806,6 +806,120 @@ test "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl" 
     try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
 }
 
+test "OSC 7501 opt-in status reports are typed FIFO and queries advertise only with a consumer" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    // With no explicit host effect this family must remain silent, including
+    // queries and even otherwise valid reports.
+    try std.testing.expect(!(try terminal.feed("\x1b]7501;?\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    terminal.setProgramStatusConsumer(true);
+    const response = "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth";
+    try std.testing.expect(!(try terminal.feed("\x1b]7501;?")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x07")).stateChanged());
+    try std.testing.expectEqualStrings(response ++ "\x07", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b]7501;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings(response ++ "\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b]7501;state=blocked:kind=permission:id=tf/plan:app=terraform:progress=42:msg=QXBwbHk=\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    const first = terminal.consequenceHead().?.program_status;
+    const record = first.action.report;
+    try std.testing.expect(record.state == .blocked);
+    try std.testing.expect(record.kind.? == .permission);
+    try std.testing.expectEqualStrings("tf/plan", record.id);
+    try std.testing.expectEqual(@as(?u8, 42), record.progress);
+    var decoded: [Terminal.ProgramStatus.max_msg_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings("Apply", record.messageText(&decoded).?);
+    try terminal.consumeConsequence(first.generation);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+
+    try std.testing.expect((try terminal.feed("\x1b]7501;state=clear:id=tf\x07")).stateChanged());
+    const clear = terminal.consequenceHead().?.program_status;
+    try std.testing.expectEqualStrings("tf", clear.action.clear);
+    try terminal.consumeConsequence(clear.generation);
+    try std.testing.expect((try terminal.feed("\x1b]7501;process-exited\x07")).stateChanged());
+    const exit_event = terminal.consequenceHead().?.program_status;
+    try std.testing.expect(exit_event.action == .process_exited);
+    try terminal.consumeConsequence(exit_event.generation);
+
+    // Invalid id does not turn into a root clear, and unknown OSC bytes
+    // cannot acquire a host effect even with status consumption enabled.
+    try std.testing.expect(!(try terminal.feed("\x1b]7501;state=clear:id=a//b\x1b\\")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    terminal.setProgramStatusConsumer(false);
+    try std.testing.expect(!(try terminal.feed("\x1b]7501;?\x1b\\")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "OSC 7501 bounded status FIFO preserves exact head under pressure" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    for (0..8) |_| try feed(&terminal, "\x1b]7501;state=working:id=one\x1b\\");
+    try std.testing.expectEqual(@as(u16, 8), terminal.consequenceCount());
+    const old = terminal.consequenceHead().?.program_status;
+    try std.testing.expectEqualStrings("one", old.action.report.id);
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]7501;state=done:id=other\x1b\\"));
+    try std.testing.expectEqual(@as(u16, 8), terminal.consequenceCount());
+    try std.testing.expectEqualStrings("one", terminal.consequenceHead().?.program_status.action.report.id);
+    try terminal.consumeConsequence(old.generation);
+    try feed(&terminal, "\x1b]7501;state=done:id=other\x1b\\");
+    try std.testing.expectEqual(@as(u16, 8), terminal.consequenceCount());
+    for (0..8) |_| {
+        const next = terminal.consequenceHead().?.program_status;
+        try terminal.consumeConsequence(next.generation);
+    }
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "OSC 7501 host consumer observes reset generation without claiming a UI" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    try feed(&terminal, "\x1b]7501;state=working:id=job:progress=70\x1b\\");
+    const old = terminal.consequenceHead().?.program_status;
+    const old_generation = old.reset_generation;
+    const old_id = old.generation;
+    try feed(&terminal, "\x1bc");
+    try std.testing.expect(terminal.resetSequence() > old_generation);
+    try std.testing.expectEqual(old_id, terminal.consequenceHead().?.program_status.generation);
+    try std.testing.expectEqual(old_generation, terminal.consequenceHead().?.program_status.reset_generation);
+    try terminal.consumeConsequence(old_id);
+    try feed(&terminal, "\x1b]7501;state=blocked:id=job:kind=auth\x1b\\");
+    const fresh = terminal.consequenceHead().?.program_status;
+    try std.testing.expect(fresh.generation > old_id);
+    try std.testing.expect(fresh.reset_generation > old_generation);
+    try std.testing.expect(fresh.action.report.kind.? == .auth);
+}
+
+test "OSC 7501 feature query reply quota rolls back without changing pending statuses" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    try feed(&terminal, "\x1b]7501;state=working:id=job\x1b\\");
+    const id = terminal.consequenceHead().?.program_status.generation;
+    const reply = "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\";
+    const before = try reply_fill.fill(&terminal, allocator, 64 * 1024 - reply.len + 1, false);
+    defer allocator.free(before);
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b]7501;?\x1b\\"));
+    try std.testing.expectEqualSlices(u8, before, terminal.replyBytes());
+    try std.testing.expectEqual(id, terminal.consequenceHead().?.program_status.generation);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try feed(&terminal, "\x1b]7501;?\x1b\\");
+    try std.testing.expectEqualStrings(reply, terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try terminal.consumeConsequence(id);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
 test "OSC 52 produces pending clipboard request" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);

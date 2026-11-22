@@ -5883,21 +5883,26 @@ references:
             relevance: host consequence
             conditions: >-
               Without a registered program_status effect, Ghostty deliberately
-              emits no reply. With the effect it returns a fixed capability list,
-              preserving the query's BEL or ST terminator and never echoing
-              status contents.
+              emits no reply. With an effect it returns a fixed list of five
+              states and three blocked interaction kinds in the original BEL/ST
+              framing, without leaking status contents. Howl now recognizes only
+              exact OSC 7501, stays silent by default, and requires the embedding
+              caller to explicitly enable a typed status consumer before any
+              fixed capability reply is emitted. Debug/Fast real VT tests prove
+              complete split queries, exact terminators, and atomic 64KiB queue
+              failure/rollback/retry without changing pending status events.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               milestone: program_status
               owner: howl-vt
-              rationale: "A shared, bounded OSC 7501 parser and opt-in consumer must be designed before advertising status support; silent unknown command is intentional today."
-              residual: "Pinned Ghostty optionally reports supported OSC 7501 states/kinds when a callback exists; Howl neither parses this family nor advertises support and has no caller status callback."
+              rationale: "One source-shared allocation-free OSC 7501 grammar and opt-in typed per-event FIFO now support Ghostty's conditional query and fragment semantics, without creating a terminal status UI."
+              residual: "Only opted-in Zig embedders can receive status events and a capability reply. No app consumer is registered by default; the C request ABI explicitly declines the unsupported new variant. The bounded protocol body is 2043 bytes instead of the 4096-byte reference maximum, and full per-window status lifetime/UI are not represented."
               source: howl-vt/src/terminal.zig
               symbol: oscProcess
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
+                symbol: "OSC 7501 opt-in status reports are typed FIFO and queries advertise only with a consumer"
           ghostty.osc7501.status_report:
             raw: "OSC 7501 ; state=...[:id=...][:msg=...] (BEL|ST)"
             effect: parse bounded program status and deliver it to an optional host effect
@@ -5906,22 +5911,30 @@ references:
             symbol: parse
             line: 309
             conditions: >-
-              The parser bounds IDs, keys, encoded text and UTF-8; invalid
-              reports are discarded. A registered callback receives exact
-              fragmented reports; otherwise reports are ignored. Hard reset
-              delivers a clear-status event through the same callback.
+              Pinned Ghostty validates one bounded id, states and optional
+              kind, progress and base64 UTF-8 text before delivering an event
+              to an explicitly installed host effect. Invalid id or encoded
+              text discards the whole report; invalid optional names/values
+              cannot overwrite a valid prior field. Howl now shares an
+              allocation-free pure parser with newer Kitty, using the stricter
+              Ghostty id cap of 128 bytes and a current 2043-byte body cap.
+              A checked, owned eight-entry status FIFO retains exact per-event
+              identities and reset-generation tags only when opted in, with
+              lazy allocation, stale-head rejection, pressure and OOM cleanup
+              proofs. Query, update, subtree clear, process-exited and malformed
+              input have named real VT Debug and ReleaseFast tests.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               milestone: program_status
               owner: howl-vt
-              rationale: "Missing structured OSC 7501 state, bounded IDs, UTF-8 payload validation, status generations and optional caller handoff; no app UI is implicitly approved."
-              residual: "Pinned Ghostty parses validated per-program statuses and emits clear on hard reset to an optional host effect; Howl does not recognize/retain these state records."
-              source: howl-vt/src/terminal.zig
-              symbol: oscProcess
+              rationale: "Native OSC 7501 grammar is source-shared, validated before event retention, and delivered by one explicit host-opt-in consequence owner. The canonical terminal retains no second per-app status database or GUI."
+              residual: "Actual per-id 256-record host index, urgency, seen/finished state lifecycle, hard-reset clear callback and app user-visible status are still host responsibilities. The reset-generation identity allows host detection but does not inject a synthetic clear event. Full 4096-byte reports are not yet admitted and the existing native C ABI explicitly reports unsupported status variants."
+              source: howl-vt/src/program_status.zig
+              symbol: parse
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
+                symbol: "OSC 7501 bounded status FIFO preserves exact head under pressure"
   kitty_delta:
     revision: a79f376b85fd95e3dfd0589877123996bacd4184
     root: kitty
@@ -5955,22 +5968,28 @@ references:
             effect: query, update or clear bounded program-status records
             relevance: host consequence
             conditions: >-
-              The newer Kitty revision adds program-status parsing, queries,
-              per-window state and bounded identifiers and text. Its
-              program_status.py implementation defines update and clear
-              lifetime; the frozen earlier revision has no OSC 7501 dispatch.
+              Newer Kitty a79f376 implements OSC 7501 revision 0.4, with
+              query, five status states, blocked kinds, updates, clear and
+              process-exited lifetime via a per-window host-owned status index.
+              Howl now parses and exposes precisely the overlapping Ghostty
+              wire grammar through the same program_status.zig module and
+              opt-in typed consequence FIFO, without a second Kitty parser.
+              Split BEL/ST queries preserve reply framing; malformed id/text
+              reports are wholly discarded; concurrent status pressure, raw
+              status memory cleanup, reset-generation tags and continued valid
+              traffic have exact native positive/negative proofs.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               milestone: program_status
               owner: howl-vt
-              rationale: "Shared OSC 7501 obligation overlaps Ghostty; implementation needs a separately designed optional consumer and should not duplicate parser/record stores."
-              residual: "Pinned newer Kitty adds OSC 7501 query/update/clear with per-window lifetime; Howl ignores it as an unknown command without reply or status mutation."
-              source: howl-vt/src/terminal.zig
-              symbol: oscProcess
+              rationale: "The new Kitty OSC 7501 family and pinned Ghostty status obligations share one canonical source-backed, bounded parser and opted-in Zig event consumer; default Howl does not advertise a host capability it has not installed."
+              residual: "Current Kitty stores up to 256 status records per window, supports ids up to 263 bytes and full 4096-byte controls, and owns per-window seen/exit/prompt clear lifetime and UI. Howl only retains up to eight ordered events pending host consumption, accepts <=128-byte ids and <=2043-byte bodies, and does not enable its consumer in the current app or native C ABI. Full modern Kitty program status parity remains deferred."
+              source: howl-vt/src/program_status.zig
+              symbol: parse
               proof:
                 path: howl-vt/test/unit/terminal_osc_test.zig
-                symbol: "Ghostty and newer Kitty OSC 7501 status family is not advertised by Howl"
+                symbol: "OSC 7501 opt-in status reports are typed FIFO and queries advertise only with a consumer"
       indexed_graphics_formats:
         source: graphics.c
         symbol: initialize_load_data

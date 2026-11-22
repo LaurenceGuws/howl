@@ -6,6 +6,7 @@ const std = @import("std");
 const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
 const progress_mod = @import("progress.zig");
+const program_status_mod = @import("program_status.zig");
 const kitty_placeholders = @import("kitty_placeholders.zig");
 const sixel = @import("sixel.zig");
 const replies = @import("replies.zig");
@@ -337,6 +338,7 @@ const SemanticEvent = union(enum) {
     kitty_keyboard_pop: u16,
     shell_mark: ItermShellMark,
     task_progress: progress_mod.Update,
+    program_status: struct { payload: []const u8, term: parser_mod.OscTerminator },
     notification: struct { kind: NotificationKind, command: u16, payload: []const u8 },
     pointer_shape: []const u8,
     text_size: TextSizeCommand,
@@ -1583,6 +1585,15 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
         // A commandless OSC is the parser's legacy title form, not OSC 0.
         .raw_title => |v| SemanticEvent{ .title_set = v.payload },
+        // OSC 7501 is shared by pinned Ghostty and newer Kitty. Recognize
+        // only this exact raw selector; no other unknown OSC is promoted.
+        .raw_other => |v| if (std.mem.startsWith(u8, v.payload, "7501;"))
+            SemanticEvent{ .program_status = .{
+                .payload = v.payload["7501;".len..],
+                .term = v.term,
+            } }
+        else
+            null,
         .linux_palette => |v| SemanticEvent{ .color_control = .{ .linux_palette = v.payload } },
         .title => |v| switch (v.command) {
             0 => SemanticEvent{ .title_and_icon_set = v.payload },
@@ -2196,6 +2207,29 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .remote_host_report => |remote_host| return vt.properties.replaceRemoteHost(remote_host),
         .shell_mark => |mark| try vt.properties.replaceShellMark(mark.kind, mark.status, mark.metadata),
         .task_progress => |value| return vt.properties.replaceProgress(value),
+        .program_status => |value| {
+            // A terminal with no registered host consumer must not claim
+            // support, leak status messages into desktop notifications or
+            // retain a caller-visible record database on its own.
+            if (!vt.program_status_consumer) return false;
+            const action = program_status_mod.parse(value.payload) orelse return false;
+            switch (action) {
+                .query => {
+                    const response = "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth";
+                    const terminator: []const u8 = if (value.term == .bel) "\x07" else "\x1b\\";
+                    const before = vt.reply_buffer.len();
+                    errdefer vt.reply_buffer.truncate(before);
+                    try vt.reply_buffer.ensureUnusedCapacity(@intCast(response.len + terminator.len));
+                    try vt.reply_buffer.append(response);
+                    try vt.reply_buffer.append(terminator);
+                    return true;
+                },
+                else => {
+                    try vt.consequences.retainProgramStatus(value.payload);
+                    return true;
+                },
+            }
+        },
         .notification => |notification| try vt.consequences.retainNotification(
             notification.kind,
             notification.command,
@@ -3808,6 +3842,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .remote_host_report,
         .shell_mark,
         .task_progress,
+        .program_status,
         .notification,
         .pointer_shape,
         .container_request,
@@ -5868,6 +5903,7 @@ pub const Terminal = struct {
     pub const Consequence = union(enum) {
         clipboard: ClipboardRequest,
         notification: consequences.Notification,
+        program_status: consequences.ProgramStatusOccurrence,
         pointer_shape: consequences.PointerShapeRequest,
         file_transfer: consequences.FileTransferPacket,
         drag_drop: DragDropCommand,
@@ -5886,7 +5922,7 @@ pub const Terminal = struct {
                 .clipboard => |value| value.kind == .query,
                 .container => |value| isContainerQuery(value.request),
                 .color_preference_query => true,
-                .notification, .pointer_shape, .file_transfer, .drag_drop, .bell, .legacy_control, .media_copy, .dcs, .string_control => false,
+                .notification, .program_status, .pointer_shape, .file_transfer, .drag_drop, .bell, .legacy_control, .media_copy, .dcs, .string_control => false,
             };
         }
 
@@ -5895,6 +5931,7 @@ pub const Terminal = struct {
             return switch (self) {
                 .clipboard => |value| value.generation,
                 .notification => |value| value.generation,
+                .program_status => |value| value.generation,
                 .pointer_shape => |value| value.generation,
                 .file_transfer => |value| value.generation,
                 .drag_drop => |value| value.generation,
@@ -6752,6 +6789,8 @@ pub const Terminal = struct {
     properties: properties.State,
     reply_buffer: replies.Buffer,
     consequences: consequences.State,
+    /// Host explicitly opts in before any OSC 7501 query can advertise support.
+    program_status_consumer: bool = false,
     locator: locator_mod.State = .{},
     charset: charset_mod.State = .{},
 
@@ -7950,6 +7989,8 @@ pub const Terminal = struct {
 
     /// Retained task progress is terminal state, not a queued notification.
     pub const Progress = progress_mod.State;
+    /// Pure, borrowed OSC 7501 grammar for typed caller status handling.
+    pub const ProgramStatus = program_status_mod;
     /// Copies current retained task progress without a notification side effect.
     pub fn taskProgress(self: *const Terminal) Progress {
         return self.properties.task_progress;
@@ -7992,12 +8033,21 @@ pub const Terminal = struct {
         };
     }
 
+    /// Enables only a real embedding host's opt-in OSC 7501 consumer.
+    /// When disabled, reports and queries are ignored without any UI or
+    /// retained consequence. The host owns per-id status and reset policy.
+    pub fn setProgramStatusConsumer(self: *Terminal, enabled: bool) void {
+        self.requireNoPreparedResize();
+        self.program_status_consumer = enabled;
+    }
+
     /// Borrows the oldest retained consequence across every protocol family.
     pub fn consequenceHead(self: *const Terminal) ?Consequence {
         const head = self.consequences.head() orelse return null;
         return switch (head) {
             .clipboard => |value| .{ .clipboard = value },
             .notification => |value| .{ .notification = value },
+            .program_status => |value| .{ .program_status = value },
             .pointer_shape => |value| .{ .pointer_shape = value },
             .file_transfer => |value| .{ .file_transfer = value },
             .drag_drop => |value| .{ .drag_drop = value },

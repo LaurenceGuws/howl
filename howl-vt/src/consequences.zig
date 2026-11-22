@@ -1,6 +1,7 @@
 //! Bounded, per-family terminal consequences.
 
 const std = @import("std");
+const program_status = @import("program_status.zig");
 
 const ClipboardRequestOwned = struct {
     generation: u64,
@@ -62,6 +63,9 @@ const string_payload_capacity: u8 = 32;
 const consequence_payload_max_bytes: u32 = 1024;
 // Bounds one notification, focus, or attention burst while a caller applies policy.
 const notification_capacity: u8 = 8;
+/// An opt-in status consumer drains events rather than forcing VT to own a
+/// per-window status database. These eight entries allocate only on use.
+const program_status_capacity: u8 = 8;
 const bell_capacity: u8 = 32;
 const legacy_control_capacity: u8 = 16;
 // Bounds one pointer-request burst while a caller applies validation and presentation policy.
@@ -102,6 +106,30 @@ const NotificationOwned = struct {
             .kind = self.kind,
             .command = self.command,
             .payload = self.payload[0..self.payload_len],
+        };
+    }
+};
+
+/// One validated program-status event, borrowing the queued payload until
+/// terminal mutation or exact-head consumption. A host owns status records.
+pub const ProgramStatusOccurrence = struct {
+    generation: u64,
+    reset_generation: u64,
+    action: program_status.Action,
+};
+
+const ProgramStatusOwned = struct {
+    generation: u64,
+    reset_generation: u64,
+    payload: []u8,
+
+    fn view(self: *const ProgramStatusOwned) ProgramStatusOccurrence {
+        // The admission path validated and then copied this exact body.
+        // No writer can mutate the owned slice before matching consumption.
+        return .{
+            .generation = self.generation,
+            .reset_generation = self.reset_generation,
+            .action = program_status.parse(self.payload).?,
         };
     }
 };
@@ -381,6 +409,7 @@ const DragDropInput = struct { kind: DragDropCommandKind, command: u8, client_id
 pub const Consequence = union(enum) {
     clipboard: ClipboardRequestView,
     notification: Notification,
+    program_status: ProgramStatusOccurrence,
     pointer_shape: PointerShapeRequest,
     file_transfer: FileTransferPacket,
     drag_drop: DragDropCommandView,
@@ -434,6 +463,9 @@ pub const State = struct {
     notifications: [notification_capacity]NotificationOwned = undefined,
     notifications_start: u8 = 0,
     notifications_count: u8 = 0,
+    program_status_packets: [program_status_capacity]ProgramStatusOwned = undefined,
+    program_status_start: u8 = 0,
+    program_status_count: u8 = 0,
     terminal_reset_generation: u64 = 1,
     pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
     pointer_shapes_start: u8 = 0,
@@ -480,6 +512,10 @@ pub const State = struct {
             const index = (@as(usize, self.clipboard_requests_start) + offset) % clipboard_capacity;
             self.allocator.free(self.clipboard_requests[index].raw);
         }
+        for (0..self.program_status_count) |offset| {
+            const index = (@as(usize, self.program_status_start) + offset) % program_status_capacity;
+            self.allocator.free(self.program_status_packets[index].payload);
+        }
         for (0..self.file_transfer_count) |offset| {
             const index = (@as(usize, self.file_transfer_start) + offset) % file_transfer_capacity;
             self.allocator.free(self.file_transfer_packets[index].payload);
@@ -511,6 +547,7 @@ pub const State = struct {
         var result: ?Consequence = null;
         considerHead(&result, if (self.pendingClipboardRequest()) |value| .{ .clipboard = value } else null);
         considerHead(&result, if (self.notificationView()) |value| .{ .notification = value } else null);
+        considerHead(&result, if (self.programStatusHead()) |value| .{ .program_status = value } else null);
         considerHead(&result, if (self.pointerShapeView()) |value| .{ .pointer_shape = value } else null);
         considerHead(&result, if (self.fileTransferHead()) |value| .{ .file_transfer = value } else null);
         considerHead(&result, if (self.dragDropHead()) |value| .{ .drag_drop = value } else null);
@@ -528,10 +565,11 @@ pub const State = struct {
     pub fn count(self: *const State) u16 {
         var result: u16 = 0;
         inline for (.{
-            self.clipboard_requests_count,     self.notifications_count, self.pointer_shapes_count,
-            self.file_transfer_count,          self.drag_drop_count,     self.container_requests_count,
-            self.color_preference_query_count, self.media_copy_count,    self.bells_count,
-            self.legacy_controls_count,        self.dcs_payloads_count,  self.string_payloads_count,
+            self.clipboard_requests_count, self.notifications_count,          self.program_status_count,
+            self.pointer_shapes_count,     self.file_transfer_count,          self.drag_drop_count,
+            self.container_requests_count, self.color_preference_query_count, self.media_copy_count,
+            self.bells_count,              self.legacy_controls_count,        self.dcs_payloads_count,
+            self.string_payloads_count,
         }) |value| result += value;
         return result;
     }
@@ -543,6 +581,7 @@ pub const State = struct {
         switch (current) {
             .clipboard => self.consumeClipboardRequest(),
             .notification => self.consumeNotification(),
+            .program_status => self.consumeProgramStatus(),
             .pointer_shape => self.consumePointerShape(),
             .file_transfer => self.consumeFileTransfer(),
             .drag_drop => self.consumeDragDrop(),
@@ -564,6 +603,37 @@ pub const State = struct {
     fn commitConsequenceId(self: *State, id: u64) void {
         std.debug.assert(id == self.consequence_generation + 1);
         self.consequence_generation = id;
+    }
+
+    /// Retains a validated OSC 7501 status transition only when the terminal
+    /// registered an opt-in host consumer. Memory and identities change only
+    /// after complete grammar, FIFO pressure, and allocation admission.
+    pub fn retainProgramStatus(self: *State, payload: []const u8) Error!void {
+        if (program_status.parse(payload) == null) return error.ConsequenceLimit;
+        try ensureRetainedBound(byteCount(payload), program_status.max_body_bytes);
+        if (self.program_status_count == program_status_capacity) return error.ConsequencePressure;
+        const id = try self.nextConsequenceId();
+        const owned = try self.allocator.dupe(u8, payload);
+        const index = (self.program_status_start + self.program_status_count) % program_status_capacity;
+        self.commitConsequenceId(id);
+        self.program_status_packets[index] = .{
+            .generation = id,
+            .reset_generation = self.terminal_reset_generation,
+            .payload = owned,
+        };
+        self.program_status_count += 1;
+    }
+
+    fn programStatusHead(self: *const State) ?ProgramStatusOccurrence {
+        if (self.program_status_count == 0) return null;
+        return self.program_status_packets[self.program_status_start].view();
+    }
+
+    fn consumeProgramStatus(self: *State) void {
+        std.debug.assert(self.program_status_count != 0);
+        self.allocator.free(self.program_status_packets[self.program_status_start].payload);
+        self.program_status_start = (self.program_status_start + 1) % program_status_capacity;
+        self.program_status_count -= 1;
     }
 
     /// Retain one notification, focus, or attention occurrence without choosing embedder policy.
@@ -1001,6 +1071,13 @@ test "every family rejects its exact queue saturation" {
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
+        for (0..program_status_capacity) |_| try state.retainProgramStatus("state=working:id=sync");
+        try std.testing.expectError(error.ConsequencePressure, state.retainProgramStatus("state=done:id=other"));
+        try std.testing.expectEqualStrings("sync", state.head().?.program_status.action.report.id);
+    }
+    {
+        var state = State.init(std.testing.allocator);
+        defer state.deinit();
         for (0..pointer_shape_capacity) |_| try state.retainPointerShape("", false);
         try std.testing.expectError(error.ConsequencePressure, state.retainPointerShape("", false));
     }
@@ -1080,6 +1157,21 @@ fn retainDcsAllocation(allocator: std.mem.Allocator) !void {
 
 test "allocation failure preserves DCS identity bytes and count" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDcsAllocation, .{});
+}
+fn retainProgramStatusAllocation(allocator: std.mem.Allocator) !void {
+    var state = State.init(allocator);
+    defer state.deinit();
+    state.retainProgramStatus("state=working:id=sync:progress=30") catch |failure| {
+        try std.testing.expectEqual(@as(u64, 0), state.consequence_generation);
+        try std.testing.expectEqual(@as(u8, 0), state.program_status_count);
+        return failure;
+    };
+    try std.testing.expectEqualStrings("sync", state.head().?.program_status.action.report.id);
+    try std.testing.expectEqual(@as(u64, 1), state.head().?.generation());
+}
+
+test "program status retention allocation failure preserves FIFO identity" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainProgramStatusAllocation, .{});
 }
 
 fn retainClipboardAllocation(allocator: std.mem.Allocator) !void {

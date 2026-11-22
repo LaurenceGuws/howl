@@ -40,6 +40,10 @@ fn project(value: Terminal.Consequence, revision: u64) Error!Projection {
             };
             result.payload = request.payload;
         },
+        // This opt-in Zig embedding consequence has no stable C request ABI
+        // yet. Fail explicitly instead of misclassifying untrusted status
+        // metadata as a notification or inventing a native enum value.
+        .program_status => return error.RequestLimit,
         .pointer_shape => |request| {
             result.info.kind = c.HVT_REQUEST_POINTER_SHAPE;
             result.info.data.pointer_shape.reset_generation = request.reset_generation;
@@ -229,6 +233,15 @@ test "native request projection covers every canonical family with native typed 
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(Info));
     try std.testing.expectEqual(@as(usize, 24), @offsetOf(Info, "data"));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(c.hvt_request_data));
+}
+
+test "optional program status requires an explicit native ABI before projection" {
+    const value: Terminal.Consequence = .{ .program_status = .{
+        .generation = 7,
+        .reset_generation = 3,
+        .action = .{ .clear = "tf/plan" },
+    } };
+    try std.testing.expectError(error.RequestLimit, project(value, 9));
 }
 
 test "native request copies preserve FIFO identity and distinguish mandatory from requested replies" {

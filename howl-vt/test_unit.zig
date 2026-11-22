@@ -18,6 +18,9 @@ test {
     // reason: The test root imports this module only to register its tests; the imported namespace itself is intentionally unused.
     _ = @import("test/unit/terminal_osc_test.zig");
     // zig-audit: acknowledge discard
+    // reason: Standalone bounded OSC 7501 grammar tests run without a host effect.
+    _ = @import("test/unit/program_status_test.zig");
+    // zig-audit: acknowledge discard
     // reason: The test root imports this module only to register its tests; the imported namespace itself is intentionally unused.
     _ = @import("src/screen/main_test.zig");
     // zig-audit: acknowledge discard
