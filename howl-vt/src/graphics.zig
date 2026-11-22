@@ -2326,6 +2326,10 @@ fn parseCommand(bytes: []const u8) ?Command {
             'U' => 1 << 23,
             'S' => 1 << 24,
             'e' => 1 << 25,
+            'P' => 1 << 26,
+            'Q' => 1 << 27,
+            'H' => 1 << 28,
+            'V' => 1 << 29,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -2383,9 +2387,15 @@ fn parseCommand(bytes: []const u8) ?Command {
             'e' => if (value.len == 1 and std.ascii.isAlphabetic(value[0])) {
                 result.feature_action = value[0];
             } else return null,
+            // Query-only syntax for unimplemented parent-relative placement:
+            // validate, but never echo these keys or admit them as actions.
+            'P', 'Q' => if (std.fmt.parseInt(u32, value, 10)) |_| {} else |_| return null,
+            'H', 'V' => if (std.fmt.parseInt(i32, value, 10)) |_| {} else |_| return null,
             else => return null,
         }
     }
+    const unimplemented_placement: u32 = (1 << 26) | (1 << 27) | (1 << 28) | (1 << 29);
+    if (result.feature_action == 0 and seen & unimplemented_placement != 0) return null;
     result.present = seen;
     return result;
 }
@@ -2423,32 +2433,53 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
     const command_value = parseCommand(packet) orelse return error.ReplyLimit;
     if (command_value.action != 'q' or command_value.feature_action == 0) return error.ReplyLimit;
     var out: FeatureWriter = .{ .bytes = scratch };
-    if (command_value.feature_action != 't' and command_value.feature_action != 'T') return scratch[0..0];
-    try out.flag('e', command_value.feature_action);
+    const action = command_value.feature_action;
+    const transmitting = action == 't' or action == 'T';
+    const placing = action == 'T' or action == 'p';
+    if (!transmitting and !placing) return scratch[0..0];
+    try out.flag('e', action);
 
-    // These presence bits are owned by parseCommand. Do not advertise a
-    // default setting that the client never requested to test.
+    // Both supported action families reuse the actual encoded command values;
+    // never report default/unrequested keys or transmit-only keys for e=p.
     const present = command_value.present;
-    if (present & (1 << 1) != 0 and command_value.medium == 'd') try out.flag('t', 'd');
-    if (present & (1 << 22) != 0 and command_value.compression == 'z') try out.flag('o', 'z');
-    if (present & (1 << 2) != 0 and
-        (command_value.format == 24 or command_value.format == 32 or command_value.format == 100))
-        try out.number('f', command_value.format);
-    if (present & (1 << 4) != 0 and command_value.width > 0 and command_value.width <= max_dimension)
-        try out.number('s', command_value.width);
-    if (present & (1 << 5) != 0 and command_value.height > 0 and command_value.height <= max_dimension)
-        try out.number('v', command_value.height);
-    // The N=1 transient hint may be ignored by design. All other N bits have
-    // no claimed capability. This is the same bounded advisory rule as normal
-    // image commands, not a promise of a distinct cache-eviction scheduler.
-    if (present & (1 << 21) != 0 and command_value.usage_hints == 1) try out.number('N', 1);
-
-    if (command_value.feature_action == 'T') {
-        // C=1 leaves the terminal cursor in place; U=1 owns virtual Unicode
-        // placements. Both paths have existing retained graphics proofs.
+    if (transmitting) {
+        if (present & (1 << 1) != 0 and command_value.medium == 'd') try out.flag('t', 'd');
+        if (present & (1 << 22) != 0 and command_value.compression == 'z') try out.flag('o', 'z');
+        if (present & (1 << 2) != 0 and
+            (command_value.format == 24 or command_value.format == 32 or command_value.format == 100))
+            try out.number('f', command_value.format);
+        if (present & (1 << 4) != 0 and command_value.width > 0 and command_value.width <= max_dimension)
+            try out.number('s', command_value.width);
+        if (present & (1 << 5) != 0 and command_value.height > 0 and command_value.height <= max_dimension)
+            try out.number('v', command_value.height);
+        // N=1 is a permitted advisory no-op; other N bits are not claimed.
+        if (present & (1 << 21) != 0 and command_value.usage_hints == 1) try out.number('N', 1);
+    }
+    if (placing) {
+        // Kitty's source orders these independently of the query input. The
+        // supported fields already map to Plane.put / makePlacement.
+        if (present & (1 << 11) != 0 and command_value.placement_id != 0)
+            try out.number('p', command_value.placement_id);
+        if (present & (1 << 9) != 0 and command_value.x != 0 and command_value.x < max_dimension)
+            try out.number('x', command_value.x);
+        if (present & (1 << 10) != 0 and command_value.y != 0 and command_value.y < max_dimension)
+            try out.number('y', command_value.y);
+        if (present & (1 << 12) != 0 and command_value.source_width > 0 and command_value.source_width <= max_dimension)
+            try out.number('w', command_value.source_width);
+        if (present & (1 << 13) != 0 and command_value.source_height > 0 and command_value.source_height <= max_dimension)
+            try out.number('h', command_value.source_height);
+        if (present & (1 << 16) != 0 and command_value.cell_x > 0 and command_value.cell_x < max_dimension)
+            try out.number('X', command_value.cell_x);
+        if (present & (1 << 17) != 0 and command_value.cell_y > 0 and command_value.cell_y < max_dimension)
+            try out.number('Y', command_value.cell_y);
+        if (present & (1 << 14) != 0 and command_value.columns > 0 and command_value.columns <= std.math.maxInt(u16))
+            try out.number('c', command_value.columns);
+        if (present & (1 << 15) != 0 and command_value.rows > 0 and command_value.rows <= std.math.maxInt(u16))
+            try out.number('r', command_value.rows);
         if (present & (1 << 20) != 0 and command_value.compose_mode == 1) try out.number('C', 1);
         if (present & (1 << 23) != 0 and command_value.unicode_placement) try out.number('U', 1);
         if (present & (1 << 18) != 0 and command_value.z != 0) try out.number('z', command_value.z);
+        // P/Q/H/V parent-relative placements remain deliberately absent.
     }
     return scratch[0..out.used];
 }
@@ -4471,6 +4502,23 @@ test "Kitty graphics feature queries return exact advertised keys without changi
     var output: [128]u8 = undefined;
     try std.testing.expectEqualStrings(",e=T,C=1,U=1", try formatFeatureQuery("a=q,i=31,e=T,U=1,C=1", &output));
     try std.testing.expectEqualStrings(",e=t,f=24,s=1,v=1", try formatFeatureQuery("a=q,i=31,e=t,f=24,s=1,v=1", &output));
+    try std.testing.expectEqualStrings(
+        ",e=p,p=2,x=1,y=2,w=3,h=4,X=5,Y=6,c=2,r=3,C=1,U=1,z=-3",
+        try formatFeatureQuery("a=q,i=31,e=p,p=2,x=1,y=2,w=3,h=4,X=5,Y=6,c=2,r=3,C=1,U=1,z=-3,s=1", &output),
+    );
+    try std.testing.expectEqualStrings(",e=p", try formatFeatureQuery("a=q,i=31,e=p,C=0,U=0,s=1,f=24", &output));
+    try std.testing.expectEqualStrings(
+        ",e=p,p=2,C=1",
+        try formatFeatureQuery("a=q,i=31,e=p,p=2,P=123,Q=456,H=-8,V=7,C=1", &output),
+    );
+    try std.testing.expectEqualStrings(",e=p", try formatFeatureQuery(
+        "a=q,i=31,e=p,x=4096,y=4096,w=4097,h=4097,X=4096,Y=4096,c=65536,r=65536",
+        &output,
+    ));
+    try std.testing.expect(parseCommand("a=p,i=31,P=123") == null);
+    try std.testing.expect(parseCommand("a=q,i=31,e=p,P=4294967296") == null);
+    try std.testing.expect(parseCommand("a=q,i=31,e=p,H=-2147483649") == null);
+    try std.testing.expectEqualStrings(",e=T,p=2,x=1,w=2,U=1", try formatFeatureQuery("a=q,i=31,e=T,p=2,x=1,w=2,U=1", &output));
     try std.testing.expectEqualStrings(",e=T", try formatFeatureQuery("a=q,i=31,e=T,f=8,t=f,N=6", &output));
     try std.testing.expectEqualStrings("", try formatFeatureQuery("a=q,i=31,e=Z", &output));
     var tiny: [3]u8 = undefined;

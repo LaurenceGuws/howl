@@ -5068,7 +5068,9 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         // Feature reports are read-only and their complete reply is reserved
         // *after* computing its precise length, before appending any bytes.
         // The ordinary image path keeps its separate 96-byte reservation.
-        var features_buf: [128]u8 = undefined;
+        // Large but bounded placement-key replies are formatted only on this
+        // uncommon read-only path, never retained in normal graphics state.
+        var features_buf: [256]u8 = undefined;
         const features = try graphics_mod.formatFeatureQuery(query, &features_buf);
         var id_buf: [16]u8 = undefined;
         const id_text = std.fmt.bufPrint(&id_buf, "i={d}", .{result.response_id.?}) catch

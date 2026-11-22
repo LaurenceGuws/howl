@@ -6086,38 +6086,44 @@ references:
               key/value pairs plus e=ACTION, and do not transmit data or
               disturb chunked uploads. docs/graphics-protocol.rst:548-593
               specifies this feature introduced with Kitty 0.50.0. Howl now
-              accepts a=q,i=ID,e=t|T and reports a bounded, truthful subset:
-              direct transmission, zlib, RGB/RGBA/PNG formats, represented
-              dimensions, advisory N=1, and for T, Unicode placements,
-              cursor no-move and z-index. All other e actions omit their
-              capability claim; q=1/2 remain quiet. Red-to-green exact-byte,
-              unsupported-value, full reply quota and ongoing-chunk tests pass.
-              In one Fleet-managed private KWin, installed Kitty 0.51.0 and
-              staged ReleaseFast Howl produced identical replies for four
-              positive/negative raw PTY feature queries.
+              accepts a=q,i=ID,e=t|T|p and advertises source-backed, bounded
+              capabilities: t/T support direct transmission, zlib, RGB/RGBA/PNG,
+              represented dimensions and advisory N=1. T/p share image placement
+              IDs, cropped source regions x/y/w/h, cell offsets X/Y, columns/
+              rows c/r, no-cursor-move C=1, Unicode U=1 and signed z layers.
+              The query parser also validates the parent-relative P/Q/H/V keys
+              but omits them from replies; actual parent-placement commands
+              remain rejected. Actions d/f/a/c do not claim support; q=1/2
+              remain silent. Native red-to-green tests prove exact ordered bytes,
+              supported value caps, quiet/full-queue atomic failure and recovery,
+              no graphics mutation and uninterrupted chunked uploads.
+              Installed Kitty 0.51.0 and staged ReleaseFast Howl in one private
+              KWin agreed byte-for-byte on five of six placement feature probes;
+              the sixth intentionally omits Kitty's unsupported P/Q/H/V fields.
             howl:
               support: partial
               disposition: deferred
               owner: howl-vt
               milestone: graphics
               rationale: >-
-                Only feature meanings with already proved native graphics
-                implementation are advertised. The current helper formats
-                from canonical parsed Command fields into bounded caller
-                scratch, and a read-only query cannot cancel pending chunks.
-                Avoid claiming unspecified actions or unimplemented media.
+                Only previously proved native graphics behavior is advertised.
+                Source placement geometry and transcript order match current
+                Kitty for represented fields. The bounded on-stack query writer
+                is shared by T/p rather than duplicating placement semantics,
+                and never disturbs a pending upload or retains new graphics state.
+                Avoid claiming unimplemented parent relationships or media.
               residual: >-
-                Action capability negotiation for p/d/f/a/c and the remaining
-                field combinations is not yet advertised, despite several
-                corresponding underlying graphics effects being supported.
-                Unrepresented external media, palette-indexed f=8/16,
-                relative-parent placement and other host presentation options
-                remain outside full Kitty feature-query parity.
+                The remaining action negotiation d/f/a/c, their exact key/value
+                combinations, parent-relative P/Q/H/V placement links, long
+                unsupported geometry requests and external media are not fully
+                covered. Indexed f=8/16 and reference-specific host rendering
+                policy remain missing. This is a scoped partial contract,
+                not full modern Kitty feature-query parity.
               source: howl-vt/src/graphics.zig
               symbol: formatFeatureQuery
               proof:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
-                symbol: "terminal: Kitty graphics feature query reports only bounded supported actions"
+                symbol: "terminal: Kitty graphics placement features negotiate only represented keys"
       transient_usage_hint:
         source: parse-graphics-command.h
         symbol: parse_graphics_code
