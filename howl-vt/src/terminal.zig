@@ -2535,65 +2535,82 @@ const TermcapValue = union(enum) {
     encoded: []const u8,
 };
 
-// Answers only capabilities owned by terminal state rather than caller configuration.
+const TermcapEntry = struct { name: []const u8, value: TermcapValue };
+
+// Fixed Kitty capabilities only when VT already owns the exact behavior.
+// Values are pre-encoded hex reply bytes; there is no host/TERM discovery here.
+const fixed_termcaps = [_]TermcapEntry{
+    .{ .name = "BD", .value = .{ .encoded = "1b5b3f323030346c" } },
+    .{ .name = "BE", .value = .{ .encoded = "1b5b3f3230303468" } },
+    .{ .name = "Co", .value = .{ .encoded = "323536" } },
+    .{ .name = "RGB", .value = .{ .encoded = "38" } },
+    .{ .name = "Su", .value = .flag },
+    .{ .name = "Tc", .value = .flag },
+    .{ .name = "XF", .value = .flag },
+    .{ .name = "am", .value = .flag },
+    .{ .name = "blink", .value = .{ .encoded = "1b5b356d" } },
+    .{ .name = "bold", .value = .{ .encoded = "1b5b316d" } },
+    .{ .name = "cbt", .value = .{ .encoded = "1b5b5a" } },
+    .{ .name = "ccc", .value = .flag },
+    .{ .name = "civis", .value = .{ .encoded = "1b5b3f32356c" } },
+    .{ .name = "clear", .value = .{ .encoded = "1b5b481b5b324a" } },
+    .{ .name = "cnorm", .value = .{ .encoded = "1b5b3f3132681b5b3f323568" } },
+    .{ .name = "colors", .value = .{ .encoded = "323536" } },
+    .{ .name = "cuf1", .value = .{ .encoded = "1b5b43" } },
+    .{ .name = "cuu1", .value = .{ .encoded = "1b5b41" } },
+    .{ .name = "cvvis", .value = .{ .encoded = "1b5b3f31323b323568" } },
+    .{ .name = "dim", .value = .{ .encoded = "1b5b326d" } },
+    .{ .name = "ed", .value = .{ .encoded = "1b5b4a" } },
+    .{ .name = "el", .value = .{ .encoded = "1b5b4b" } },
+    .{ .name = "home", .value = .{ .encoded = "1b5b48" } },
+    .{ .name = "hts", .value = .{ .encoded = "1b48" } },
+    .{ .name = "kcbt", .value = .{ .encoded = "1b5b5a" } },
+    .{ .name = "op", .value = .{ .encoded = "1b5b33393b34396d" } },
+    .{ .name = "rc", .value = .{ .encoded = "1b38" } },
+    .{ .name = "rev", .value = .{ .encoded = "1b5b376d" } },
+    .{ .name = "ritm", .value = .{ .encoded = "1b5b32336d" } },
+    .{ .name = "rmam", .value = .{ .encoded = "1b5b3f376c" } },
+    .{ .name = "rmcup", .value = .{ .encoded = "1b5b3f313034396c" } },
+    .{ .name = "rmir", .value = .{ .encoded = "1b5b346c" } },
+    .{ .name = "rmkx", .value = .{ .encoded = "1b5b3f316c" } },
+    .{ .name = "rmso", .value = .{ .encoded = "1b5b32376d" } },
+    .{ .name = "rmul", .value = .{ .encoded = "1b5b32346d" } },
+    .{ .name = "sc", .value = .{ .encoded = "1b37" } },
+    .{ .name = "sgr0", .value = .{ .encoded = "1b28421b5b6d" } },
+    .{ .name = "sitm", .value = .{ .encoded = "1b5b336d" } },
+    .{ .name = "smam", .value = .{ .encoded = "1b5b3f3768" } },
+    .{ .name = "smcup", .value = .{ .encoded = "1b5b3f3130343968" } },
+    .{ .name = "smir", .value = .{ .encoded = "1b5b3468" } },
+    .{ .name = "smkx", .value = .{ .encoded = "1b5b3f3168" } },
+    .{ .name = "smso", .value = .{ .encoded = "1b5b376d" } },
+    .{ .name = "smul", .value = .{ .encoded = "1b5b346d" } },
+};
+
+comptime {
+    for (fixed_termcaps, 0..) |entry, index| {
+        if (entry.name.len == 0) @compileError("empty fixed termcap name");
+        if (index > 0 and std.mem.order(u8, fixed_termcaps[index - 1].name, entry.name) != .lt)
+            @compileError("fixed termcaps must be strictly sorted and unique");
+        switch (entry.value) {
+            .flag => {},
+            .encoded => |bytes| {
+                if (bytes.len == 0 or bytes.len % 2 != 0)
+                    @compileError("malformed fixed termcap value length");
+                for (bytes) |byte| {
+                    if (!((byte >= '0' and byte <= '9') or (byte >= 'a' and byte <= 'f')))
+                        @compileError("non-hex fixed termcap value");
+                }
+            },
+        }
+    }
+}
+
+// Keep the original byte-for-byte matching and response ownership; constant
+// expansion preserves the old straight-line lookup with no runtime allocation.
 fn termcapValue(encoded_name: []const u8) ?TermcapValue {
-    if (hexNameEquals(encoded_name, "Co") or hexNameEquals(encoded_name, "colors"))
-        return .{ .encoded = "323536" };
-    if (hexNameEquals(encoded_name, "RGB")) return .{ .encoded = "38" };
-    // Pinned Kitty capabilities for behavior VT already owns: automatic
-    // margins, OSC 4 palette changes, and focus reporting on DEC 1004.
-    if (hexNameEquals(encoded_name, "am") or
-        hexNameEquals(encoded_name, "ccc") or
-        hexNameEquals(encoded_name, "XF")) return .flag;
-    // Pinned Kitty's terminfo strings for the existing DEC 2004 mode.
-    // The value is the exact control sequence encoded as lowercase hex.
-    if (hexNameEquals(encoded_name, "BE")) return .{ .encoded = "1b5b3f3230303468" };
-    if (hexNameEquals(encoded_name, "BD")) return .{ .encoded = "1b5b3f323030346c" };
-    // Pinned Kitty advertises these fixed SGR and DEC cursor controls.
-    // Each action already has one Screen/Terminal owner; no capability
-    // registry, host setting, or unrepresented terminal identity is needed.
-    if (hexNameEquals(encoded_name, "smul")) return .{ .encoded = "1b5b346d" };
-    if (hexNameEquals(encoded_name, "rmul")) return .{ .encoded = "1b5b32346d" };
-    if (hexNameEquals(encoded_name, "sitm")) return .{ .encoded = "1b5b336d" };
-    if (hexNameEquals(encoded_name, "ritm")) return .{ .encoded = "1b5b32336d" };
-    if (hexNameEquals(encoded_name, "civis")) return .{ .encoded = "1b5b3f32356c" };
-    if (hexNameEquals(encoded_name, "cnorm")) return .{ .encoded = "1b5b3f3132681b5b3f323568" };
-    if (hexNameEquals(encoded_name, "cvvis")) return .{ .encoded = "1b5b3f31323b323568" };
-    // Existing Screen and Terminal owners already implement this exact
-    // pinned Kitty fixed screen lifecycle/erase subset; no host dimensions
-    // or product-specific terminal identity are reported.
-    if (hexNameEquals(encoded_name, "smcup")) return .{ .encoded = "1b5b3f3130343968" };
-    if (hexNameEquals(encoded_name, "rmcup")) return .{ .encoded = "1b5b3f313034396c" };
-    if (hexNameEquals(encoded_name, "sc")) return .{ .encoded = "1b37" };
-    if (hexNameEquals(encoded_name, "rc")) return .{ .encoded = "1b38" };
-    if (hexNameEquals(encoded_name, "clear")) return .{ .encoded = "1b5b481b5b324a" };
-    if (hexNameEquals(encoded_name, "home")) return .{ .encoded = "1b5b48" };
-    if (hexNameEquals(encoded_name, "el")) return .{ .encoded = "1b5b4b" };
-    if (hexNameEquals(encoded_name, "ed")) return .{ .encoded = "1b5b4a" };
-    // Pinned Kitty fixed text-rendition controls map to existing cell and
-    // charset semantics. sgr0 includes G0 ASCII designation, not just SGR 0.
-    if (hexNameEquals(encoded_name, "sgr0")) return .{ .encoded = "1b28421b5b6d" };
-    if (hexNameEquals(encoded_name, "op")) return .{ .encoded = "1b5b33393b34396d" };
-    if (hexNameEquals(encoded_name, "bold")) return .{ .encoded = "1b5b316d" };
-    if (hexNameEquals(encoded_name, "smso") or hexNameEquals(encoded_name, "rev"))
-        return .{ .encoded = "1b5b376d" };
-    if (hexNameEquals(encoded_name, "rmso")) return .{ .encoded = "1b5b32376d" };
-    if (hexNameEquals(encoded_name, "dim")) return .{ .encoded = "1b5b326d" };
-    if (hexNameEquals(encoded_name, "blink")) return .{ .encoded = "1b5b356d" };
-    // These pinned fixed input/mode/tab/motion sequences are interpreted by
-    // existing Terminal and Screen owners, independent of any host keymap.
-    if (hexNameEquals(encoded_name, "smkx")) return .{ .encoded = "1b5b3f3168" };
-    if (hexNameEquals(encoded_name, "rmkx")) return .{ .encoded = "1b5b3f316c" };
-    if (hexNameEquals(encoded_name, "smir")) return .{ .encoded = "1b5b3468" };
-    if (hexNameEquals(encoded_name, "rmir")) return .{ .encoded = "1b5b346c" };
-    if (hexNameEquals(encoded_name, "smam")) return .{ .encoded = "1b5b3f3768" };
-    if (hexNameEquals(encoded_name, "rmam")) return .{ .encoded = "1b5b3f376c" };
-    if (hexNameEquals(encoded_name, "hts")) return .{ .encoded = "1b48" };
-    if (hexNameEquals(encoded_name, "cbt") or hexNameEquals(encoded_name, "kcbt"))
-        return .{ .encoded = "1b5b5a" };
-    if (hexNameEquals(encoded_name, "cuu1")) return .{ .encoded = "1b5b41" };
-    if (hexNameEquals(encoded_name, "cuf1")) return .{ .encoded = "1b5b43" };
-    if (hexNameEquals(encoded_name, "Tc") or hexNameEquals(encoded_name, "Su")) return .flag;
+    inline for (fixed_termcaps) |entry| {
+        if (hexNameEquals(encoded_name, entry.name)) return entry.value;
+    }
     return null;
 }
 
