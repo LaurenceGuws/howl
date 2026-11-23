@@ -150,6 +150,11 @@ specifications:
       level: defined
       wire: CSI Pn d
       rule: Sets the active line position.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-99318f2215
+        source_line: 835
+        wire: CSI Ps d
     - id: ed
       section: 8.3.39
       level: defined
@@ -525,6 +530,11 @@ specifications:
       level: defined
       wire: CSI Pn `
       rule: CHARACTER POSITION ABSOLUTE (HPA); ECMA-48 standardized control function, CSI form (source page 45).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-2fdadd1aba
+        source_line: 755
+        wire: CSI Ps `
     - id: hpb
       section: 8.3.58
       level: defined
@@ -535,6 +545,11 @@ specifications:
       level: defined
       wire: CSI Pn a
       rule: CHARACTER POSITION FORWARD (HPR); ECMA-48 standardized control function, CSI form (source page 45).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-249c1d3d62
+        source_line: 758
+        wire: CSI Ps a
     - id: htj
       section: 8.3.61
       level: defined
@@ -1000,6 +1015,11 @@ specifications:
       level: defined
       wire: CSI Pn e
       rule: LINE POSITION FORWARD (VPR); ECMA-48 standardized control function, CSI form (source page 74).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-9f31d47497
+        source_line: 837
+        wire: CSI Ps e
     - id: vt
       section: 8.3.161
       level: defined
@@ -2600,14 +2620,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 744
       symbol: DECST8C
-    - id: csi-2fdadd1aba
-      wire: CSI Ps `
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 755
-    - id: csi-249c1d3d62
-      wire: CSI Ps a
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 758
     - id: csi-118f929579
       wire: CSI Ps c
       section: Functions using CSI , ordered by the final character(s)
@@ -2620,15 +2632,6 @@ discovery_catalogues:
       wire: CSI > Ps c
       section: Functions using CSI , ordered by the final character(s)
       source_line: 810
-    - id: csi-99318f2215
-      wire: CSI Ps d
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 835
-      symbol: VPA
-    - id: csi-9f31d47497
-      wire: CSI Ps e
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 837
     - id: csi-878281c3fe
       wire: CSI Ps ; Ps f
       section: Functions using CSI , ordered by the final character(s)
