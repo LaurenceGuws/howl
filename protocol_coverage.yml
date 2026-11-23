@@ -6817,42 +6817,73 @@ references:
             effect: transmit or query opaque palette-indexed image pixels
             relevance: graphics
             conditions: >-
-              Each pixel carries one palette index; displayed pixels respond
-              to palette changes. The reference's parser supports direct and
-              zlib-compressed payloads but rejects this format in animation
-              and composition paths.
+              Frozen newer Kitty a79f376 graphics.c:697,908-915,950,1999,2347
+              accepts one palette index per opaque pixel, including direct and
+              zlib-compressed images, and refreshes the drawn color when its
+              terminal palette changes. Indexed animation/frame composition
+              are invalid. Howl now retains source indices alongside its
+              bounded RGBA image view, recolors when used palette entries
+              change, and publishes a new immutable graphics resource without
+              changing decoded image identity or alpha.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               milestone: graphics
               owner: howl-vt
-              rationale: "Palette-index ownership and generation-aware image projection, direct and compressed resource bounds and renderer invalidation must precede f=8 admission."
-              residual: "Pinned newer Kitty f=8 stores one palette index per pixel and tracks live palette changes; Howl rejects f=8 before allocating/placing image data while accepting 24/32/100."
+              rationale: >-
+                True indexed source bytes are retained with the canonical
+                graphics Plane. Palette updates through OSC 4/10/11/21,
+                Kitty stack restoration and host defaults generate a new
+                RGBA projection only when an image actually uses a changed
+                color. Indexed f=8 direct/zlib transmission and query,
+                transactional allocation and malformed-input rollback,
+                bounded storage/replacement and immutable output are proven.
+              residual: >-
+                Indexed palette entries 0..253 and 255 are supported through
+                the canonical terminal colors and available optional roles.
+                Index 254, Kitty's hovered-URL color, falls back to Howl's
+                default foreground because Howl has no separate hovered-URL
+                image color owner. Exact Kitty hover-state changes and a full
+                reference-parity claim remain unqualified.
               source: howl-vt/src/graphics.zig
-              symbol: Plane.transmit
+              symbol: Plane.refreshIndexedColors
               proof:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
-                symbol: "terminal: newer Kitty indexed formats remain explicit rejected admissions"
+                symbol: "terminal: indexed Kitty pixels follow canonical palette mutations without losing alpha or image identity"
           kitty_delta.graphics.format_indexed16:
             raw: "APC G a=t|T|q,f=16,Pm ; Pb ST"
             effect: transmit or query palette-indexed pixels with alpha
             relevance: graphics
             conditions: >-
-              Each pixel has an index plus an alpha byte; the rendered colour
-              follows palette changes while alpha remains per-pixel. The
-              reference excludes indexed animation and composition.
+              Frozen newer Kitty a79f376 graphics.c:697,908-915,950,1999,2347
+              stores a palette index then an opacity byte per pixel; palette
+              updates change the RGB view while alpha remains unchanged.
+              The format supports direct/zlib transmit/query but not frame
+              animation or composition. Howl now retains both source bytes
+              and projects live RGBA through the same graphics resource owner.
             howl:
-              support: missing
+              support: partial
               disposition: deferred
               milestone: graphics
               owner: howl-vt
-              rationale: "Per-pixel alpha with palette-coupled frame/placement resources and compression/rollback proofs are missing; admitting f=16 as RGBA would be incorrect."
-              residual: "Pinned newer Kitty f=16 stores palette index plus alpha and tracks live palette updates; Howl rejects f=16 before admitting data."
+              rationale: >-
+                Source index-plus-alpha pixels remain individually owned with
+                an exact four-word palette dependency mask. Direct/zlib
+                admission, 0/128/255 per-pixel opacity, special palette
+                foreground/background/selection/cursor fallbacks, immutable
+                image output, color-stack restore, host defaults and
+                transactionally failed allocation/replacement are proven.
+              residual: >-
+                Live indexed image color and per-pixel opacity work, but the
+                reference's index 254 hovered-URL visual state is not separately
+                represented in Howl and uses its foreground fallback. Exact
+                hover-triggered recoloring therefore remains a partial
+                compatibility obligation.
               source: howl-vt/src/graphics.zig
-              symbol: Plane.transmit
+              symbol: Plane.refreshIndexedColors
               proof:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig
-                symbol: "terminal: newer Kitty indexed formats remain explicit rejected admissions"
+                symbol: "terminal: indexed Kitty zlib, query, stack restore and forbidden animation preserve owned bytes"
       conemu_cwd_report:
         source: vt-parser.c
         symbol: dispatch_osc
@@ -6968,7 +6999,8 @@ references:
               disturb chunked uploads. docs/graphics-protocol.rst:548-593
               specifies this feature introduced with Kitty 0.50.0. Howl now
               accepts a=q,i=ID,e=t|T|p|d|f|a|c and advertises only proven
-              subsets. t/T: direct/zlib/RGB/RGBA/PNG and bounded dimensions,
+              subsets. t/T: direct/zlib/RGB/RGBA/PNG and indexed f=8/f=16,
+              bounded dimensions,
               advisory N=1; T/p: placement identity, crop/cell offsets, output
               geometry, no cursor move, Unicode, signed z. d: actual deletion
               selectors with only the p/x/y/z fields each uses. New frame
@@ -7009,7 +7041,8 @@ references:
                 Still partial: unlike current Kitty, Howl does not advertise
                 PNG frame loads, extra animation frame indices past its fixed
                 frame quota, geometry above native image bounds, external media,
-                indexed f=8/16 or parent-relative P/Q/H/V placements. The
+                full indexed hover color 254 or complete parent-relative
+                P/Q/H/V feature advertisement. The
                 earlier deliberate cursor-cell delete excess-field difference
                 also remains. Action e=q, host graphics presentation policy and
                 some additional field combinations remain unqualified. Scope

@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const png = @import("png.zig");
+const properties = @import("properties.zig");
 
 // File map:
 //   - fixed bounds and graphics command vocabulary
@@ -35,6 +36,10 @@ pub const max_dimension: u32 = 4096;
 pub const max_command_bytes: usize = 8192;
 /// Bounds one in-flight compressed direct payload above decoded image quota.
 const max_compressed_bytes: usize = max_image_bytes + 128 * 1024;
+// Indexed images retain their source indices as well as the public RGBA view.
+// f=16 can require two extra bytes per pixel above the 16 MiB RGBA limit.
+const max_indexed_retained_bytes: usize = max_image_bytes + max_image_bytes / 2;
+const default_indexed_colors: properties.ColorState = .{};
 
 /// Identifies the screen bank owning one placement.
 pub const Bank = enum { primary, alternate };
@@ -115,6 +120,12 @@ const Image = struct {
     height: u32,
     generation: u64,
     pixels: []u8,
+    /// Original one/two-byte indices, retained for live palette changes.
+    /// Null keeps RGB/RGBA/PNG and animation-frame ownership unchanged.
+    indexed_pixels: ?[]u8 = null,
+    indexed_format: u8 = 0,
+    /// Exact palette index set for skipping unrelated OSC color mutations.
+    indexed_used: [4]u64 = @splat(0),
     current_frame: u16 = 0,
     root_gap_ms: u32 = 0,
     animation: AnimationState = .stopped,
@@ -122,6 +133,62 @@ const Image = struct {
     loops_remaining: u32 = 0,
     frame_started_ms: ?u64 = null,
 };
+
+// The first 248 Kitty indexed colors share the canonical SGR palette. The
+// remaining slots name terminal-wide presentation values, not palette[248..].
+// Howl does not currently expose a dedicated hovered-URL color (254), so it
+// uses its normal foreground until the host adds that independent policy.
+fn indexedColor(colors: *const properties.ColorState, index: u8) properties.Rgb {
+    return switch (index) {
+        0...247 => colors.palette[index],
+        248 => colors.background,
+        249, 255 => colors.foreground,
+        250 => colors.selection_background orelse colors.foreground,
+        251 => colors.selection_foreground orelse colors.background,
+        252 => colors.cursor orelse colors.foreground,
+        253 => colors.cursor_text orelse colors.background,
+        254 => colors.foreground,
+    };
+}
+
+// Every pixel remains a canonical index until this owned RGBA projection.
+// The same routine services initial indexed admission and later color changes.
+fn recolorIndexed(
+    rgba: []u8,
+    source: []const u8,
+    format: u8,
+    colors: *const properties.ColorState,
+    initial: bool,
+) bool {
+    std.debug.assert(format == 8 or format == 16);
+    const channels: usize = format / 8;
+    std.debug.assert(rgba.len / 4 == source.len / channels and rgba.len % 4 == 0);
+    var changed = false;
+    for (0..rgba.len / 4) |pixel| {
+        const color = indexedColor(colors, source[pixel * channels]);
+        const alpha: u8 = if (format == 8) 255 else source[pixel * channels + 1];
+        const output = rgba[pixel * 4 ..][0..4];
+        // First admission owns uninitialized destination bytes. Never read
+        // them before writing the initial canonical RGBA projection.
+        if (initial or output[0] != color.r or output[1] != color.g or output[2] != color.b or output[3] != alpha) {
+            output.* = .{ color.r, color.g, color.b, alpha };
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+fn indexedUse(source: []const u8, format: u8) [4]u64 {
+    std.debug.assert(format == 8 or format == 16);
+    const stride: usize = format / 8;
+    std.debug.assert(source.len % stride == 0);
+    var used: [4]u64 = @splat(0);
+    for (0..source.len / stride) |pixel| {
+        const index = source[pixel * stride];
+        used[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+    }
+    return used;
+}
 
 const AnimationState = enum { stopped, loading, running };
 
@@ -331,7 +398,10 @@ pub const Plane = struct {
     /// Releases transfer and retained image allocations.
     pub fn deinit(self: *Plane) void {
         self.cancel();
-        for (self.images[0..self.image_count]) |retained| self.allocator.free(retained.pixels);
+        for (self.images[0..self.image_count]) |retained| {
+            self.allocator.free(retained.pixels);
+            if (retained.indexed_pixels) |source| self.allocator.free(source);
+        }
         for (self.frames[0..self.frame_count]) |retained| self.allocator.free(retained.pixels);
         self.* = undefined;
     }
@@ -340,6 +410,51 @@ pub const Plane = struct {
     pub fn cancel(self: *Plane) void {
         if (self.loading) |loading| self.allocator.free(loading.bytes);
         self.loading = null;
+    }
+
+    /// Reprojects retained palette-indexed image pixels only when an indexed
+    /// color they actually use changes. The canonical index bytes stay owned
+    /// here; held native output copies remain immutable across color updates.
+    /// No allocations or image-data replacement are needed for a recolor.
+    pub fn refreshIndexedColors(self: *Plane, prior: *const properties.ColorState, current: *const properties.ColorState) bool {
+        if (self.image_count == 0 or std.meta.eql(prior.*, current.*)) return false;
+        var has_indexed = false;
+        for (self.images[0..self.image_count]) |retained| {
+            if (retained.indexed_pixels != null) {
+                has_indexed = true;
+                break;
+            }
+        }
+        if (!has_indexed) return false;
+        var affected: [4]u64 = @splat(0);
+        for (0..256) |index| {
+            if (!std.meta.eql(indexedColor(prior, @intCast(index)), indexedColor(current, @intCast(index)))) {
+                affected[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+            }
+        }
+        if (std.mem.allEqual(u64, &affected, 0)) return false;
+        var mutated: [max_images]bool = @splat(false);
+        var changed = false;
+        for (self.images[0..self.image_count], 0..) |*retained, index| {
+            const source = retained.indexed_pixels orelse continue;
+            var intersects = false;
+            for (retained.indexed_used, affected) |used, changed_indices| {
+                if (used & changed_indices != 0) {
+                    intersects = true;
+                    break;
+                }
+            }
+            if (!intersects) continue;
+            mutated[index] = recolorIndexed(retained.pixels, source, retained.indexed_format, current, false);
+            changed = changed or mutated[index];
+        }
+        if (!changed) return false;
+        self.advance();
+        self.content_generation = self.next_generation;
+        for (self.images[0..self.image_count], 0..) |*retained, index| {
+            if (mutated[index]) retained.generation = self.next_generation;
+        }
+        return true;
     }
 
     /// Applies one complete `_G` APC body after the leading `G`.
@@ -357,7 +472,7 @@ pub const Plane = struct {
         cell_width: u32,
         cell_height: u32,
     ) std.mem.Allocator.Error!Result {
-        return self.commandWithAnchors(bytes, bank, screen_origin, row, col, cell_width, cell_height, null);
+        return self.commandWithAnchors(bytes, bank, screen_origin, row, col, cell_width, cell_height, null, null);
     }
 
     /// Applies a graphics command with optional text-derived virtual-parent
@@ -373,6 +488,7 @@ pub const Plane = struct {
         cell_width: u32,
         cell_height: u32,
         anchors: ?AnchorSource,
+        colors: ?*const properties.ColorState,
     ) std.mem.Allocator.Error!Result {
         if (bytes.len > max_command_bytes) return .{ .failure = .quota };
         const command_value = parseCommand(bytes) orelse {
@@ -410,7 +526,7 @@ pub const Plane = struct {
             };
         }
         return switch (command_value.action) {
-            't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height),
+            't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors),
             'f' => try self.frame(command_value),
             'a' => self.animate(command_value),
             'c' => try self.composeFrames(command_value),
@@ -437,6 +553,7 @@ pub const Plane = struct {
         col: u16,
         cell_width: u32,
         cell_height: u32,
+        colors: *const properties.ColorState,
     ) std.mem.Allocator.Error!Result {
         errdefer self.cancel();
         if (self.loading == null) {
@@ -444,14 +561,20 @@ pub const Plane = struct {
             if ((command_value.id != 0 and command_value.image_number != 0) or
                 (!is_png and (command_value.width == 0 or command_value.height == 0)) or
                 command_value.width > max_dimension or command_value.height > max_dimension or
-                (command_value.format != 24 and command_value.format != 32 and !is_png))
+                (command_value.format != 8 and command_value.format != 16 and
+                    command_value.format != 24 and command_value.format != 32 and !is_png))
                 return .{
                     .response_id = nonzero(command_value.id),
                     .response_number = nonzero(command_value.image_number),
                     .failure = .invalid,
                     .quiet = command_value.quiet,
                 };
-            const channels: usize = if (command_value.format == 24) 3 else 4;
+            const channels: usize = switch (command_value.format) {
+                8 => 1,
+                16 => 2,
+                24 => 3,
+                else => 4,
+            };
             const pixels = std.math.mul(usize, command_value.width, command_value.height) catch
                 return .{
                     .response_id = nonzero(command_value.id),
@@ -546,7 +669,7 @@ pub const Plane = struct {
                 command_value.id != 0 or command_value.image_number != 0 or command_value.placement_id != 0)
             {
                 self.cancel();
-                return self.transmit(command_value, bank, row, col, cell_width, cell_height);
+                return self.transmit(command_value, bank, row, col, cell_width, cell_height, colors);
             }
             if (command_value.format != 32 or command_value.action != 't' or command_value.compression != 0) {
                 self.cancel();
@@ -646,7 +769,7 @@ pub const Plane = struct {
             self.cancel();
             return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
         }
-        return try self.finish(bank, row, col, cell_width, cell_height);
+        return try self.finish(bank, row, col, cell_width, cell_height, colors);
     }
 
     // -------------------------------------------------------------------------
@@ -666,6 +789,8 @@ pub const Plane = struct {
             self.kittyImageNumberIndex(command_value.image_number)) orelse
             return .{ .failure = .missing, .quiet = command_value.quiet };
         const image_value = self.images[image_index];
+        if (image_value.indexed_pixels != null)
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
         if (command_value.cell_x > 1)
             return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
         const documented_compose_mode: u2 = @intCast(command_value.cell_x);
@@ -729,7 +854,7 @@ pub const Plane = struct {
         continuation.width = 0;
         continuation.height = 0;
         continuation.compression = 0;
-        return self.transmit(continuation, .primary, 0, 0, 1, 1);
+        return self.transmit(continuation, .primary, 0, 0, 1, 1, &default_indexed_colors);
     }
 
     fn finishFrame(self: *Plane, loading: Loading) std.mem.Allocator.Error!Result {
@@ -848,6 +973,8 @@ pub const Plane = struct {
             self.kittyImageNumberIndex(command_value.image_number)) orelse
             return .{ .failure = .missing, .quiet = command_value.quiet };
         const image_value = self.images[image_index];
+        if (image_value.indexed_pixels != null)
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
         const source = self.framePixels(image_value, command_value.rows) orelse
             return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
         const destination_number = std.math.cast(u16, command_value.columns) orelse
@@ -943,6 +1070,7 @@ pub const Plane = struct {
         col: u16,
         cell_width: u32,
         cell_height: u32,
+        colors: *const properties.ColorState,
     ) std.mem.Allocator.Error!Result {
         const loading = self.loading.?;
         self.loading = null;
@@ -1004,7 +1132,18 @@ pub const Plane = struct {
         }
         const rgba = try self.allocator.alloc(u8, rgba_len);
         errdefer self.allocator.free(rgba);
-        if (loading.format == 32) {
+        const is_indexed = loading.format == 8 or loading.format == 16;
+        const indexed_source: ?[]u8 = if (is_indexed)
+            try self.allocator.dupe(u8, loading.bytes[0..loading.used])
+        else
+            null;
+        errdefer if (indexed_source) |source| self.allocator.free(source);
+        if (indexed_source) |source| {
+            std.debug.assert(source.len == rgba_len / 4 * @as(usize, loading.format / 8));
+            // Every admitted indexed image has at least one pixel; initial
+            // projection must initialize the complete fresh RGBA allocation.
+            std.debug.assert(recolorIndexed(rgba, source, loading.format, colors, true));
+        } else if (loading.format == 32) {
             @memcpy(rgba, loading.bytes);
         } else {
             var source: usize = 0;
@@ -1017,7 +1156,9 @@ pub const Plane = struct {
                 rgba[destination + 3] = 255;
             }
         }
-        self.reclaimForKittyAdmission(rgba_len, protected_image_id);
+        const retained_bytes = rgba.len + if (indexed_source) |source| source.len else @as(usize, 0);
+        std.debug.assert(retained_bytes <= max_indexed_retained_bytes);
+        self.reclaimForKittyAdmission(retained_bytes, protected_image_id);
         const admitted_prior_index = if (protected_image_id) |image_id|
             // zig-audit: acknowledge orelse_unreachable
             // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
@@ -1036,6 +1177,10 @@ pub const Plane = struct {
             self.removeFrames(image_id);
             self.storage_bytes -= self.images[index].pixels.len;
             self.allocator.free(self.images[index].pixels);
+            if (self.images[index].indexed_pixels) |source| {
+                self.storage_bytes -= source.len;
+                self.allocator.free(source);
+            }
             self.images[index] = .{
                 .id = image_id,
                 .bank = bank,
@@ -1045,6 +1190,9 @@ pub const Plane = struct {
                 .height = loading.height,
                 .generation = content_generation,
                 .pixels = rgba,
+                .indexed_pixels = indexed_source,
+                .indexed_format = if (is_indexed) loading.format else 0,
+                .indexed_used = if (indexed_source) |source| indexedUse(source, loading.format) else @splat(0),
             };
         } else {
             const image_id = self.allocateImageId();
@@ -1057,10 +1205,13 @@ pub const Plane = struct {
                 .height = loading.height,
                 .generation = content_generation,
                 .pixels = rgba,
+                .indexed_pixels = indexed_source,
+                .indexed_format = if (is_indexed) loading.format else 0,
+                .indexed_used = if (indexed_source) |source| indexedUse(source, loading.format) else @splat(0),
             };
             self.image_count += 1;
         }
-        self.storage_bytes += rgba.len;
+        self.storage_bytes += retained_bytes;
         if (display) {
             const image_id = self.images[admitted_prior_index orelse self.image_count - 1].id;
             planned_placement.?.image_id = image_id;
@@ -1380,7 +1531,10 @@ pub const Plane = struct {
     pub fn reset(self: *Plane) bool {
         self.cancel();
         const changed = self.image_count != 0 or self.placement_count != 0 or self.frame_count != 0;
-        for (self.images[0..self.image_count]) |retained| self.allocator.free(retained.pixels);
+        for (self.images[0..self.image_count]) |retained| {
+            self.allocator.free(retained.pixels);
+            if (retained.indexed_pixels) |source| self.allocator.free(source);
+        }
         for (self.frames[0..self.frame_count]) |retained| self.allocator.free(retained.pixels);
         self.image_count = 0;
         self.placement_count = 0;
@@ -1908,6 +2062,8 @@ pub const Plane = struct {
             self.kittyImageNumberIndex(command_value.image_number)) orelse
             return .{ .failure = .missing, .quiet = command_value.quiet };
         const image_value = &self.images[index];
+        if (image_value.indexed_pixels != null)
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
         const selected_frame: ?u16 = if (command_value.columns == 0)
             null
         else
@@ -2264,10 +2420,12 @@ pub const Plane = struct {
         incoming_bytes: usize,
         protected_image_id: ?u32,
     ) void {
-        std.debug.assert(incoming_bytes <= max_image_bytes);
+        std.debug.assert(incoming_bytes <= max_indexed_retained_bytes);
         const replacement_bytes = if (protected_image_id) |image_id|
             if (self.imageIndex(image_id)) |index|
-                self.images[index].pixels.len + self.frameBytes(image_id)
+                self.images[index].pixels.len +
+                    (if (self.images[index].indexed_pixels) |source| source.len else @as(usize, 0)) +
+                    self.frameBytes(image_id)
             else
                 0
         else
@@ -2387,6 +2545,10 @@ pub const Plane = struct {
         self.removeFrames(removed.id);
         self.storage_bytes -= removed.pixels.len;
         self.allocator.free(removed.pixels);
+        if (removed.indexed_pixels) |source| {
+            self.storage_bytes -= source.len;
+            self.allocator.free(source);
+        }
         self.image_count -= 1;
         if (index != self.image_count) self.images[index] = self.images[self.image_count];
     }
@@ -2806,7 +2968,7 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         if (present & (1 << 22) != 0 and command_value.compression == 'z') try out.flag('o', 'z');
         if (present & (1 << 2) != 0 and
             (command_value.format == 24 or command_value.format == 32 or
-                (action != 'f' and command_value.format == 100)))
+                (action != 'f' and (command_value.format == 8 or command_value.format == 16 or command_value.format == 100))))
             try out.number('f', command_value.format);
         if (present & (1 << 4) != 0 and command_value.width > 0 and command_value.width <= max_dimension)
             try out.number('s', command_value.width);
@@ -5283,7 +5445,7 @@ test "Kitty graphics feature queries return exact advertised keys without changi
     try std.testing.expect(parseCommand("a=q,i=31,e=p,P=4294967296") == null);
     try std.testing.expect(parseCommand("a=q,i=31,e=p,H=-2147483649") == null);
     try std.testing.expectEqualStrings(",e=T,p=2,x=1,w=2,U=1", try formatFeatureQuery("a=q,i=31,e=T,p=2,x=1,w=2,U=1", &output));
-    try std.testing.expectEqualStrings(",e=T", try formatFeatureQuery("a=q,i=31,e=T,f=8,t=f,N=6", &output));
+    try std.testing.expectEqualStrings(",e=T,f=8", try formatFeatureQuery("a=q,i=31,e=T,f=8,t=f,N=6", &output));
     try std.testing.expectEqualStrings("", try formatFeatureQuery("a=q,i=31,e=Z", &output));
     var tiny: [3]u8 = undefined;
     try std.testing.expectError(error.ReplyLimit, formatFeatureQuery("a=q,i=31,e=T", &tiny));
@@ -5360,6 +5522,48 @@ test "Kitty usage hints are bounded advisory no-op metadata" {
 test "static image allocation failure leaves the plane reusable" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationFailure, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, frameAllocationFailure, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, indexedAllocationFailure, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, indexedAllocationFailure, .{true});
+}
+
+fn indexedAllocationFailure(allocator: std.mem.Allocator, starts_indexed: bool) !void {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    const baseline: []const u8 = if (starts_indexed)
+        "a=T,f=16,s=1,v=1,i=72,p=3,C=1,q=2;AoA="
+    else
+        "a=T,f=32,s=1,v=1,i=72,p=3,C=1,q=2;AQIDBA==";
+    try std.testing.expect((try plane.command(baseline, .primary, 0, 0, 0, 1, 1)).changed);
+    const initial_generation = plane.generation();
+    const initial_content = plane.content_generation;
+    const image_id = plane.image(0).?.id;
+    const placement = plane.placement(0).?;
+    const old_bytes = plane.storage_bytes;
+    const prior: [4]u8 = plane.image(0).?.pixels[0..4].*;
+    // Inject each possible allocation failure only into replacement, not
+    // the established old image. Cleanup must be symmetric for RGBA and
+    // indexed index+alpha source ownership.
+    plane.allocator = allocator;
+    defer plane.allocator = std.testing.allocator;
+    const replacement: []const u8 = if (starts_indexed)
+        "a=T,f=32,s=1,v=1,i=72,p=3,C=1,q=2;BQYHCA=="
+    else
+        "a=T,f=16,s=1,v=1,i=72,p=3,C=1,q=2;AoA=";
+    const result = plane.command(replacement, .primary, 0, 0, 0, 1, 1) catch |err| {
+        try std.testing.expectEqual(initial_generation, plane.generation());
+        try std.testing.expectEqual(initial_content, plane.content_generation);
+        try std.testing.expectEqual(old_bytes, plane.storage_bytes);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqual(image_id, plane.image(0).?.id);
+        try std.testing.expectEqualDeep(placement, plane.placement(0).?);
+        try std.testing.expectEqualSlices(u8, &prior, plane.image(0).?.pixels);
+        return err;
+    };
+    try std.testing.expect(result.changed and result.failure == null);
+    try std.testing.expectEqual(image_id, plane.image(0).?.id);
+    try std.testing.expectEqual(placement.identity, plane.placement(0).?.identity);
+    try std.testing.expectEqual(if (starts_indexed) @as(usize, 4) else @as(usize, 6), plane.storage_bytes);
 }
 
 test "Kitty frame capacity rejects the next frame without retained mutation" {

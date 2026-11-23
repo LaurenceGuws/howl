@@ -3238,8 +3238,12 @@ fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
     return switch (command) {
         .push => |index| vt.properties.pushColor(index),
         .pop => |index| restored: {
+            const previous_colors = vt.properties.colors;
             if (!vt.properties.popColor(index)) break :restored false;
             const colors = &vt.properties.colors;
+            // zig-audit: acknowledge discard
+            // reason: A successful color-stack pop already reports semantic mutation; the graphics owner advances its separate image generation if indexed pixels change.
+            _ = vt.graphics.refreshIndexedColors(&previous_colors, colors);
             vt.screen_state.primary.cursor.cursor_color = colors.cursor;
             vt.screen_state.alternate.cursor.cursor_color = colors.cursor;
             vt.screen_state.primary.cursor.cursor_text_color = colors.cursor_text;
@@ -3842,8 +3846,10 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             // cursor overrides masking the new canonical color.
             const cursor_before = vt.properties.colors.cursor;
             const text_before = vt.properties.colors.cursor_text;
+            const previous_colors = vt.properties.colors;
             const semantic_changed = try applySemanticEvent(vt, event);
             const colors = &vt.properties.colors;
+            const image_changed = vt.graphics.refreshIndexedColors(&previous_colors, colors);
             if (!std.meta.eql(cursor_before, colors.cursor)) {
                 vt.screen_state.primary.cursor.cursor_color = colors.cursor;
                 vt.screen_state.alternate.cursor.cursor_color = colors.cursor;
@@ -3852,22 +3858,25 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 vt.screen_state.primary.cursor.cursor_text_color = colors.cursor_text;
                 vt.screen_state.alternate.cursor.cursor_text_color = colors.cursor_text;
             }
-            return semantic_changed;
+            return semantic_changed or image_changed;
         },
         .iterm_set_colors => |payload| {
+            const previous_colors = vt.properties.colors;
             const changed = color_control.applyItermSetColors(
                 &vt.properties.colors,
                 &vt.properties.color_defaults,
                 payload,
             );
+            var image_changed = false;
             if (changed) {
+                image_changed = vt.graphics.refreshIndexedColors(&previous_colors, &vt.properties.colors);
                 // iTerm changes the shared color owner. Old OSC cursor shadows must not mask it.
                 vt.screen_state.primary.cursor.cursor_color = vt.properties.colors.cursor;
                 vt.screen_state.alternate.cursor.cursor_color = vt.properties.colors.cursor;
                 vt.screen_state.primary.cursor.cursor_text_color = vt.properties.colors.cursor_text;
                 vt.screen_state.alternate.cursor.cursor_text_color = vt.properties.colors.cursor_text;
             }
-            return changed;
+            return changed or image_changed;
         },
         .bell,
         .title_and_icon_set,
@@ -5141,6 +5150,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         if (cell) |value| value.width else 1,
         if (cell) |value| value.height else 1,
         anchors,
+        &terminal.properties.colors,
     );
     if (result.feature_query) |query| {
         if (result.quiet != 0) return false;
@@ -7273,8 +7283,12 @@ pub const Terminal = struct {
     pub fn setColorDefaults(self: *Terminal, defaults: ColorDefaults) void {
         self.requireNoPreparedResize();
         if (std.meta.eql(self.properties.color_defaults, defaults)) return;
+        const previous_colors = self.properties.colors;
         self.properties.color_defaults = defaults;
         self.properties.colors = defaults;
+        // zig-audit: acknowledge discard
+        // reason: The host defaults API already advances terminal identity; the indexed image owner advances its own generation if the projected RGBA bytes change.
+        _ = self.graphics.refreshIndexedColors(&previous_colors, &self.properties.colors);
         self.screen_state.primary.cursor.cursor_color = null;
         self.screen_state.alternate.cursor.cursor_color = null;
         self.screen_state.primary.cursor.cursor_text_color = null;

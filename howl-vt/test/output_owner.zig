@@ -258,6 +258,59 @@ test "native image output follows Unicode virtual parent cells with immutable he
     try std.testing.expectEqual(data_revision, owner.observation().images(0).content_generation);
 }
 
+test "native indexed Kitty images refresh palette-derived pixels without changing held graphics" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b[?25l\x1b[2;2H" ++
+        "\x1b_Ga=T,f=8,s=2,v=1,i=91,z=1,C=1,q=2;Afg=\x1b\\" ++
+        "\x1b[3;2H\x1b_Ga=T,f=16,s=2,v=1,i=92,z=1,C=1,q=2;AoD5/w==\x1b\\");
+    try owner.flush();
+    const held = try owner.hold();
+    var holding = true;
+    defer if (holding) release(owner, held);
+    try std.testing.expectEqual(@as(usize, 2), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 2), held.snapshot.graphics.positive.len);
+    const initial_rgba = try a.dupe(u8, held.snapshot.graphics.images[0].pixels);
+    defer a.free(initial_rgba);
+    const initial_alpha = try a.dupe(u8, held.snapshot.graphics.images[1].pixels);
+    defer a.free(initial_alpha);
+    const first_generation = held.snapshot.graphics.images[0].resource.generation;
+    const first_command = held.snapshot.graphics.positive[0];
+    const decoded_before = owner.observation().images(0).content_generation;
+
+    // Recolor terminal-owned image pixels, while the old accepted frame
+    // remains a frozen, caller-pinned copy of the previous palette.
+    try owner.feed("\x1b]4;1;#112233;2;#aabbcc\x1b\\\x1b]10;#445566\x1b\\\x1b]11;#778899\x1b\\");
+    try owner.flush();
+    try std.testing.expect(owner.observation().images(0).content_generation > decoded_before);
+    try std.testing.expectEqualSlices(u8, initial_rgba, held.snapshot.graphics.images[0].pixels);
+    try std.testing.expectEqualSlices(u8, initial_alpha, held.snapshot.graphics.images[1].pixels);
+    try std.testing.expectEqualDeep(first_command, held.snapshot.graphics.positive[0]);
+    try std.testing.expectError(error.LeaseBusy, owner.hold());
+    release(owner, held);
+    holding = false;
+
+    const updated = try owner.hold();
+    try std.testing.expectEqualSlices(u8, &.{ 0x11, 0x22, 0x33, 255, 0x77, 0x88, 0x99, 255 }, updated.snapshot.graphics.images[0].pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0xaa, 0xbb, 0xcc, 128, 0x44, 0x55, 0x66, 255 }, updated.snapshot.graphics.images[1].pixels);
+    try std.testing.expect(@backingInt(updated.snapshot.graphics.images[0].resource.generation) > @backingInt(first_generation));
+    const refreshed_resource = updated.snapshot.graphics.images[0].resource;
+    release(owner, updated);
+
+    // A palette color absent from both images never invalidates the native
+    // image resource even though the terminal's global colors do change.
+    const unchanged = owner.observation().images(0).content_generation;
+    try owner.feed("\x1b]4;17;#123456\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqual(unchanged, owner.observation().images(0).content_generation);
+    const unrelated = try owner.hold();
+    defer release(owner, unrelated);
+    try std.testing.expectEqualDeep(refreshed_resource, unrelated.snapshot.graphics.images[0].resource);
+    try std.testing.expectEqualSlices(u8, &.{ 0x11, 0x22, 0x33, 255, 0x77, 0x88, 0x99, 255 }, unrelated.snapshot.graphics.images[0].pixels);
+}
+
 test "public output OOM preserves held output and retries newer canonical input" {
     const f = try font(12);
     defer f.deinit();

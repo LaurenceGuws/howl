@@ -3793,9 +3793,10 @@ test "terminal: Kitty graphics feature query reports only bounded supported acti
     try std.testing.expectEqualStrings("\x1b_Gi=31,e=t,t=d,o=z,f=24,s=1,v=1,N=1;OK\x1b\\", terminal.replyBytes());
     try consumeReplies(&terminal);
 
-    // Querying unimplemented keys, values and actions cannot claim them.
+    // Indexed transmission is now supported; file medium, U=0, C=0 and
+    // unsupported usage-hint values are still not advertised as features.
     try std.testing.expect((try terminal.feed("\x1b_Ga=q,i=31,e=T,f=8,t=f,U=0,C=0,N=6\x1b\\")).stateChanged());
-    try std.testing.expectEqualStrings("\x1b_Gi=31,e=T;OK\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqualStrings("\x1b_Gi=31,e=T,f=8;OK\x1b\\", terminal.replyBytes());
     try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b_Ga=q,i=31,e=Z,U=1\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings("\x1b_Gi=31;OK\x1b\\", terminal.replyBytes());
@@ -4112,24 +4113,163 @@ test "terminal: canceled Kitty continuation releases transfer without retained m
     try std.testing.expectEqual(@as(u32, 1), terminal.images(0).image(0).?.id);
 }
 
-test "terminal: newer Kitty indexed formats remain explicit rejected admissions" {
+test "terminal: newer Kitty indexed formats reject surplus pixel bytes without leaking image state" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
     for ([_]u8{ 8, 16 }) |format| {
         var buf: [96]u8 = undefined;
         const command = try std.fmt.bufPrint(&buf, "\x1b_Ga=t,f={d},s=1,v=1,i=74;AQIDBA==\x1b\\", .{format});
         try std.testing.expect((try terminal.feed(command)).stateChanged());
-        try std.testing.expectEqualStrings("\x1b_Gi=74;EINVAL\x1b\\", terminal.replyBytes());
+        // Four raw bytes cannot fit either one indexed byte (f=8) or two
+        // indexed-plus-alpha bytes (f=16) for one pixel. Admission remains
+        // bounded and transactionally rejects this malformed source size.
+        try std.testing.expectEqualStrings("\x1b_Gi=74;ENOSPC\x1b\\", terminal.replyBytes());
         try consumeReplies(&terminal);
         try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
         try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
         try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
     }
-    // Unsupported indexed formats cannot suppress later recognized RGBA.
+    // Malformed indexed payloads cannot suppress later valid RGBA.
     try std.testing.expect((try terminal.feed(
         "\x1b_Ga=t,f=32,s=1,v=1,i=75,q=2;AQIDBA==\x1b\\",
     )).stateChanged());
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+}
+
+test "terminal: indexed Kitty pixels follow canonical palette mutations without losing alpha or image identity" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(
+        &terminal,
+        "\x1b[2;1H" ++
+            "\x1b_Ga=T,f=8,s=2,v=1,i=91,C=1,q=2;Afg=\x1b\\" ++
+            "\x1b[3;1H\x1b_Ga=T,f=16,s=2,v=1,i=92,C=1,q=2;AoD5/w==\x1b\\",
+    );
+    const initial = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), initial.imageCount());
+    try std.testing.expectEqual(@as(usize, 2), initial.placementCount());
+    const initial_colors = terminal.presentation();
+    const red = initial_colors.palette[1];
+    const green = initial_colors.palette[2];
+    const bg = initial_colors.background;
+    const fg = initial_colors.foreground;
+    try std.testing.expectEqualSlices(u8, &.{ red.r, red.g, red.b, 255, bg.r, bg.g, bg.b, 255 }, initial.image(0).?.pixels);
+    try std.testing.expectEqualSlices(u8, &.{ green.r, green.g, green.b, 128, fg.r, fg.g, fg.b, 255 }, initial.image(1).?.pixels);
+    const source_id = initial.image(0).?.id;
+    const second_id = initial.image(1).?.id;
+    const geometry_generation = initial.generation;
+
+    try feed(&terminal, "\x1b]4;1;#112233;2;#aabbcc\x1b\\\x1b]10;#445566\x1b\\\x1b]11;#778899\x1b\\");
+    const recolored = terminal.images(0);
+    try std.testing.expectEqual(source_id, recolored.image(0).?.id);
+    try std.testing.expectEqual(second_id, recolored.image(1).?.id);
+    try std.testing.expect(recolored.generation > geometry_generation);
+    try std.testing.expectEqualSlices(u8, &.{ 0x11, 0x22, 0x33, 255, 0x77, 0x88, 0x99, 255 }, recolored.image(0).?.pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0xaa, 0xbb, 0xcc, 128, 0x44, 0x55, 0x66, 255 }, recolored.image(1).?.pixels);
+    const changed = recolored.content_generation;
+    try feed(&terminal, "\x1b]4;1;#112233;2;#aabbcc\x1b\\");
+    try std.testing.expectEqual(changed, terminal.images(0).content_generation);
+
+    var host_defaults = Terminal.ColorDefaults{};
+    host_defaults.palette[1] = .{ .r = 5, .g = 6, .b = 7 };
+    host_defaults.palette[2] = .{ .r = 8, .g = 9, .b = 10 };
+    host_defaults.foreground = .{ .r = 11, .g = 12, .b = 13 };
+    host_defaults.background = .{ .r = 14, .g = 15, .b = 16 };
+    terminal.setColorDefaults(host_defaults);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 255, 14, 15, 16, 255 }, terminal.images(0).image(0).?.pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 8, 9, 10, 128, 11, 12, 13, 255 }, terminal.images(0).image(1).?.pixels);
+}
+
+test "terminal: indexed Kitty zlib, query, stack restore and forbidden animation preserve owned bytes" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(
+        &terminal,
+        "\x1b_Ga=T,f=8,s=2,v=2,i=93,o=z,C=1,q=2;eJxj/PGTCQAE5AH1\x1b\\" ++
+            "\x1b_Ga=T,f=16,s=2,v=1,i=94,o=z,C=1,q=2;eJxjavj5HwAEfQJ7\x1b\\",
+    );
+    const colors = terminal.presentation();
+    const image0 = terminal.images(0).image(0).?;
+    const first = colors.palette[1];
+    const second = colors.palette[2];
+    const bg = colors.background;
+    const fg = colors.foreground;
+    try std.testing.expectEqualSlices(u8, &.{ first.r, first.g, first.b, 255, bg.r, bg.g, bg.b, 255, fg.r, fg.g, fg.b, 255, second.r, second.g, second.b, 255 }, image0.pixels);
+    try std.testing.expectEqualSlices(u8, &.{ second.r, second.g, second.b, 128, fg.r, fg.g, fg.b, 255 }, terminal.images(0).image(1).?.pixels);
+    const identity = terminal.images(0).content_generation;
+
+    // Feature probing validates payloads but never retains or replaces data.
+    try feed(&terminal, "\x1b_Ga=q,f=8,s=1,v=1,i=95;AQ==\x1b\\");
+    try std.testing.expectEqualStrings("\x1b_Gi=95;OK\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(identity, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+
+    // Indexed image frames, animation and composition are not supported by
+    // the pinned newer protocol. All attempts must be silent no-mutation
+    // negative controls when q=2 requests response suppression.
+    for ([_][]const u8{
+        "\x1b_Ga=f,i=93,f=32,s=1,v=1,r=2,q=2;AQIDBA==\x1b\\",
+        "\x1b_Ga=a,i=93,s=3,q=2\x1b\\",
+        "\x1b_Ga=c,i=93,r=1,c=1,q=2\x1b\\",
+        "\x1b_Ga=t,i=96,f=8,s=2,v=1,o=z,q=2;%%\x1b\\",
+    }) |rejected| {
+        try std.testing.expect(!(try terminal.feed(rejected)).stateChanged());
+        try std.testing.expectEqual(identity, terminal.images(0).content_generation);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+        try std.testing.expectEqualSlices(u8, image0.pixels, terminal.images(0).image(0).?.pixels);
+    }
+
+    // A program palette override updates the indexed image, and Kitty's
+    // existing bounded color stack restores it from canonical saved colors.
+    try feed(&terminal, "\x1b]30001\x1b\\\x1b]4;1;#010203\x1b\\");
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 255 }, terminal.images(0).image(0).?.pixels[0..4]);
+    try feed(&terminal, "\x1b]30101\x1b\\");
+    try std.testing.expectEqualSlices(u8, &.{ first.r, first.g, first.b, 255 }, terminal.images(0).image(0).?.pixels[0..4]);
+}
+
+test "terminal: Kitty indexed image special palette slots are live with foreground and background fallbacks" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 12);
+    defer terminal.deinit();
+    var defaults = Terminal.ColorDefaults{};
+    defaults.foreground = .{ .r = 1, .g = 2, .b = 3 };
+    defaults.background = .{ .r = 4, .g = 5, .b = 6 };
+    defaults.selection_background = .{ .r = 7, .g = 8, .b = 9 };
+    defaults.selection_foreground = .{ .r = 10, .g = 11, .b = 12 };
+    defaults.cursor = .{ .r = 13, .g = 14, .b = 15 };
+    defaults.cursor_text = .{ .r = 16, .g = 17, .b = 18 };
+    terminal.setColorDefaults(defaults);
+    try feed(&terminal, "\x1b_Ga=T,f=8,s=8,v=1,i=96,C=1,q=2;+Pn6+/z9/v8=\x1b\\");
+    const image = terminal.images(0).image(0) orelse return error.ImageMissing;
+    try std.testing.expectEqualSlices(u8, &.{ 4, 5, 6, 255, 1, 2, 3, 255, 7, 8, 9, 255, 10, 11, 12, 255, 13, 14, 15, 255, 16, 17, 18, 255, 1, 2, 3, 255, 1, 2, 3, 255 }, image.pixels);
+    // Without optional selected/cursor color choices, documented fallbacks
+    // are the canonical terminal fg/bg, not palette[250..253] or black.
+    defaults.selection_background = null;
+    defaults.selection_foreground = null;
+    defaults.cursor = null;
+    defaults.cursor_text = null;
+    defaults.foreground = .{ .r = 20, .g = 21, .b = 22 };
+    defaults.background = .{ .r = 23, .g = 24, .b = 25 };
+    terminal.setColorDefaults(defaults);
+    const recolored = terminal.images(0).image(0).?.pixels;
+    try std.testing.expectEqualSlices(u8, &.{ 20, 21, 22, 255, 23, 24, 25, 255, 20, 21, 22, 255, 23, 24, 25, 255 }, recolored[8..24]);
+}
+
+test "terminal: Kitty indexed 16-bit transparent pixel remains transparent across palette changes" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    // One byte of SGR palette identity plus an alpha=0 byte. Recoloring
+    // must not replace that opacity with the palette's opaque default.
+    try feed(&terminal, "\x1b_Ga=t,f=16,s=1,v=1,i=97,q=2;AgA=\x1b\\");
+    const before = terminal.images(0).image(0) orelse return error.MissingImage;
+    try std.testing.expectEqual(@as(u8, 0), before.pixels[3]);
+    const source_id = before.id;
+    try feed(&terminal, "\x1b]4;2;#123456\x1b\\");
+    const after = terminal.images(0).image(0) orelse return error.MissingImage;
+    try std.testing.expectEqual(source_id, after.id);
+    try std.testing.expectEqualSlices(u8, &.{ 0x12, 0x34, 0x56, 0 }, after.pixels);
 }
 
 test "terminal: Kitty image number gets stable identity for put reply and deletion" {
