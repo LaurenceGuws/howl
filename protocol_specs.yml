@@ -1,0 +1,3824 @@
+schema: 1
+kind: terminal-protocol-specifications
+as_of: '2026-11-23'
+scope: broad-source-inventory-not-exhaustive
+policy:
+  authority: originating standard or protocol author's published specification
+  conformance: A defined control is not automatically mandatory to implement. In particular, ECMA-48 permits limited conformance to a declared
+    selection (clauses 2.1-2.3). MUST/SHOULD/MAY are used only where the originating document uses that force.
+  measurement: Index source-defined functions and secondary discovery sequences separately. This is not a Howl coverage percentage or implementation
+    mapping.
+  mapping: No Howl implementation or applicability mapping exists in this file. A separately requested future assessment can refer to stable
+    clause identifiers.
+  interoperability: Secondary discovery catalogues do not become normative protocol requirements; trace their true source before declaring
+    a conformance obligation.
+  collisions: compare normative same-wire obligations before any explicit policy adjudication
+  revision: change a document pin deliberately; do not silently follow live references
+specifications:
+  ecma48:
+    title: 'ECMA-48: Control Functions for Coded Character Sets'
+    author: Ecma International
+    authority: standard
+    revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+    scope: Selected common control functions, not all 162 functions in clause 8.3
+    clauses:
+    - id: selection
+      section: 2.1-2.3
+      level: defined
+      wire: identified selection
+      rule: Conformance identifies which functions a device originates or receives, including implicit and explicit default parameters; it
+        does not require every defined function.
+    - id: csi-syntax
+      section: '5.4'
+      level: defined
+      wire: CSI parameters intermediates final
+      rule: Control sequences use a parameter/intermediate/final coded representation; private-use bytes do not redefine standard functions.
+    - id: csi-parameters
+      section: 5.4.1-5.4.3
+      level: defined
+      wire: CSI Pm ; Pm final
+      rule: Numeric parameter strings, omitted parameter substrings and defaults obey the specified control function and mode.
+    - id: c0-bel
+      section: 8.3.3
+      level: defined
+      wire: BEL
+      rule: The bell control is a defined independent C0 control function.
+    - id: c0-bs
+      section: 8.3.5
+      level: defined
+      wire: BS
+      rule: Moves the active position back by one character position along the active line.
+    - id: c0-cr
+      section: 8.3.15
+      level: defined
+      wire: CR
+      rule: Returns the active position to the corresponding line home or line limit according to the movement direction.
+    - id: c0-lf
+      section: 8.3.74
+      level: defined
+      wire: LF
+      rule: Moves the active position to the corresponding position on the next line.
+    - id: c0-ht
+      section: 8.3.60
+      level: defined
+      wire: HT
+      rule: Moves the active position to the next horizontal tabulation stop.
+    - id: c1-csi
+      section: 8.3.16
+      level: defined
+      wire: CSI
+      rule: Introduces a control sequence; seven-bit and eight-bit representations follow the standard coding rules.
+    - id: c1-osc
+      section: 8.3.89
+      level: defined
+      wire: OSC ... ST
+      rule: Introduces an operating-system control string; its contents are not defined by this standard.
+    - id: c1-dcs
+      section: 8.3.27
+      level: defined
+      wire: DCS ... ST
+      rule: Introduces a device control string; private payload protocols require their own source.
+    - id: c1-st
+      section: 8.3.143
+      level: defined
+      wire: ST
+      rule: Terminates an applicable control string.
+    - id: cup
+      section: 8.3.21
+      level: defined
+      wire: CSI Pn ; Pn H
+      rule: Sets active position to the specified line and character position.
+    - id: cuu
+      section: 8.3.22
+      level: defined
+      wire: CSI Pn A
+      rule: Moves the active position upward by the specified number of lines.
+    - id: cud
+      section: 8.3.19
+      level: defined
+      wire: CSI Pn B
+      rule: Moves the active position downward by the specified number of lines.
+    - id: cuf
+      section: 8.3.20
+      level: defined
+      wire: CSI Pn C
+      rule: Moves the active position forward by the specified number of character positions.
+    - id: cub
+      section: 8.3.18
+      level: defined
+      wire: CSI Pn D
+      rule: Moves the active position backward by the specified number of character positions.
+    - id: cha
+      section: 8.3.9
+      level: defined
+      wire: CSI Pn G
+      rule: Sets the active character position within its line.
+    - id: vpa
+      section: 8.3.158
+      level: defined
+      wire: CSI Pn d
+      rule: Sets the active line position.
+    - id: ed
+      section: 8.3.39
+      level: defined
+      wire: CSI Ps J
+      rule: Erases a selected part of the active page according to the parameter.
+    - id: el
+      section: 8.3.41
+      level: defined
+      wire: CSI Ps K
+      rule: Erases a selected part of the active line according to the parameter.
+    - id: ech
+      section: 8.3.38
+      level: defined
+      wire: CSI Pn X
+      rule: Erases a specified number of character positions from the active position.
+    - id: ich
+      section: 8.3.64
+      level: defined
+      wire: CSI Pn @
+      rule: Inserts the specified number of character positions.
+    - id: dch
+      section: 8.3.26
+      level: defined
+      wire: CSI Pn P
+      rule: Deletes the specified number of character positions.
+    - id: il
+      section: 8.3.67
+      level: defined
+      wire: CSI Pn L
+      rule: Inserts lines in the active page.
+    - id: dl
+      section: 8.3.32
+      level: defined
+      wire: CSI Pn M
+      rule: Deletes lines in the active page.
+    - id: su
+      section: 8.3.147
+      level: defined
+      wire: CSI Pn S
+      rule: Scrolls the active page upward by the specified number of lines.
+    - id: sd
+      section: 8.3.113
+      level: defined
+      wire: CSI Pn T
+      rule: Scrolls the active page downward by the specified number of lines.
+    - id: sgr
+      section: 8.3.117
+      level: defined
+      wire: CSI Pm m
+      rule: Selects the graphic rendition attributes applied to subsequently presented text.
+    - id: sm
+      section: 8.3.125
+      level: defined
+      wire: CSI Pm h
+      rule: Sets the specified standard modes.
+    - id: rm
+      section: 8.3.106
+      level: defined
+      wire: CSI Pm l
+      rule: Resets the specified standard modes.
+    - id: dsr
+      section: 8.3.35
+      level: defined
+      wire: CSI Ps n
+      rule: Requests or reports device status as selected by the parameter.
+    - id: cpr
+      section: 8.3.14
+      level: defined
+      wire: CSI Pn ; Pn R
+      rule: Reports the active position in a coded control sequence.
+    - id: rep
+      section: 8.3.103
+      level: defined
+      wire: CSI Pn b
+      rule: Repeats the preceding graphic character according to the count parameter.
+    - id: ris
+      section: 8.3.105
+      level: defined
+      wire: ESC c
+      rule: Resets a receiving device to its initial state.
+    - id: hts
+      section: 8.3.62
+      level: defined
+      wire: HTS
+      rule: Sets a tabulation stop at the active position.
+    - id: tbc
+      section: 8.3.154
+      level: defined
+      wire: CSI Ps g
+      rule: Clears tabulation stops according to the parameter.
+    - id: ack
+      section: 8.3.1
+      level: defined
+      wire: '0x06'
+      rule: ACKNOWLEDGE (ACK); ECMA-48 standardized control function, C0 form (source page 33).
+    - id: apc
+      section: 8.3.2
+      level: defined
+      wire: 0x9F | ESC _
+      rule: APPLICATION PROGRAM COMMAND (APC); ECMA-48 standardized control function, C1 form (source page 33).
+    - id: bph
+      section: 8.3.4
+      level: defined
+      wire: 0x82 | ESC B
+      rule: BREAK PERMITTED HERE (BPH); ECMA-48 standardized control function, C1 form (source page 33).
+    - id: can
+      section: 8.3.6
+      level: defined
+      wire: '0x18'
+      rule: CANCEL (CAN); ECMA-48 standardized control function, C0 form (source page 34).
+    - id: cbt
+      section: 8.3.7
+      level: defined
+      wire: CSI Pn Z
+      rule: CURSOR BACKWARD TABULATION (CBT); ECMA-48 standardized control function, CSI form (source page 34).
+    - id: cch
+      section: 8.3.8
+      level: defined
+      wire: 0x94 | ESC T
+      rule: CANCEL CHARACTER (CCH); ECMA-48 standardized control function, C1 form (source page 34).
+    - id: cht
+      section: 8.3.10
+      level: defined
+      wire: CSI Pn I
+      rule: CURSOR FORWARD TABULATION (CHT); ECMA-48 standardized control function, CSI form (source page 34).
+    - id: cmd
+      section: 8.3.11
+      level: defined
+      wire: ESC d
+      rule: CODING METHOD DELIMITER (CMD); ECMA-48 standardized control function, ESC form (source page 34).
+    - id: cnl
+      section: 8.3.12
+      level: defined
+      wire: CSI Pn E
+      rule: CURSOR NEXT LINE (CNL); ECMA-48 standardized control function, CSI form (source page 35).
+    - id: cpl
+      section: 8.3.13
+      level: defined
+      wire: CSI Pn F
+      rule: CURSOR PRECEDING LINE (CPL); ECMA-48 standardized control function, CSI form (source page 35).
+    - id: ctc
+      section: 8.3.17
+      level: defined
+      wire: CSI Ps... W
+      rule: CURSOR TABULATION CONTROL (CTC); ECMA-48 standardized control function, CSI form (source page 36).
+    - id: cvt
+      section: 8.3.23
+      level: defined
+      wire: CSI Pn Y
+      rule: CURSOR LINE TABULATION (CVT); ECMA-48 standardized control function, CSI form (source page 37).
+    - id: da
+      section: 8.3.24
+      level: defined
+      wire: CSI Ps c
+      rule: DEVICE ATTRIBUTES (DA); ECMA-48 standardized control function, CSI form (source page 37).
+    - id: daq
+      section: 8.3.25
+      level: defined
+      wire: CSI Ps... o
+      rule: DEFINE AREA QUALIFICATION (DAQ); ECMA-48 standardized control function, CSI form (source page 37).
+    - id: dc1
+      section: 8.3.28
+      level: defined
+      wire: '0x11'
+      rule: DEVICE CONTROL ONE (DC1); ECMA-48 standardized control function, C0 form (source page 38).
+    - id: dc2
+      section: 8.3.29
+      level: defined
+      wire: '0x12'
+      rule: DEVICE CONTROL TWO (DC2); ECMA-48 standardized control function, C0 form (source page 38).
+    - id: dc3
+      section: 8.3.30
+      level: defined
+      wire: '0x13'
+      rule: DEVICE CONTROL THREE (DC3); ECMA-48 standardized control function, C0 form (source page 39).
+    - id: dc4
+      section: 8.3.31
+      level: defined
+      wire: '0x14'
+      rule: DEVICE CONTROL FOUR (DC4); ECMA-48 standardized control function, C0 form (source page 39).
+    - id: dle
+      section: 8.3.33
+      level: defined
+      wire: '0x10'
+      rule: DATA LINK ESCAPE (DLE); ECMA-48 standardized control function, C0 form (source page 39).
+    - id: dmi
+      section: 8.3.34
+      level: defined
+      wire: ESC `
+      rule: DISABLE MANUAL INPUT (DMI); ECMA-48 standardized control function, ESC form (source page 39).
+    - id: dta
+      section: 8.3.36
+      level: defined
+      wire: CSI Pn1;Pn2 SP T
+      rule: DIMENSION TEXT AREA (DTA); ECMA-48 standardized control function, CSI form (source page 40).
+    - id: ea
+      section: 8.3.37
+      level: defined
+      wire: CSI Ps O
+      rule: ERASE IN AREA (EA); ECMA-48 standardized control function, CSI form (source page 40).
+    - id: ef
+      section: 8.3.40
+      level: defined
+      wire: CSI Ps N
+      rule: ERASE IN FIELD (EF); ECMA-48 standardized control function, CSI form (source page 41).
+    - id: em
+      section: 8.3.42
+      level: defined
+      wire: '0x19'
+      rule: END OF MEDIUM (EM); ECMA-48 standardized control function, C0 form (source page 42).
+    - id: emi
+      section: 8.3.43
+      level: defined
+      wire: ESC b
+      rule: ENABLE MANUAL INPUT (EMI); ECMA-48 standardized control function, ESC form (source page 42).
+    - id: enq
+      section: 8.3.44
+      level: defined
+      wire: '0x05'
+      rule: ENQUIRY (ENQ); ECMA-48 standardized control function, C0 form (source page 43).
+    - id: eot
+      section: 8.3.45
+      level: defined
+      wire: '0x04'
+      rule: END OF TRANSMISSION (EOT); ECMA-48 standardized control function, C0 form (source page 43).
+    - id: epa
+      section: 8.3.46
+      level: defined
+      wire: 0x97 | ESC W
+      rule: END OF GUARDED AREA (EPA); ECMA-48 standardized control function, C1 form (source page 43).
+    - id: esa
+      section: 8.3.47
+      level: defined
+      wire: 0x87 | ESC G
+      rule: END OF SELECTED AREA (ESA); ECMA-48 standardized control function, C1 form (source page 43).
+    - id: esc
+      section: 8.3.48
+      level: defined
+      wire: '0x1B'
+      rule: ESCAPE (ESC); ECMA-48 standardized control function, C0 form (source page 43).
+    - id: etb
+      section: 8.3.49
+      level: defined
+      wire: '0x17'
+      rule: END OF TRANSMISSION BLOCK (ETB); ECMA-48 standardized control function, C0 form (source page 43).
+    - id: etx
+      section: 8.3.50
+      level: defined
+      wire: '0x03'
+      rule: END OF TEXT (ETX); ECMA-48 standardized control function, C0 form (source page 43).
+    - id: ff
+      section: 8.3.51
+      level: defined
+      wire: '0x0C'
+      rule: FORM FEED (FF); ECMA-48 standardized control function, C0 form (source page 44).
+    - id: fnk
+      section: 8.3.52
+      level: defined
+      wire: CSI Pn SP W
+      rule: FUNCTION KEY (FNK); ECMA-48 standardized control function, CSI form (source page 44).
+    - id: fnt
+      section: 8.3.53
+      level: defined
+      wire: CSI Ps1;Ps2 SP D
+      rule: FONT SELECTION (FNT); ECMA-48 standardized control function, CSI form (source page 44).
+    - id: gcc
+      section: 8.3.54
+      level: defined
+      wire: CSI Ps SP _
+      rule: GRAPHIC CHARACTER COMBINATION (GCC); ECMA-48 standardized control function, CSI form (source page 44).
+    - id: gsm
+      section: 8.3.55
+      level: defined
+      wire: CSI Pn1;Pn2 SP B
+      rule: GRAPHIC SIZE MODIFICATION (GSM); ECMA-48 standardized control function, CSI form (source page 45).
+    - id: gss
+      section: 8.3.56
+      level: defined
+      wire: CSI Pn SP C
+      rule: GRAPHIC SIZE SELECTION (GSS); ECMA-48 standardized control function, CSI form (source page 45).
+    - id: hpa
+      section: 8.3.57
+      level: defined
+      wire: CSI Pn `
+      rule: CHARACTER POSITION ABSOLUTE (HPA); ECMA-48 standardized control function, CSI form (source page 45).
+    - id: hpb
+      section: 8.3.58
+      level: defined
+      wire: CSI Pn j
+      rule: CHARACTER POSITION BACKWARD (HPB); ECMA-48 standardized control function, CSI form (source page 45).
+    - id: hpr
+      section: 8.3.59
+      level: defined
+      wire: CSI Pn a
+      rule: CHARACTER POSITION FORWARD (HPR); ECMA-48 standardized control function, CSI form (source page 45).
+    - id: htj
+      section: 8.3.61
+      level: defined
+      wire: 0x89 | ESC I
+      rule: CHARACTER TABULATION WITH JUSTIFICATION (HTJ); ECMA-48 standardized control function, C1 form (source page 46).
+    - id: hvp
+      section: 8.3.63
+      level: defined
+      wire: CSI Pn1;Pn2 f
+      rule: CHARACTER AND LINE POSITION (HVP); ECMA-48 standardized control function, CSI form (source page 46).
+    - id: idcs
+      section: 8.3.65
+      level: defined
+      wire: CSI Ps SP O
+      rule: IDENTIFY DEVICE CONTROL STRING (IDCS); ECMA-48 standardized control function, CSI form (source page 47).
+    - id: igs
+      section: 8.3.66
+      level: defined
+      wire: CSI Ps SP M
+      rule: IDENTIFY GRAPHIC SUBREPERTOIRE (IGS); ECMA-48 standardized control function, CSI form (source page 47).
+    - id: int
+      section: 8.3.68
+      level: defined
+      wire: ESC a
+      rule: INTERRUPT (INT); ECMA-48 standardized control function, ESC form (source page 48).
+    - id: is1
+      section: 8.3.69
+      level: defined
+      wire: '0x1F'
+      rule: INFORMATION SEPARATOR ONE (US - UNIT SEPARATOR) (IS1); ECMA-48 standardized control function, C0 form (source page 48).
+    - id: is2
+      section: 8.3.70
+      level: defined
+      wire: '0x1E'
+      rule: INFORMATION SEPARATOR TWO (RS - RECORD SEPARATOR) (IS2); ECMA-48 standardized control function, C0 form (source page 48).
+    - id: is3
+      section: 8.3.71
+      level: defined
+      wire: '0x1D'
+      rule: INFORMATION SEPARATOR THREE (GS - GROUP SEPARATOR) (IS3); ECMA-48 standardized control function, C0 form (source page 48).
+    - id: is4
+      section: 8.3.72
+      level: defined
+      wire: '0x1C'
+      rule: INFORMATION SEPARATOR FOUR (FS - FILE SEPARATOR) (IS4); ECMA-48 standardized control function, C0 form (source page 48).
+    - id: jfy
+      section: 8.3.73
+      level: defined
+      wire: CSI Ps... SP F
+      rule: JUSTIFY (JFY); ECMA-48 standardized control function, CSI form (source page 48).
+    - id: ls0
+      section: 8.3.75
+      level: defined
+      wire: '0x0F'
+      rule: LOCKING-SHIFT ZERO (LS0); ECMA-48 standardized control function, C0 form (source page 49).
+    - id: ls1
+      section: 8.3.76
+      level: defined
+      wire: '0x0E'
+      rule: LOCKING-SHIFT ONE (LS1); ECMA-48 standardized control function, C0 form (source page 49).
+    - id: ls1r
+      section: 8.3.77
+      level: defined
+      wire: ESC ~
+      rule: LOCKING-SHIFT ONE RIGHT (LS1R); ECMA-48 standardized control function, ESC form (source page 49).
+    - id: ls2
+      section: 8.3.78
+      level: defined
+      wire: ESC n
+      rule: LOCKING-SHIFT TWO (LS2); ECMA-48 standardized control function, ESC form (source page 49).
+    - id: ls2r
+      section: 8.3.79
+      level: defined
+      wire: ESC }
+      rule: LOCKING-SHIFT TWO RIGHT (LS2R); ECMA-48 standardized control function, ESC form (source page 49).
+    - id: ls3
+      section: 8.3.80
+      level: defined
+      wire: ESC o
+      rule: LOCKING-SHIFT THREE (LS3); ECMA-48 standardized control function, ESC form (source page 50).
+    - id: ls3r
+      section: 8.3.81
+      level: defined
+      wire: ESC |
+      rule: LOCKING-SHIFT THREE RIGHT (LS3R); ECMA-48 standardized control function, ESC form (source page 50).
+    - id: mc
+      section: 8.3.82
+      level: defined
+      wire: CSI Ps i
+      rule: MEDIA COPY (MC); ECMA-48 standardized control function, CSI form (source page 50).
+    - id: mw
+      section: 8.3.83
+      level: defined
+      wire: 0x95 | ESC U
+      rule: MESSAGE WAITING (MW); ECMA-48 standardized control function, C1 form (source page 50).
+    - id: nak
+      section: 8.3.84
+      level: defined
+      wire: '0x15'
+      rule: NEGATIVE ACKNOWLEDGE (NAK); ECMA-48 standardized control function, C0 form (source page 50).
+    - id: nbh
+      section: 8.3.85
+      level: defined
+      wire: 0x83 | ESC C
+      rule: NO BREAK HERE (NBH); ECMA-48 standardized control function, C1 form (source page 50).
+    - id: nel
+      section: 8.3.86
+      level: defined
+      wire: 0x85 | ESC E
+      rule: NEXT LINE (NEL); ECMA-48 standardized control function, C1 form (source page 51).
+    - id: np
+      section: 8.3.87
+      level: defined
+      wire: CSI Pn U
+      rule: NEXT PAGE (NP); ECMA-48 standardized control function, CSI form (source page 51).
+    - id: nul
+      section: 8.3.88
+      level: defined
+      wire: '0x00'
+      rule: NULL (NUL); ECMA-48 standardized control function, C0 form (source page 51).
+    - id: pec
+      section: 8.3.90
+      level: defined
+      wire: CSI Ps SP Z
+      rule: PRESENTATION EXPAND OR CONTRACT (PEC); ECMA-48 standardized control function, CSI form (source page 51).
+    - id: pfs
+      section: 8.3.91
+      level: defined
+      wire: CSI Ps SP J
+      rule: PAGE FORMAT SELECTION (PFS); ECMA-48 standardized control function, CSI form (source page 52).
+    - id: pld
+      section: 8.3.92
+      level: defined
+      wire: 0x8B | ESC K
+      rule: PARTIAL LINE FORWARD (PLD); ECMA-48 standardized control function, C1 form (source page 52).
+    - id: plu
+      section: 8.3.93
+      level: defined
+      wire: 0x8C | ESC L
+      rule: PARTIAL LINE BACKWARD (PLU); ECMA-48 standardized control function, C1 form (source page 53).
+    - id: pm
+      section: 8.3.94
+      level: defined
+      wire: 0x9E | ESC ^
+      rule: PRIVACY MESSAGE (PM); ECMA-48 standardized control function, C1 form (source page 53).
+    - id: pp
+      section: 8.3.95
+      level: defined
+      wire: CSI Pn V
+      rule: PRECEDING PAGE (PP); ECMA-48 standardized control function, CSI form (source page 53).
+    - id: ppa
+      section: 8.3.96
+      level: defined
+      wire: CSI Pn SP P
+      rule: PAGE POSITION ABSOLUTE (PPA); ECMA-48 standardized control function, CSI form (source page 53).
+    - id: ppb
+      section: 8.3.97
+      level: defined
+      wire: CSI Pn SP R
+      rule: PAGE POSITION BACKWARD (PPB); ECMA-48 standardized control function, CSI form (source page 53).
+    - id: ppr
+      section: 8.3.98
+      level: defined
+      wire: CSI Pn SP Q
+      rule: PAGE POSITION FORWARD (PPR); ECMA-48 standardized control function, CSI form (source page 53).
+    - id: ptx
+      section: 8.3.99
+      level: defined
+      wire: CSI Ps \
+      rule: PARALLEL TEXTS (PTX); ECMA-48 standardized control function, CSI form (source page 53).
+    - id: pu1
+      section: 8.3.100
+      level: defined
+      wire: 0x91 | ESC Q
+      rule: PRIVATE USE ONE (PU1); ECMA-48 standardized control function, C1 form (source page 54).
+    - id: pu2
+      section: 8.3.101
+      level: defined
+      wire: 0x92 | ESC R
+      rule: PRIVATE USE TWO (PU2); ECMA-48 standardized control function, C1 form (source page 54).
+    - id: quad
+      section: 8.3.102
+      level: defined
+      wire: CSI Ps... SP H
+      rule: QUAD (QUAD); ECMA-48 standardized control function, CSI form (source page 55).
+    - id: ri
+      section: 8.3.104
+      level: defined
+      wire: 0x8D | ESC M
+      rule: REVERSE LINE FEED (RI); ECMA-48 standardized control function, C1 form (source page 55).
+    - id: sacs
+      section: 8.3.107
+      level: defined
+      wire: CSI Pn SP \
+      rule: SET ADDITIONAL CHARACTER SEPARATION (SACS); ECMA-48 standardized control function, CSI form (source page 56).
+    - id: sapv
+      section: 8.3.108
+      level: defined
+      wire: CSI Ps... SP ]
+      rule: SELECT ALTERNATIVE PRESENTATION VARIANTS (SAPV); ECMA-48 standardized control function, CSI form (source page 57).
+    - id: sci
+      section: 8.3.109
+      level: defined
+      wire: 0x9A | ESC Z
+      rule: SINGLE CHARACTER INTRODUCER (SCI); ECMA-48 standardized control function, C1 form (source page 58).
+    - id: sco
+      section: 8.3.110
+      level: defined
+      wire: CSI Ps SP e
+      rule: SELECT CHARACTER ORIENTATION (SCO); ECMA-48 standardized control function, CSI form (source page 58).
+    - id: scp
+      section: 8.3.111
+      level: defined
+      wire: CSI Ps1;Ps2 SP k
+      rule: SELECT CHARACTER PATH (SCP); ECMA-48 standardized control function, CSI form (source page 58).
+    - id: scs
+      section: 8.3.112
+      level: defined
+      wire: CSI Pn SP g
+      rule: SET CHARACTER SPACING (SCS); ECMA-48 standardized control function, CSI form (source page 59).
+    - id: sds
+      section: 8.3.114
+      level: defined
+      wire: CSI Ps ]
+      rule: START DIRECTED STRING (SDS); ECMA-48 standardized control function, CSI form (source page 59).
+    - id: see
+      section: 8.3.115
+      level: defined
+      wire: CSI Ps Q
+      rule: SELECT EDITING EXTENT (SEE); ECMA-48 standardized control function, CSI form (source page 60).
+    - id: sef
+      section: 8.3.116
+      level: defined
+      wire: CSI Ps1;Ps2 SP Y
+      rule: SHEET EJECT AND FEED (SEF); ECMA-48 standardized control function, CSI form (source page 60).
+    - id: shs
+      section: 8.3.118
+      level: defined
+      wire: CSI Ps SP K
+      rule: SELECT CHARACTER SPACING (SHS); ECMA-48 standardized control function, CSI form (source page 63).
+    - id: si
+      section: 8.3.119
+      level: defined
+      wire: '0x0F'
+      rule: SHIFT-IN (SI); ECMA-48 standardized control function, C0 form (source page 63).
+    - id: simd
+      section: 8.3.120
+      level: defined
+      wire: CSI Ps ^
+      rule: SELECT IMPLICIT MOVEMENT DIRECTION (SIMD); ECMA-48 standardized control function, CSI form (source page 63).
+    - id: sl
+      section: 8.3.121
+      level: defined
+      wire: CSI Pn SP @
+      rule: SCROLL LEFT (SL); ECMA-48 standardized control function, CSI form (source page 63).
+    - id: slh
+      section: 8.3.122
+      level: defined
+      wire: CSI Pn SP U
+      rule: SET LINE HOME (SLH); ECMA-48 standardized control function, CSI form (source page 64).
+    - id: sll
+      section: 8.3.123
+      level: defined
+      wire: CSI Pn SP V
+      rule: SET LINE LIMIT (SLL); ECMA-48 standardized control function, CSI form (source page 64).
+    - id: sls
+      section: 8.3.124
+      level: defined
+      wire: CSI Pn SP h
+      rule: SET LINE SPACING (SLS); ECMA-48 standardized control function, CSI form (source page 64).
+    - id: so
+      section: 8.3.126
+      level: defined
+      wire: '0x0E'
+      rule: SHIFT-OUT (SO); ECMA-48 standardized control function, C0 form (source page 65).
+    - id: soh
+      section: 8.3.127
+      level: defined
+      wire: '0x01'
+      rule: START OF HEADING (SOH); ECMA-48 standardized control function, C0 form (source page 65).
+    - id: sos
+      section: 8.3.128
+      level: defined
+      wire: 0x98 | ESC X
+      rule: START OF STRING (SOS); ECMA-48 standardized control function, C1 form (source page 66).
+    - id: spa
+      section: 8.3.129
+      level: defined
+      wire: 0x96 | ESC V
+      rule: START OF GUARDED AREA (SPA); ECMA-48 standardized control function, C1 form (source page 66).
+    - id: spd
+      section: 8.3.130
+      level: defined
+      wire: CSI Ps1;Ps2 SP S
+      rule: SELECT PRESENTATION DIRECTIONS (SPD); ECMA-48 standardized control function, CSI form (source page 66).
+    - id: sph
+      section: 8.3.131
+      level: defined
+      wire: CSI Pn SP i
+      rule: SET PAGE HOME (SPH); ECMA-48 standardized control function, CSI form (source page 67).
+    - id: spi
+      section: 8.3.132
+      level: defined
+      wire: CSI Pn1;Pn2 SP G
+      rule: SPACING INCREMENT (SPI); ECMA-48 standardized control function, CSI form (source page 67).
+    - id: spl
+      section: 8.3.133
+      level: defined
+      wire: CSI Pn SP j
+      rule: SET PAGE LIMIT (SPL); ECMA-48 standardized control function, CSI form (source page 68).
+    - id: spqr
+      section: 8.3.134
+      level: defined
+      wire: CSI Ps SP X
+      rule: SELECT PRINT QUALITY AND RAPIDITY (SPQR); ECMA-48 standardized control function, CSI form (source page 68).
+    - id: sr
+      section: 8.3.135
+      level: defined
+      wire: CSI Pn SP A
+      rule: SCROLL RIGHT (SR); ECMA-48 standardized control function, CSI form (source page 68).
+    - id: srcs
+      section: 8.3.136
+      level: defined
+      wire: CSI Pn SP f
+      rule: SET REDUCED CHARACTER SEPARATION (SRCS); ECMA-48 standardized control function, CSI form (source page 68).
+    - id: srs
+      section: 8.3.137
+      level: defined
+      wire: CSI Ps [
+      rule: START REVERSED STRING (SRS); ECMA-48 standardized control function, CSI form (source page 69).
+    - id: ssa
+      section: 8.3.138
+      level: defined
+      wire: 0x86 | ESC F
+      rule: START OF SELECTED AREA (SSA); ECMA-48 standardized control function, C1 form (source page 69).
+    - id: ssu
+      section: 8.3.139
+      level: defined
+      wire: CSI Ps SP I
+      rule: SELECT SIZE UNIT (SSU); ECMA-48 standardized control function, CSI form (source page 69).
+    - id: ssw
+      section: 8.3.140
+      level: defined
+      wire: CSI Pn SP [
+      rule: SET SPACE WIDTH (SSW); ECMA-48 standardized control function, CSI form (source page 70).
+    - id: ss2
+      section: 8.3.141
+      level: defined
+      wire: 0x8E | ESC N
+      rule: SINGLE-SHIFT TWO (SS2); ECMA-48 standardized control function, C1 form (source page 70).
+    - id: ss3
+      section: 8.3.142
+      level: defined
+      wire: 0x8F | ESC O
+      rule: SINGLE-SHIFT THREE (SS3); ECMA-48 standardized control function, C1 form (source page 70).
+    - id: stab
+      section: 8.3.144
+      level: defined
+      wire: CSI Ps SP ^
+      rule: SELECTIVE TABULATION (STAB); ECMA-48 standardized control function, CSI form (source page 71).
+    - id: sts
+      section: 8.3.145
+      level: defined
+      wire: 0x93 | ESC S
+      rule: SET TRANSMIT STATE (STS); ECMA-48 standardized control function, C1 form (source page 71).
+    - id: stx
+      section: 8.3.146
+      level: defined
+      wire: '0x02'
+      rule: START OF TEXT (STX); ECMA-48 standardized control function, C0 form (source page 71).
+    - id: sub
+      section: 8.3.148
+      level: defined
+      wire: '0x1A'
+      rule: SUBSTITUTE (SUB); ECMA-48 standardized control function, C0 form (source page 71).
+    - id: svs
+      section: 8.3.149
+      level: defined
+      wire: CSI Ps SP L
+      rule: SELECT LINE SPACING (SVS); ECMA-48 standardized control function, CSI form (source page 71).
+    - id: syn
+      section: 8.3.150
+      level: defined
+      wire: '0x16'
+      rule: SYNCHRONOUS IDLE (SYN); ECMA-48 standardized control function, C0 form (source page 72).
+    - id: tac
+      section: 8.3.151
+      level: defined
+      wire: CSI Pn SP b
+      rule: TABULATION ALIGNED CENTRED (TAC); ECMA-48 standardized control function, CSI form (source page 72).
+    - id: tale
+      section: 8.3.152
+      level: defined
+      wire: CSI Pn SP a
+      rule: TABULATION ALIGNED LEADING EDGE (TALE); ECMA-48 standardized control function, CSI form (source page 72).
+    - id: tate
+      section: 8.3.153
+      level: defined
+      wire: CSI Pn SP `
+      rule: TABULATION ALIGNED TRAILING EDGE (TATE); ECMA-48 standardized control function, CSI form (source page 72).
+    - id: tcc
+      section: 8.3.155
+      level: defined
+      wire: CSI Pn1;Pn2 SP c
+      rule: TABULATION CENTRED ON CHARACTER (TCC); ECMA-48 standardized control function, CSI form (source page 73).
+    - id: tsr
+      section: 8.3.156
+      level: defined
+      wire: CSI Pn SP d
+      rule: TABULATION STOP REMOVE (TSR); ECMA-48 standardized control function, CSI form (source page 73).
+    - id: tss
+      section: 8.3.157
+      level: defined
+      wire: CSI Pn SP E
+      rule: THIN SPACE SPECIFICATION (TSS); ECMA-48 standardized control function, CSI form (source page 73).
+    - id: vpb
+      section: 8.3.159
+      level: defined
+      wire: CSI Pn k
+      rule: LINE POSITION BACKWARD (VPB); ECMA-48 standardized control function, CSI form (source page 74).
+    - id: vpr
+      section: 8.3.160
+      level: defined
+      wire: CSI Pn e
+      rule: LINE POSITION FORWARD (VPR); ECMA-48 standardized control function, CSI form (source page 74).
+    - id: vt
+      section: 8.3.161
+      level: defined
+      wire: '0x0B'
+      rule: LINE TABULATION (VT); ECMA-48 standardized control function, C0 form (source page 74).
+    - id: vts
+      section: 8.3.162
+      level: defined
+      wire: 0x8A | ESC J
+      rule: LINE TABULATION SET (VTS); ECMA-48 standardized control function, C1 form (source page 74).
+    - id: mode-bdsm
+      section: 7.2.1
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: BI-DIRECTIONAL SUPPORT MODE (BDSM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-crm
+      section: 7.2.2
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: CONTROL REPRESENTATION MODE (CRM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-dcsm
+      section: 7.2.3
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: DEVICE COMPONENT SELECT MODE (DCSM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-erm
+      section: 7.2.4
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: ERASURE MODE (ERM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-feam
+      section: 7.2.5
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: FORMAT EFFECTOR ACTION MODE (FEAM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-fetm
+      section: 7.2.6
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: FORMAT EFFECTOR TRANSFER MODE (FETM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-gatm
+      section: 7.2.7
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: GUARDED AREA TRANSFER MODE (GATM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-grcm
+      section: 7.2.8
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: GRAPHIC RENDITION COMBINATION MODE (GRCM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-hem
+      section: 7.2.9
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: CHARACTER EDITING MODE (HEM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-irm
+      section: 7.2.10
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: INSERTION REPLACEMENT MODE (IRM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-kam
+      section: 7.2.11
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: KEYBOARD ACTION MODE (KAM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-matm
+      section: 7.2.12
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: MULTIPLE AREA TRANSFER MODE (MATM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-pum
+      section: 7.2.13
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: POSITIONING UNIT MODE (PUM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-satm
+      section: 7.2.14
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: SELECTED AREA TRANSFER MODE (SATM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-srm
+      section: 7.2.15
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: SEND/RECEIVE MODE (SRM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-srtm
+      section: 7.2.16
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: STATUS REPORT TRANSFER MODE (SRTM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-tsm
+      section: 7.2.17
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: TABULATION STOP MODE (TSM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-ttm
+      section: 7.2.18
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: TRANSFER TERMINATION MODE (TTM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-vem
+      section: 7.2.19
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: LINE EDITING MODE (VEM); standard mode selection; see section for exact mode value and effects.
+    - id: mode-zdm
+      section: 7.2.20
+      level: defined
+      wire: CSI Pm h / CSI Pm l
+      rule: ZERO DEFAULT MODE (ZDM); standard mode selection; see section for exact mode value and effects.
+  osc8:
+    title: Hyperlinks in Terminal Emulators (OSC 8)
+    author: Egmont Koblinger, VTE/iTerm2 collaboration
+    authority: protocol-author
+    revision: 2017 proposal, maintained clarification 2025-03-24
+    url: https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
+    scope: OSC 8 grammar, cell association and URI policy; no implementation-specific length limits
+    clauses:
+    - id: open
+      section: The escape sequence
+      level: defined
+      wire: OSC 8 ; params ; URI ST
+      rule: Subsequently painted cells receive the declared hyperlink URI until the link is closed or replaced.
+    - id: close
+      section: The escape sequence
+      level: defined
+      wire: OSC 8 ; ; ST
+      rule: An empty URI closes the current hyperlink association.
+    - id: id
+      section: The escape sequence
+      level: defined
+      wire: id=value
+      rule: The optional id parameter distinguishes semantic hyperlink runs; unrecognized parameters are available for future extension.
+    - id: uri
+      section: The escape sequence
+      level: defined
+      wire: URI
+      rule: The hyperlink target is URI-encoded; permitted schemes and launch action are host policy, not a protocol guarantee.
+    - id: file-host
+      section: file:// URIs
+      level: defined
+      wire: file://host/path
+      rule: File links carry a hostname; a receiver must not silently treat a foreign-host file URI as a local file.
+  rex_status:
+    title: Rex Program Status Protocol (OSC 7501)
+    author: Mitchell Hashimoto / Rex
+    authority: protocol-author
+    revision: 0.4, 2026-10-10
+    url: https://www.superlogical.com/rex/docs/build/program-status
+    scope: Complete numbered OSC 7501 protocol sections; host UI is intentionally unspecified
+    clauses:
+    - id: syntax
+      section: Syntax
+      level: defined
+      wire: OSC 7501 ; key=value[:key=value...] ST
+      rule: A report is colon-delimited lowercase key=value pairs using the specified value alphabet.
+    - id: unknown-keys
+      section: Syntax
+      level: must
+      wire: unknown=...
+      rule: Ignore unknown keys so later revisions remain extensible; repeated known keys use their last value.
+    - id: invalid-report
+      section: Syntax
+      level: must
+      wire: invalid/base64/control-text
+      rule: Discard a whole report if bounds, base64 decoding or decoded text control-character restrictions are violated.
+    - id: record-update
+      section: Records and ids
+      level: defined
+      wire: id=segment[/segment...]
+      rule: One record per id, absent id addresses the root, and each accepted report replaces rather than merges that record.
+    - id: id-rejection
+      section: Records and ids
+      level: defined
+      wire: malformed id
+      rule: Reject a report with an invalid id instead of falling back to the root record.
+    - id: tree-clear
+      section: Records and ids / States
+      level: must
+      wire: state=clear[:id=...]
+      rule: Clear the addressed record and its descendants; clearing with no id removes all records.
+    - id: states
+      section: States
+      level: defined
+      wire: state=idle|working|done|blocked|error
+      rule: The five states have distinct meanings; unknown or absent states invalidate the entire report.
+    - id: lifecycle
+      section: States
+      level: must
+      wire: process-exited / OSC 133 A
+      rule: Drop working and blocked records on process exit or new shell prompt; preserve done and error records.
+    - id: no-heartbeat
+      section: States
+      level: must
+      wire: (no sequence)
+      rule: Do not require periodic re-reporting just to keep existing records alive.
+    - id: kind
+      section: Keys
+      level: defined
+      wire: kind=permission|question|auth
+      rule: Blocked records may describe which kind of user interaction is required; other states ignore kind.
+    - id: progress
+      section: Keys
+      level: defined
+      wire: progress=0..100
+      rule: Working and blocked records may carry bounded percentage; absence means indeterminate progress.
+    - id: inherited-app
+      section: Keys
+      level: must
+      wire: app=name
+      rule: Use the nearest ancestor app identity when a child record has no app of its own.
+    - id: text
+      section: Keys
+      level: must
+      wire: title=base64 / msg=base64
+      rule: Validate decoded UTF-8 text and refuse embedded control characters; treat it as text rather than markup.
+    - id: query
+      section: Feature detection
+      level: must
+      wire: OSC 7501 ; ? ST
+      rule: A supporting terminal replies with ? and may enumerate accepted states/kinds, without exposing stored records.
+    - id: bounded-sequence
+      section: Limits
+      level: defined
+      wire: complete OSC through ST
+      rule: Maximum wire sequence is 4096 bytes; this is a ceiling, and lower bounds for individual report fields are specified.
+    - id: record-capacity
+      section: Limits
+      level: must
+      wire: status records
+      rule: Support at least 64 and at most 256 records per terminal; when full evict the least recently updated record to admit a new one.
+    - id: record-security
+      section: Security
+      level: must
+      wire: OSC 7501 status values
+      rule: Never interpret title or message as markup and never return any stored id, title or message in protocol replies.
+    - id: presentation
+      section: Motivation / In Rex
+      level: defined
+      wire: (host rendering)
+      rule: The protocol reports facts; graphical presentation, notification style and tab adornments are not defined by the wire protocol.
+  conemu_progress:
+    title: ConEmu-specific OSC 9;4 progress report
+    author: ConEmu
+    authority: protocol-author
+    revision: ConEmu published ANSI escape code table, observed 2026-11-23
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC
+    scope: Only originating ConEmu OSC 9;4, not every OSC 9 command or Windows Terminal UI
+    clauses:
+    - id: format
+      section: ConEmu specific OSC
+      level: defined
+      wire: OSC 9 ; 4 ; state ; progress ST
+      rule: Reports task progress state and an optional percentage to the terminal.
+    - id: states
+      section: ConEmu specific OSC
+      level: defined
+      wire: state 0..4
+      rule: 0 clears, 1 sets a 0..100 percentage, 2 marks error, 3 indeterminate, 4 paused; error and paused permit omitted percentage.
+  iterm2_osc1337:
+    title: iTerm2 proprietary OSC 1337 commands
+    author: iTerm2
+    authority: protocol-author
+    revision: iTerm2 documentation 3.6, observed 2026-11-23
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+    scope: Selected documented product-host commands, not a universal VT specification
+    clauses:
+    - id: set-user-var
+      section: iTerm2 Extensions / SetUserVar
+      level: defined
+      wire: OSC 1337 ; SetUserVar=name=base64 ST
+      rule: Defines a named host-session variable with a base64-encoded value for host substitution.
+    - id: set-mark
+      section: Set Mark
+      level: defined
+      wire: OSC 1337 ; SetMark ST
+      rule: Records a host-side location mark for later navigation.
+    - id: remote-host
+      section: iTerm2 Extensions / RemoteHost
+      level: defined
+      wire: OSC 1337 ; RemoteHost=user@host ST
+      rule: Reports the shell user and remote hostname to the host.
+    - id: current-dir
+      section: iTerm2 Extensions / CurrentDir
+      level: defined
+      wire: OSC 1337 ; CurrentDir=path ST
+      rule: Reports the current shell working directory to the host.
+    - id: clear-scrollback
+      section: Clear Scrollback History
+      level: defined
+      wire: OSC 1337 ; ClearScrollback ST
+      rule: Requests host-side scrollback history clearing.
+    - id: set-profile
+      section: Change profile
+      level: defined
+      wire: OSC 1337 ; SetProfile=name ST
+      rule: Requests a host-owned named profile change; this does not define a generic terminal color operation.
+    - id: notification
+      section: Post a notification
+      level: defined
+      wire: OSC 9 ; message ST
+      rule: Requests a simple host notification from the iTerm2-specific OSC 9 family; OSC 9;4 is separately indexed under its ConEmu origin.
+    - id: cursor-guide
+      section: Cursor Guide
+      level: defined
+      wire: OSC 1337 ; CursorGuide=... ST
+      rule: Changes presentation of the host cursor guide.
+    - id: steal-focus
+      section: Steal Focus
+      level: defined
+      wire: OSC 1337 ; StealFocus ST
+      rule: Requests that the host bring its window to the foreground.
+    - id: copy-to-clipboard
+      section: Copy to clipboard
+      level: defined
+      wire: OSC 1337 ; CopyToClipboard=name ST
+      rule: Starts host-side clipboard capture under the declared destination.
+    - id: end-copy
+      section: Copy to clipboard
+      level: defined
+      wire: OSC 1337 ; EndCopy ST
+      rule: Stops clipboard capture and commits the copied content.
+    - id: set-colors
+      section: Change the color palette
+      level: defined
+      wire: OSC 1337 ; SetColors=key=value ST
+      rule: Sets a named iTerm2 session color or palette value.
+    - id: tab-color
+      section: Set window title and tab chrome background color
+      level: defined
+      wire: OSC 6 ; 1 ; bg ; channel ; brightness ; value ST
+      rule: Sets a selected title/tab chrome background channel.
+    - id: shell-integration-version
+      section: ShellIntegrationVersion
+      level: defined
+      wire: OSC 1337 ; ShellIntegrationVersion=version;shell ST
+      rule: Reports shell-integration script version and shell identity.
+    - id: clear-captured-output
+      section: ClearCapturedOutput
+      level: defined
+      wire: OSC 1337 ; ClearCapturedOutput ST
+      rule: Clears the host captured command-output area.
+    - id: badge-format
+      section: Badge
+      level: defined
+      wire: OSC 1337 ; SetBadgeFormat=base64 ST
+      rule: Defines the host badge format.
+    - id: unicode-version
+      section: Unicode Version
+      level: defined
+      wire: OSC 1337 ; UnicodeVersion=value ST
+      rule: Selects the Unicode version used for terminal width calculations.
+    - id: report-variable
+      section: Report Variable
+      level: defined
+      wire: OSC 1337 ; ReportVariable=base64(variable-name) ST
+      rule: Requests a named host-session variable using its base64-encoded name; response contains a base64-encoded value.
+    - id: report-cell-size
+      section: Report Cell Size
+      level: defined
+      wire: OSC 1337 ; ReportCellSize ST
+      rule: Requests the current character cell pixel dimensions.
+    - id: session-status
+      section: Session Status
+      level: defined
+      wire: OSC 21337 ; indicator=color ; status=text [ ; status-color=color ] ST
+      rule: Sets the host tab indicator and accompanying status subtitle.
+    - id: inline-file
+      section: File Transfer
+      level: defined
+      wire: 'OSC 1337 ; File=metadata : base64-data ST'
+      rule: Transfers named inline image/file payload with iTerm2-specific metadata.
+    - id: custom-buttons
+      section: Buttons
+      level: defined
+      wire: OSC 1337 ; Button=... ST
+      rule: Declares a host-owned custom control button.
+  xterm_controls:
+    title: XTerm Control Sequences (XTerm-origin extensions only)
+    author: Thomas E. Dickey / xterm
+    authority: extension-publisher
+    revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+    scope: Selected documented xterm extensions; not an alternative ECMA-48 or DEC normative standard
+    clauses:
+    - id: bracketed-paste-mode
+      section: Bracketed Paste Mode
+      level: defined
+      wire: CSI ? 2004 h / l
+      rule: Enable or disable bracketed paste reporting for host-delivered paste.
+    - id: bracketed-paste-delimiters
+      section: Bracketed Paste Mode
+      level: defined
+      wire: CSI 200 ~ ... CSI 201 ~
+      rule: When enabled, bracket the delivered paste bytes with start/end markers.
+    - id: clipboard-osc52
+      section: Operating System Commands
+      level: defined
+      wire: OSC 52 ; selection ; base64 ST
+      rule: Requests copying or querying selected clipboard/selection data; authorization is host policy.
+    - id: palette-osc4
+      section: Operating System Commands
+      level: defined
+      wire: OSC 4 ; index ; color ST
+      rule: Sets or queries indexed palette entries using the documented color grammar.
+    - id: palette-reset
+      section: Operating System Commands
+      level: defined
+      wire: OSC 104 [; index] ST
+      rule: Restores indexed palette entries to their configured defaults.
+    - id: dynamic-colors
+      section: Operating System Commands
+      level: defined
+      wire: OSC 10 / OSC 11 / OSC 12
+      rule: Sets or queries default foreground, background and cursor colors.
+    - id: mouse-sgr
+      section: Mouse Tracking / Extended coordinates
+      level: defined
+      wire: CSI ? 1006 h/l
+      rule: Uses the SGR mouse event encoding while the corresponding tracking mode reports pointer actions.
+    - id: focus
+      section: FocusIn/FocusOut
+      level: defined
+      wire: CSI ? 1004 h/l
+      rule: Enables or disables focus enter/leave events reported through the terminal.
+  kitty_keyboard:
+    title: Comprehensive keyboard handling in terminals
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/keyboard-protocol.rst
+    scope: Opt-in progressive keyboard reporting including bank-local stacks, encoding and event types
+    clauses:
+    - id: flags
+      section: Progressive enhancement
+      level: defined
+      wire: CSI flags ; mode u
+      rule: Sets, adds or clears the five progressive enhancement flags according to the requested mode.
+    - id: query
+      section: Progressive enhancement
+      level: defined
+      wire: CSI ? u
+      rule: Replies with current keyboard enhancement flags using CSI ? flags u.
+    - id: stack
+      section: Progressive enhancement
+      level: defined
+      wire: CSI > flags u / CSI < count u
+      rule: Pushes or pops keyboard mode flags with bounded per-screen stacks, preserving independent primary/alternate modes.
+    - id: disambiguate
+      section: Disambiguate escape codes
+      level: defined
+      wire: flag 1
+      rule: Distinguishes ambiguous legacy key sequences such as Escape from the start of a CSI sequence.
+    - id: event-types
+      section: Report event types
+      level: defined
+      wire: flag 2
+      rule: Allows reporting key press, repeat and release event kinds.
+    - id: alternate-keys
+      section: Report alternate keys
+      level: defined
+      wire: flag 4
+      rule: Includes alternate key values when an event is encoded as an escape sequence.
+    - id: all-keys
+      section: Report all keys as escape codes
+      level: defined
+      wire: flag 8
+      rule: Encodes text-producing and modifier keys as events rather than plain text bytes.
+    - id: associated-text
+      section: Report associated text
+      level: defined
+      wire: flag 16
+      rule: Includes Unicode text code points with encoded key events when the applicable enhancement is active.
+    - id: legacy
+      section: Legacy key event encoding
+      level: defined
+      wire: legacy text / CSI / SS3
+      rule: Default compatibility mode emits traditional key sequences or UTF-8 text without enabling advanced event reporting.
+  kitty_graphics:
+    title: Kitty terminal graphics protocol
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/graphics-protocol.rst
+    scope: Selected documented transport, image, placement, indexed color, animation and lifetime clauses
+    clauses:
+    - id: envelope
+      section: The graphics escape code
+      level: defined
+      wire: APC G control ; payload ST
+      rule: Graphics commands use APC G with comma-delimited control fields and an optional data payload.
+    - id: rgb-rgba
+      section: Transferring pixel data / RGB and RGBA data
+      level: defined
+      wire: a=t/T f=24|32 s=width v=height
+      rule: Direct RGB/RGBA data uses exactly three or four sRGB bytes per pixel with explicit dimensions.
+    - id: indexed-8
+      section: Indexed color data
+      level: defined
+      wire: f=8
+      rule: Each pixel retains one opaque 256-color palette index; image colors follow the current terminal palette.
+    - id: indexed-16
+      section: Indexed color data
+      level: defined
+      wire: f=16
+      rule: Each pixel retains its palette index and an independent alpha byte; palette changes update RGB without changing alpha.
+    - id: indexed-special
+      section: Indexed color data
+      level: defined
+      wire: palette indices 248..255
+      rule: Special indexed values select default, selection, cursor, URL-hover and fallback foreground/background colors as documented.
+    - id: png
+      section: PNG data
+      level: defined
+      wire: f=100
+      rule: Accepts a PNG encoded image with dimensions determined from PNG data.
+    - id: compressed
+      section: Compression
+      level: defined
+      wire: o=z
+      rule: Allows zlib-compressed transmitted image data subject to the declared uncompressed size.
+    - id: mediums
+      section: The transmission medium
+      level: defined
+      wire: t=d|f|t|s
+      rule: Specifies direct and local-file/shared-memory transmission media with the applicable local/remote rules.
+    - id: query
+      section: Querying support and available transmission mediums
+      level: defined
+      wire: a=q / query payload
+      rule: A capability query does not itself display or retain the image and returns a protocol reply.
+    - id: put
+      section: Display images on screen
+      level: defined
+      wire: a=p / a=T
+      rule: Placements refer to previously transmitted image data with their own identity and geometry.
+    - id: unicode
+      section: Unicode placeholders
+      level: defined
+      wire: U=1 plus U+10EEEE cells
+      rule: A virtual placement follows matching Unicode placeholder cell positions and moves with text.
+    - id: relative
+      section: Relative placements
+      level: defined
+      wire: P=parent-image Q=placement H/V=offsets
+      rule: A placement may attach to a parent physical or Unicode placement with a bounded, cycle-free ancestry and lifetime.
+    - id: delete
+      section: Deleting images
+      level: defined
+      wire: a=d d=selector
+      rule: Lowercase selectors retire placements; uppercase variants additionally reclaim unreferenced decoded image data.
+    - id: replies
+      section: Suppressing responses from the terminal
+      level: defined
+      wire: q=0|1|2
+      rule: Selects normal responses or suppresses response categories as documented.
+    - id: frame-load
+      section: Animation / Transferring animation frame data
+      level: defined
+      wire: a=f
+      rule: Transmits numbered animation-frame data subject to base/edit and timing rules.
+    - id: animation
+      section: Animation / Controlling animations
+      level: defined
+      wire: a=a
+      rule: Controls animation state, loop count, current frame and frame durations.
+    - id: composition
+      section: Animation / Composing animation frames
+      level: defined
+      wire: a=c
+      rule: Composes bounded regions from one animation frame to another.
+    - id: no-indexed-animation
+      section: Indexed color data
+      level: defined
+      wire: f=8|16 with a=f|a=c
+      rule: Indexed images do not support animation-frame loading or frame composition.
+    - id: quota
+      section: Image persistence and storage quotas
+      level: defined
+      wire: retained image resources
+      rule: Terminals may bound image retention and prefer reclaiming unplaced image data under storage pressure.
+  kitty_clipboard:
+    title: Kitty clipboard protocol (OSC 5522)
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/clipboard.rst
+    scope: Read/write, MIME, permission, paste events, detection and multiplexing
+    clauses:
+    - id: envelope
+      section: Copying all data types to the clipboard
+      level: defined
+      wire: OSC 5522 ; metadata ; base64 ST
+      rule: Transports clipboard requests and replies with MIME-aware metadata and standard base64 data.
+    - id: read
+      section: Reading data from the system clipboard
+      level: defined
+      wire: type=read
+      rule: Requests selected MIME types or the available MIME list, with the terminal allowed to require user permission.
+    - id: write
+      section: Writing data to the system clipboard
+      level: defined
+      wire: type=write
+      rule: Transfers MIME-labeled clipboard data through status and chunked content rules.
+    - id: password
+      section: Avoiding repeated permission prompts
+      level: defined
+      wire: pw=... name=...
+      rule: A named permission token can avoid repeated prompts when the user has authorized its scope.
+    - id: paste-events
+      section: Allowing terminal applications to respond to paste events
+      level: defined
+      wire: CSI ? 5522 h/l
+      rule: When enabled, the host reports paste-triggered MIME availability for application-directed retrieval.
+    - id: detection
+      section: Detecting support for this protocol
+      level: defined
+      wire: CSI ? 5522 $ p
+      rule: Uses standard mode-query reporting to discover whether paste event mode is supported.
+    - id: mux-id
+      section: Support for terminal multiplexers
+      level: defined
+      wire: id=...
+      rule: Response metadata preserves the sanitized request id so a multiplexer can route responses.
+  kitty_color:
+    title: Kitty color control and color stack
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/color-stack.rst
+    scope: Original OSC color stack and OSC 21 named color controls
+    clauses:
+    - id: push
+      section: Saving and restoring colors
+      level: defined
+      wire: OSC 30001 ST
+      rule: Saves the current terminal dynamic colors and 256-entry ANSI palette to a bounded stack.
+    - id: pop
+      section: Saving and restoring colors
+      level: defined
+      wire: OSC 30101 ST
+      rule: Restores a previously saved color state and its palette without confusing it with host defaults.
+    - id: set
+      section: Setting and querying colors
+      level: defined
+      wire: OSC 21 ; name=color ST
+      rule: Sets named terminal colors using the published key/value and color encoding rules.
+    - id: query
+      section: Querying current color values
+      level: defined
+      wire: OSC 21 ; name=? ST
+      rule: Reports currently resolved values for requested named colors, including unset-color semantics.
+  kitty_notification:
+    title: Kitty desktop notifications (OSC 99)
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/desktop-notifications.rst
+    scope: Notification commands and application callbacks; visual desktop policy is host-owned
+    clauses:
+    - id: envelope
+      section: Desktop notifications
+      level: defined
+      wire: OSC 99 ; metadata ; payload ST
+      rule: Transmits notification fields and optional payload chunks with an explicit metadata separator.
+    - id: chunks
+      section: Desktop notifications
+      level: defined
+      wire: i=notification-id d=0|1
+      rule: Multiple chunks with one id form a pending notification; the completion flag commits it.
+    - id: title-body
+      section: Desktop notifications
+      level: defined
+      wire: p=title|body
+      rule: Title/body payloads are plain safe UTF-8 or marked base64; markup is not assumed.
+    - id: activation
+      section: Being informed when user activates the notification
+      level: defined
+      wire: activation-report fields
+      rule: A program can request host feedback when the user activates a notification.
+    - id: close
+      section: Updating or closing an existing notification
+      level: defined
+      wire: notification identity / close
+      rule: An identified notification can be updated or explicitly retired using the prescribed metadata.
+    - id: query
+      section: Querying for support
+      level: defined
+      wire: OSC 99 feature query
+      rule: Negotiates the subset of notification features the host offers.
+  kitty_text_size:
+    title: Kitty text sizing protocol (OSC 66)
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/text-sizing-protocol.rst
+    scope: Sizing syntax, geometry, fractional scaling and editing interactions
+    clauses:
+    - id: envelope
+      section: The escape code
+      level: defined
+      wire: OSC 66 ; metadata ; safe-UTF8-text ST
+      rule: Accepts at most 4096 bytes of escape-safe UTF-8 text per command with bounded colon-separated sizing metadata.
+    - id: scale
+      section: How it works
+      level: defined
+      wire: s=1..7 w=0..7
+      rule: Reserves an explicitly sized group of terminal cells and renders the supplied text at the requested scale and width.
+    - id: fraction
+      section: Fractional scaling
+      level: defined
+      wire: n numerator d denominator
+      rule: Uses validated fractional scaling and alignment metadata, with nonzero denominator larger than numerator.
+    - id: editing
+      section: Wrapping and overwriting behavior
+      level: defined
+      wire: sized text cells
+      rule: Writing, wrapping and erase/edit operations preserve the logical multi-cell text association.
+    - id: detection
+      section: Detecting if the terminal supports this protocol
+      level: defined
+      wire: text-size feature probe
+      rule: Clients can discover whether OSC 66 sizing can be interpreted.
+  kitty_pointer:
+    title: Kitty mouse pointer shape control
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/pointer-shapes.rst
+    scope: Set, push/pop, query and bounded stack rules for OSC 22 pointer shapes
+    clauses:
+    - id: set
+      section: Setting the pointer shape
+      level: defined
+      wire: OSC 22 ; [=]shape ST
+      rule: Requests the documented mouse pointer shape by name.
+    - id: stack
+      section: Pushing and popping shapes onto the stack
+      level: defined
+      wire: OSC 22 ; >names / < ST
+      rule: Push/pop requested pointer shapes; implementations choose a bound but support at least 16 stack entries.
+    - id: query
+      section: Querying support
+      level: defined
+      wire: OSC 22 ; ?shape[,shape] ST
+      rule: Reports current pointer shape or supported names using the documented response vocabulary.
+  kitty_multi_cursor:
+    title: Kitty multiple cursors protocol
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/multiple-cursors-protocol.rst
+    scope: One protocol, not a list of the reference terminal cursor-renderer internals
+    clauses:
+    - id: syntax
+      section: Quickstart
+      level: defined
+      wire: CSI > shape ; position ... SP q
+      rule: Sets extra cursor shapes on declared cell points or rectangles.
+    - id: clipping
+      section: Quickstart
+      level: must
+      wire: out-of-range points and rectangles
+      rule: Ignore out-of-screen cells and trailing incomplete coordinate groups, without moving other extra cursors.
+    - id: detection
+      section: Querying for support
+      level: defined
+      wire: multiple cursor support query
+      rule: Reports whether the extra-cursor feature and relevant shapes are available.
+    - id: clear
+      section: Clearing previously set multi-cursors
+      level: defined
+      wire: extra cursor clear request
+      rule: Removes extra cursor positions without altering the ordinary primary cursor.
+    - id: color
+      section: Changing the color of extra cursors
+      level: defined
+      wire: extra cursor color control
+      rule: Allows optional extra cursor color and text-under-cursor color.
+  kitty_unscroll:
+    title: Kitty unscroll extension to SD
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/unscroll.rst
+    scope: One source-authored modifier of ECMA-48 SD, not a new SD standard
+    clauses:
+    - id: unscroll
+      section: Unscrolling the screen
+      level: defined
+      wire: CSI Pn + T
+      rule: Scrolls down and fills newly exposed lines from retained scrollback where available instead of inserting blank lines.
+    - id: fallback
+      section: Unscrolling the screen
+      level: defined
+      wire: empty history / alternate screen
+      rule: With no usable history, uses ordinary blank-line SD behavior; the unscroll capacity is at least one screen.
+  dec_vt240:
+    title: Digital VT240 Series Programmer Pocket Guide
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: 2nd edition, September 1984 (EK-VT240-HR-002)
+    url: https://vt100.net/dec/ek-vt240-hr-002.pdf
+    scope: Selected originating DEC private controls, not duplicate ECMA-48 functions
+    clauses:
+    - id: origin
+      section: Terminal Modes / Origin Mode
+      level: defined
+      wire: CSI ? 6 h/l
+      rule: Selects cursor addressing relative to the defined scrolling region or the display page.
+    - id: autowrap
+      section: Terminal Modes / Auto Wrap
+      level: defined
+      wire: CSI ? 7 h/l
+      rule: Controls automatic line wrapping at the right display margin.
+    - id: stbm
+      section: Set Top and Bottom Margins (DECSTBM), page 37
+      level: defined
+      wire: CSI Pt ; Pb r
+      rule: Defines the vertical scrolling region with one-based top and bottom margins and documented defaults.
+    - id: sca
+      section: Select Character Attributes (DECSCA), page 35
+      level: defined
+      wire: CSI Ps " q
+      rule: Selects whether subsequently written characters are protected against selective erasure.
+    - id: sel
+      section: Erasing / Selective Erase in Line (DECSEL), page 37
+      level: defined
+      wire: CSI ? Ps K
+      rule: Erases eligible unprotected characters within the selected part of the line.
+    - id: sed
+      section: Erasing / Selective Erase in Display (DECSED), page 37
+      level: defined
+      wire: CSI ? Ps J
+      rule: Erases eligible unprotected characters within the selected part of the display.
+    - id: decaln
+      section: Adjustments (DECALN), page 47
+      level: defined
+      wire: 'ESC # 8'
+      rule: Displays the screen-alignment pattern for checking video cell geometry.
+  dec_sixel:
+    title: Digital VT330/VT340 Programmer Pocket Guide, sixel graphics
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: 2nd edition, May 1988 (EK-VT3XX-HR-002)
+    url: https://vt100.net/dec/ek-vt3xx-hr-002.pdf
+    scope: Section 2.14 sixel graphics only, not the entire VT340 graphics or ReGIS system
+    clauses:
+    - id: envelope
+      section: 2.14 / Sixel Data Format, page 95
+      level: defined
+      wire: DCS P1 ; P2 ; P3 q sixels ST
+      rule: Introduces a sixel data stream with defined macro, background, grid and terminator parameters.
+    - id: six-dots
+      section: 2.14 / Sixel Data Format, page 96
+      level: defined
+      wire: '? through ~'
+      rule: Each data character encodes a vertical six-dot column; the character code minus 0x3f yields its six bit mask.
+    - id: background
+      section: 2.14 / Sixel Data Format, page 96
+      level: defined
+      wire: P2=0|1|2
+      rule: Selects background painting for unset sixel bits versus preserving existing pixel colors.
+    - id: repeat
+      section: 2.14 / Sixel Control Functions, page 97
+      level: defined
+      wire: '! Pn sixel'
+      rule: Repeats the following sixel data character by the specified count.
+    - id: raster
+      section: 2.14 / Raster Attributes, page 97
+      level: defined
+      wire: '" Pan ; Pad ; Ph ; Pv'
+      rule: Sets pixel aspect ratio and nominal image extent ahead of sixel data, overriding the macro aspect ratio.
+    - id: color
+      section: 2.14 / Color Introducer, pages 97-98
+      level: defined
+      wire: '# Pc [; Pu ; Px ; Py ; Pz]'
+      rule: Selects or defines a palette register using HLS or RGB coordinates.
+  dec_vt420:
+    title: VT420 Programmer Reference Manual (DEC private extensions)
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: second edition, February 1992, EK-VT420-RM.002
+    url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+    scope: Original DEC VT400 operations; existing ECMA-48 functions are not redefined here
+    clauses:
+    - id: column-mode
+      section: Page Memory / Selecting 80 or 132 Columns, p130
+      level: defined
+      wire: CSI ? 3 h/l
+      rule: DECCOLM switches between 80 and 132 terminal columns under the configured terminal mode.
+    - id: left-right-margins
+      section: Page Memory / Set Left and Right Margins, p133
+      level: defined
+      wire: CSI Pl ; Pr s
+      rule: DECSLRM sets left and right scrolling-region margins.
+    - id: top-bottom-margins
+      section: Page Memory / Set Top and Bottom Margins, p134
+      level: defined
+      wire: CSI Pt ; Pb r
+      rule: DECSTBM selects vertical scrolling margins.
+    - id: origin-mode
+      section: Page Memory / Origin Mode, p135
+      level: defined
+      wire: CSI ? 6 h/l
+      rule: DECOM toggles origin-relative versus page-relative cursor addressing.
+    - id: delete-column
+      section: Editing / Delete Column, p149
+      level: defined
+      wire: CSI Pn ' ~
+      rule: DECDC deletes one or more vertical columns and shifts later columns left.
+    - id: insert-column
+      section: Editing / Insert Column, p150
+      level: defined
+      wire: CSI Pn ' }
+      rule: DECIC inserts blank vertical columns and shifts columns right.
+    - id: protected-character
+      section: Editing / Select Character Protection Attribute, p155
+      level: defined
+      wire: CSI Ps " q
+      rule: DECSCA chooses protection on subsequently written characters for DEC selective erasure.
+    - id: selective-ed
+      section: Editing / Selective Erase in Display, p156
+      level: defined
+      wire: CSI ? Ps J
+      rule: DECSED erases eligible unprotected cells within the selected part of the display.
+    - id: selective-el
+      section: Editing / Selective Erase in Line, p157
+      level: defined
+      wire: CSI ? Ps K
+      rule: DECSEL erases eligible unprotected cells within the selected part of the line.
+    - id: copy-rect
+      section: Rectangular Area Operations / Copy Rectangular Area, p161
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
+      rule: DECCRA copies a rectangular region between pages with origin and destination coordinates.
+    - id: fill-rect
+      section: Rectangular Area Operations / Fill Rectangular Area, p162
+      level: defined
+      wire: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
+      rule: DECFRA fills a rectangular region with the supplied character.
+    - id: erase-rect
+      section: Rectangular Area Operations / Erase Rectangular Area, p164
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr $ z
+      rule: DECERA erases all characters in the selected rectangle.
+    - id: selective-erase-rect
+      section: Rectangular Area Operations / Selective Erase Rectangular Area, p165
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr $ {
+      rule: DECSERA erases unprotected characters in the selected rectangle.
+    - id: attr-change-extent
+      section: Rectangular Area Operations / Select Attribute Change Extent, p166
+      level: defined
+      wire: CSI Ps * x
+      rule: DECSACE selects whether attribute operations act on stream or rectangular extents.
+    - id: attr-change-rect
+      section: Rectangular Area Operations / Change Attributes in Rectangular Area, p167
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Ps $ r
+      rule: DECCARA changes attributes in the selected rectangle.
+    - id: attr-reverse-rect
+      section: Rectangular Area Operations / Reverse Attributes in Rectangular Area, p169
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Ps $ t
+      rule: DECRARA reverses selected attributes in a rectangle.
+    - id: cursor-visible
+      section: Cursor Movement / Text Cursor Enable Mode, p176
+      level: defined
+      wire: CSI ? 25 h/l
+      rule: DECTCEM sets or clears presentation of the text cursor.
+    - id: back-index
+      section: Cursor Movement / Back Index, p177
+      level: defined
+      wire: ESC 6
+      rule: DECBI shifts the active line to the right at its left margin.
+    - id: forward-index
+      section: Cursor Movement / Forward Index, p177
+      level: defined
+      wire: ESC 9
+      rule: DECFI shifts the active line to the left at its right margin.
+    - id: backarrow-mode
+      section: Keyboard / Backarrow Key Mode, p188
+      level: defined
+      wire: CSI ? 67 h/l
+      rule: DECBKM selects Backspace versus Delete input encoding for the backarrow key.
+    - id: autowrap
+      section: Keyboard / Autowrap Mode, p191
+      level: defined
+      wire: CSI ? 7 h/l
+      rule: DECAWM controls automatic continuation to the next line at the right margin.
+    - id: cursor-key-mode
+      section: Keyboard / Cursor Keys Mode, p192
+      level: defined
+      wire: CSI ? 1 h/l
+      rule: DECCKM chooses application versus normal cursor-key input encoding.
+    - id: app-keypad
+      section: Keyboard / Keypad Application and Numeric Modes, p192
+      level: defined
+      wire: ESC = / ESC >
+      rule: DECKPAM and DECKPNM select application or numeric keypad behavior.
+    - id: save-cursor
+      section: Cursor and Presentation State / DECSC
+      level: defined
+      wire: ESC 7
+      rule: DECSC saves cursor position and the specified cursor presentation state.
+    - id: restore-cursor
+      section: Cursor and Presentation State / DECRC
+      level: defined
+      wire: ESC 8
+      rule: DECRC restores the previously saved cursor state.
+    - id: request-status-string
+      section: Reports / Request Selection or Setting
+      level: defined
+      wire: DCS $ q Pt ST
+      rule: DECRQSS queries selected rendition or margin state by control-function descriptor.
+    - id: reply-status-string
+      section: Reports / Report Selection or Setting
+      level: defined
+      wire: DCS Ps $ r Pt ST
+      rule: DECRPSS replies to a selection/setting query with a validity indicator and content.
+    - id: request-mode
+      section: Mode Reporting / Request Mode
+      level: defined
+      wire: CSI ? Pm $ p
+      rule: DECRQM queries the state of a DEC private mode.
+    - id: report-mode
+      section: Mode Reporting / Report Mode
+      level: defined
+      wire: CSI ? Pm ; Ps $ y
+      rule: DECRPM reports a private mode and its recognized set/reset/permanence state.
+  finalterm_shell:
+    title: FinalTerm semantic prompt markers (OSC 133)
+    author: FinalTerm; surviving documentation maintained by iTerm2
+    authority: preserved-origin-documentation
+    revision: original FinalTerm A/B/C/D, cited in iTerm2 3.6
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+    scope: Only original common OSC 133 semantic zones; iTerm2 is a preserving secondary documentation source
+    clauses:
+    - id: prompt-start
+      section: Shell Integration/FinalTerm / FTCS_PROMPT
+      level: defined
+      wire: OSC 133 ; A ST
+      rule: Shell begins displaying a prompt.
+    - id: prompt-end
+      section: Shell Integration/FinalTerm / FTCS_COMMAND_START
+      level: defined
+      wire: OSC 133 ; B ST
+      rule: Shell finishes displaying a prompt; input follows.
+    - id: command-executed
+      section: Shell Integration/FinalTerm / FTCS_COMMAND_EXECUTED
+      level: defined
+      wire: OSC 133 ; C ST
+      rule: Command execution begins and command output follows.
+    - id: command-finished
+      section: Shell Integration/FinalTerm / FTCS_COMMAND_FINISHED
+      level: defined
+      wire: OSC 133 ; D [ ; exit_status ] ST
+      rule: The command finishes; a present numeric exit status describes success or failure.
+  vscode_shell:
+    title: VS Code shell integration protocol (OSC 633)
+    author: Microsoft / Visual Studio Code
+    authority: protocol-author
+    revision: published documentation, observed 2026-11-23
+    url: https://code.visualstudio.com/docs/terminal/shell-integration
+    scope: VS Code-specific control family; not a generic replacement for FinalTerm OSC 133
+    clauses:
+    - id: prompt-start
+      section: Supported escape sequences / VS Code custom sequences
+      level: defined
+      wire: OSC 633 ; A ST
+      rule: Begin command prompt.
+    - id: prompt-end
+      section: Supported escape sequences / VS Code custom sequences
+      level: defined
+      wire: OSC 633 ; B ST
+      rule: End command prompt.
+    - id: command-executed
+      section: Supported escape sequences / VS Code custom sequences
+      level: defined
+      wire: OSC 633 ; C ST
+      rule: Mark execution start.
+    - id: command-finished
+      section: Supported escape sequences / VS Code custom sequences
+      level: defined
+      wire: OSC 633 ; D [; exitcode] ST
+      rule: Report command completion and optional exit status.
+    - id: command-text
+      section: Supported escape sequences / VS Code custom sequences
+      level: defined
+      wire: OSC 633 ; E ; commandline [; nonce] ST
+      rule: Report the interpreted command line, optionally authenticated by a nonce.
+    - id: property
+      section: Supported escape sequences / VS Code custom sequences
+      level: defined
+      wire: OSC 633 ; P ; Property=Value ST
+      rule: Report recognized host properties such as current working directory and Windows shell mode.
+  contour_sync:
+    title: Synchronized output (DEC private mode 2026)
+    author: Contour terminal / cross-terminal synchronized output
+    authority: extension-publisher
+    revision: Contour documented extension, observed 2026-11-23
+    url: https://contour-terminal.org/vt-extensions/synchronized-output/
+    scope: Cross-terminal private mode derived from the idea of iTerm2 synchronized output; timing and host policy can be bounded
+    clauses:
+    - id: begin
+      section: Semantics
+      level: defined
+      wire: CSI ? 2026 h
+      rule: 'Begin a synchronized output update: process terminal data while withholding intermediate presentation.'
+    - id: end
+      section: Semantics
+      level: defined
+      wire: CSI ? 2026 l
+      rule: End synchronized update and make the final current screen available for presentation.
+    - id: query
+      section: Feature detection
+      level: defined
+      wire: CSI ? 2026 $ p
+      rule: Report whether private mode 2026 is supported and its state.
+  urxvt_notify:
+    title: rxvt-unicode Perl extension OSC 777 namespace
+    author: rxvt-unicode notify Perl extension
+    authority: extension-publisher
+    revision: rxvt-unicode community extension, observed 2026-11-23
+    url: https://github.com/exg/rxvt-unicode/blob/main/src/urxvt.pm
+    scope: The originating Perl-extension namespace is specified here; the notify subcommand is a later adoption convention, not a universal
+      protocol.
+    clauses:
+    - id: perl-osc
+      section: on_osc_seq_perl
+      level: defined
+      wire: OSC 777 ; extension-name ; payload ST
+      rule: Dispatches an OSC command to an installed Perl extension under its declared extension name.
+    - id: notify-convention
+      section: Common notify Perl extension convention
+      level: defined
+      wire: OSC 777 ; notify ; title ; body ST
+      rule: Uses the notify extension namespace to request a plain-text notification; this convention is distinct from the generic rxvt OSC
+        777 hook.
+  kitty_file_transfer:
+    title: Kitty file transfer over the TTY (OSC 5113)
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/file-transfer-protocol.rst
+    scope: Complete published transfer action families, not a filesystem permission grant
+    clauses:
+    - id: envelope
+      section: Encoding of transfer commands as escape codes
+      level: defined
+      wire: OSC 5113 ; key=value [ ; key=value ... ] ST
+      rule: Encodes transfer commands and metadata with action and session identity.
+    - id: send
+      section: Sending files to the computer running the terminal emulator
+      level: defined
+      wire: OSC 5113 ; ac=send ; id=session ST
+      rule: Requests authorization to send files to the terminal-host computer.
+    - id: receive
+      section: Receiving files from the computer running terminal emulator
+      level: defined
+      wire: OSC 5113 ; ac=receive ; id=session ST
+      rule: Requests authorization to receive files from the terminal-host computer.
+    - id: file
+      section: File metadata
+      level: defined
+      wire: OSC 5113 ; ac=file ; fid=... ST
+      rule: Describes a file including type, path, timestamps and permission metadata.
+    - id: data
+      section: Overall design
+      level: defined
+      wire: OSC 5113 ; ac=data ; d=base64 ST
+      rule: Transmits encoded data chunks for a declared file within a session.
+    - id: end-data
+      section: Overall design
+      level: defined
+      wire: OSC 5113 ; ac=end_data ; fid=... ST
+      rule: Marks the end of transferred data for a file.
+    - id: status
+      section: Overall design
+      level: defined
+      wire: OSC 5113 ; ac=status ; st=base64 ST
+      rule: Reports transfer status or errors for a session.
+    - id: finish
+      section: Overall design
+      level: defined
+      wire: OSC 5113 ; ac=finish ST
+      rule: Finishes the authorized transfer session.
+    - id: cancel
+      section: Canceling a session
+      level: defined
+      wire: OSC 5113 ; ac=cancel ST
+      rule: Cancels a transfer session and retires its in-flight state.
+    - id: compression
+      section: Compression
+      level: defined
+      wire: OSC 5113 ; zip=zlib ST
+      rule: Allows compressed transfer content under the documented bounds.
+    - id: links
+      section: Symbolic and hard links
+      level: defined
+      wire: OSC 5113 ; ft=symlink|link ST
+      rule: Describes symbolic or hard link metadata instead of raw file contents.
+    - id: delta
+      section: Transmitting binary deltas
+      level: defined
+      wire: OSC 5113 ; tt=rsync ST
+      rule: Uses signatures and deltas for content updates.
+    - id: authorization
+      section: Bypassing explicit user authorization
+      level: defined
+      wire: OSC 5113 ; pw=hash ST
+      rule: Supports an explicitly configured pre-shared authorization method.
+  kitty_misc:
+    title: Kitty small terminal protocol extensions
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/misc-protocol.rst
+    scope: Separate mini-extensions, not a redefinition of their shared xterm/DEC base commands
+    clauses:
+    - id: save-all-side-effect-free-modes
+      section: Simple save/restore of all terminal modes
+      level: defined
+      wire: CSI ? s / CSI ? r
+      rule: Without a mode list, extends XTSAVE/XTRESTORE to save or restore side-effect-free modes.
+    - id: clear-bold-only
+      section: Independent control of bold and faint SGR properties
+      level: defined
+      wire: CSI 221 m
+      rule: Resets bold without clearing faint.
+    - id: clear-faint-only
+      section: Independent control of bold and faint SGR properties
+      level: defined
+      wire: CSI 222 m
+      rule: Resets faint without clearing bold.
+    - id: mouse-leave
+      section: Reporting when the mouse leaves the window
+      level: defined
+      wire: SGR pixel mouse event with bit 8
+      rule: Reports pointer exit from the window with the special SGR mouse event bit.
+    - id: clear-to-scrollback
+      section: An escape code to move the contents of the screen into the scrollback
+      level: defined
+      wire: CSI 22 J
+      rule: Moves the visible screen into retained scrollback and clears it.
+    - id: private-dcs
+      section: kitty specific private escape codes
+      level: defined
+      wire: DCS @ kitty-... ST
+      rule: Kitty-specific DCS command namespace for external kittens and remote control.
+discovery_catalogues:
+  xterm_ctlseqs:
+    title: XTerm Control Sequences (discovery only)
+    publisher: Thomas E. Dickey / xterm
+    role: secondary-reference-not-protocol-authority
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+    local_snapshot: ~/personal/official_docs/xterm/ctlseqs.html.md
+    snapshot_sha256: 8c62d6c9f72af9f53c4744526132fee39630f465fd8d431766929faf1454e47f
+    warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
+      protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
+    sequences:
+    - id: esc-514c28b6ff
+      wire: ESC D
+      section: C1 (8-Bit) Control Characters
+      source_line: 161
+    - id: esc-789593f177
+      wire: ESC E
+      section: C1 (8-Bit) Control Characters
+      source_line: 164
+    - id: esc-353d33e4a2
+      wire: ESC H
+      section: C1 (8-Bit) Control Characters
+      source_line: 167
+    - id: esc-4a4cc79e89
+      wire: ESC M
+      section: C1 (8-Bit) Control Characters
+      source_line: 170
+    - id: esc-25192095af
+      wire: ESC N
+      section: C1 (8-Bit) Control Characters
+      source_line: 173
+    - id: esc-fe2e229e2f
+      wire: ESC O
+      section: C1 (8-Bit) Control Characters
+      source_line: 177
+    - id: esc-40aa4b63e9
+      wire: ESC P
+      section: C1 (8-Bit) Control Characters
+      source_line: 181
+    - id: esc-b2634d45b1
+      wire: ESC V
+      section: C1 (8-Bit) Control Characters
+      source_line: 184
+    - id: esc-4ff368f782
+      wire: ESC W
+      section: C1 (8-Bit) Control Characters
+      source_line: 187
+    - id: esc-7963134488
+      wire: ESC X
+      section: C1 (8-Bit) Control Characters
+      source_line: 190
+    - id: esc-f342577b57
+      wire: ESC Z
+      section: C1 (8-Bit) Control Characters
+      source_line: 193
+      symbol: DA
+    - id: esc-10d308deeb
+      wire: ESC [
+      section: C1 (8-Bit) Control Characters
+      source_line: 196
+    - id: esc-5f0dd1b590
+      wire: ESC \
+      section: C1 (8-Bit) Control Characters
+      source_line: 199
+    - id: esc-8527fe776c
+      wire: ESC ]
+      section: C1 (8-Bit) Control Characters
+      source_line: 202
+    - id: esc-96f3bd2d29
+      wire: ESC ^
+      section: C1 (8-Bit) Control Characters
+      source_line: 205
+    - id: esc-6d43c2b77b
+      wire: ESC _
+      section: C1 (8-Bit) Control Characters
+      source_line: 208
+    - id: esc-6436a8e3dc
+      wire: ESC SP F
+      section: Controls beginning with ESC
+      source_line: 282
+      symbol: S7C1T
+    - id: esc-41198bce8d
+      wire: ESC SP G
+      section: Controls beginning with ESC
+      source_line: 287
+      symbol: S8C1T
+    - id: esc-5df28b937a
+      wire: ESC SP L
+      section: Controls beginning with ESC
+      source_line: 292
+    - id: esc-16e4711bcc
+      wire: ESC SP M
+      section: Controls beginning with ESC
+      source_line: 294
+    - id: esc-ecb85e0fd8
+      wire: ESC SP N
+      section: Controls beginning with ESC
+      source_line: 296
+    - id: esc-44ab86aa54
+      wire: 'ESC # 3'
+      section: Controls beginning with ESC
+      source_line: 298
+      symbol: DECDHL
+    - id: esc-9225af7f15
+      wire: 'ESC # 4'
+      section: Controls beginning with ESC
+      source_line: 300
+      symbol: DECDHL
+    - id: esc-f22011512d
+      wire: 'ESC # 5'
+      section: Controls beginning with ESC
+      source_line: 302
+      symbol: DECSWL
+    - id: esc-127380e396
+      wire: 'ESC # 6'
+      section: Controls beginning with ESC
+      source_line: 304
+      symbol: DECDWL
+    - id: esc-d654f4f54c
+      wire: 'ESC # 8'
+      section: Controls beginning with ESC
+      source_line: 306
+      symbol: DECALN
+    - id: esc-93bf6694ea
+      wire: ESC % @
+      section: Controls beginning with ESC
+      source_line: 308
+    - id: esc-e2136b9e51
+      wire: ESC % G
+      section: Controls beginning with ESC
+      source_line: 310
+    - id: esc-f7c699f296
+      wire: ESC ( C
+      section: Controls beginning with ESC
+      source_line: 312
+    - id: esc-051e7a8374
+      wire: ESC ) C
+      section: Controls beginning with ESC
+      source_line: 366
+    - id: esc-4ec6fa58b2
+      wire: ESC * C
+      section: Controls beginning with ESC
+      source_line: 369
+    - id: esc-b2dd6280b9
+      wire: ESC + C
+      section: Controls beginning with ESC
+      source_line: 372
+    - id: esc-90e75ff5f8
+      wire: ESC - C
+      section: Controls beginning with ESC
+      source_line: 375
+    - id: esc-8f0b71c281
+      wire: ESC . C
+      section: Controls beginning with ESC
+      source_line: 387
+    - id: esc-e6ea7a2f87
+      wire: ESC / C
+      section: Controls beginning with ESC
+      source_line: 390
+    - id: esc-92abac61a2
+      wire: ESC 6
+      section: Controls beginning with ESC
+      source_line: 393
+      symbol: DECBI
+    - id: esc-ae31dbf9e2
+      wire: ESC 7
+      section: Controls beginning with ESC
+      source_line: 395
+      symbol: DECSC
+    - id: esc-7a60c48e15
+      wire: ESC 8
+      section: Controls beginning with ESC
+      source_line: 397
+      symbol: DECRC
+    - id: esc-f863048dbd
+      wire: ESC 9
+      section: Controls beginning with ESC
+      source_line: 399
+      symbol: DECFI
+    - id: esc-5948c81512
+      wire: ESC =
+      section: Controls beginning with ESC
+      source_line: 401
+      symbol: DECKPAM
+    - id: esc-c378320387
+      wire: ESC >
+      section: Controls beginning with ESC
+      source_line: 403
+      symbol: DECKPNM
+    - id: esc-64947902c6
+      wire: ESC F
+      section: Controls beginning with ESC
+      source_line: 405
+    - id: esc-4b7f14d66e
+      wire: ESC c
+      section: Controls beginning with ESC
+      source_line: 408
+      symbol: RIS
+    - id: esc-b77edc5658
+      wire: ESC l
+      section: Controls beginning with ESC
+      source_line: 410
+    - id: esc-f9bab55706
+      wire: ESC m
+      section: Controls beginning with ESC
+      source_line: 413
+    - id: esc-ba6620a697
+      wire: ESC n
+      section: Controls beginning with ESC
+      source_line: 415
+      symbol: LS2
+    - id: esc-e77796413d
+      wire: ESC o
+      section: Controls beginning with ESC
+      source_line: 417
+      symbol: LS3
+    - id: esc-b4e77a7241
+      wire: ESC |
+      section: Controls beginning with ESC
+      source_line: 419
+      symbol: LS3R
+    - id: esc-511cd7733d
+      wire: ESC }
+      section: Controls beginning with ESC
+      source_line: 421
+      symbol: LS2R
+    - id: esc-6cbd53f6ba
+      wire: ESC ~
+      section: Controls beginning with ESC
+      source_line: 423
+      symbol: LS1R
+    - id: apc-06485b89d8
+      wire: APC Pt ST None.
+      section: Application Program-Command functions
+      source_line: 428
+    - id: dcs-26ac144774
+      wire: DCS Ps ; Ps | Pt ST
+      section: Device-Control functions
+      source_line: 434
+      symbol: DECUDK
+    - id: dcs-1903109226
+      wire: DCS Ps ! u Pt ST
+      section: Device-Control functions
+      source_line: 451
+      symbol: DECAUPSS
+    - id: dcs-2bfa63903e
+      wire: DCS $ q Pt ST
+      section: Device-Control functions
+      source_line: 474
+      symbol: DECRQSS
+    - id: dcs-47fd6579ab
+      wire: DCS Ps $ t Pt ST
+      section: Device-Control functions
+      source_line: 499
+      symbol: DECRSPS
+    - id: dcs-e4533479c3
+      wire: DCS + Q Pt ST
+      section: Device-Control functions
+      source_line: 506
+      symbol: XTGETXRES
+    - id: dcs-cfa8116725
+      wire: DCS + p Pt ST
+      section: Device-Control functions
+      source_line: 530
+      symbol: XTSETTCAP
+    - id: dcs-1bf1251fb4
+      wire: DCS + q Pt ST
+      section: Device-Control functions
+      source_line: 539
+      symbol: XTGETTCAP
+    - id: csi-d144620701
+      wire: CSI Ps @
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 581
+      symbol: ICH
+    - id: csi-84d0e5591c
+      wire: CSI Ps SP @
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 583
+      symbol: SL
+    - id: csi-d6b19ba45b
+      wire: CSI Ps A
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 586
+      symbol: CUU
+    - id: csi-86ca1360de
+      wire: CSI Ps SP A
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 588
+      symbol: SR
+    - id: csi-201e2ef40b
+      wire: CSI Ps B
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 591
+      symbol: CUD
+    - id: csi-b4a3ca935f
+      wire: CSI Ps C
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 593
+      symbol: CUF
+    - id: csi-94007e4272
+      wire: CSI Ps D
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 595
+      symbol: CUB
+    - id: csi-e068e475ad
+      wire: CSI Ps E
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 597
+      symbol: CNL
+    - id: csi-07ed9438c5
+      wire: CSI Ps F
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 599
+      symbol: CPL
+    - id: csi-656a665464
+      wire: CSI Ps G
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 601
+      symbol: CHA
+    - id: csi-fbf3db4964
+      wire: CSI Ps ; Ps H
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 603
+      symbol: CUP
+    - id: csi-10f9ddce08
+      wire: CSI Ps I
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 606
+      symbol: CHT
+    - id: csi-d004c0f19d
+      wire: CSI Ps J
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 608
+      symbol: ED
+    - id: csi-72d8c0a03a
+      wire: CSI ? Ps J
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 614
+      symbol: DECSED
+    - id: csi-eefbb0a47d
+      wire: CSI Ps K
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 621
+      symbol: EL
+    - id: csi-2e23147752
+      wire: CSI ? Ps K
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 626
+      symbol: DECSEL
+    - id: csi-d0058a2bc2
+      wire: CSI Ps L
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 632
+      symbol: IL
+    - id: csi-e665b6e9f4
+      wire: CSI Ps M
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 634
+      symbol: DL
+    - id: csi-5c6a7c2170
+      wire: CSI Ps P
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 636
+      symbol: DCH
+    - id: csi-16a4dc30f6
+      wire: 'CSI # P'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 638
+    - id: csi-17a508e465
+      wire: 'CSI Pm # P'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 639
+    - id: csi-2fae0da402
+      wire: 'CSI # Q'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 645
+    - id: csi-6ea5baa87d
+      wire: 'CSI Pm # Q'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 646
+    - id: csi-ad2e28f70b
+      wire: 'CSI # R'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 652
+    - id: csi-532a461d36
+      wire: CSI Ps S
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 656
+      symbol: SU
+    - id: csi-7dc42143ea
+      wire: 'CSI # S'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 658
+      symbol: XTTITLEPOS
+    - id: csi-7cdf7b8401
+      wire: CSI ? Pi ; Pa ; Pv S
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 665
+      symbol: XTSMGRAPHICS
+    - id: csi-4d195f9861
+      wire: CSI Ps T
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 720
+      symbol: SD
+    - id: csi-235a751eee
+      wire: CSI Ps ; Ps ; Ps ; Ps ; Ps T
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 722
+      symbol: XTHIMOUSE
+    - id: csi-518ec07749
+      wire: CSI > Pm T
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 727
+      symbol: XTRMTITLE
+    - id: csi-01947d180b
+      wire: CSI ? 5 W Reset tab stops to start with column 9, every 8 columns
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 744
+      symbol: DECST8C
+    - id: csi-50cd35976d
+      wire: CSI Ps X
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 747
+      symbol: ECH
+    - id: csi-1a83ad912b
+      wire: CSI Ps Z
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 749
+      symbol: CBT
+    - id: csi-6f39fa13a7
+      wire: CSI Ps ^
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 751
+      symbol: SD
+    - id: csi-2fdadd1aba
+      wire: CSI Ps `
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 755
+    - id: csi-249c1d3d62
+      wire: CSI Ps a
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 758
+    - id: csi-74aff5c25d
+      wire: CSI Ps b
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 761
+      symbol: REP
+    - id: csi-118f929579
+      wire: CSI Ps c
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 763
+    - id: csi-538ff9fdc8
+      wire: CSI = Ps c
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 804
+    - id: csi-4fe5c0a5a6
+      wire: CSI > Ps c
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 810
+    - id: csi-99318f2215
+      wire: CSI Ps d
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 835
+      symbol: VPA
+    - id: csi-9f31d47497
+      wire: CSI Ps e
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 837
+    - id: csi-878281c3fe
+      wire: CSI Ps ; Ps f
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 840
+    - id: csi-807c225322
+      wire: CSI > Pp ; Pv f
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 844
+    - id: csi-f0cc67d5c7
+      wire: CSI > Pp f
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 845
+      symbol: XTFMTKEYS
+    - id: csi-100de06422
+      wire: CSI Ps g
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 871
+      symbol: TBC
+    - id: csi-c4b4b85336
+      wire: CSI ? Pp g
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 877
+      symbol: XTQFMTKEYS
+    - id: csi-6912179284
+      wire: CSI Pm h
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 905
+      symbol: SM
+    - id: csi-7f26dc7a37
+      wire: CSI ? Pm h
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 911
+      symbol: DECSET
+    - id: csi-2852648ca5
+      wire: CSI Ps i
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1041
+      symbol: MC
+    - id: csi-6dd886d3cc
+      wire: CSI ? Ps i
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1048
+      symbol: MC
+    - id: csi-5df72d65f1
+      wire: CSI Pm l
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1056
+      symbol: RM
+    - id: csi-8326970770
+      wire: CSI ? Pm l
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1062
+      symbol: DECRST
+    - id: csi-754afe63c9
+      wire: CSI Pm m
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1183
+      symbol: SGR
+    - id: csi-a7e271a5e0
+      wire: CSI > Pp ; Pv m
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1322
+    - id: csi-d60cec79e7
+      wire: CSI > Pp m
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1323
+      symbol: XTMODKEYS
+    - id: csi-4fe8991d89
+      wire: CSI ? Pp m
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1349
+      symbol: XTQMODKEYS
+    - id: csi-e85c0202bf
+      wire: CSI Ps n
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1377
+      symbol: DSR
+    - id: csi-8dcde60b89
+      wire: CSI > Ps n
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1398
+    - id: csi-f2360e60be
+      wire: CSI ? Ps n
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1420
+    - id: csi-3b0d6ef095
+      wire: CSI > Ps p
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1458
+      symbol: XTSMPOINTER
+    - id: csi-1ddd518ae0
+      wire: CSI ! p
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1473
+      symbol: DECSTR
+    - id: csi-724bc8b026
+      wire: CSI Pl ; Pc " p
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1475
+      symbol: DECSCL
+    - id: csi-a9bfad2075
+      wire: CSI Ps $ p
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1496
+      symbol: DECRQM
+    - id: csi-4d9e66b18d
+      wire: CSI ? Ps $ p
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1507
+      symbol: DECRQM
+    - id: csi-18367d6543
+      wire: 'CSI # p'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1519
+    - id: csi-6dc3de0fc3
+      wire: 'CSI Pm # p'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1520
+      symbol: XTPUSHSGR
+    - id: csi-9c41e7f26d
+      wire: CSI > Ps q
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1525
+      symbol: XTVERSION
+    - id: csi-7973ed5976
+      wire: CSI Ps q
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1530
+      symbol: DECLL
+    - id: csi-8c99edd0c8
+      wire: CSI Ps SP q
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1539
+      symbol: DECSCUSR
+    - id: csi-8e923aba42
+      wire: CSI Ps " q
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1549
+      symbol: DECSCA
+    - id: csi-9274687a13
+      wire: 'CSI # q'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1556
+      symbol: XTPOPSGR
+    - id: csi-542315e11b
+      wire: CSI Ps ; Ps r
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1560
+    - id: csi-0c95b02fe1
+      wire: CSI ? Pm r
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1564
+      symbol: XTRESTORE
+    - id: csi-8f7c941588
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1574
+      symbol: DECCARA
+    - id: csi-2198aed027
+      wire: CSI s
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1583
+    - id: csi-c4ca9bb4cf
+      wire: CSI Pl ; Pr s
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1586
+      symbol: DECSLRM
+    - id: csi-64d9c20f92
+      wire: CSI > Ps s
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1590
+      symbol: XTSHIFTESCAPE
+    - id: csi-ba1c668e35
+      wire: CSI ? Pm s
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1607
+      symbol: XTSAVE
+    - id: csi-91d57d4c0a
+      wire: CSI Ps ; Ps ; Ps t
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1616
+      symbol: XTWINOPS
+    - id: csi-dbd1b93d52
+      wire: CSI > Pm t
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1698
+    - id: csi-a6bef4a803
+      wire: CSI Ps SP t
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1711
+      symbol: DECSWBV
+    - id: csi-5bddb81eac
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ t
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1717
+      symbol: DECRARA
+    - id: csi-1fcd21cd8e
+      wire: CSI u
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1725
+    - id: csi-996d289cc3
+      wire: CSI & u
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1727
+      symbol: DECRQUPSS
+    - id: csi-f8ef357623
+      wire: CSI Ps SP u
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1730
+      symbol: DECSMBV
+    - id: csi-dd97c5f289
+      wire: CSI " v
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1736
+      symbol: DECRQDE
+    - id: csi-78d54c142e
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1746
+      symbol: DECCRA
+    - id: csi-f38f13fb1a
+      wire: CSI Ps $ w
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1753
+      symbol: DECRQPSR
+    - id: csi-d3c7ca5037
+      wire: CSI Pt ; Pl ; Pb ; Pr ' w
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1767
+      symbol: DECEFR
+    - id: csi-1e399e435a
+      wire: CSI Ps x
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1779
+      symbol: DECREQTPARM
+    - id: csi-a9140b3a2a
+      wire: CSI Ps * x
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1791
+      symbol: DECSACE
+    - id: csi-f5310073dd
+      wire: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1809
+      symbol: DECFRA
+    - id: csi-eb0e648cf6
+      wire: 'CSI Ps # y'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1814
+      symbol: XTCHECKSUM
+    - id: csi-d3b76a1dbb
+      wire: CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1824
+      symbol: DECRQCRA
+    - id: csi-fa2af1e6b1
+      wire: CSI Ps ; Pu ' z
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1833
+      symbol: DECELR
+    - id: csi-48e8cc62da
+      wire: CSI Pt ; Pl ; Pb ; Pr $ z
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1846
+      symbol: DECERA
+    - id: csi-091043d69e
+      wire: CSI Pm ' {
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1850
+      symbol: DECSLE
+    - id: csi-49bd9f1f64
+      wire: 'CSI # {'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1861
+    - id: csi-3da8d297df
+      wire: 'CSI Pm # {'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1862
+      symbol: XTPUSHSGR
+    - id: csi-57e171e687
+      wire: CSI Pt ; Pl ; Pb ; Pr $ {
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1882
+      symbol: DECSERA
+    - id: csi-156199d0b1
+      wire: 'CSI Pt ; Pl ; Pb ; Pr # |'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1886
+      symbol: XTREPORTSGR
+    - id: csi-5bce18dca3
+      wire: CSI Ps $ |
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1892
+      symbol: DECSCPP
+    - id: csi-d792d66921
+      wire: CSI Ps ' |
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1898
+      symbol: DECRQLP
+    - id: csi-43f1b260e7
+      wire: CSI Ps * |
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1938
+      symbol: DECSNLS
+    - id: csi-c0bf8b230a
+      wire: 'CSI # }'
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1941
+      symbol: XTPOPSGR
+    - id: csi-32051dd066
+      wire: CSI Ps ; Pf ; Pb , |
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1945
+      symbol: DECAC
+    - id: csi-31ba47f36d
+      wire: CSI Ps ; Pf ; Pb , }
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1956
+      symbol: DECATC
+    - id: csi-b38bf83439
+      wire: CSI Ps ' }
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1981
+      symbol: DECIC
+    - id: csi-d29e668ba9
+      wire: CSI Ps $ }
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1984
+      symbol: DECSASD
+    - id: csi-c96fada8ba
+      wire: CSI Ps ' ~
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1989
+      symbol: DECDC
+    - id: csi-0cc14c89d4
+      wire: CSI Ps $ ~
+      section: Functions using CSI , ordered by the final character(s)
+      source_line: 1992
+      symbol: DECSSDT
+    - id: osc-9731e40b62
+      wire: OSC Ps ; Pt BEL
+      section: Operating System Commands
+      source_line: 2001
+    - id: osc-14418614ad
+      wire: OSC Ps ; Pt ST
+      section: Operating System Commands
+      source_line: 2003
+    - id: pm-3a72abf844
+      wire: PM Pt ST
+      section: Privacy Message
+      source_line: 2267
+    - id: dcs-27fe9c2ba4
+      wire: DCS Pa ; Pb ; Ph q
+      section: Sixel Graphics
+      source_line: 3221
+    - id: dcs-73e92f91aa
+      wire: DCS Pm p Pr..Pr ST
+      section: ReGIS Graphics
+      source_line: 3254
+    - id: esc-14df8c1237
+      wire: ESC ETX
+      section: Tektronix 4014 Mode
+      source_line: 3308
+    - id: esc-bf0cdf83e7
+      wire: ESC ENQ
+      section: Tektronix 4014 Mode
+      source_line: 3310
+    - id: esc-24ece2028e
+      wire: ESC FF
+      section: Tektronix 4014 Mode
+      source_line: 3312
+    - id: esc-06cd9b82d6
+      wire: ESC SO
+      section: Tektronix 4014 Mode
+      source_line: 3314
+    - id: esc-8d5915fa7a
+      wire: ESC SI
+      section: Tektronix 4014 Mode
+      source_line: 3316
+    - id: esc-305fd317a7
+      wire: ESC ETB
+      section: Tektronix 4014 Mode
+      source_line: 3318
+    - id: esc-3824a5834a
+      wire: ESC CAN
+      section: Tektronix 4014 Mode
+      source_line: 3321
+    - id: esc-c7468fd1fd
+      wire: ESC SUB
+      section: Tektronix 4014 Mode
+      source_line: 3323
+    - id: esc-dd3f49ca71
+      wire: ESC FS
+      section: Tektronix 4014 Mode
+      source_line: 3325
+    - id: esc-cd1aed3d58
+      wire: 'ESC :'
+      section: Tektronix 4014 Mode
+      source_line: 3331
+    - id: esc-769d1ab47b
+      wire: ESC ;
+      section: Tektronix 4014 Mode
+      source_line: 3333
+    - id: esc-de2946a98b
+      wire: ESC `
+      section: Tektronix 4014 Mode
+      source_line: 3343
+    - id: esc-9823d68ac5
+      wire: ESC a
+      section: Tektronix 4014 Mode
+      source_line: 3345
+    - id: esc-de8e5a4e5d
+      wire: ESC b
+      section: Tektronix 4014 Mode
+      source_line: 3347
+    - id: esc-b1b6adbc06
+      wire: ESC d
+      section: Tektronix 4014 Mode
+      source_line: 3351
+    - id: esc-a8a6034fa8
+      wire: ESC h
+      section: Tektronix 4014 Mode
+      source_line: 3353
+    - id: esc-a91a43c484
+      wire: ESC i
+      section: Tektronix 4014 Mode
+      source_line: 3355
+    - id: esc-d0945ffb28
+      wire: ESC j
+      section: Tektronix 4014 Mode
+      source_line: 3357
+    - id: esc-e65506d255
+      wire: ESC k
+      section: Tektronix 4014 Mode
+      source_line: 3359
+    - id: esc-c33d9b5f2e
+      wire: ESC p
+      section: Tektronix 4014 Mode
+      source_line: 3363
+    - id: esc-80c9217580
+      wire: ESC q
+      section: Tektronix 4014 Mode
+      source_line: 3365
+    - id: esc-8a00bdff3e
+      wire: ESC r
+      section: Tektronix 4014 Mode
+      source_line: 3367
+    - id: esc-3b38272ec5
+      wire: ESC s
+      section: Tektronix 4014 Mode
+      source_line: 3369
+    - id: esc-11eeeae5d0
+      wire: ESC t
+      section: Tektronix 4014 Mode
+      source_line: 3371
+    - id: esc-457e1dc272
+      wire: ESC <
+      section: VT52 Mode
+      source_line: 3388
+    - id: esc-1a52090ba5
+      wire: ESC A
+      section: VT52 Mode
+      source_line: 3394
+    - id: esc-b0bb2d201b
+      wire: ESC B
+      section: VT52 Mode
+      source_line: 3396
+    - id: esc-76873eeca9
+      wire: ESC C
+      section: VT52 Mode
+      source_line: 3398
+    - id: esc-3290703b9a
+      wire: ESC G
+      section: VT52 Mode
+      source_line: 3404
+    - id: esc-6d8ca0843a
+      wire: ESC I
+      section: VT52 Mode
+      source_line: 3408
+    - id: esc-10f130db3f
+      wire: ESC J
+      section: VT52 Mode
+      source_line: 3410
+    - id: esc-fb8c0ef87a
+      wire: ESC K
+      section: VT52 Mode
+      source_line: 3412
+    - id: esc-13153bf1ce
+      wire: ESC Y Ps Ps
+      section: VT52 Mode
+      source_line: 3414
+    - id: osc-selector-0
+      wire: OSC 0 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2025
+    - id: osc-selector-1
+      wire: OSC 1 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2026
+    - id: osc-selector-2
+      wire: OSC 2 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2027
+    - id: osc-selector-3
+      wire: OSC 3 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2028
+    - id: osc-selector-10
+      wire: OSC 10 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2106
+    - id: osc-selector-11
+      wire: OSC 11 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2107
+    - id: osc-selector-12
+      wire: OSC 12 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2108
+    - id: osc-selector-13
+      wire: OSC 13 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2109
+    - id: osc-selector-14
+      wire: OSC 14 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2110
+    - id: osc-selector-15
+      wire: OSC 15 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2111
+    - id: osc-selector-16
+      wire: OSC 16 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2112
+    - id: osc-selector-17
+      wire: OSC 17 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2113
+    - id: osc-selector-18
+      wire: OSC 18 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2114
+    - id: osc-selector-19
+      wire: OSC 19 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2115
+    - id: osc-selector-22
+      wire: OSC 22 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2117
+    - id: osc-selector-46
+      wire: OSC 46 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2122
+    - id: osc-selector-50
+      wire: OSC 50 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2126
+    - id: osc-selector-51
+      wire: OSC 51 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2143
+    - id: osc-selector-52
+      wire: OSC 52 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2145
+    - id: osc-selector-60
+      wire: OSC 60 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2171
+    - id: osc-selector-61
+      wire: OSC 61 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2192
+    - id: osc-selector-62
+      wire: OSC 62 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2203
+    - id: osc-selector-110
+      wire: OSC 110 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2245
+    - id: osc-selector-111
+      wire: OSC 111 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2246
+    - id: osc-selector-112
+      wire: OSC 112 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2247
+    - id: osc-selector-113
+      wire: OSC 113 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2248
+    - id: osc-selector-114
+      wire: OSC 114 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2249
+    - id: osc-selector-115
+      wire: OSC 115 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2250
+    - id: osc-selector-116
+      wire: OSC 116 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2251
+    - id: osc-selector-117
+      wire: OSC 117 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2252
+    - id: osc-selector-118
+      wire: OSC 118 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2253
+    - id: osc-selector-119
+      wire: OSC 119 ; Pt (BEL | ST)
+      section: Operating System Commands
+      source_line: 2254
+    - id: private-mode-1-h-line-913
+      wire: CSI ? 1 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 913
+    - id: private-mode-2-h-line-914
+      wire: CSI ? 2 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 914
+    - id: private-mode-3-h-line-916
+      wire: CSI ? 3 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 916
+    - id: private-mode-4-h-line-917
+      wire: CSI ? 4 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 917
+    - id: private-mode-5-h-line-918
+      wire: CSI ? 5 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 918
+    - id: private-mode-6-h-line-919
+      wire: CSI ? 6 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 919
+    - id: private-mode-7-h-line-920
+      wire: CSI ? 7 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 920
+    - id: private-mode-8-h-line-921
+      wire: CSI ? 8 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 921
+    - id: private-mode-9-h-line-922
+      wire: CSI ? 9 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 922
+    - id: private-mode-10-h-line-924
+      wire: CSI ? 10 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 924
+    - id: private-mode-12-h-line-925
+      wire: CSI ? 12 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 925
+    - id: private-mode-13-h-line-926
+      wire: CSI ? 13 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 926
+    - id: private-mode-14-h-line-928
+      wire: CSI ? 14 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 928
+    - id: private-mode-18-h-line-930
+      wire: CSI ? 18 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 930
+    - id: private-mode-19-h-line-931
+      wire: CSI ? 19 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 931
+    - id: private-mode-25-h-line-933
+      wire: CSI ? 25 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 933
+    - id: private-mode-30-h-line-934
+      wire: CSI ? 30 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 934
+    - id: private-mode-35-h-line-935
+      wire: CSI ? 35 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 935
+    - id: private-mode-38-h-line-936
+      wire: CSI ? 38 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 936
+    - id: private-mode-40-h-line-937
+      wire: CSI ? 40 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 937
+    - id: private-mode-41-h-line-938
+      wire: CSI ? 41 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 938
+    - id: private-mode-42-h-line-939
+      wire: CSI ? 42 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 939
+    - id: private-mode-43-h-line-941
+      wire: CSI ? 43 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 941
+    - id: private-mode-44-h-line-943
+      wire: CSI ? 44 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 943
+    - id: private-mode-44-h-line-944
+      wire: CSI ? 44 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 944
+    - id: private-mode-45-h-line-946
+      wire: CSI ? 45 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 946
+    - id: private-mode-45-h-line-947
+      wire: CSI ? 45 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 947
+    - id: private-mode-46-h-line-949
+      wire: CSI ? 46 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 949
+    - id: private-mode-46-h-line-951
+      wire: CSI ? 46 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 951
+    - id: private-mode-47-h-line-952
+      wire: CSI ? 47 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 952
+    - id: private-mode-47-h-line-954
+      wire: CSI ? 47 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 954
+    - id: private-mode-66-h-line-956
+      wire: CSI ? 66 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 956
+    - id: private-mode-67-h-line-957
+      wire: CSI ? 67 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 957
+    - id: private-mode-69-h-line-959
+      wire: CSI ? 69 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 959
+    - id: private-mode-80-h-line-961
+      wire: CSI ? 80 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 961
+    - id: private-mode-95-h-line-963
+      wire: CSI ? 95 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 963
+    - id: private-mode-1000-h-line-965
+      wire: CSI ? 1000 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 965
+    - id: private-mode-1001-h-line-968
+      wire: CSI ? 1001 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 968
+    - id: private-mode-1002-h-line-969
+      wire: CSI ? 1002 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 969
+    - id: private-mode-1003-h-line-971
+      wire: CSI ? 1003 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 971
+    - id: private-mode-1004-h-line-973
+      wire: CSI ? 1004 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 973
+    - id: private-mode-1005-h-line-974
+      wire: CSI ? 1005 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 974
+    - id: private-mode-1006-h-line-975
+      wire: CSI ? 1006 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 975
+    - id: private-mode-1007-h-line-976
+      wire: CSI ? 1007 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 976
+    - id: private-mode-1010-h-line-978
+      wire: CSI ? 1010 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 978
+    - id: private-mode-1011-h-line-980
+      wire: CSI ? 1011 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 980
+    - id: private-mode-1014-h-line-982
+      wire: CSI ? 1014 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 982
+    - id: private-mode-1015-h-line-983
+      wire: CSI ? 1015 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 983
+    - id: private-mode-1016-h-line-984
+      wire: CSI ? 1016 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 984
+    - id: private-mode-1020-h-line-985
+      wire: CSI ? 1020 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 985
+    - id: private-mode-1021-h-line-986
+      wire: CSI ? 1021 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 986
+    - id: private-mode-1022-h-line-987
+      wire: CSI ? 1022 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 987
+    - id: private-mode-1023-h-line-988
+      wire: CSI ? 1023 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 988
+    - id: private-mode-1034-h-line-989
+      wire: CSI ? 1034 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 989
+    - id: private-mode-1035-h-line-992
+      wire: CSI ? 1035 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 992
+    - id: private-mode-1036-h-line-994
+      wire: CSI ? 1036 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 994
+    - id: private-mode-1037-h-line-996
+      wire: CSI ? 1037 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 996
+    - id: private-mode-1039-h-line-998
+      wire: CSI ? 1039 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 998
+    - id: private-mode-1040-h-line-1000
+      wire: CSI ? 1040 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1000
+    - id: private-mode-1041-h-line-1002
+      wire: CSI ? 1041 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1002
+    - id: private-mode-1042-h-line-1004
+      wire: CSI ? 1042 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1004
+    - id: private-mode-1043-h-line-1007
+      wire: CSI ? 1043 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1007
+    - id: private-mode-1044-h-line-1009
+      wire: CSI ? 1044 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1009
+    - id: private-mode-1045-h-line-1011
+      wire: CSI ? 1045 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1011
+    - id: private-mode-1046-h-line-1013
+      wire: CSI ? 1046 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1013
+    - id: private-mode-1047-h-line-1016
+      wire: CSI ? 1047 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1016
+    - id: private-mode-1048-h-line-1018
+      wire: CSI ? 1048 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1018
+    - id: private-mode-1049-h-line-1020
+      wire: CSI ? 1049 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1020
+    - id: private-mode-1050-h-line-1026
+      wire: CSI ? 1050 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1026
+    - id: private-mode-1051-h-line-1028
+      wire: CSI ? 1051 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1028
+    - id: private-mode-1052-h-line-1029
+      wire: CSI ? 1052 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1029
+    - id: private-mode-1053-h-line-1030
+      wire: CSI ? 1053 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1030
+    - id: private-mode-1060-h-line-1031
+      wire: CSI ? 1060 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1031
+    - id: private-mode-1061-h-line-1033
+      wire: CSI ? 1061 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1033
+    - id: private-mode-2001-h-line-1034
+      wire: CSI ? 2001 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1034
+    - id: private-mode-2002-h-line-1035
+      wire: CSI ? 2002 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1035
+    - id: private-mode-2003-h-line-1036
+      wire: CSI ? 2003 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1036
+    - id: private-mode-2004-h-line-1037
+      wire: CSI ? 2004 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1037
+    - id: private-mode-2005-h-line-1038
+      wire: CSI ? 2005 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1038
+    - id: private-mode-2006-h-line-1039
+      wire: CSI ? 2006 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1039
+    - id: private-mode-0-h-line-1042
+      wire: CSI ? 0 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1042
+    - id: private-mode-4-h-line-1043
+      wire: CSI ? 4 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1043
+    - id: private-mode-5-h-line-1044
+      wire: CSI ? 5 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1044
+    - id: private-mode-10-h-line-1045
+      wire: CSI ? 10 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1045
+    - id: private-mode-11-h-line-1046
+      wire: CSI ? 11 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1046
+    - id: private-mode-1-h-line-1050
+      wire: CSI ? 1 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1050
+    - id: private-mode-4-h-line-1051
+      wire: CSI ? 4 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1051
+    - id: private-mode-5-h-line-1052
+      wire: CSI ? 5 h
+      section: DEC Private Mode Set (DECSET)
+      source_line: 1052
+    - id: private-mode-1-l-line-1064
+      wire: CSI ? 1 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1064
+    - id: private-mode-2-l-line-1065
+      wire: CSI ? 2 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1065
+    - id: private-mode-3-l-line-1066
+      wire: CSI ? 3 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1066
+    - id: private-mode-4-l-line-1067
+      wire: CSI ? 4 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1067
+    - id: private-mode-5-l-line-1068
+      wire: CSI ? 5 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1068
+    - id: private-mode-6-l-line-1069
+      wire: CSI ? 6 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1069
+    - id: private-mode-7-l-line-1070
+      wire: CSI ? 7 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1070
+    - id: private-mode-8-l-line-1071
+      wire: CSI ? 8 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1071
+    - id: private-mode-9-l-line-1072
+      wire: CSI ? 9 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1072
+    - id: private-mode-10-l-line-1073
+      wire: CSI ? 10 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1073
+    - id: private-mode-12-l-line-1074
+      wire: CSI ? 12 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1074
+    - id: private-mode-13-l-line-1075
+      wire: CSI ? 13 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1075
+    - id: private-mode-14-l-line-1077
+      wire: CSI ? 14 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1077
+    - id: private-mode-18-l-line-1079
+      wire: CSI ? 18 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1079
+    - id: private-mode-19-l-line-1080
+      wire: CSI ? 19 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1080
+    - id: private-mode-25-l-line-1082
+      wire: CSI ? 25 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1082
+    - id: private-mode-30-l-line-1083
+      wire: CSI ? 30 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1083
+    - id: private-mode-35-l-line-1084
+      wire: CSI ? 35 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1084
+    - id: private-mode-40-l-line-1085
+      wire: CSI ? 40 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1085
+    - id: private-mode-41-l-line-1086
+      wire: CSI ? 41 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1086
+    - id: private-mode-42-l-line-1087
+      wire: CSI ? 42 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1087
+    - id: private-mode-43-l-line-1089
+      wire: CSI ? 43 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1089
+    - id: private-mode-44-l-line-1091
+      wire: CSI ? 44 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1091
+    - id: private-mode-44-l-line-1092
+      wire: CSI ? 44 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1092
+    - id: private-mode-45-l-line-1094
+      wire: CSI ? 45 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1094
+    - id: private-mode-45-l-line-1095
+      wire: CSI ? 45 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1095
+    - id: private-mode-46-l-line-1097
+      wire: CSI ? 46 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1097
+    - id: private-mode-47-l-line-1099
+      wire: CSI ? 47 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1099
+    - id: private-mode-47-l-line-1100
+      wire: CSI ? 47 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1100
+    - id: private-mode-66-l-line-1102
+      wire: CSI ? 66 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1102
+    - id: private-mode-67-l-line-1103
+      wire: CSI ? 67 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1103
+    - id: private-mode-69-l-line-1105
+      wire: CSI ? 69 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1105
+    - id: private-mode-80-l-line-1107
+      wire: CSI ? 80 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1107
+    - id: private-mode-95-l-line-1110
+      wire: CSI ? 95 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1110
+    - id: private-mode-1000-l-line-1112
+      wire: CSI ? 1000 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1112
+    - id: private-mode-1001-l-line-1114
+      wire: CSI ? 1001 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1114
+    - id: private-mode-1002-l-line-1115
+      wire: CSI ? 1002 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1115
+    - id: private-mode-1003-l-line-1117
+      wire: CSI ? 1003 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1117
+    - id: private-mode-1004-l-line-1119
+      wire: CSI ? 1004 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1119
+    - id: private-mode-1005-l-line-1120
+      wire: CSI ? 1005 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1120
+    - id: private-mode-1006-l-line-1121
+      wire: CSI ? 1006 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1121
+    - id: private-mode-1007-l-line-1122
+      wire: CSI ? 1007 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1122
+    - id: private-mode-1010-l-line-1124
+      wire: CSI ? 1010 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1124
+    - id: private-mode-1011-l-line-1126
+      wire: CSI ? 1011 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1126
+    - id: private-mode-1014-l-line-1128
+      wire: CSI ? 1014 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1128
+    - id: private-mode-1015-l-line-1129
+      wire: CSI ? 1015 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1129
+    - id: private-mode-1016-l-line-1130
+      wire: CSI ? 1016 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1130
+    - id: private-mode-1034-l-line-1131
+      wire: CSI ? 1034 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1131
+    - id: private-mode-1035-l-line-1133
+      wire: CSI ? 1035 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1133
+    - id: private-mode-1036-l-line-1135
+      wire: CSI ? 1036 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1135
+    - id: private-mode-1037-l-line-1137
+      wire: CSI ? 1037 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1137
+    - id: private-mode-1039-l-line-1139
+      wire: CSI ? 1039 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1139
+    - id: private-mode-1040-l-line-1141
+      wire: CSI ? 1040 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1141
+    - id: private-mode-1041-l-line-1143
+      wire: CSI ? 1041 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1143
+    - id: private-mode-1042-l-line-1145
+      wire: CSI ? 1042 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1145
+    - id: private-mode-1043-l-line-1148
+      wire: CSI ? 1043 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1148
+    - id: private-mode-1045-l-line-1150
+      wire: CSI ? 1045 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1150
+    - id: private-mode-1046-l-line-1152
+      wire: CSI ? 1046 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1152
+    - id: private-mode-1047-l-line-1157
+      wire: CSI ? 1047 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1157
+    - id: private-mode-1048-l-line-1160
+      wire: CSI ? 1048 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1160
+    - id: private-mode-1049-l-line-1162
+      wire: CSI ? 1049 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1162
+    - id: private-mode-1050-l-line-1167
+      wire: CSI ? 1050 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1167
+    - id: private-mode-1051-l-line-1169
+      wire: CSI ? 1051 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1169
+    - id: private-mode-1052-l-line-1170
+      wire: CSI ? 1052 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1170
+    - id: private-mode-1053-l-line-1171
+      wire: CSI ? 1053 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1171
+    - id: private-mode-1060-l-line-1172
+      wire: CSI ? 1060 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1172
+    - id: private-mode-1061-l-line-1174
+      wire: CSI ? 1061 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1174
+    - id: private-mode-2001-l-line-1176
+      wire: CSI ? 2001 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1176
+    - id: private-mode-2002-l-line-1177
+      wire: CSI ? 2002 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1177
+    - id: private-mode-2003-l-line-1178
+      wire: CSI ? 2003 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1178
+    - id: private-mode-2004-l-line-1179
+      wire: CSI ? 2004 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1179
+    - id: private-mode-2005-l-line-1180
+      wire: CSI ? 2005 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1180
+    - id: private-mode-2006-l-line-1181
+      wire: CSI ? 2006 l
+      section: DEC Private Mode Reset (DECRST)
+      source_line: 1181

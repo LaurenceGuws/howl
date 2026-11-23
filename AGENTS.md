@@ -10,7 +10,7 @@ Read only what the task needs:
 - `project_rules.yml`: non-negotiable engineering rules.
 - `project_source_map.yml`: accepted and experimental source boundaries.
 - `project_version_scope.yml`: current capability cut and gates.
-- `protocol_coverage.yml`: terminal-protocol census when protocol behavior is involved.
+- `protocol_specs.yml`: static originating-protocol and VT-sequence index; no Howl implementation score or CLI.
 
 Official docs and maintained references are local development inputs:
 

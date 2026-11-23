@@ -62,42 +62,12 @@ The optional [standalone VT native contract](howl-vt/native.md) remains
 independently qualified for C embedders. It introduces no Server, socket,
 GUI scheduling or client ownership into the core.
 
-## VT protocol coverage
+## Terminal protocols
 
-`protocol_coverage.yml` (schema 4) is the pinned behavior and decision index,
-not a loose TODO list. Each reference records Howl support (`full`, `partial`,
-`missing`, or `unassessed`), disposition (`none`, `active`, `delegated`, `deferred`,
-`excluded`, or `adjudicated`), source owners, proofs, and exact residuals.
-
-**Full compatibility is the default Round 2 target.** A historical exclusion is
-not proof that a feature is impossible. When two protocols demand incompatible
-effects for the **same wire input**, the record owns a structured `adjudication`
-with both protocol owners, both effects, their source evidence, current usage,
-relative age, the selected winner, and a named native test. The root
-`collision_policy` records Captain's comparison order: true protocol origin,
-exact behavior, contemporary use, Kitty > xterm > iTerm2 > Ghostty when relevant,
-then newer protocol. A genuine unresolved collision goes to Captain rather than
-being silently excluded. `adjudicated` means that decision is made and proven,
-**not** that Howl satisfies the losing pinned reference.
-
-The companion Nushell query surface makes the index discoverable:
-
-```sh
-nu --no-config-file -c 'source protocol_coverage.nu; protocol summary'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol query --support partial'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol query --support missing'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol query --disposition adjudicated'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol query --text XTQMODKEYS'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol show libvterm.csi.decsgr'
-nu --no-config-file -c 'source protocol_coverage.nu; protocol decision libvterm.csi.decsgr | to json -r'
-```
-
-Use `protocol query --support partial` and `--support missing` for the
-full Round 2 queue, including records historically marked deferred or excluded.
-Only an explicit indexed collision decision records a resolved impossibility.
-The validator checks the priority policy, the ruling's required evidence and
-the existence of its named Zig test. `zig build protocol` runs that validation
-and corrupt-policy fixtures independently of the portable core `zig build check` gate.
+`protocol_specs.yml` is a static index of published terminal protocol definitions
+and control sequences. It distinguishes originating specifications from
+secondary discovery references. It contains no Howl implementation mapping,
+coverage score, CLI, or build step. The index can be read as ordinary YAML.
 
 ## Build
 
@@ -107,7 +77,6 @@ Howl uses the exact Zig version in `.zigversion`, supplied by Fleet on `PATH`. T
 test "$(zig version)" = "$(cat .zigversion)"
 zig build check
 zig build test
-zig build protocol
 zig build audit
 ```
 

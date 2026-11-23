@@ -70,21 +70,6 @@ pub fn build(b: *std.Build) void {
     audit.dependOn(&project_audit.step);
     check.dependOn(audit);
 
-    const protocol = b.step("protocol", "Validate the protocol catalogue");
-    const protocol_command = b.addSystemCommand(&.{
-        "nu",                                                             "--no-config-file", "-c",
-        "source protocol_coverage.nu; protocol validate --fail | ignore",
-    });
-    protocol_command.setCwd(b.path("."));
-    protocol.dependOn(&protocol_command.step);
-    const protocol_inventory_test = b.addSystemCommand(&.{ "nu", "--no-config-file", "-c", "source protocol_coverage.nu; source tools/protocol_inventory_test.nu" });
-    protocol_inventory_test.setCwd(b.path("."));
-    protocol.dependOn(&protocol_inventory_test.step);
-    const protocol_evidence_test = b.addSystemCommand(&.{ "python3", "-B", "tools/protocol_evidence.py", "--self-test" });
-    protocol_evidence_test.setCwd(b.path("."));
-    protocol.dependOn(&protocol_evidence_test.step);
-    tests.dependOn(protocol);
-
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     // The root qualifies optional VT/Text output without making plain VT depend
