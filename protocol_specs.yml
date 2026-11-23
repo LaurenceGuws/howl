@@ -811,6 +811,10 @@ specifications:
         catalogue: xterm_ctlseqs
         entry_id: csi-2852648ca5
         source_line: 1041
+      private_variants:
+      - clause: dec_vt240.media-copy-dec-private
+        wire: CSI ? Ps i
+        description: DEC-private media-copy parameter family; not the unprefixed ECMA-48 wire form.
     - id: mw
       section: 8.3.83
       level: defined
@@ -2007,6 +2011,7 @@ specifications:
     authority: protocol-author
     revision: 2nd edition, September 1984 (EK-VT240-HR-002)
     url: https://vt100.net/dec/ek-vt240-hr-002.pdf
+    snapshot_sha256: 365a3195c3de2e4ceb323f0bf500321317ae4a94db2c1c251057a4933476a72b
     scope: Selected originating DEC private controls, not duplicate ECMA-48 functions
     clauses:
     - id: origin
@@ -2044,6 +2049,41 @@ specifications:
       level: defined
       wire: 'ESC # 8'
       rule: Displays the screen-alignment pattern for checking video cell geometry.
+    - id: media-copy-dec-private
+      section: Printing / Auto print, Print cursor line and ReGIS hardcopy routing, printed pages 38-39
+      level: defined
+      wire: CSI ? Ps i
+      rule: DEC-private Media Copy controls printer autoprint, a cursor-line print request, ReGIS graphics hardcopy routing and printer-to-host
+        transfer. These are private-parameter meanings distinct from unprefixed ECMA-48 Media Copy.
+      related_standard: ecma48.mc
+      parameters:
+      - selector: 0
+        also_default: true
+        effect: Select the printer port for subsequent ReGIS graphics hardcopy, effective even when no printer is connected.
+      - selector: 1
+        effect: Print the display line containing the cursor, without moving the cursor.
+      - selector: 2
+        effect: Direct subsequent ReGIS graphics hardcopy to host port.
+      - selector: 4
+        effect: Disable autoprint mode.
+      - selector: 5
+        effect: 'Enable autoprint: print the display line when the cursor leaves it through LF, FF, VT or wrapping.'
+      - selector: 8
+        effect: Stop communication from printer port to host port.
+      - selector: 9
+        effect: Start communication from printer port to host port.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-6dd886d3cc
+        source_line: 1048
+        wire: CSI ? Ps i
+      xterm_parameter_scope: The pinned xterm reference confirms 1,4,5 from the original DEC family and 10,11 from later DEC documentation.
+        It does not list 0,2,8,9; absence is not proof of a no-op.
+      later_dec_documentation: dec_vt420.media-copy-dec-private-extended
+      xterm_documented_overlap:
+      - 1
+      - 4
+      - 5
   dec_sixel:
     title: Digital VT330/VT340 Programmer Pocket Guide, sixel graphics
     author: Digital Equipment Corporation
@@ -2088,6 +2128,7 @@ specifications:
     authority: protocol-author
     revision: second edition, February 1992, EK-VT420-RM.002
     url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+    snapshot_sha256: 6edca845f10c8fc10be87f111d0ad95130d6aa15a09de578bbb8d5133511ecd2
     scope: Original DEC VT400 operations; existing ECMA-48 functions are not redefined here
     clauses:
     - id: column-mode
@@ -2249,6 +2290,32 @@ specifications:
       level: defined
       wire: CSI ? Pm ; Ps $ y
       rule: DECRPM reports a private mode and its recognized set/reset/permanence state.
+    - id: media-copy-dec-private-extended
+      section: Chapter 11 / Keyboard, Printing, and Display Commands / Printing Functions, printed pages 212-214
+      level: defined
+      wire: CSI ? Ps i
+      rule: Documents additional DEC-private Media Copy selectors 10,11,18,19 in the VT420, while retaining the overlapping autoprint, cursor-line
+        and printer-to-host functions 1,4,5,8,9 from earlier DEC terminals.
+      extends: dec_vt240.media-copy-dec-private
+      parameters:
+      - selector: 10
+        effect: Print the composed main display, including content from both sessions if composed; not affected by printer extent mode DECPEX.
+      - selector: 11
+        effect: Print all pages in the current session page memory; printer form-feed mode DECPFF may append FF after each page.
+      - selector: 18
+        effect: Assign the printer to the active host session; terminal accepts printer commands only from that session.
+      - selector: 19
+        effect: Release the printer; terminal accepts printer commands from both sessions.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-6dd886d3cc
+        source_line: 1048
+        wire: CSI ? Ps i
+      scope_note: These are additional documented DEC selectors, not a competing xterm definition; the pinned xterm reference does not document
+        DEC 18/19.
+      xterm_documented_overlap:
+      - 10
+      - 11
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -2838,11 +2905,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 911
       symbol: DECSET
-    - id: csi-6dd886d3cc
-      wire: CSI ? Ps i
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1048
-      symbol: MC
     - id: csi-8326970770
       wire: CSI ? Pm l
       section: Functions using CSI , ordered by the final character(s)
