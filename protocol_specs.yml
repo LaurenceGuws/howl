@@ -140,6 +140,11 @@ specifications:
       level: defined
       wire: CSI Pn G
       rule: Sets the active character position within its line.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-656a665464
+        source_line: 601
+        wire: CSI Ps G
     - id: vpa
       section: 8.3.158
       level: defined
@@ -229,6 +234,11 @@ specifications:
       level: defined
       wire: CSI Pn S
       rule: Scrolls the active page upward by the specified number of lines.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-532a461d36
+        source_line: 656
+        wire: CSI Ps S
     - id: sd
       section: 8.3.113
       level: defined
@@ -280,6 +290,11 @@ specifications:
       level: defined
       wire: CSI Pn b
       rule: Repeats the preceding graphic character according to the count parameter.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-74aff5c25d
+        source_line: 761
+        wire: CSI Ps b
     - id: ris
       section: 8.3.105
       level: defined
@@ -585,26 +600,51 @@ specifications:
       level: defined
       wire: ESC ~
       rule: LOCKING-SHIFT ONE RIGHT (LS1R); ECMA-48 standardized control function, ESC form (source page 49).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-6cbd53f6ba
+        source_line: 423
+        wire: ESC ~
     - id: ls2
       section: 8.3.78
       level: defined
       wire: ESC n
       rule: LOCKING-SHIFT TWO (LS2); ECMA-48 standardized control function, ESC form (source page 49).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-ba6620a697
+        source_line: 415
+        wire: ESC n
     - id: ls2r
       section: 8.3.79
       level: defined
       wire: ESC }
       rule: LOCKING-SHIFT TWO RIGHT (LS2R); ECMA-48 standardized control function, ESC form (source page 49).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-511cd7733d
+        source_line: 421
+        wire: ESC }
     - id: ls3
       section: 8.3.80
       level: defined
       wire: ESC o
       rule: LOCKING-SHIFT THREE (LS3); ECMA-48 standardized control function, ESC form (source page 50).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-e77796413d
+        source_line: 417
+        wire: ESC o
     - id: ls3r
       section: 8.3.81
       level: defined
       wire: ESC |
       rule: LOCKING-SHIFT THREE RIGHT (LS3R); ECMA-48 standardized control function, ESC form (source page 50).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-b4e77a7241
+        source_line: 419
+        wire: ESC |
     - id: mc
       section: 8.3.82
       level: defined
@@ -780,6 +820,11 @@ specifications:
       level: defined
       wire: CSI Pn SP @
       rule: SCROLL LEFT (SL); ECMA-48 standardized control function, CSI form (source page 63).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-84d0e5591c
+        source_line: 583
+        wire: CSI Ps SP @
     - id: slh
       section: 8.3.122
       level: defined
@@ -845,6 +890,11 @@ specifications:
       level: defined
       wire: CSI Pn SP A
       rule: SCROLL RIGHT (SR); ECMA-48 standardized control function, CSI form (source page 68).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-86ca1360de
+        source_line: 588
+        wire: CSI Ps SP A
     - id: srcs
       section: 8.3.136
       level: defined
@@ -2461,31 +2511,6 @@ discovery_catalogues:
       wire: ESC m
       section: Controls beginning with ESC
       source_line: 413
-    - id: esc-ba6620a697
-      wire: ESC n
-      section: Controls beginning with ESC
-      source_line: 415
-      symbol: LS2
-    - id: esc-e77796413d
-      wire: ESC o
-      section: Controls beginning with ESC
-      source_line: 417
-      symbol: LS3
-    - id: esc-b4e77a7241
-      wire: ESC |
-      section: Controls beginning with ESC
-      source_line: 419
-      symbol: LS3R
-    - id: esc-511cd7733d
-      wire: ESC }
-      section: Controls beginning with ESC
-      source_line: 421
-      symbol: LS2R
-    - id: esc-6cbd53f6ba
-      wire: ESC ~
-      section: Controls beginning with ESC
-      source_line: 423
-      symbol: LS1R
     - id: apc-06485b89d8
       wire: APC Pt ST None.
       section: Application Program-Command functions
@@ -2525,21 +2550,6 @@ discovery_catalogues:
       section: Device-Control functions
       source_line: 539
       symbol: XTGETTCAP
-    - id: csi-84d0e5591c
-      wire: CSI Ps SP @
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 583
-      symbol: SL
-    - id: csi-86ca1360de
-      wire: CSI Ps SP A
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 588
-      symbol: SR
-    - id: csi-656a665464
-      wire: CSI Ps G
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 601
-      symbol: CHA
     - id: csi-2e23147752
       wire: CSI ? Ps K
       section: Functions using CSI , ordered by the final character(s)
@@ -2565,11 +2575,6 @@ discovery_catalogues:
       wire: 'CSI # R'
       section: Functions using CSI , ordered by the final character(s)
       source_line: 652
-    - id: csi-532a461d36
-      wire: CSI Ps S
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 656
-      symbol: SU
     - id: csi-7dc42143ea
       wire: 'CSI # S'
       section: Functions using CSI , ordered by the final character(s)
@@ -2603,11 +2608,6 @@ discovery_catalogues:
       wire: CSI Ps a
       section: Functions using CSI , ordered by the final character(s)
       source_line: 758
-    - id: csi-74aff5c25d
-      wire: CSI Ps b
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 761
-      symbol: REP
     - id: csi-118f929579
       wire: CSI Ps c
       section: Functions using CSI , ordered by the final character(s)
