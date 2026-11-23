@@ -315,6 +315,17 @@ specifications:
       level: defined
       wire: CSI Ps g
       rule: Clears tabulation stops according to the parameter.
+      competing_parameter_behaviors:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-100de06422
+        wire: CSI Ps g
+        selectors:
+        - 1
+        - 2
+        - 4
+        - 5
+        effect: Xterm ignores these selectors; ECMA-48 defines tab-stop clearing actions for them.
+        pending_reconciliation: ecma48-tbc-vs-xterm-subset
     - id: ack
       section: 8.3.1
       level: defined
@@ -2650,6 +2661,8 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 871
       symbol: TBC
+      competes_with: ecma48.tbc
+      pending_reconciliation: ecma48-tbc-vs-xterm-subset
     - id: csi-c4b4b85336
       wire: CSI ? Pp g
       section: Functions using CSI , ordered by the final character(s)
@@ -3890,7 +3903,39 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: ecma48-tbc-vs-xterm-subset
+      status: confirmed-parameter-behavior-difference-awaiting-decision
+      wire: CSI Ps g
+      common_selectors:
+        Ps=0: Clear character tab stop at current position.
+        Ps=3: Clear all character tab stops.
+      conflicting_selectors:
+      - selector: 1
+        ecma48: Clear the line tab stop at the active line.
+        xterm: No operation.
+      - selector: 2
+        ecma48: Clear all character tab stops in the active line, subject to TSM.
+        xterm: No operation.
+      - selector: 4
+        ecma48: Clear all line tab stops.
+        xterm: No operation.
+      - selector: 5
+        ecma48: Clear all tab stops, both character and line.
+        xterm: No operation.
+      sources:
+      - clause: ecma48.tbc
+        document: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+        section: 8.3.154 / printed page 73
+      - discovery_entry: csi-100de06422
+        document: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+        source_line: 871
+      observation: Both specifications use the same CSI Ps g family. ECMA-48 specifies Ps=0..5; xterm supports Ps=0 and Ps=3 while explicitly
+        ignoring the other standard selectors for VT100 compatibility. The sources agree on common selectors but disagree on whether the
+        others perform erasure.
+      question: For Ps=1,2,4,5, should Howl adopt the ECMA-48-defined tab-stop effects or the xterm-compatible no-ops? No choice is made
+        here.
+      decision: null
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
