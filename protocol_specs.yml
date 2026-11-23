@@ -357,6 +357,10 @@ specifications:
         entry_id: csi-e85c0202bf
         source_line: 1377
         wire: CSI Ps n
+      private_variants:
+      - clause: dec_vt3xx_text.dsr-dec-private
+        wire: CSI ? Ps n
+        description: DEC-specific requests and responses; the ? prefix is not part of the standard DSR request.
     - id: cpr
       section: 8.3.14
       level: defined
@@ -1633,6 +1637,28 @@ specifications:
         source_line: 871
         wire: CSI Ps g
       decision: ecma48-tbc-vs-xterm-subset
+    - id: decxcpr-xterm-reply
+      section: Functions using CSI / DEC-specific DSR (source line 1420); charproc.c CASE_DSR
+      level: defined
+      wire: CSI ? Prow ; Pcol [ ; Ppage ] R
+      rule: Xterm responds to CSI ? 6 n with a private-prefixed cursor position. It includes page number 1 when emulating VT420 or eligible
+        VT330-level operation; older levels report only row and column.
+      source_request: CSI ? 6 n
+      originating_dec_reference: dec_vt3xx_text.dsr-dec-private
+      competes_with: DEC VT330/VT340 and VT420 source reply CSI Prow ; Pcol ; Ppage R (without ?).
+      xterm_reference_documentation: The pinned ctlseqs text at line 1420 describes CSI ? row ; col R, without the optional page used by
+        its implementation at later VT levels.
+      xterm_implementation:
+        source: https://github.com/xterm-x11/xterm-snapshots/blob/5afc76e089167da6d07c49334d0bf350377f6c0a/charproc.c
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c, CASE_DSR / CASE_CPR, parameter 6
+        observed_rule: Private ? prefix is always present; page=1 is appended for VT420 or qualifying VT330 modes.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f2360e60be
+        source_line: 1420
+        wire: CSI ? Ps n
+      pending_reconciliation: dec-private-dsr-decxcpr-reply-shape
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -2316,6 +2342,60 @@ specifications:
       xterm_documented_overlap:
       - 10
       - 11
+    - id: device-status-reports-extended
+      section: Chapter 12 / Device Status Reports, printed pages 236-242
+      level: defined
+      wire: CSI ? Ps [ ; Pid ] n
+      rule: VT420 extends the DEC private DSR family with macro memory, data integrity and multiple-session queries, while preserving older
+        printer and keyboard status requests. Reply fields and values are source-defined.
+      extends: dec_vt3xx_text.dsr-dec-private
+      parameters:
+      - selector: 62
+        name: DECMSR
+        effect: Request available macro-definition storage, reported as available bytes divided by 16 and rounded down.
+        response: CSI Pn * {, where Pn = floor(available macro-definition bytes / 16).
+      - selector: 63
+        name: DECCKSR
+        request: CSI ? 63 ; Pid n
+        effect: Request checksum of current text macro definitions; optional request label Pid is echoed.
+        response: DCS Pid ! ~ xxxx ST (four hexadecimal checksum digits).
+      - selector: 75
+        name: Data integrity
+        effect: Query and reset integrity flag since the preceding report.
+        responses:
+          '70': No communication errors since last report.
+          '71': Communication error since last report.
+          '73': Not reported since power-up or hard reset.
+        response_wire: CSI ? Pstatus n
+      - selector: 85
+        name: Multi-session configuration
+        effect: Query configuration and state of multiple host sessions.
+        responses:
+          80;Ps2: SSU multiple sessions enabled (Ps2 max sessions).
+          81;Ps2: SSU sessions configured but pending (Ps2 max sessions).
+          '83': Not configured for multiple sessions.
+          '87': Separate physical line for each session.
+        response_wire: CSI ? Pstatus [ ; Ps2 ] n
+      reaffirmed_requests:
+      - 6
+      - 15
+      - 25
+      - 26
+      response_extension:
+        selector: 26
+        response: CSI ? 27 ; Pdialect ; Pstatus ; Pkeyboard_type n in VT400 mode; Pkeyboard_type identifies the keyboard model.
+        source: VT420 Chapter 12, printed page 238
+      original_decxcpr: VT420 printed pages 236-237 independently repeat the DECXCPR response CSI Prow ; Pcol ; Ppage R without a private
+        ? prefix.
+      competing_reply_format: xterm_controls.decxcpr-xterm-reply
+      pending_reconciliation: dec-private-dsr-decxcpr-reply-shape
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f2360e60be
+        source_line: 1420
+        wire: CSI ? Ps n
+      scope_note: The DEC printer and keyboard response sets include states omitted from xterm examples. Omission alone is not conflicting
+        semantics.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -2588,6 +2668,73 @@ specifications:
         colour-space identifier and components; optional tolerance and tolerance-space elements may follow.
       extends: ecma48.sgr
       original_ecma48: ECMA-48 fifth edition (1991) reserved selectors 38 and 48 for future standardization with those intended colour purposes.
+  dec_vt3xx_text:
+    title: 'DEC VT330/VT340 Programmer Reference Manual, Volume 1: Text Programming'
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: Second edition, May 1988 (EK-VT3XX-TP-002)
+    url: https://mirrors.meulie.net/bitsavers.org/pdf/dec/terminal/vt340/EK-VT3XX-TP-002_VT330_VT340_Text_Programming_198805.pdf
+    snapshot_sha256: 518676ad1188d4f75d0780e25f0a8fda2bb4a1a591902c6d62e1b9fde8042978
+    scope: Original DEC-private Device Status Reports in Chapter 12, printed pages 201-205; not the complete VT300 text repertoire.
+    clauses:
+    - id: dsr-dec-private
+      section: Chapter 12 / Device Status Reports (DSR), printed pages 201-205
+      level: defined
+      wire: CSI ? Ps n
+      rule: Requests DEC-private device status, with parameter selecting the report. The private CSI ? form is distinct from standard ECMA-48
+        CSI Ps n; each request has a specified reply format and report values.
+      related_standard: ecma48.dsr
+      parameters:
+      - selector: 6
+        name: DECXCPR
+        effect: Request extended cursor position including current page number.
+        response: CSI Prow ; Pcol ; Ppage R (DEC source has no private ? prefix).
+        competing_reply_format: xterm_controls.decxcpr-xterm-reply
+        pending_reconciliation: dec-private-dsr-decxcpr-reply-shape
+      - selector: 15
+        name: Printer status
+        effect: Query printer-port status.
+        responses:
+          '10': Printer ready.
+          '11': Printer not ready.
+          '13': No printer detected since power-up/reset.
+          '18': Printer busy in other session.
+          '19': Printer assigned to other session.
+        response_wire: CSI ? Pstatus n
+      - selector: 25
+        name: UDK status
+        effect: Query whether user-defined keys are locked.
+        responses:
+          '20': Unlocked.
+          '21': Locked.
+        response_wire: CSI ? Pstatus n
+      - selector: 26
+        name: Keyboard dialect/status
+        effect: Query the keyboard dialect and readiness.
+        response: CSI ? 27 ; Pdialect [ ; Pstatus ] n; status is present in VT300 operating mode; Pstatus is 0 ready, 3 absent, or 8 busy.
+      - selector: 55
+        name: Locator status
+        effect: Query whether an attached locator is available.
+        responses:
+          '50': Locator ready.
+          '53': No locator detected.
+          '58': Locator busy in other session.
+        response_wire: CSI ? Pstatus n
+      - selector: 56
+        name: Locator device ID
+        effect: Query the type of attached locator.
+        responses:
+          '0': Unknown.
+          '1': DEC mouse.
+          '2': DEC tablet.
+        response_wire: CSI ? 57 ; Ptype n
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f2360e60be
+        source_line: 1420
+        wire: CSI ? Ps n
+      later_dec_documentation: dec_vt420.device-status-reports-extended
+      source_note: Source defines CSI ? 6 n request but no private prefix in its DECXCPR response; this is not silently normalized to xterm.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -2923,10 +3070,6 @@ discovery_catalogues:
       wire: CSI > Ps n
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1398
-    - id: csi-f2360e60be
-      wire: CSI ? Ps n
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1420
     - id: csi-3b0d6ef095
       wire: CSI > Ps p
       section: Functions using CSI , ordered by the final character(s)
@@ -4105,7 +4248,35 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: dec-private-dsr-decxcpr-reply-shape
+      status: confirmed-material-response-wire-difference-awaiting-decision
+      request: CSI ? 6 n
+      source_interpretations:
+      - clause: dec_vt3xx_text.dsr-dec-private
+        response: CSI Prow ; Pcol ; Ppage R
+        source: VT330/VT340 Text Programming (May 1988), Chapter 12, page 202
+      - clause: dec_vt420.device-status-reports-extended
+        response: CSI Prow ; Pcol ; Ppage R
+        source: VT420 Programmer Reference Manual (Feb 1992), Chapter 12, pages 236-237
+      - clause: xterm_controls.decxcpr-xterm-reply
+        response: CSI ? Prow ; Pcol [ ; Ppage ] R
+        source: Xterm ctlseqs line 1420 plus pinned xterm charproc.c; page field depends on emulated VT level
+      independent_implementations:
+      - name: Ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        response: CSI ? Prow ; Pcol ; 1 R
+        source_location: src/terminal/stream_terminal.zig, deviceStatus() and DECXCPR test
+      - name: Kitty
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        response: CSI ? Prow ; Pcol R
+        source_location: kitty/screen.c, report_device_status()
+      material_difference: The DEC manuals do not place ? in the reply, whereas xterm, Ghostty and Kitty do. The page field is defined by
+        DEC and present for VT420 xterm/Ghostty, but absent from Kitty and lower-level xterm output.
+      scope_limit: Only CSI ? 6 n response encoding; all other DEC-private DSR parameters retain their independently source-defined meanings.
+      question: Which reply prefix and page-field policy should Howl adopt for DECXCPR? This material divergence among important references
+        requires Captain review under the accepted reference-consensus rule.
+      decision: null
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
