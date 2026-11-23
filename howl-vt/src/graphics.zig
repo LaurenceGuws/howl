@@ -286,6 +286,17 @@ const delete_selectors = "afinrpqxyzc";
 
 /// Owns decoded image/frame bytes, placements, animation state, and one transfer.
 pub const Plane = struct {
+    /// Borrowed only for one synchronous graphics command invocation.
+    // zig-audit: acknowledge anyopaque
+    // reason: The plain image owner cannot depend on the terminal's canonical Unicode view type; the caller restores its exact short-lived type in the callback.
+    pub const AnchorContext = *anyopaque;
+    /// Optional read-only canonical Unicode anchor resolver for geometric
+    /// deletions. Plain Planes remain independently usable without a screen.
+    /// The caller owns the context and may use it only for this command.
+    pub const AnchorSource = struct {
+        context: AnchorContext,
+        resolve: *const fn (AnchorContext, u16) ?Anchor,
+    };
     // -------------------------------------------------------------------------
     // Retained graphics ownership
     // -------------------------------------------------------------------------
@@ -346,6 +357,23 @@ pub const Plane = struct {
         cell_width: u32,
         cell_height: u32,
     ) std.mem.Allocator.Error!Result {
+        return self.commandWithAnchors(bytes, bank, screen_origin, row, col, cell_width, cell_height, null);
+    }
+
+    /// Applies a graphics command with optional text-derived virtual-parent
+    /// positions for geometry deletions. An absent resolver keeps the Plane
+    /// independent from terminal cell storage and ignores unanchored hits.
+    pub fn commandWithAnchors(
+        self: *Plane,
+        bytes: []const u8,
+        bank: Bank,
+        screen_origin: u64,
+        row: u64,
+        col: u16,
+        cell_width: u32,
+        cell_height: u32,
+        anchors: ?AnchorSource,
+    ) std.mem.Allocator.Error!Result {
         if (bytes.len > max_command_bytes) return .{ .failure = .quota };
         const command_value = parseCommand(bytes) orelse {
             self.cancel();
@@ -387,7 +415,7 @@ pub const Plane = struct {
             'a' => self.animate(command_value),
             'c' => try self.composeFrames(command_value),
             'p' => self.put(command_value, bank, row, col, cell_width, cell_height),
-            'd' => self.delete(command_value, bank, screen_origin, row, col),
+            'd' => self.delete(command_value, bank, screen_origin, row, col, anchors),
             else => .{
                 .response_id = nonzero(command_value.id),
                 .response_number = nonzero(command_value.image_number),
@@ -1124,9 +1152,9 @@ pub const Plane = struct {
             const parent_index = self.parentPlacementIndex(command_value.parent_id, command_value.parent_placement_id, bank) orelse
                 return .{ .response_id = command_value.id, .failure = .parent_missing, .quiet = command_value.quiet };
             const parent = self.placements[parent_index];
-            // A virtual parent needs its Unicode-placeholder anchor from
-            // canonical text. Never fabricate a cursor location for it.
-            if (parent.virtual) return .{ .response_id = command_value.id, .failure = .unsupported, .quiet = command_value.quiet };
+            // A virtual parent has no cursor anchor. The read-only native
+            // projection resolves its location from matching U+10EEEE text;
+            // admit the stable graph reference even before that text exists.
             if (replacing) |index| if (parent.identity == self.placements[index].identity)
                 return .{ .response_id = command_value.id, .failure = .invalid, .quiet = command_value.quiet };
             if (self.parentError(parent.identity, if (replacing) |index| self.placements[index].identity else 0)) |failure|
@@ -1173,6 +1201,7 @@ pub const Plane = struct {
         screen_origin: u64,
         cursor_row: u64,
         cursor_col: u16,
+        anchors: ?AnchorSource,
     ) Result {
         self.cancel();
         const selector = if (command_value.delete == 0) 'a' else command_value.delete;
@@ -1207,11 +1236,34 @@ pub const Plane = struct {
             }
             const kitty_id = self.kittyIdForImage(placement_value.image_id);
             const kitty_number = self.kittyNumberForImage(placement_value.image_id);
-            const anchor = self.placementAnchor(placement_index) orelse {
+            if (kitty_id == null or placement_value.bank != bank) {
                 placement_index += 1;
                 continue;
+            }
+            // Identity and range deletion also apply to invisible virtual
+            // prototypes and children whose Unicode parent has no current
+            // text anchor. Geometry selectors require a resolved position.
+            const anchor: Anchor = if (normalized == 'i' or normalized == 'n' or normalized == 'r')
+                .{ .row = 0, .col = 0 }
+            else blk: {
+                const root = self.placementRoot(placement_index) orelse {
+                    placement_index += 1;
+                    continue;
+                };
+                if (root.virtual_index) |virtual_index| {
+                    const source = anchors orelse {
+                        placement_index += 1;
+                        continue;
+                    };
+                    const base = source.resolve(source.context, virtual_index) orelse {
+                        placement_index += 1;
+                        continue;
+                    };
+                    break :blk .{ .row = base.row + root.offset.row, .col = base.col + root.offset.col };
+                }
+                break :blk root.offset;
             };
-            if (kitty_id == null or placement_value.bank != bank or !deleteMatches(
+            if (!deleteMatches(
                 placement_value,
                 anchor,
                 kitty_id,
@@ -1441,7 +1493,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = self.placements[index];
-            if (retained.bank != bank) {
+            if (retained.bank != bank or retained.virtual) {
                 index += 1;
                 continue;
             }
@@ -1464,7 +1516,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = self.placements[index];
-            if (retained.bank != .primary or retained.parent_identity != 0 or retained.row >= absolute_row) {
+            if (retained.bank != .primary or retained.virtual or retained.parent_identity != 0 or retained.row >= absolute_row) {
                 index += 1;
                 continue;
             }
@@ -1779,8 +1831,17 @@ pub const Plane = struct {
         var changed = false;
         var semantic_changed = false;
         var next_ms: ?u32 = null;
+        var running = false;
+        for (self.images[0..self.image_count]) |image_value| {
+            if (image_value.animation != .stopped) {
+                running = true;
+                break;
+            }
+        }
+        if (!running) return .{ .changed = false, .semantic_changed = false, .next_ms = null };
+        const independent_visible = self.independentPhysicalVisibility();
         for (self.images[0..self.image_count], 0..) |*image_value, image_index| {
-            const visible = self.hasPhysicalPlacement(image_value.id) or virtual_visible[image_index];
+            const visible = independent_visible[image_index] or virtual_visible[image_index];
             if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0 or
                 !visible or self.animationDuration(image_value.*) == 0)
                 continue;
@@ -2037,7 +2098,7 @@ pub const Plane = struct {
             if (depth == max_parent_depth) return .too_deep;
             const index = self.identityIndex(ancestor) orelse return .parent_missing;
             const value = self.placements[index];
-            if (value.virtual) return .unsupported;
+            if (value.virtual and value.parent_identity != 0) return .invalid;
             ancestor = value.parent_identity;
             depth += 1;
         }
@@ -2070,31 +2131,47 @@ pub const Plane = struct {
         return false;
     }
 
-    /// Resolves one bounded physical parent chain without editing retained
-    /// anchors. Signed offsets can place children partially outside a view.
+    /// Resolves a bounded parent chain without editing retained anchors.
+    /// Virtual roots preserve only offsets: canonical text owns their anchor.
     pub const Anchor = struct { row: i128, col: i128 };
-    /// Resolves one placement's effective physical anchor through the
-    /// validated, compaction-aware parent indices. A virtual parent remains
-    /// unsupported until it can be rooted in canonical Unicode placeholders.
-    pub fn placementAnchor(self: *const Plane, index: usize) ?Anchor {
+    /// Distinguishes an independent physical root from an unpositioned
+    /// virtual prototype, carrying signed offsets in either case.
+    pub const PlacementRoot = struct {
+        offset: Anchor,
+        virtual_index: ?u16 = null,
+    };
+    /// Finds a physical absolute anchor or a virtual root and its signed
+    /// child offset, using only validated compaction-aware parent links.
+    pub fn placementRoot(self: *const Plane, index: usize) ?PlacementRoot {
         if (index >= self.placement_count) return null;
         var value = self.placements[index];
+        var current_index = index;
         var row: i128 = 0;
         var col: i128 = 0;
         var depth: u8 = 0;
         while (true) {
             row += value.parent_row_offset;
             col += value.parent_col_offset;
-            if (value.parent_identity == 0) return .{ .row = row + value.row, .col = col + value.col };
+            if (value.parent_identity == 0) {
+                if (value.virtual) return .{ .offset = .{ .row = row, .col = col }, .virtual_index = @intCast(current_index) };
+                return .{ .offset = .{ .row = row + value.row, .col = col + value.col } };
+            }
             if (depth == max_parent_depth) return null;
             const expected_parent = value.parent_identity;
             const parent_index = value.parent_slot orelse return null;
             if (parent_index >= self.placement_count) return null;
             value = self.placements[parent_index];
+            current_index = parent_index;
             if (value.identity != expected_parent) return null;
-            if (value.virtual) return null;
             depth += 1;
         }
+    }
+
+    /// Resolves only rooted physical graphs. Virtual roots deliberately
+    /// require Images' existing Unicode-placeholder read-only scanner.
+    pub fn placementAnchor(self: *const Plane, index: usize) ?Anchor {
+        const root = self.placementRoot(index) orelse return null;
+        return if (root.virtual_index == null) root.offset else null;
     }
 
     fn makePlacement(
@@ -2401,20 +2478,45 @@ pub const Plane = struct {
         return false;
     }
 
-    fn hasPhysicalPlacement(self: *const Plane, image_id: u32) bool {
-        for (self.placements[0..self.placement_count]) |value|
-            if (value.image_id == image_id and !value.virtual) return true;
-        return false;
+    /// One bounded scan produces physical visibility for all image identities.
+    /// A child of a virtual prototype is not independently visible, even if
+    /// its placement has a physical pixel resource.
+    fn independentPhysicalVisibility(self: *const Plane) [max_images]bool {
+        var visible: [max_images]bool = @splat(false);
+        for (self.placements[0..self.placement_count], 0..) |value, index| {
+            if (value.virtual) continue;
+            const root = self.placementRoot(index) orelse continue;
+            if (root.virtual_index != null) continue;
+            for (self.images[0..self.image_count], 0..) |image_value, image_index| {
+                if (image_value.id != value.image_id) continue;
+                visible[image_index] = true;
+                break;
+            }
+        }
+        return visible;
     }
 
     /// Reports whether one running image needs caller-projected virtual visibility.
     pub fn needsVirtualAnimationVisibility(self: *const Plane, bank: Bank) bool {
-        for (self.placements[0..self.placement_count]) |placement_value| {
-            if (!placement_value.virtual or placement_value.bank != bank or
-                self.hasPhysicalPlacement(placement_value.image_id))
-                continue;
-            for (self.images[0..self.image_count]) |image_value| {
+        var running = false;
+        for (self.images[0..self.image_count]) |image_value| {
+            if (image_value.animation != .stopped) {
+                running = true;
+                break;
+            }
+        }
+        if (!running) return false;
+        const independent_visible = self.independentPhysicalVisibility();
+        for (self.placements[0..self.placement_count], 0..) |placement_value, index| {
+            if (placement_value.bank != bank) continue;
+            const virtual_dependent = placement_value.virtual or blk: {
+                const root = self.placementRoot(index) orelse break :blk false;
+                break :blk root.virtual_index != null;
+            };
+            if (!virtual_dependent) continue;
+            for (self.images[0..self.image_count], 0..) |image_value, image_index| {
                 if (image_value.id != placement_value.image_id) continue;
+                if (independent_visible[image_index]) break;
                 if (image_value.animation != .stopped and self.frameCount(image_value.id) != 0 and
                     self.animationDuration(image_value) != 0)
                     return true;
@@ -2427,6 +2529,7 @@ pub const Plane = struct {
     /// Copies one invisible Kitty Unicode-placeholder prototype and its image geometry.
     pub const VirtualPrototype = struct {
         image_id: u32,
+        placement_identity: u64,
         image_width: u32,
         image_height: u32,
         image_generation: u64,
@@ -2444,22 +2547,25 @@ pub const Plane = struct {
     ) ?VirtualPrototype {
         const image_index = self.kittyImageIndex(kitty_image_id) orelse return null;
         const image_value = self.images[image_index];
+        var oldest: ?Placement = null;
         for (self.placements[0..self.placement_count]) |placement_value| {
             if (!placement_value.virtual or placement_value.bank != bank or
                 placement_value.image_id != image_value.id)
                 continue;
             if (kitty_placement_id != 0 and placement_value.kitty_id != kitty_placement_id) continue;
-            return .{
-                .image_id = image_value.id,
-                .image_width = image_value.width,
-                .image_height = image_value.height,
-                .image_generation = image_value.generation,
-                .placement_generation = placement_value.generation,
-                .cols = placement_value.cols,
-                .rows = placement_value.rows,
-            };
+            if (oldest == null or placement_value.identity < oldest.?.identity) oldest = placement_value;
         }
-        return null;
+        const placement_value = oldest orelse return null;
+        return .{
+            .image_id = image_value.id,
+            .placement_identity = placement_value.identity,
+            .image_width = image_value.width,
+            .image_height = image_value.height,
+            .image_generation = image_value.generation,
+            .placement_generation = placement_value.generation,
+            .cols = placement_value.cols,
+            .rows = placement_value.rows,
+        };
     }
 
     /// Reports whether one screen bank retains any invisible Unicode-placeholder prototype.
@@ -3934,10 +4040,9 @@ test "Kitty geometric upper Q retires animation frames only after final matched 
     try std.testing.expect(plane.content_generation > generation);
 }
 
-test "Kitty virtual parent placement needs the Unicode anchor owner before admission" {
-    // Physical P/Q parents have stable placement identities. The separate
-    // U+10EEEE virtual parent needs text-run projection before relative puts
-    // can be accepted, so this case must remain an exact no-mutation failure.
+test "Kitty virtual child cannot itself be relative to another placement" {
+    // A virtual prototype gets its anchor from U+10EEEE text, and may have
+    // physical descendants. The virtual prototype itself cannot be a child.
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
     try std.testing.expect((try plane.command(
@@ -3963,7 +4068,7 @@ test "Kitty virtual parent placement needs the Unicode anchor owner before admis
     const prior_content_generation = plane.content_generation;
     const prior_storage = plane.storage_bytes;
     const relative_put = try plane.command(
-        "a=p,i=92,p=4,P=91,Q=3,q=2",
+        "a=p,i=92,p=4,P=91,Q=3,U=1,q=2",
         .primary,
         0,
         1,
@@ -3971,7 +4076,7 @@ test "Kitty virtual parent placement needs the Unicode anchor owner before admis
         1,
         1,
     );
-    try std.testing.expectEqual(Failure.unsupported, relative_put.failure.?);
+    try std.testing.expectEqual(Failure.invalid, relative_put.failure.?);
     try std.testing.expect(!relative_put.changed);
     try std.testing.expectEqual(prior_generation, plane.generation());
     try std.testing.expectEqual(prior_content_generation, plane.content_generation);
@@ -3981,6 +4086,41 @@ test "Kitty virtual parent placement needs the Unicode anchor owner before admis
     try std.testing.expectEqual(@as(u16, 2), plane.image_count);
     try std.testing.expectEqual(@as(?u32, 91), plane.images[0].kitty_id);
     try std.testing.expectEqual(@as(?u32, 92), plane.images[1].kitty_id);
+}
+
+test "Kitty virtual parent admits a physically rendered child without cursor motion" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const before = plane.generation();
+    const added = try plane.command("a=p,i=43,p=4,P=42,Q=3,H=2,V=-1,q=2", .primary, 0, 1, 6, 1, 1);
+    try std.testing.expect(added.changed and added.failure == null);
+    try std.testing.expect(added.cursor_advance == null);
+    try std.testing.expect(plane.generation() > before);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expectEqual(plane.placement(0).?.identity, plane.placement(1).?.parent_identity);
+    // The relative offset is retained, not mistaken for an ordinary cursor
+    // anchor before any U+10EEEE text exists.
+    try std.testing.expect(plane.placementAnchor(1) == null);
+    try std.testing.expect((try plane.command("a=d,d=i,i=42,p=3", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
 }
 
 test "Kitty physical P Q placement admits signed offsets without moving the cursor and cascades deletion" {

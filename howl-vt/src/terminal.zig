@@ -5127,7 +5127,12 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
     else
         @as(u64, active.historyRowBase()) + active.historyCount() + active.cursor.row;
     const cell = active.cellPixelSize();
-    const result = try terminal.graphics.command(
+    // A scoped borrowed view supplies the same canonical text-derived
+    // virtual-parent location to geometry deletion that native rendering
+    // already uses. It is never persisted by the graphics Plane.
+    var observed: GraphicsAnchorContext = .{ .images = terminal.images(0) };
+    const anchors: graphics_mod.Plane.AnchorSource = .{ .context = &observed, .resolve = resolveGraphicsVirtualAnchor };
+    const result = try terminal.graphics.commandWithAnchors(
         packet,
         bank,
         if (bank == .alternate) 0 else @as(u64, active.historyRowBase()) + active.historyCount(),
@@ -5135,6 +5140,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         active.cursor.col,
         if (cell) |value| value.width else 1,
         if (cell) |value| value.height else 1,
+        anchors,
     );
     if (result.feature_query) |query| {
         if (result.quiet != 0) return false;
@@ -5195,6 +5201,20 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
     else
         false;
     return result.changed or cursor_changed or (respond and !suppressed);
+}
+
+const GraphicsAnchorContext = struct {
+    images: Terminal.Images,
+    cache: Terminal.Images.VirtualParentCache = .{},
+};
+
+fn resolveGraphicsVirtualAnchor(context: graphics_mod.Plane.AnchorContext, index: u16) ?graphics_mod.Plane.Anchor {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback's context is exactly the borrowed Terminal.Images value provided by applyKittyGraphicsPacket.
+    // zig-audit: acknowledge align_cast
+    // reason: The local Images variable is correctly aligned and remains live for the synchronous graphics command.
+    const projection: *GraphicsAnchorContext = @ptrCast(@alignCast(context));
+    return projection.cache.get(&projection.images, index);
 }
 
 fn applyKittyGraphicsCursorAdvance(
@@ -6145,7 +6165,11 @@ pub const Terminal = struct {
             if (index < plane.placement_count) {
                 const value = plane.placement(index) orelse return null;
                 if (value.virtual or value.bank != self.bank) return null;
-                const anchor = plane.placementAnchor(index) orelse return null;
+                const root = plane.placementRoot(index) orelse return null;
+                const anchor = if (root.virtual_index) |virtual_index| blk: {
+                    const base = self.virtualParentAnchor(virtual_index) orelse return null;
+                    break :blk graphics_mod.Plane.Anchor{ .row = base.row + root.offset.row, .col = base.col + root.offset.col };
+                } else root.offset;
                 if (anchor.row < self.visible_row_start or
                     anchor.row >= @as(i128, self.visible_row_start) + self.rows) return null;
                 return .{
@@ -6171,6 +6195,28 @@ pub const Terminal = struct {
         /// other-bank prototypes to the caller's final-command budget.
         /// This preserves the native placeholder scanner across successive
         /// reads instead of rescanning the cell lattice for every index.
+        const VirtualParentCache = struct {
+            entries: [64]struct { identity: u64 = 0, anchor: ?graphics_mod.Plane.Anchor = null } = @splat(.{}),
+            next_slot: u6 = 0,
+
+            fn get(self: *VirtualParentCache, projection: *const Images, index: u16) ?graphics_mod.Plane.Anchor {
+                // A deletion can compact the Plane while the command's
+                // scoped projection remains borrowed. Cache by stable ref
+                // identity, never by the recyclable dense placement index.
+                const parent = projection.backingPlane().placement(index) orelse return null;
+                if (!parent.virtual or parent.bank != projection.bank or parent.identity == 0) return null;
+                for (&self.entries) |entry| {
+                    if (entry.identity == parent.identity) return entry.anchor;
+                }
+                const resolved = projection.virtualParentAnchor(index);
+                self.entries[self.next_slot] = .{ .identity = parent.identity, .anchor = resolved };
+                self.next_slot +%= 1;
+                return resolved;
+            }
+        };
+
+        /// Streams physical and Unicode-projected graphics from one borrowed
+        /// view with an ephemeral bounded virtual-parent anchor memo.
         pub const PlacementIterator = struct {
             /// The final-command destination Y may be negative when a tall
             /// physical image's anchor precedes the selected history viewport.
@@ -6179,6 +6225,13 @@ pub const Terminal = struct {
             physical_index: usize = 0,
             virtual_row: u16 = 0,
             scanner: ?PlaceholderRunScanner = null,
+            /// One-iterator view-derived memo; never retained by Plane or a
+            /// later output cut. Common fanout shares a single text scan.
+            virtual_cache: VirtualParentCache = .{},
+
+            fn parentAnchor(self: *PlacementIterator, index: u16) ?graphics_mod.Plane.Anchor {
+                return self.virtual_cache.get(self.images, index);
+            }
 
             /// Copies the next visible physical or projected virtual placement.
             pub fn next(self: *PlacementIterator) ?VisiblePlacement {
@@ -6188,7 +6241,11 @@ pub const Terminal = struct {
                     self.physical_index += 1;
                     const physical = plane.placement(index) orelse continue;
                     if (physical.virtual or physical.bank != self.images.bank) continue;
-                    const anchor = plane.placementAnchor(index) orelse continue;
+                    const root = plane.placementRoot(index) orelse continue;
+                    const anchor = if (root.virtual_index) |virtual_index| blk: {
+                        const base = self.parentAnchor(virtual_index) orelse continue;
+                        break :blk graphics_mod.Plane.Anchor{ .row = base.row + root.offset.row, .col = base.col + root.offset.col };
+                    } else root.offset;
                     const row_offset: i128 = anchor.row - @as(i128, self.images.visible_row_start);
                     const pixel_top = row_offset * self.images.cell_pixel_height + physical.cell_y;
                     const pixel_bottom = pixel_top + physical.pixel_height;
@@ -6323,6 +6380,32 @@ pub const Terminal = struct {
             columns: u16,
         };
 
+        /// Returns the canonical text-derived location of one invisible
+        /// prototype. Kitty's virtual anchor is the independent minimum X/Y
+        /// across all matching placeholders, not a stored cursor position.
+        /// Uses the same indexed-color/diacritic scanner as ordinary virtual
+        /// image projection and only the caller-selected history viewport.
+        fn virtualParentAnchor(self: *const Images, parent_index: u16) ?graphics_mod.Plane.Anchor {
+            const plane = self.backingPlane();
+            const parent = plane.placement(parent_index) orelse return null;
+            if (!parent.virtual or parent.bank != self.bank) return null;
+            var anchor: ?graphics_mod.Plane.Anchor = null;
+            var row: u16 = 0;
+            while (row < self.view.rows) : (row += 1) {
+                var scanner = PlaceholderRunScanner.init(self, row);
+                while (scanner.next()) |run| {
+                    const prototype = plane.virtualPrototype(self.bank, run.image_id, run.placement_id) orelse continue;
+                    if (prototype.placement_identity != parent.identity or self.projectVirtualRun(run) == null) continue;
+                    const candidate = graphics_mod.Plane.Anchor{ .row = @as(i128, self.visible_row_start) + run.screen_row, .col = run.screen_col };
+                    if (anchor) |*previous| {
+                        previous.row = @min(previous.row, candidate.row);
+                        previous.col = @min(previous.col, candidate.col);
+                    } else anchor = candidate;
+                }
+            }
+            return anchor;
+        }
+
         const PlaceholderRunScanner = struct {
             images: *const Images,
             row: u16,
@@ -6406,23 +6489,16 @@ pub const Terminal = struct {
         ) void {
             @memset(output, false);
             const plane = self.backingPlane();
-            const room = maximum_image_placements -| plane.placement_count;
-            if (room == 0) return;
-            var projected_count: usize = 0;
-            var row: u16 = 0;
-            while (row < self.view.rows) : (row += 1) {
-                var scanner = PlaceholderRunScanner.init(self, row);
-                while (scanner.next()) |run| {
-                    const projected = self.projectVirtualRun(run) orelse continue;
-                    if (projected_count == room) return;
-                    projected_count += 1;
-                    var image_index: usize = 0;
-                    while (image_index < plane.image_count) : (image_index += 1) {
-                        const image_value = plane.image(image_index) orelse continue;
-                        if (image_value.id != projected.image_id) continue;
-                        output[image_index] = true;
-                        break;
-                    }
+            // The shared visible-placement iterator owns both ordinary
+            // Unicode prototype projection and virtual-parent children.
+            // Reuse it rather than teaching the animation clock a second
+            // text scan or counting unanchored children as visible pixels.
+            var iterator = self.placementIterator();
+            while (iterator.next()) |visible| {
+                for (0..plane.image_count) |image_index| {
+                    if (plane.images[image_index].id != visible.placement.image_id) continue;
+                    output[image_index] = true;
+                    break;
                 }
             }
         }
@@ -11256,6 +11332,268 @@ test "virtual projection resumes after prototype admission and stops after delet
     try std.testing.expectEqual(@as(usize, 1), images.imageCount());
     try std.testing.expectEqual(@as(usize, 0), images.placementCount());
     try std.testing.expect(images.placement(0) == null);
+}
+
+test "virtual parent resolves from Unicode placeholder cells and follows text without mutating image data" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    const glyph = "\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=2,V=1,z=1,q=2\x1b\\",
+    )).stateChanged());
+    const original = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), original.imageCount());
+    try std.testing.expectEqual(@as(usize, 2), original.placementCount());
+    try std.testing.expect(original.placement(0) == null);
+    try std.testing.expect(original.placement(1) == null);
+    var unanchored = original.placementIterator();
+    try std.testing.expect(unanchored.next() == null);
+    const content = original.content_generation;
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3H" ++ glyph)).stateChanged());
+    var visible = terminal.images(0);
+    const child = visible.placement(1) orelse return error.MissingChild;
+    try std.testing.expectEqual(@as(u16, 2), child.row);
+    try std.testing.expectEqual(@as(u16, 4), child.col);
+    var entries = visible.placementIterator();
+    const rendered_child = entries.next() orelse return error.MissingChild;
+    try std.testing.expectEqual(@as(i128, 40), rendered_child.left);
+    try std.testing.expectEqual(@as(i128, 40), rendered_child.top);
+    try std.testing.expect(entries.next() != null);
+    try std.testing.expect(entries.next() == null);
+
+    // Kitty defines the virtual anchor as independent minimum X/Y across
+    // matching placeholder cells, not necessarily one physical cell.
+    try std.testing.expect((try terminal.feed("\x1b[1;7H" ++ glyph)).stateChanged());
+    visible = terminal.images(0);
+    try std.testing.expectEqual(@as(u16, 1), visible.placement(1).?.row);
+    try std.testing.expectEqual(@as(u16, 4), visible.placement(1).?.col);
+    try std.testing.expectEqual(content, visible.content_generation);
+
+    // Delete one cell; the child follows the remaining actual placeholder.
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[X")).stateChanged());
+    visible = terminal.images(0);
+    try std.testing.expectEqual(@as(u16, 1), visible.placement(1).?.row);
+    try std.testing.expectEqual(@as(u16, 8), visible.placement(1).?.col);
+    try std.testing.expect((try terminal.feed("\x1b[1;7H\x1b[X")).stateChanged());
+    visible = terminal.images(0);
+    try std.testing.expect(visible.placement(1) == null);
+    var none = visible.placementIterator();
+    try std.testing.expect(none.next() == null);
+    try std.testing.expectEqual(@as(usize, 2), visible.imageCount());
+    try std.testing.expectEqual(content, visible.content_generation);
+}
+
+test "virtual parent's physical child matches geometry deletion at the canonical text anchor" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=2,V=1,z=-7,q=2\x1b\\" ++
+            "\x1b[2;3H\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m",
+    )).stateChanged());
+    const positioned = terminal.images(0);
+    try std.testing.expectEqual(@as(u16, 2), positioned.placement(1).?.row);
+    try std.testing.expectEqual(@as(u16, 4), positioned.placement(1).?.col);
+    const data_generation = positioned.content_generation;
+    // One-based cursor-independent hit on the child's derived location.
+    try std.testing.expect((try terminal.feed("\x1b_Ga=d,d=q,x=5,y=3,z=-7\x1b\\")).stateChanged());
+    const after = terminal.images(0);
+    try std.testing.expect(after.placement(0) == null);
+    try std.testing.expectEqual(@as(usize, 2), after.imageCount());
+    try std.testing.expectEqual(data_generation, after.content_generation);
+    // The placeholder's virtual prototype still projects independently.
+    var iterator = after.placementIterator();
+    const remaining = iterator.next() orelse return error.MissingVirtualImage;
+    try std.testing.expectEqual(@as(i32, -1), remaining.placement.z);
+    try std.testing.expectEqual(@as(u32, 1), remaining.placement.image_id);
+    try std.testing.expect(iterator.next() == null);
+}
+
+test "virtual parent's physical child obeys all six canonical geometry selectors" {
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    for ([_]struct { miss: []const u8, hit: []const u8, cursor: []const u8 = "" }{
+        .{ .miss = "a=d,d=p,x=2,y=3", .hit = "a=d,d=p,x=5,y=3" },
+        .{ .miss = "a=d,d=q,x=5,y=3,z=7", .hit = "a=d,d=q,x=5,y=3,z=-7" },
+        .{ .miss = "a=d,d=x,x=2", .hit = "a=d,d=x,x=5" },
+        .{ .miss = "a=d,d=y,y=2", .hit = "a=d,d=y,y=3" },
+        .{ .miss = "a=d,d=z,z=7", .hit = "a=d,d=z,z=-7" },
+        .{ .miss = "a=d,d=c", .hit = "a=d,d=c", .cursor = "\x1b[3;5H" },
+    }) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(10, 20);
+        try std.testing.expect((try terminal.feed(
+            "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+                "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+                "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=2,V=1,z=-7,q=2\x1b\\" ++
+                "\x1b[2;3H\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m",
+        )).stateChanged());
+        const before = terminal.images(0);
+        const initial_generation = before.generation;
+        const decoded_generation = before.content_generation;
+        var miss_buffer: [96]u8 = undefined;
+        const first = try std.fmt.bufPrint(&miss_buffer, "\x1b_G{s}\x1b\\", .{case.miss});
+        var hit_buffer: [96]u8 = undefined;
+        const second = try std.fmt.bufPrint(&hit_buffer, "\x1b_G{s}\x1b\\", .{case.hit});
+        try std.testing.expect(!(try terminal.feed(first)).stateChanged());
+        try std.testing.expectEqual(initial_generation, terminal.images(0).generation);
+        if (case.cursor.len != 0) try std.testing.expect((try terminal.feed(case.cursor)).stateChanged());
+        try std.testing.expect((try terminal.feed(second)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(decoded_generation, after.content_generation);
+        try std.testing.expectEqual(@as(usize, 2), after.imageCount());
+        var iterator = after.placementIterator();
+        const retained = iterator.next() orelse return error.MissingVirtualParent;
+        try std.testing.expectEqual(@as(u32, 1), retained.placement.image_id);
+        try std.testing.expect(iterator.next() == null);
+    }
+}
+
+test "virtual parent Q selects the exact prototype while omitted Q selects the oldest" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=p,i=42,p=7,U=1,C=1,q=2\x1b\\" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=4,P=42,Q=7,H=1,V=0,z=1,q=2\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=5,P=42,H=1,V=0,z=1,q=2\x1b\\" ++
+            "\x1b[2;2H\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m" ++
+            "\x1b[3;5H\x1b[38;5;42;58;5;7m" ++ placeholder ++ "\x1b[0m",
+    )).stateChanged());
+    const observed = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), observed.imageCount());
+    // Physical slots: two virtual prototypes, then Q=7 and default Q=3.
+    try std.testing.expect(observed.placement(0) == null);
+    try std.testing.expect(observed.placement(1) == null);
+    try std.testing.expectEqual(@as(u16, 2), observed.placement(2).?.row);
+    try std.testing.expectEqual(@as(u16, 5), observed.placement(2).?.col);
+    try std.testing.expectEqual(@as(u16, 1), observed.placement(3).?.row);
+    try std.testing.expectEqual(@as(u16, 2), observed.placement(3).?.col);
+    try std.testing.expect((try terminal.feed("\x1b_Ga=d,d=i,i=42,p=7\x1b\\")).stateChanged());
+    const after = terminal.images(0);
+    var iterator = after.placementIterator();
+    var remaining_child: ?Terminal.ImagePlacement = null;
+    while (iterator.next()) |projected| {
+        if (projected.placement.image_id == 2) remaining_child = projected.placement;
+    }
+    try std.testing.expectEqual(@as(u16, 1), remaining_child.?.row);
+    try std.testing.expectEqual(@as(u16, 2), remaining_child.?.col);
+}
+
+test "virtual parent image animation wakes only while matching text exposes the child" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=43,s=1,v=1,r=1,z=40,C=1,q=2;AP8A/w==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=43,s=1,v=1,r=2,z=50,C=1,q=2;AAD//w==\x1b\\" ++
+            "\x1b_Ga=a,i=43,s=3,q=2\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=0,V=0,z=1,q=2\x1b\\",
+    )).stateChanged());
+    const before = terminal.serviceAnimations(100 * std.time.ns_per_ms);
+    try std.testing.expect(!before.changed);
+    try std.testing.expectEqual(@as(?u32, null), before.next_ms);
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m")).stateChanged());
+    const active = terminal.serviceAnimations(200 * std.time.ns_per_ms);
+    try std.testing.expect(active.next_ms != null);
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[X")).stateChanged());
+    const hidden = terminal.serviceAnimations(300 * std.time.ns_per_ms);
+    try std.testing.expect(!hidden.changed);
+    try std.testing.expectEqual(@as(?u32, null), hidden.next_ms);
+}
+
+test "virtual parent survives scrollback eviction and reanchors on new Unicode text" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 2);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    const styled_placeholder = "\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=1,V=0,z=1,q=2\x1b\\" ++
+            "\x1b[2;2H" ++ styled_placeholder,
+    )).stateChanged());
+    const start = terminal.images(0);
+    try std.testing.expectEqual(@as(u16, 1), start.placement(1).?.row);
+    try std.testing.expectEqual(@as(u16, 2), start.placement(1).?.col);
+    const decoded = start.content_generation;
+    for (0..6) |_| try std.testing.expect((try terminal.feed("\x1b[3;1H\x1bD")).stateChanged());
+    const evicted = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), evicted.imageCount());
+    try std.testing.expectEqual(@as(u16, 2), terminal.graphics.placement_count);
+    try std.testing.expect(evicted.placement(1) == null);
+    try std.testing.expectEqual(decoded, evicted.content_generation);
+
+    // The text can appear again after old scrollback cells disappear.
+    try std.testing.expect((try terminal.feed("\x1b[1;4H" ++ styled_placeholder)).stateChanged());
+    const after = terminal.images(0);
+    try std.testing.expectEqual(@as(u16, 2), terminal.graphics.placement_count);
+    try std.testing.expectEqual(@as(u16, 0), after.placement(1).?.row);
+    try std.testing.expectEqual(@as(u16, 4), after.placement(1).?.col);
+    try std.testing.expectEqual(decoded, after.content_generation);
+}
+
+test "virtual-parent child uses the selected history viewport and survives text reflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    const glyph = "\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=1,V=0,z=1,q=2\x1b\\" ++
+            "\x1b[2;2H" ++ glyph,
+    )).stateChanged());
+    const data = terminal.images(0).content_generation;
+    for (0..3) |_| try std.testing.expect((try terminal.feed("\x1b[3;1H\x1bD")).stateChanged());
+    try std.testing.expect(terminal.images(0).placement(1) == null);
+    const history = terminal.semanticView(0).history_count;
+    try std.testing.expect(history >= 2);
+    var found = false;
+    var offset: u32 = 1;
+    while (offset <= history) : (offset += 1) {
+        const projected = terminal.images(offset);
+        var iterator = projected.placementIterator();
+        const child = iterator.next() orelse continue;
+        const parent = iterator.next() orelse continue;
+        try std.testing.expectEqual(parent.placement.row, child.placement.row);
+        try std.testing.expectEqual(@as(u16, parent.placement.col + 1), child.placement.col);
+        found = true;
+        break;
+    }
+    try std.testing.expect(found);
+
+    try terminal.resize(4, 5);
+    try std.testing.expectEqual(data, terminal.images(0).content_generation);
+    found = false;
+    offset = 0;
+    while (offset <= terminal.semanticView(0).history_count) : (offset += 1) {
+        const projected = terminal.images(offset);
+        var iterator = projected.placementIterator();
+        const child = iterator.next() orelse continue;
+        const parent = iterator.next() orelse continue;
+        try std.testing.expectEqual(parent.placement.row, child.placement.row);
+        try std.testing.expectEqual(@as(u16, parent.placement.col + 1), child.placement.col);
+        found = true;
+        break;
+    }
+    try std.testing.expect(found);
 }
 
 test "mode2048 repeated enable reports unknown pixels without any resize" {

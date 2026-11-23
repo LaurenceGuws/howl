@@ -203,6 +203,61 @@ test "native image output resolves physical P Q ancestry without mutating held c
     try std.testing.expectEqual(@as(usize, 0), deleted.snapshot.graphics.images.len);
 }
 
+test "native image output follows Unicode virtual parent cells with immutable held graphics" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    const placeholder = "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85";
+    const styled = "\x1b[38;5;42;58;5;3m" ++ placeholder ++ "\x1b[0m";
+    try owner.feed("\x1b[?25l" ++
+        "\x1b_Ga=T,f=32,s=1,v=1,i=42,p=3,U=1,C=1,q=2;AQIDBA==\x1b\\" ++
+        "\x1b_Ga=t,f=32,s=1,v=1,i=43,q=2;AQIDBA==\x1b\\" ++
+        "\x1b_Ga=p,i=43,p=4,P=42,Q=3,H=2,V=1,z=1,q=2\x1b\\");
+    try owner.flush();
+    const unanchored = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 0), unanchored.snapshot.graphics.positive.len);
+    try owner.release(unanchored);
+
+    try owner.feed("\x1b[2;3H" ++ styled);
+    try owner.flush();
+    const initial = try owner.hold();
+    var holding = true;
+    defer if (holding) release(owner, initial);
+    try std.testing.expectEqual(@as(usize, 1), initial.snapshot.graphics.positive.len);
+    try std.testing.expectEqual(@as(usize, 1), initial.snapshot.graphics.negative.len);
+    const width: i32 = initial.snapshot.cell_width;
+    const height: i32 = initial.snapshot.cell_height;
+    const child = initial.snapshot.graphics.positive[0].rgba.destination;
+    try std.testing.expectEqual(@as(i32, 4) * width, child.x);
+    try std.testing.expectEqual(@as(i32, 2) * height, child.y);
+    const old_bytes = try a.dupe(u8, initial.snapshot.graphics.images[1].pixels);
+    defer a.free(old_bytes);
+    const data_revision = owner.observation().images(0).content_generation;
+
+    // Text edit, not graphics mutation, relocates the same child.
+    try owner.feed("\x1b[2;3H\x1b[X\x1b[4;5H" ++ styled);
+    try owner.flush();
+    try std.testing.expectEqualDeep(child, initial.snapshot.graphics.positive[0].rgba.destination);
+    try std.testing.expectEqualSlices(u8, old_bytes, initial.snapshot.graphics.images[1].pixels);
+    release(owner, initial);
+    holding = false;
+    const moved = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 1), moved.snapshot.graphics.positive.len);
+    const relocated = moved.snapshot.graphics.positive[0].rgba.destination;
+    try std.testing.expectEqual(@as(i32, 6) * width, relocated.x);
+    try std.testing.expectEqual(@as(i32, 4) * height, relocated.y);
+    try std.testing.expectEqual(data_revision, owner.observation().images(0).content_generation);
+    release(owner, moved);
+
+    try owner.feed("\x1b[4;5H\x1b[X");
+    try owner.flush();
+    const absent = try owner.hold();
+    defer release(owner, absent);
+    try std.testing.expectEqual(@as(usize, 0), absent.snapshot.graphics.positive.len);
+    try std.testing.expectEqual(data_revision, owner.observation().images(0).content_generation);
+}
+
 test "public output OOM preserves held output and retries newer canonical input" {
     const f = try font(12);
     defer f.deinit();
