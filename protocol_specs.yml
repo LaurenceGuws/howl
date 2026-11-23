@@ -12,7 +12,7 @@ policy:
     clause identifiers.
   interoperability: Secondary discovery catalogues do not become normative protocol requirements; trace their true source before declaring
     a conformance obligation.
-  collisions: compare normative same-wire obligations before any explicit policy adjudication
+  collisions: Merge only source-confirmed equivalent semantics, preserving discovery provenance; keep differences unresolved for explicit Captain review without inventing a winner.
   revision: change a document pin deliberately; do not silently follow live references
 specifications:
   ecma48:
@@ -89,26 +89,51 @@ specifications:
       level: defined
       wire: CSI Pn ; Pn H
       rule: Sets active position to the specified line and character position.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-fbf3db4964
+        source_line: 603
+        wire: CSI Ps ; Ps H
     - id: cuu
       section: 8.3.22
       level: defined
       wire: CSI Pn A
       rule: Moves the active position upward by the specified number of lines.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d6b19ba45b
+        source_line: 586
+        wire: CSI Ps A
     - id: cud
       section: 8.3.19
       level: defined
       wire: CSI Pn B
       rule: Moves the active position downward by the specified number of lines.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-201e2ef40b
+        source_line: 591
+        wire: CSI Ps B
     - id: cuf
       section: 8.3.20
       level: defined
       wire: CSI Pn C
       rule: Moves the active position forward by the specified number of character positions.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-b4a3ca935f
+        source_line: 593
+        wire: CSI Ps C
     - id: cub
       section: 8.3.18
       level: defined
       wire: CSI Pn D
       rule: Moves the active position backward by the specified number of character positions.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-94007e4272
+        source_line: 595
+        wire: CSI Ps D
     - id: cha
       section: 8.3.9
       level: defined
@@ -2370,31 +2395,11 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 583
       symbol: SL
-    - id: csi-d6b19ba45b
-      wire: CSI Ps A
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 586
-      symbol: CUU
     - id: csi-86ca1360de
       wire: CSI Ps SP A
       section: Functions using CSI , ordered by the final character(s)
       source_line: 588
       symbol: SR
-    - id: csi-201e2ef40b
-      wire: CSI Ps B
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 591
-      symbol: CUD
-    - id: csi-b4a3ca935f
-      wire: CSI Ps C
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 593
-      symbol: CUF
-    - id: csi-94007e4272
-      wire: CSI Ps D
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 595
-      symbol: CUB
     - id: csi-e068e475ad
       wire: CSI Ps E
       section: Functions using CSI , ordered by the final character(s)
@@ -2410,11 +2415,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 601
       symbol: CHA
-    - id: csi-fbf3db4964
-      wire: CSI Ps ; Ps H
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 603
-      symbol: CUP
     - id: csi-10f9ddce08
       wire: CSI Ps I
       section: Functions using CSI , ordered by the final character(s)
@@ -3822,3 +3822,21 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
+    pending_reconciliation:
+    - id: xterm-ed-saved-lines
+      candidate_specification: ecma48.ed
+      discovery_entry: csi-d004c0f19d
+      status: unresolved
+      observation: ECMA-48 ED has defined erase-area parameters 0, 1 and 2. XTerm documents the same CSI Ps J family but also uses Ps=3 for
+        saved scrollback lines.
+      question: Should Ps=3 be a separately sourced XTerm extension attached to ED, or a distinct canonical semantic branch? No change until
+        reviewed.
+      decision: null
+    - id: xterm-decsed-saved-lines
+      candidate_specification: dec_vt420.selective-ed
+      discovery_entry: csi-72d8c0a03a
+      status: unresolved
+      observation: DEC selective erase documents the standard 0, 1 and 2 cases. XTerm also documents Ps=3 to clear selectively saved lines
+        for CSI ? Ps J.
+      question: How should the XTerm-only Ps=3 variant be represented without implying that it originates in the DEC specification?
+      decision: null
