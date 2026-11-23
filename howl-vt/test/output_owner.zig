@@ -97,6 +97,49 @@ test "accepted output cut freezes transparent color opacity across canonical mut
     try std.testing.expectEqual(@as(?f32, 0.2), next.snapshot.transparent_background[1].?.opacity);
 }
 
+test "native output retains SGR blink glyph tags and phase without reprojecting text" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b[?25l\x1b[5mA\x1b[25mB");
+    try owner.flush();
+    const old = try owner.hold();
+    var held = true;
+    defer if (held) release(owner, old);
+    try std.testing.expect(old.snapshot.text_blink_rows[0]);
+    try std.testing.expect(old.snapshot.text_blink_visible);
+    var blinking: usize = 0;
+    var steady: usize = 0;
+    for (old.snapshot.glyphs[0]) |command| {
+        if (output.commands.blinks(command)) blinking += 1 else steady += 1;
+    }
+    try std.testing.expect(blinking > 0 and steady > 0);
+    const sequence = owner.observation().semanticSequence();
+    const revision = old.snapshot.content_revision;
+    const generation = old.snapshot.resource;
+    const glyphs = try a.dupe(output.commands.Command, old.snapshot.glyphs[0]);
+    defer a.free(glyphs);
+    try std.testing.expect(!owner.serviceAnimations(100 * std.time.ns_per_ms).changed);
+    const advanced = owner.serviceAnimations(600 * std.time.ns_per_ms);
+    try std.testing.expect(advanced.changed);
+    try std.testing.expectEqual(@as(?u32, 500), advanced.next_ms);
+    try std.testing.expectEqual(sequence, owner.observation().semanticSequence());
+    try owner.flush();
+    // The reader's prior lease is not mutated by another phase service.
+    try std.testing.expect(old.snapshot.text_blink_visible);
+    try std.testing.expectEqualDeep(glyphs, old.snapshot.glyphs[0]);
+    release(owner, old);
+    held = false;
+    const current = try owner.hold();
+    defer release(owner, current);
+    try std.testing.expect(!current.snapshot.text_blink_visible);
+    try std.testing.expect(current.snapshot.text_blink_rows[0]);
+    try std.testing.expectEqual(revision, current.snapshot.content_revision);
+    try std.testing.expectEqualDeep(generation, current.snapshot.resource);
+    try std.testing.expectEqualDeep(glyphs, current.snapshot.glyphs[0]);
+}
+
 test "public output OOM preserves held output and retries newer canonical input" {
     const f = try font(12);
     defer f.deinit();

@@ -888,6 +888,7 @@ const State = struct {
         const live = observation.semanticView(0);
         self.viewport.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
+        if (result.animation_changed) self.output_gate.pending = true;
         self.reconcileSelection(observation, live);
         const search_changed = self.search.step(observation) catch |failure| failed: {
             self.search.fail(failure);
@@ -1039,7 +1040,9 @@ const State = struct {
             for ([_]?i32{
                 self.output_gate.waitMs(now),
                 if (self.store_busy and self.visible.load(.acquire) and self.credit.load(.acquire)) @as(i32, 1) else null,
-                if (result.animation_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
+                // Hidden panes have no pixels to animate. A reveal wakes the
+                // worker and services current phase before publication.
+                if (self.visible.load(.acquire)) if (result.animation_wait_ms) |ms| @as(i32, @intCast(@min(ms, std.math.maxInt(i32)))) else null else null,
                 if (result.input_retry_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);

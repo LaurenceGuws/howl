@@ -168,6 +168,11 @@ pub const Terminal = opaque {
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!void {
         try self.impl().feed(bytes);
     }
+    /// Services canonical image and SGR text phases on the caller's clock.
+    /// Accepted output remains immutable until a separate explicit flush.
+    pub fn serviceAnimations(self: *Terminal, timestamp_ns: u64) vt.Terminal.AnimationService {
+        return self.impl().vt.serviceAnimations(timestamp_ns);
+    }
     /// Commits native resize before subsequent fallible output preparation.
     pub fn resize(self: *Terminal, rows: u16, columns: u16) ResizeError!void {
         try self.impl().resize(rows, columns);

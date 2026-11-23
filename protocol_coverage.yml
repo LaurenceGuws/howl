@@ -6249,11 +6249,12 @@ references:
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: out of range Kitty underline style is ignored by Howl"}}}
           kitty.sgr.blink: {raw: "CSI 5 m", effect: enable blink,
-            conditions: "Howl retains SGR 5 and 25 cell flags but lacks Kitty text blink timing in native output; malformed-color trailing attribute handling also differs",
+            conditions: "Howl now retains SGR 5/25 text-ink provenance through native glyph and decoration commands, services a caller-clocked 500ms visible/hidden phase with no canonical content mutation, and repaints only affected SDL rows. Pinned Kitty's malformed extended-color trailing-group behavior remains different, and exact Kitty visual phase/opacity and retained-history viewport behavior are not yet claimed.",
             howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
-              source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
-              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+              residual: "Actual SGR 5 blinking text, steady neighboring text, selected ink, positive image layering, immutable atlas reuse and bounded visible-host wake now have native and SDL pixel proofs. Exact Kitty malformed-color tail semantics, renderer opacity timing, and blinking retained-history-only views remain partial.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.serviceAnimations,
+              proof: {path: howl-app/src/canvas.zig,
+                symbol: "SGR text blink phase repaints only its row and preserves selected ink and positive graphics"}}}
           kitty.sgr.rapid_blink: {raw: "CSI 6 m", effect: ignore unsupported rapid blink,
             recognition: accepted_noop, howl: {support: full, source: howl-vt/src/screen.zig, symbol: Screen.applySgr,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,

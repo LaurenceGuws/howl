@@ -40,6 +40,8 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
 /// Only the progress and deadlines consumed by the owning terminal worker.
 pub const Service = struct {
     synchronized_output: vt.Terminal.SynchronizedOutputProgress = .{},
+    /// Presentation phase advanced, even if canonical text revision did not.
+    animation_changed: bool = false,
     stream_closed: bool,
     child_exit: ?pty.ChildExit,
     write_pending: bool,
@@ -312,6 +314,7 @@ pub const Core = struct {
         const animation = self.terminal.serviceAnimations(now);
         return .{
             .synchronized_output = synced,
+            .animation_changed = animation.changed,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
             .write_pending = self.writePending(),

@@ -43,6 +43,13 @@ pub fn Emitter(comptime instrumented: bool) type {
                 value.* += @sizeOf(frame.Command);
             };
         }
+        fn markBlink(output: []frame.Command, first: usize, used: usize) void {
+            for (output[first..used]) |*command| switch (command.*) {
+                .solid => |*value| value.blink = true,
+                .alpha_mask => |*value| value.blink = true,
+                .rgba => |*value| value.blink = true,
+            };
+        }
         fn rgba(c: VT.Rgb) frame.Color {
             return .{ .r = c.r, .g = c.g, .b = c.b, .a = c.a };
         }
@@ -331,6 +338,8 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (!uniform or span.attrs.underline or span.attrs.strikethrough) for (cells, 0..) |cell, col| {
                 if (cell.x != 0 or cell.attrs.invisible or
                     (!cell.attrs.underline and !cell.attrs.strikethrough)) continue;
+                const start = used;
+                defer if (cell.attrs.blink) markBlink(output, start, used);
                 if (needsScale(cell)) {
                     if (retained_row < cell.y) continue;
                     const lead = screen.retainedCellInfoAt(retained_row - cell.y, @intCast(col)) orelse return error.UnsupportedScene;
@@ -354,6 +363,8 @@ pub fn Emitter(comptime instrumented: bool) type {
                 column += 1;
                 const cell = cells[col];
                 if (cell.x != 0 or cell.attrs.invisible) continue;
+                const start = used;
+                defer if (cell.attrs.blink) markBlink(output, start, used);
                 if (needsScale(cell)) {
                     if (retained_row < cell.y) continue;
                     const lead_row = retained_row - cell.y;
@@ -425,7 +436,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                             break :blk next_scalars[0..@as(usize, if (next.codepoint == 0) 0 else 1)];
                         } else if (history) |recency| screen.historyCellScalarsAt(recency, @intCast(end), &next_scalars) else screen.cellScalarsAt(logical_row, @intCast(end), &next_scalars);
                         if (!operator(next, seq)) break;
-                        if (!uniform and (variant(next.attrs) != style or
+                        if (!uniform and (next.attrs.blink != cell.attrs.blink or variant(next.attrs) != style or
                             !std.meta.eql((try colors(next, p)).fg, c.fg))) break;
                         operators[end - col] = seq[0];
                     }

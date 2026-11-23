@@ -5704,7 +5704,7 @@ pub const Terminal = struct {
     pub const SynchronizedOutputProgress = TerminalSynchronizedOutputProgress;
     /// Reports one caller-clocked animation service turn.
     pub const AnimationService = struct {
-        /// True when a currently displayed image frame changed.
+        /// True when a displayed image or text-ink phase changed.
         changed: bool,
         /// Milliseconds until the next animation boundary, or null when idle.
         next_ms: ?u32,
@@ -6839,6 +6839,13 @@ pub const Terminal = struct {
     semantic_sequence: u64 = 1,
     content_sequence: u64 = 1,
     structural_edit_generation: u64 = 1,
+    /// Caller-clocked presentation only; time never mutates canonical cells.
+    text_blink_origin_ms: ?u64 = null,
+    text_blink_visible: bool = true,
+    text_blink_row_generation: u64 = 0,
+    text_blink_cells_identity: usize = 0,
+    text_blink_alternate: bool = false,
+    text_blink_present: bool = false,
     resize_prepared: bool = false,
     // -------------------------------------------------------------------------
     // Construction and feed
@@ -7966,12 +7973,12 @@ pub const Terminal = struct {
         };
     }
 
-    /// Advances retained Kitty animation against caller monotonic time.
+    /// Advances retained image and SGR text phases against caller monotonic time.
     ///
     /// VT owns frame selection and semantic identity but owns no clock or
     /// scheduler. The caller supplies monotonic nanoseconds and may use
-    /// `next_ms` to arrange its next service turn. A selected-frame or run-state
-    /// mutation advances the canonical terminal semantic sequence exactly once.
+    /// `next_ms` to arrange its next service turn. Only an image-frame/run-state
+    /// mutation advances canonical semantic identity; text blinking never does.
     pub fn serviceAnimations(self: *Terminal, timestamp_ns: u64) AnimationService {
         self.requireNoPreparedResize();
         var virtual_visible: [maximum_images]bool = @splat(false);
@@ -7988,7 +7995,52 @@ pub const Terminal = struct {
             advanceIdentity(&self.semantic_sequence);
             self.content_sequence = self.semantic_sequence;
         }
-        return .{ .changed = tick.changed, .next_ms = tick.next_ms };
+        const alternate = self.screen_state.alt_active;
+        const screen = if (alternate) &self.screen_state.alternate else &self.screen_state.primary;
+        // The next-row identity advances on any cell edit, erase or reset;
+        // backing identity also invalidates the cache across a replacement
+        // grid. Idle and cursor-only worker turns therefore do no cell scan.
+        const cells = screen.cells.?;
+        const identity = @intFromPtr(cells.ptr);
+        if (self.text_blink_row_generation != screen.next_row_generation or
+            self.text_blink_cells_identity != identity or self.text_blink_alternate != alternate)
+        {
+            self.text_blink_present = false;
+            for (cells) |cell| {
+                if (cell.attrs.blink and !cell.attrs.invisible and cell.x == 0 and
+                    (cell.codepoint != 0 and cell.codepoint != ' ' and cell.codepoint != 0x10eeee or cell.combining_len != 0))
+                {
+                    self.text_blink_present = true;
+                    break;
+                }
+            }
+            self.text_blink_row_generation = screen.next_row_generation;
+            self.text_blink_cells_identity = identity;
+            self.text_blink_alternate = alternate;
+        }
+        if (!self.text_blink_present) {
+            self.text_blink_origin_ms = null;
+            self.text_blink_visible = true;
+            return .{ .changed = tick.changed, .next_ms = tick.next_ms };
+        }
+        const now_ms = timestamp_ns / std.time.ns_per_ms;
+        if (self.text_blink_origin_ms == null or now_ms < self.text_blink_origin_ms.?) {
+            self.text_blink_origin_ms = now_ms;
+            self.text_blink_visible = true;
+        }
+        const elapsed = now_ms - self.text_blink_origin_ms.?;
+        const interval_ms: u32 = 500;
+        const visible = (elapsed / interval_ms) % 2 == 0;
+        const changed = visible != self.text_blink_visible;
+        self.text_blink_visible = visible;
+        const next = interval_ms - @as(u32, @intCast(elapsed % interval_ms));
+        return .{ .changed = tick.changed or changed, .next_ms = if (tick.next_ms) |earlier| @min(earlier, next) else next };
+    }
+
+    /// Presentation phase from the last caller-supplied animation service.
+    /// Canonical text, history and image generations remain independent.
+    pub fn textBlinkVisible(self: *const Terminal) bool {
+        return self.text_blink_visible;
     }
 
     /// Copies the coherent mode-directed caller interaction state.
@@ -9376,6 +9428,38 @@ test "terminal animation service chooses earliest independent image boundary" {
     try std.testing.expect(both_second.generation > before_both_second);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, both_first.pixels);
     try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, both_second.pixels);
+}
+
+test "terminal SGR text blink owns caller-clocked phases without changing content" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expectEqual(@as(?u32, null), terminal.serviceAnimations(0).next_ms);
+    try std.testing.expect((try terminal.feed("\x1b[5m \x1b[25m")).stateChanged());
+    try std.testing.expectEqual(@as(?u32, null), terminal.serviceAnimations(50 * std.time.ns_per_ms).next_ms);
+    try std.testing.expect((try terminal.feed("\x1b[1;1H")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?25l\x1b[5mB\x1b[25mS")).stateChanged());
+    const sequence = terminal.semanticSequence();
+    const content = terminal.contentSequence();
+    const a = terminal.serviceAnimations(100 * std.time.ns_per_ms);
+    try std.testing.expect(!a.changed);
+    try std.testing.expectEqual(@as(?u32, 500), a.next_ms);
+    const b = terminal.serviceAnimations(599 * std.time.ns_per_ms);
+    try std.testing.expect(!b.changed);
+    try std.testing.expectEqual(@as(?u32, 1), b.next_ms);
+    const c = terminal.serviceAnimations(600 * std.time.ns_per_ms);
+    try std.testing.expect(c.changed);
+    try std.testing.expectEqual(@as(?u32, 500), c.next_ms);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(content, terminal.contentSequence());
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'S'), terminal.semanticView(0).cellAt(0, 1));
+    const d = terminal.serviceAnimations(1100 * std.time.ns_per_ms);
+    try std.testing.expect(d.changed);
+    try std.testing.expectEqual(@as(?u32, 500), d.next_ms);
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[0K")).stateChanged());
+    const retired = terminal.serviceAnimations(1600 * std.time.ns_per_ms);
+    try std.testing.expectEqual(@as(?u32, null), retired.next_ms);
+    try std.testing.expect(!retired.changed);
 }
 
 test "terminal animation lifecycle preserves finite loading stop selection and gaps" {

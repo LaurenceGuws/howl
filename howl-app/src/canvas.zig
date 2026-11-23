@@ -114,6 +114,7 @@ pub const Canvas = struct {
     generation: u64 = 0,
     content: ?*c.SDL_Texture = null,
     content_revision: ?u64 = null,
+    text_blink_visible: ?bool = null,
     visual_context: ?u64 = null,
     row_origin: u16 = 0,
     row_count: u16 = 0,
@@ -289,7 +290,8 @@ pub const Canvas = struct {
             // reason: Best-effort restoration keeps the original backend failure.
             errdefer _ = c.SDL_SetRenderTarget(renderer, previous_target);
             const target_pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snapshot.surface.width), .h = @floatFromInt(snapshot.surface.height) };
-            const full = self.content_revision == null or self.visual_context != snapshot.visual_context or self.row_origin != snapshot.row_origin or self.row_count != snapshot.rows;
+            const full = self.content_revision == null or self.visual_context != snapshot.visual_context or self.row_origin != snapshot.row_origin or self.row_count != snapshot.rows or
+                (self.text_blink_visible != null and self.text_blink_visible.? != snapshot.text_blink_visible);
             if (full) {
                 if (!c.SDL_SetRenderClipRect(renderer, null) or !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) or !c.SDL_RenderClear(renderer)) return error.SDLTexture;
                 try self.drawSnapshot(renderer, geometry, target_pane, snapshot, 0, snapshot.rows, false, null);
@@ -338,7 +340,45 @@ pub const Canvas = struct {
             self.row_count = snapshot.rows;
             @memcpy(self.row_generations[0..snapshot.rows], snapshot.row_generations[0..snapshot.rows]);
             self.content_revision = snapshot.content_revision;
+        } else if (self.text_blink_visible != null and self.text_blink_visible.? != snapshot.text_blink_visible) {
+            // Presentation-only phase: reuse the same held immutable glyph
+            // commands and atlas. Never advance the canonical content
+            // revision or upload another resource for text blinking.
+            const previous_target = c.SDL_GetRenderTarget(renderer);
+            if (!c.SDL_SetRenderTarget(renderer, target)) return error.SDLTexture;
+            // zig-audit: acknowledge discard
+            // reason: Retain original drawing failure while restoring SDL target.
+            errdefer _ = c.SDL_SetRenderTarget(renderer, previous_target);
+            const target_pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snapshot.surface.width), .h = @floatFromInt(snapshot.surface.height) };
+            var row: u16 = 0;
+            while (row < snapshot.rows) {
+                if (!snapshot.text_blink_rows[row]) {
+                    row += 1;
+                    continue;
+                }
+                const first = row;
+                row += 1;
+                while (row < snapshot.rows and snapshot.text_blink_rows[row]) row += 1;
+                const clip: c.SDL_Rect = .{
+                    .x = 0,
+                    .y = @intCast(@as(u32, first) * snapshot.cell_height),
+                    .w = snapshot.surface.width,
+                    .h = @intCast(@as(u32, row - first) * snapshot.cell_height),
+                };
+                // Clear even transparent backgrounds before reassembling the
+                // same clipped stacking order. A blended background cannot
+                // erase retained glyph alpha from the previous phase.
+                if (!c.SDL_SetRenderClipRect(renderer, &clip) or
+                    !c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_NONE) or
+                    !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0)) return error.SDLTexture;
+                const rect: c.SDL_FRect = .{ .x = 0, .y = @floatFromInt(clip.y), .w = @floatFromInt(clip.w), .h = @floatFromInt(clip.h) };
+                if (!c.SDL_RenderFillRect(renderer, &rect) or
+                    !c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND)) return error.SDLTexture;
+                try self.drawSnapshot(renderer, geometry, target_pane, snapshot, first, row, false, clip);
+            }
+            if (!c.SDL_SetRenderClipRect(renderer, null) or !c.SDL_SetRenderTarget(renderer, previous_target)) return error.SDLTexture;
         }
+        self.text_blink_visible = snapshot.text_blink_visible;
         const clip = drawing.clipBounds(pane);
         const dest: c.SDL_FRect = .{ .x = pane.x, .y = pane.y, .w = @floatFromInt(snapshot.surface.width), .h = @floatFromInt(snapshot.surface.height) };
         if (!c.SDL_SetRenderClipRect(renderer, &clip) or !c.SDL_RenderTexture(renderer, target, null, &dest)) return error.SDLTexture;
@@ -479,10 +519,14 @@ pub const Canvas = struct {
                         .width = @intCast((col - first) * snapshot.cell_width),
                         .height = snapshot.cell_height,
                     };
-                    for (snapshot.decorations[row]) |command|
+                    for (snapshot.decorations[row]) |command| {
+                        if (!snapshot.text_blink_visible and output_commands.blinks(command)) continue;
                         try self.replaySelectionInk(renderer, geometry, origin, clip, command, selected_rect, selected);
-                    for (snapshot.glyphs[row]) |command|
+                    }
+                    for (snapshot.glyphs[row]) |command| {
+                        if (!snapshot.text_blink_visible and output_commands.blinks(command)) continue;
                         try self.replaySelectionInk(renderer, geometry, origin, clip, command, selected_rect, selected);
+                    }
                 }
             }
             try geometry.finish(renderer);
@@ -547,6 +591,7 @@ pub const Canvas = struct {
     fn invalidateContentRevision(self: *Canvas) void {
         self.content_revision = null;
         self.visual_context = null;
+        self.text_blink_visible = null;
     }
 
     fn beginCommands(renderer: *c.SDL_Renderer, geometry: *Geometry) !void {
@@ -615,8 +660,10 @@ pub const Canvas = struct {
             for (first..end) |row| {
                 var origin = pane;
                 origin.y += @as(f32, @floatFromInt(row * snapshot.cell_height));
-                for (@field(snapshot, phase)[row]) |command|
+                for (@field(snapshot, phase)[row]) |command| {
+                    if (!snapshot.text_blink_visible and output_commands.blinks(command)) continue;
                     try self.appendContentCommand(renderer, geometry, origin, visible, command, narrow_x);
+                }
             }
         }
         for (snapshot.graphics.positive) |command|
@@ -1554,6 +1601,93 @@ fn testSnapshot(background: output_commands.Command, rows: []const CommandRow, c
         snapshot.glyphs[index] = row.glyphs;
     }
     return snapshot;
+}
+
+test "SGR text blink phase repaints only its row and preserves selected ink and positive graphics" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(20, 20, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    var backend = Canvas.init(std.testing.allocator);
+    defer backend.deinit();
+    const geometry = try std.testing.allocator.create(Geometry);
+    defer std.testing.allocator.destroy(geometry);
+    geometry.* = .{};
+    const background: output_commands.Command = .{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 20, .height = 20 },
+        .color = .{ .r = 10, .g = 20, .b = 30, .a = 255 },
+    } };
+    const blinking: output_commands.Command = .{ .solid = .{
+        .rect = .{ .x = 1, .y = 1, .width = 4, .height = 4 },
+        .color = .{ .r = 220, .g = 30, .b = 40, .a = 255 },
+        .blink = true,
+    } };
+    const static: output_commands.Command = .{ .solid = .{
+        .rect = .{ .x = 12, .y = 1, .width = 4, .height = 4 },
+        .color = .{ .r = 30, .g = 220, .b = 40, .a = 255 },
+    } };
+    const lower: output_commands.Command = .{ .solid = .{
+        .rect = .{ .x = 2, .y = 1, .width = 4, .height = 4 },
+        .color = .{ .r = 40, .g = 50, .b = 230, .a = 255 },
+    } };
+    const positive: output_commands.Command = .{ .solid = .{
+        .rect = .{ .x = 3, .y = 2, .width = 1, .height = 1 },
+        .color = .{ .r = 230, .g = 210, .b = 20, .a = 255 },
+    } };
+    var snapshot = testSnapshot(background, &.{
+        .{ .y = 0, .backgrounds = &.{}, .decorations = &.{}, .glyphs = &.{ blinking, static } },
+        .{ .y = 10, .backgrounds = &.{}, .decorations = &.{}, .glyphs = &.{lower} },
+    }, null, &.{}, 10);
+    snapshot.surface = .{ .width = 20, .height = 20 };
+    snapshot.cell_width = 10;
+    snapshot.cols = 2;
+    snapshot.content_revision = 1;
+    snapshot.visual_context = 1;
+    snapshot.text_blink_rows[0] = true;
+    snapshot.graphics.positive = &.{positive};
+    const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = 20, .h = 20 };
+    var original: ?*c.SDL_Texture = null;
+    for ([_]bool{ true, false, true }) |visible| {
+        snapshot.text_blink_visible = visible;
+        try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+        try std.testing.expect(c.SDL_RenderClear(renderer));
+        try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, &snapshot);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        if (original) |texture| try std.testing.expectEqual(texture, backend.content.?) else original = backend.content.?;
+        try std.testing.expectEqual(@as(?u64, 1), backend.content_revision);
+        try std.testing.expectEqual(@as(?bool, visible), backend.text_blink_visible);
+        var rgb: [3]u8 = undefined;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 1, 1, &rgb[0], &rgb[1], &rgb[2], null));
+        try std.testing.expectEqualDeep(if (visible) [3]u8{ 220, 30, 40 } else [3]u8{ 10, 20, 30 }, rgb);
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 3, 2, &rgb[0], &rgb[1], &rgb[2], null));
+        try std.testing.expectEqualDeep([3]u8{ 230, 210, 20 }, rgb);
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 13, 2, &rgb[0], &rgb[1], &rgb[2], null));
+        try std.testing.expectEqualDeep([3]u8{ 30, 220, 40 }, rgb);
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 3, 12, &rgb[0], &rgb[1], &rgb[2], null));
+        try std.testing.expectEqualDeep([3]u8{ 40, 50, 230 }, rgb);
+    }
+    // Selection lives above the retained texture; hidden blink ink must
+    // remain hidden even when the selected foreground is explicitly tinted.
+    backend.selection_paint = .{ .rows = 2 };
+    backend.selection_paint.add(0, 0, 0);
+    snapshot.selection_background = .{ .r = 70, .g = 80, .b = 90 };
+    snapshot.selection_foreground = .{ .r = 255, .g = 255, .b = 0 };
+    for ([_]bool{ false, true }) |visible| {
+        snapshot.text_blink_visible = visible;
+        try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+        try std.testing.expect(c.SDL_RenderClear(renderer));
+        try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, &snapshot);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        try std.testing.expectEqual(original.?, backend.content.?);
+        var pixel: [3]u8 = undefined;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 1, 1, &pixel[0], &pixel[1], &pixel[2], null));
+        try std.testing.expectEqualDeep(if (visible) [3]u8{ 255, 255, 0 } else [3]u8{ 70, 80, 90 }, pixel);
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 13, 2, &pixel[0], &pixel[1], &pixel[2], null));
+        try std.testing.expectEqualDeep([3]u8{ 30, 220, 40 }, pixel);
+    }
 }
 
 test "single-resource upload leaves accepted pixels intact on allocation failure and replaces on retry" {

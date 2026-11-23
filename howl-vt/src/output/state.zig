@@ -138,6 +138,10 @@ pub const Snapshot = struct {
     terminal_revision: u64 = 0,
     content_revision: u64 = 0,
     cursor_blink: bool = false,
+    /// Immutable text-ink phase and exact rows that contain blinking output.
+    /// The clock never changes text content, row generations or image pixels.
+    text_blink_visible: bool = true,
+    text_blink_rows: [rows]bool = @splat(false),
     cursor_movement: u64 = 0,
     alternate: bool = false,
     rows: u16 = 24,
@@ -333,6 +337,7 @@ pub fn State(comptime instrumented: bool) type {
         accepted_terminal_revision: u64 = 0,
         accepted_content_revision: u64 = 0,
         accepted_cursor_blink: bool = false,
+        accepted_text_blink_visible: bool = true,
         accepted_cursor_movement: u64 = 0,
         cursor_slot: Slot = .{},
         cell_width: u16,
@@ -788,7 +793,20 @@ pub fn State(comptime instrumented: bool) type {
                 result.glyphs[row] = self.rowCommands(row);
                 result.backgrounds[row] = self.rowBackgroundCommands(row);
                 result.decorations[row] = self.rowDecorationCommands(row);
+                for (result.glyphs[row]) |command| {
+                    if (frame.blinks(command)) {
+                        result.text_blink_rows[row] = true;
+                        break;
+                    }
+                }
+                if (!result.text_blink_rows[row]) for (result.decorations[row]) |command| {
+                    if (frame.blinks(command)) {
+                        result.text_blink_rows[row] = true;
+                        break;
+                    }
+                };
             }
+            result.text_blink_visible = self.accepted_text_blink_visible;
             self.resource_held = self.resource_current;
             self.color_held = self.color_current;
             self.graphics_held = self.graphics_current;
@@ -1101,6 +1119,7 @@ pub fn State(comptime instrumented: bool) type {
             self.accepted_terminal_revision = self.vt.semanticSequence();
             self.accepted_content_revision = next_content_revision;
             self.accepted_cursor_blink = semantic_view.cursor_blink;
+            self.accepted_text_blink_visible = self.vt.textBlinkVisible();
             self.accepted_cursor_movement = semantic_view.cursor_movement_timestamp_ns;
             self.cursor_slot.current = cursor_next;
             self.ready = true;

@@ -119,16 +119,28 @@ pub const FrameExternalResource = struct {
 /// Supplies one final surface-clipped backend draw command.
 /// Sampled commands retain destination plus visible clip so source mapping is unchanged.
 pub const Command = union(enum) {
-    solid: struct { rect: Rect, color: Color },
+    solid: struct { rect: Rect, color: Color, blink: bool = false },
     alpha_mask: struct {
         destination: Rect,
         clip: Rect,
         resource: ResourceView,
         color: Color,
         cursor_component: bool = false,
+        /// Exact SGR 5 ink provenance, not a renderer-owned cell lookup.
+        blink: bool = false,
     },
-    rgba: struct { destination: Rect, clip: Rect, resource: ResourceView },
+    rgba: struct { destination: Rect, clip: Rect, resource: ResourceView, blink: bool = false },
 };
+
+/// A final command's immutable temporal ink classification.
+/// Text blinking never applies to the canonical background or image plane.
+pub fn blinks(command: Command) bool {
+    return switch (command) {
+        .solid => |value| value.blink,
+        .alpha_mask => |value| value.blink,
+        .rgba => |value| value.blink,
+    };
+}
 
 /// Reports whether backend residency contains this exact occurrence, format, and extent.
 pub fn residencyMatches(
