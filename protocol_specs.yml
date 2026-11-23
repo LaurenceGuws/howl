@@ -330,7 +330,7 @@ specifications:
         - 4
         - 5
         effect: DEC VT100 and xterm ignore these selectors; ECMA-48 defines tab-stop clearing actions for them.
-        pending_reconciliation: ecma48-tbc-vs-xterm-subset
+        decision: ecma48-tbc-vs-xterm-subset
     - id: ack
       section: 8.3.1
       level: defined
@@ -1498,7 +1498,7 @@ specifications:
         entry_id: csi-100de06422
         source_line: 871
         wire: CSI Ps g
-      pending_reconciliation: ecma48-tbc-vs-xterm-subset
+      decision: ecma48-tbc-vs-xterm-subset
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -2372,7 +2372,7 @@ specifications:
         are ignored.
       equivalent_to: xterm_controls.tbc-vt100-subset
       competes_with: ecma48.tbc
-      pending_reconciliation: ecma48-tbc-vs-xterm-subset
+      decision: ecma48-tbc-vs-xterm-subset
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -3933,53 +3933,7 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation:
-    - id: ecma48-tbc-vs-xterm-subset
-      status: reopened-third-reference-behavior-awaiting-decision
-      wire: CSI Ps g
-      common_core:
-        Ps=0: Clear current character tab stop.
-        Ps=3: Clear all character tab stops.
-      original_sources:
-      - clause: ecma48.tbc
-        section: 8.3.154
-        meaning: Ps=1,2,4,5 have defined tabulation-clearing effects, including line tab stops.
-      - clause: dec_vt100.tbc
-        meaning: Ps=0 or 3 active; all other parameter values ignored.
-      - clause: xterm_controls.tbc-vt100-subset
-        meaning: Ps=0 or 3 active; other parameter values ignored for VT100 compatibility.
-      implementation_evidence:
-      - implementation: libvterm
-        revision: 934bc2fbf21800ac3458a499df8820ca5fb45fd3
-        source: https://github.com/neovim/libvterm/blob/934bc2fbf21800ac3458a499df8820ca5fb45fd3/src/state.c
-        location: src/state.c, CSI 0x67 switch
-        behavior: Ps=0 clears current character stop; Ps=3 and Ps=5 clear all character stops; Ps=1,2,4 have no effect. No line-tab-stop
-          model is implemented for those selectors.
-      - implementation: Foot
-        revision: cb2771788998f6a6288e2de8273c55a8214551e0
-        location: csi.c, case g
-        behavior: Ps=0 and Ps=3 only; all other values unhandled.
-      - implementation: Kitty
-        revision: a79f376b85fd95e3dfd0589877123996bacd4184
-        location: kitty/screen.c, screen_clear_tab_stop
-        behavior: Ps=0 and Ps=3 mutate tab stops; Ps=2 explicitly no-op; other values unsupported.
-      - implementation: Ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        location: src/terminal/csi.zig, TabClear; src/terminal/stream.zig, CSI g dispatch
-        behavior: Only Ps=0 current and Ps=3 all have effects.
-      - implementation: WezTerm
-        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
-        location: term/src/terminalstate/mod.rs, TabStops::clear
-        behavior: Only Ps=0 current and Ps=3 all have effects; other ECMA tab-clear selectors unhandled.
-      material_difference: For CSI 5 g, xterm/DEC VT100 ignore the command, whereas libvterm clears character tab stops. ECMA-48 defines
-        clearing both character and line tab stops. The implementation results therefore are not only two-way ECMA-versus-xterm.
-      previous_provisional_decision:
-        commit: 8b967715a1579eb932b2c6ff83d35e7b8e9f973d
-        choice: xterm/DEC VT100 subset
-        status: reopened because the Captain’s two-way-only condition was not met; no active winner
-      question: 'Which effect should CSI 5 g have in Howl: xterm-compatible no-op or libvterm-style clear of character stops? The other ECMA-only
-        selectors 1,2,4 should be decided explicitly alongside it.'
-      decision: null
+    pending_reconciliation: []
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
@@ -4045,3 +3999,57 @@ reconciliation:
     clause: ecma48.sd
     wire: CSI Pn T
   implementation_mapping: Decision recorded in static index; Howl VT implementation remains separately assessable and is not changed here.
+- id: ecma48-tbc-vs-xterm-subset
+  wire: CSI Ps g
+  status: resolved-by-explicit-reference-consensus
+  approved_by: Captain
+  accepted_interpretation:
+    clause: xterm_controls.tbc-vt100-subset
+    historical_source: dec_vt100.tbc
+    effect: Ps=0 clears the current horizontal tab stop; Ps=3 clears all horizontal tab stops; Ps=1,2,4,5 have no effect.
+  unsupported_competing_interpretation:
+    clause: ecma48.tbc
+    section: 8.3.154 / printed page 73
+    selectors:
+    - selector: 1
+      effect: Clear the line tab stop at the active line.
+    - selector: 2
+      effect: Clear all character tab stops in the active line, subject to TSM.
+    - selector: 4
+      effect: Clear all line tab stops.
+    - selector: 5
+      effect: Clear all character and line tab stops.
+  independent_implementation_evidence:
+  - implementation: libvterm
+    revision: 934bc2fbf21800ac3458a499df8820ca5fb45fd3
+    source: https://github.com/neovim/libvterm/blob/934bc2fbf21800ac3458a499df8820ca5fb45fd3/src/state.c
+    location: src/state.c, CSI 0x67 switch
+    behavior: Ps=0 clears current character stop; Ps=3 and Ps=5 clear all character stops; Ps=1,2,4 have no effect. No line-tab-stop model
+      is implemented for those selectors.
+  - implementation: Foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    location: csi.c, case g
+    behavior: Ps=0 and Ps=3 only; all other values unhandled.
+  - implementation: Kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    location: kitty/screen.c, screen_clear_tab_stop
+    behavior: Ps=0 and Ps=3 mutate tab stops; Ps=2 explicitly no-op; other values unsupported.
+  - implementation: Ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    location: src/terminal/csi.zig, TabClear; src/terminal/stream.zig, CSI g dispatch
+    behavior: Only Ps=0 current and Ps=3 all have effects.
+  - implementation: WezTerm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    location: term/src/terminalstate/mod.rs, TabStops::clear
+    behavior: Only Ps=0 current and Ps=3 all have effects; other ECMA tab-clear selectors unhandled.
+  reason: 'Captain explicitly selected the DEC VT100/xterm behavior because it is the broadly implemented convention among the examined terminal
+    references: Foot, Kitty, Ghostty and WezTerm agree that only Ps=0 and Ps=3 perform tab-stop changes. libvterm independently implements
+    Ps=5 as clear-all, and ECMA-48 defines broader operations for Ps=1,2,4,5. These disagreements were considered rather than suppressed;
+    this is an explicit compatibility choice, not an automatic two-source tie-break or a claim of complete ECMA-48 conformance.'
+  policy: Explicit case decision after multi-reference review; conditional ECMA/xterm two-way tie-breaker was not applicable.
+  previous_provisional_decision:
+    commit: 8b967715a1579eb932b2c6ff83d35e7b8e9f973d
+    choice: xterm/DEC VT100 subset
+    status: reopened because the Captain’s two-way-only condition was not met; no active winner
+  scope_limit: Only the TBC Ps=1,2,4,5 interpretation. Ps=0 and Ps=3 agree across the relevant specifications.
+  implementation_mapping: Not part of this static specification index. Howl current behavior is not validated by this decision.
