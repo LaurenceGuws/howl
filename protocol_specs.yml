@@ -209,6 +209,13 @@ specifications:
       level: defined
       wire: CSI Pm m
       rule: Selects the graphic rendition attributes applied to subsequently presented text.
+      parameter_interpretations:
+      - selector: 21
+        exact_wire: CSI 21 m
+        section: 8.3.117 / parameter 21
+        effect: Doubly underlined text.
+        competes_with: linux_console.sgr21
+        decision: sgr21-ecma48-vs-linux-console
     - id: sm
       section: 8.3.125
       level: defined
@@ -2155,6 +2162,22 @@ specifications:
       level: defined
       wire: DCS @ kitty-... ST
       rule: Kitty-specific DCS command namespace for external kittens and remote control.
+  linux_console:
+    title: Linux virtual console control sequences (console_codes(4))
+    author: Linux virtual console; documented by the Linux man-pages project
+    authority: extension-publisher
+    revision: Linux man-pages pinned source 637b0aa571b61d98c717e7ab7490df8a3d9e4841
+    url: https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages/+/637b0aa571b61d98c717e7ab7490df8a3d9e4841/man/man4/console_codes.4
+    scope: De facto Linux kernel virtual-console semantics, not a universal VT standard and not the graphical backend used by Howl.
+    clauses:
+    - id: sgr21
+      section: console_codes(4), ECMA-48 Select Graphic Rendition / parameter 21
+      level: defined
+      wire: CSI 21 m
+      rule: Set single underline in the Linux virtual console since Linux 4.17.
+      historical_semantics: Before Linux 4.17 the same sequence selected normal intensity instead.
+      competes_with: ecma48.sgr
+      decision: sgr21-ecma48-vs-linux-console
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -3875,3 +3898,21 @@ reconciliation:
     without adding a printer rendition profile.
   compatibility_mode: none
   scope_limit: Only this verified printer-versus-keyboard same-wire collision. Other DEC terminal controls require independent source review.
+- id: sgr21-ecma48-vs-linux-console
+  wire: CSI 21 m
+  status: resolved-by-explicit-choice
+  approved_by: Captain
+  accepted_interpretation:
+    clause: ecma48.sgr
+    source: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+    section: 8.3.117 / SGR parameter 21
+    effect: Double underline (also documented by xterm).
+  unsupported_competing_interpretation:
+    clause: linux_console.sgr21
+    source: https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages/+/637b0aa571b61d98c717e7ab7490df8a3d9e4841/man/man4/console_codes.4
+    section: console_codes(4) / SGR parameter 21
+    effect: Single underline on Linux 4.17 and newer; formerly normal intensity.
+  reason: Identical complete input sequence has incompatible text rendition meanings. Howl deliberately adopts the ECMA-48/xterm interpretation
+    and does not support the competing Linux-console interpretation.
+  scope_limit: Only SGR 21 on the Linux virtual console; no blanket rejection of other Linux-console sequences.
+  implementation_mapping: not part of specification index; this decision is not a claim that every other clause has been assessed
