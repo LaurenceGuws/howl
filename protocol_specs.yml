@@ -281,6 +281,34 @@ specifications:
         effect: Doubly underlined text.
         competes_with: linux_console.sgr21
         decision: sgr21-ecma48-vs-linux-console
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-754afe63c9
+        source_line: 1183
+        wire: CSI Pm m
+      source_specific_parameters:
+      - selectors:
+        - 38
+        - 48
+        original_ecma48: Reserved in ECMA-48 fifth edition (1991) for intended foreground/background colour standardization.
+        originating_specification: itu_t416.sgr-colour-subparameters
+        xterm: Supports ISO/IEC 8613-6 colon-separated indexed colour (:5:index) and direct RGB (:2:colourspace:R:G:B); also supports semicolon-separated
+          legacy forms such as ;2;R;G;B for KDE Konsole compatibility.
+        classification: formal colour selector standard plus separately documented legacy syntax; xterm is not the originating ISO authority
+        catalogue: xterm_ctlseqs
+        entry_id: csi-754afe63c9
+        source_line: 1273
+      - selectors:
+        - 90..97
+        - 100..107
+        origin_attribution: aixterm (credited by xterm; original aixterm source not independently pinned)
+        xterm: When 16-colour support is compiled, 90..97 select bright foreground and 100..107 select bright background palette entries.
+        conditional_alternative: If built without 16-colour support, xterm documents rxvt-style SGR 100 as reset of foreground and background
+          to defaults, not bright-black background.
+        classification: attributed bright-colour extension with explicit build-dependent legacy alternative; not ECMA-48 fifth-edition selectors
+        catalogue: xterm_ctlseqs
+        entry_id: csi-754afe63c9
+        source_line: 1245
     - id: sm
       section: 8.3.125
       level: defined
@@ -746,6 +774,43 @@ specifications:
       level: defined
       wire: CSI Ps i
       rule: MEDIA COPY (MC); ECMA-48 standardized control function, CSI form (source page 50).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-2852648ca5
+        source_line: 1041
+        wire: CSI Ps i
+      source_specific_parameters:
+      - selectors:
+        - 0
+        - 4
+        - 5
+        ecma48: Ps=0 initiates transfer to a primary auxiliary device; Ps=4 stops and Ps=5 starts relaying received data to that device.
+        xterm: Ps=0 prints the screen; Ps=4 disables and Ps=5 enables printer-controller mode.
+        classification: same Media Copy family with xterm printer-oriented auxiliary-device realization
+        catalogue: xterm_ctlseqs
+        entry_id: csi-2852648ca5
+        source_line: 1041
+      - selectors:
+        - 1
+        - 2
+        - 3
+        - 6
+        - 7
+        ecma48: 'Respectively: initiate transfer from primary; transfer to/from secondary; stop/start relay to secondary auxiliary device.'
+        xterm: Not documented in the pinned xterm MC entry; omission is not evidence of a particular no-op effect.
+        classification: ECMA-48 parameter coverage retained without inventing xterm behavior
+        catalogue: xterm_ctlseqs
+        entry_id: csi-2852648ca5
+        source_line: 1041
+      - selectors:
+        - 10
+        - 11
+        ecma48: Not defined in ECMA-48 fifth-edition MC.
+        xterm: Ps=10 outputs an HTML screen dump; Ps=11 outputs an SVG screen dump.
+        classification: xterm-origin output-format extensions in MC, not distinct command identities
+        catalogue: xterm_ctlseqs
+        entry_id: csi-2852648ca5
+        source_line: 1041
     - id: mw
       section: 8.3.83
       level: defined
@@ -2438,6 +2503,24 @@ specifications:
       equivalent_to: xterm_controls.tbc-vt100-subset
       competes_with: ecma48.tbc
       decision: ecma48-tbc-vs-xterm-subset
+  itu_t416:
+    title: 'ITU-T Recommendation T.416 / ISO/IEC 8613-6: Character content architectures'
+    author: International Telecommunication Union (ITU-T) / ISO-IEC
+    authority: standard
+    revision: ITU-T T.416 (03/1993); published as identical ISO/IEC 8613-6:1994 text
+    url: https://www.itu.int/rec/dologin_pub.asp?id=T-REC-T.416-199303-I%21%21PDF-E&lang=e&type=items
+    snapshot_sha256: 3337680cb61970a39d753237738aa824325101ee57ee9eca972729d11fe7d97a
+    scope: SGR foreground/background colour selectors 38 and 48 as formalized for ODA in section 13.1.8, not all ODA document semantics.
+    clauses:
+    - id: sgr-colour-subparameters
+      section: 13.1.8 / Table 4 and printed page 41
+      level: defined
+      wire: SGR 38 or 48 followed by a colour parameter substring (Pe:Pe...)
+      rule: SGR 38 selects foreground and SGR 48 background colour. Colon-separated parameter elements select 0 (implementation-defined foreground
+        only), 1 (transparent), 2 (direct RGB), 3 (direct CMY), 4 (direct CMYK), or 5 (indexed palette colour). Direct colours include a
+        colour-space identifier and components; optional tolerance and tolerance-space elements may follow.
+      extends: ecma48.sgr
+      original_ecma48: ECMA-48 fifth edition (1991) reserved selectors 38 and 48 for future standardization with those intended colour purposes.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -2755,11 +2838,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 911
       symbol: DECSET
-    - id: csi-2852648ca5
-      wire: CSI Ps i
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1041
-      symbol: MC
     - id: csi-6dd886d3cc
       wire: CSI ? Ps i
       section: Functions using CSI , ordered by the final character(s)
@@ -2770,11 +2848,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1062
       symbol: DECRST
-    - id: csi-754afe63c9
-      wire: CSI Pm m
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1183
-      symbol: SGR
     - id: csi-a7e271a5e0
       wire: CSI > Pp ; Pv m
       section: Functions using CSI , ordered by the final character(s)
