@@ -12,14 +12,20 @@ policy:
     clause identifiers.
   interoperability: Secondary discovery catalogues do not become normative protocol requirements; trace their true source before declaring
     a conformance obligation.
-  collisions: Merge only source-confirmed equivalent semantics, preserving discovery provenance; keep differences unresolved for explicit
-    Captain review without inventing a winner.
+  collisions: Merge only source-confirmed equivalent semantics, preserving original definitions and discovery provenance. For incompatible
+    complete wire sequences or parameter meanings, retain all sourced interpretations and their exact differences; resolve only under the
+    approved evidence rules below or an explicit Captain choice. Otherwise leave the case pending.
   revision: change a document pin deliberately; do not silently follow live references
-  ecma48_xterm_tiebreaker: Captain prefers xterm only when source review finds no third materially different interpretation of the same wire
-    input, including among strongly relevant independently maintained terminal implementations. An implementation is interoperability evidence
-    rather than an originating protocol specification, but a distinct implementation behavior blocks an automatic two-way tie-break. Preserve
-    original specifications and exact parameter semantics; bring multi-way disagreements to Captain. This policy does not assert current
-    Howl support.
+  ecma48_xterm_tiebreaker: In an isolated, source-verified two-way conflict between an older ECMA-48 definition and xterm, prefer the xterm
+    interpretation. Preserve the competing original definition and the reason for selecting xterm. When further relevant terminal references
+    establish wider evidence, apply reference_consensus instead; this is not a blanket xterm priority in multi-way disputes.
+  reference_consensus: When a clear majority of relevant independently maintained terminal references agree on the observable behavior of
+    the same complete wire sequence and parameter values, adopt that behavior without asking Captain to resolve routine differences. Use
+    pinned, source-verified references; consider reference relevance and independence, not merely raw counts or shared parser ancestry. Keep
+    all originating specification meanings and material minority behavior indexed with provenance and rationale. A small isolated minority
+    difference does not by itself block consensus. Escalate when an important reference has a substantial semantic divergence, or when evidence
+    is too mixed or incomplete to establish consensus. These decisions select intended protocol semantics only, never claim current Howl
+    implementation conformance.
 specifications:
   ecma48:
     title: 'ECMA-48: Control Functions for Coded Character Sets'
