@@ -15,6 +15,10 @@ policy:
   collisions: Merge only source-confirmed equivalent semantics, preserving discovery provenance; keep differences unresolved for explicit
     Captain review without inventing a winner.
   revision: change a document pin deliberately; do not silently follow live references
+  ecma48_xterm_tiebreaker: For an evidenced same-wire semantic conflict where only ECMA-48 and xterm publish incompatible interpretations,
+    prefer xterm for Howl if no third originating specification introduces another competing interpretation. Independently sourced agreement
+    with either side does not create a third competing interpretation. Keep the published meanings separately indexed, document the exact
+    conflicting parameters and decision, and do not infer current Howl implementation support. Other conflicts still require Captain review.
 specifications:
   ecma48:
     title: 'ECMA-48: Control Functions for Coded Character Sets'
@@ -316,16 +320,16 @@ specifications:
       wire: CSI Ps g
       rule: Clears tabulation stops according to the parameter.
       competing_parameter_behaviors:
-      - catalogue: xterm_ctlseqs
-        entry_id: csi-100de06422
+      - clause: xterm_controls.tbc-vt100-subset
+        agrees_with: dec_vt100.tbc
         wire: CSI Ps g
         selectors:
         - 1
         - 2
         - 4
         - 5
-        effect: Xterm ignores these selectors; ECMA-48 defines tab-stop clearing actions for them.
-        pending_reconciliation: ecma48-tbc-vs-xterm-subset
+        effect: DEC VT100 and xterm ignore these selectors; ECMA-48 defines tab-stop clearing actions for them.
+        decision: ecma48-tbc-vs-xterm-subset
     - id: ack
       section: 8.3.1
       level: defined
@@ -1480,6 +1484,20 @@ specifications:
         entry_id: csi-6f39fa13a7
         source_line: 751
         wire: CSI Ps ^
+    - id: tbc-vt100-subset
+      section: Functions using CSI / Tab Clear (TBC)
+      level: defined
+      wire: CSI Ps g
+      rule: Ps=0 clears the horizontal tab stop at the current column; Ps=3 clears all horizontal tab stops. For VT100 compatibility, other
+        values are ignored.
+      equivalent_to: dec_vt100.tbc
+      competes_with: ecma48.tbc
+      decision: ecma48-tbc-vs-xterm-subset
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-100de06422
+        source_line: 871
+        wire: CSI Ps g
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -2336,6 +2354,24 @@ specifications:
       historical_semantics: Before Linux 4.17 the same sequence selected normal intensity instead.
       competes_with: ecma48.sgr
       decision: sgr21-ecma48-vs-linux-console
+  dec_vt100:
+    title: DEC VT100 User Guide
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: EK-VT100-UG; Digital original guide, PDF transcription by Edwin Rhodes (2004)
+    url: https://geoffg.net/Downloads/Terminal/VT100_User_Guide.pdf
+    snapshot_sha256: 91f271c2eb0b0bf6f643de42422c8a2fb3efc910b086714414833940ce3de8ef
+    scope: Selected VT100 TBC semantics in Chapter 3, not the entire DEC VT100 control repertoire.
+    clauses:
+    - id: tbc
+      section: Chapter 3 / Valid ANSI Mode Control Sequences / TBC (PDF page 50)
+      level: defined
+      wire: CSI Ps g
+      rule: Ps=0 clears the horizontal tab stop at the active position; Ps=3 clears all horizontal tab stops; all other parameter values
+        are ignored.
+      equivalent_to: xterm_controls.tbc-vt100-subset
+      competes_with: ecma48.tbc
+      decision: ecma48-tbc-vs-xterm-subset
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -2656,13 +2692,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 845
       symbol: XTFMTKEYS
-    - id: csi-100de06422
-      wire: CSI Ps g
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 871
-      symbol: TBC
-      competes_with: ecma48.tbc
-      pending_reconciliation: ecma48-tbc-vs-xterm-subset
     - id: csi-c4b4b85336
       wire: CSI ? Pp g
       section: Functions using CSI , ordered by the final character(s)
@@ -3903,39 +3932,7 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation:
-    - id: ecma48-tbc-vs-xterm-subset
-      status: confirmed-parameter-behavior-difference-awaiting-decision
-      wire: CSI Ps g
-      common_selectors:
-        Ps=0: Clear character tab stop at current position.
-        Ps=3: Clear all character tab stops.
-      conflicting_selectors:
-      - selector: 1
-        ecma48: Clear the line tab stop at the active line.
-        xterm: No operation.
-      - selector: 2
-        ecma48: Clear all character tab stops in the active line, subject to TSM.
-        xterm: No operation.
-      - selector: 4
-        ecma48: Clear all line tab stops.
-        xterm: No operation.
-      - selector: 5
-        ecma48: Clear all tab stops, both character and line.
-        xterm: No operation.
-      sources:
-      - clause: ecma48.tbc
-        document: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
-        section: 8.3.154 / printed page 73
-      - discovery_entry: csi-100de06422
-        document: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-        source_line: 871
-      observation: Both specifications use the same CSI Ps g family. ECMA-48 specifies Ps=0..5; xterm supports Ps=0 and Ps=3 while explicitly
-        ignoring the other standard selectors for VT100 compatibility. The sources agree on common selectors but disagree on whether the
-        others perform erasure.
-      question: For Ps=1,2,4,5, should Howl adopt the ECMA-48-defined tab-stop effects or the xterm-compatible no-ops? No choice is made
-        here.
-      decision: null
+    pending_reconciliation: []
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
@@ -4001,3 +3998,28 @@ reconciliation:
     clause: ecma48.sd
     wire: CSI Pn T
   implementation_mapping: Decision recorded in static index; Howl VT implementation remains separately assessable and is not changed here.
+- id: ecma48-tbc-vs-xterm-subset
+  wire: CSI Ps g
+  status: resolved-by-explicit-choice
+  approved_by: Captain
+  accepted_interpretation:
+    clause: xterm_controls.tbc-vt100-subset
+    historical_source: dec_vt100.tbc
+    effect: Ps=0 clears the current horizontal tab stop, Ps=3 clears all; Ps=1,2,4,5 are no-ops.
+  unsupported_competing_interpretation:
+    clause: ecma48.tbc
+    section: 8.3.154 / printed page 73
+    selectors:
+    - selector: 1
+      effect: Clear the line tab stop at the active line.
+    - selector: 2
+      effect: Clear all character tab stops in the active line, subject to TSM.
+    - selector: 4
+      effect: Clear all line tab stops.
+    - selector: 5
+      effect: Clear all character and line tab stops.
+  reason: Captain chose the xterm VT100-compatible parameter subset. The original DEC VT100 User Guide independently documents the same behavior;
+    there is no third competing published interpretation in the sources examined. ECMA-48 retains its complete original meanings.
+  conditional_preference: policy.ecma48_xterm_tiebreaker
+  scope_limit: Only TBC parameter values 1,2,4,5; selectors 0 and 3 agree. Other conflicting commands require source verification.
+  implementation_mapping: The index records intended semantics, not an assertion of current Howl behavior.
