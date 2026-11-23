@@ -20,10 +20,13 @@ pub const max_image_bytes: usize = 16 * 1024 * 1024;
 /// Bounds retained image identities.
 pub const max_images: usize = 256;
 // Cell-tiled previews at the supported image limit can need thousands of
-// distinct placement identities. 16K remains bounded and fits the v8 1 MiB
-// graphics manifest (28 + 256*20 + 16384*52 bytes) and Canvas headroom.
+// distinct placement identities. The v8 1 MiB external graphics manifest
+// still uses its fixed 52-byte placement records; this Plane's private
+// parent graph does not extend the published manifest or renderer ABI.
 /// Bounds distinct retained image placements without merging client identities.
 pub const max_placements: usize = 16 * 1024;
+/// Physical placement ancestry is bounded independently of the image quota.
+const max_parent_depth: u8 = 16;
 /// Bounds retained animation frames across one terminal.
 const max_frames: usize = 256;
 /// Bounds either image dimension before byte-count validation.
@@ -58,6 +61,15 @@ const Placement = struct {
     kitty_id: u32,
     /// Monotonic placement identity.
     generation: u64,
+    /// Stable placement identity across re-put, unlike render generation.
+    identity: u64 = 0,
+    /// Zero denotes a normal cursor-anchored placement.
+    parent_identity: u64 = 0,
+    /// Dense index validated against stable parent_identity. Retirement
+    /// rebinds this in one bounded scan instead of searching per draw.
+    parent_slot: ?u16 = null,
+    parent_col_offset: i32 = 0,
+    parent_row_offset: i32 = 0,
     /// Screen bank owning this placement.
     bank: Bank,
     /// Primary absolute projected row or alternate screen row.
@@ -186,6 +198,9 @@ pub const Failure = enum {
     unsupported,
     quota,
     missing,
+    parent_missing,
+    cycle,
+    too_deep,
 
     /// Returns the Kitty response token.
     pub fn bytes(self: Failure) []const u8 {
@@ -194,6 +209,9 @@ pub const Failure = enum {
             .unsupported => "ENOTSUP",
             .quota => "ENOSPC",
             .missing => "ENOENT",
+            .parent_missing => "ENOPARENT",
+            .cycle => "ECYCLE",
+            .too_deep => "ETOODEEP",
         };
     }
 };
@@ -222,6 +240,10 @@ const Command = struct {
     quiet: u2 = 0,
     delete: u8 = 0,
     placement_id: u32 = 0,
+    parent_id: u32 = 0,
+    parent_placement_id: u32 = 0,
+    parent_col_offset: i32 = 0,
+    parent_row_offset: i32 = 0,
     source_width: u32 = 0,
     source_height: u32 = 0,
     columns: u32 = 0,
@@ -911,6 +933,14 @@ pub const Plane = struct {
             self.placementIndex(self.images[prior_index.?].id, loading.placement_id)
         else
             null;
+        if (replaced_placement) |index| {
+            // A virtual placeholder needs a different text-owned anchor.
+            // Until it is implemented, never strand children of an existing
+            // physical placement by converting that parent in place.
+            if (self.hasChildren(self.placements[index].identity) and
+                (loading.unicode_placement or self.placements[index].bank != bank))
+                return .{ .response_id = loading.id, .failure = .unsupported, .quiet = loading.quiet };
+        }
         if (display and self.placement_count == max_placements and replaced_placement == null)
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         var planned_placement = if (display)
@@ -1008,8 +1038,12 @@ pub const Plane = struct {
             planned_placement.?.image_id = image_id;
             planned_placement.?.generation = content_generation;
             if (admitted_replaced_placement) |index| {
+                // Updating one existing Kitty placement preserves its stable
+                // identity so children follow the new parent geometry.
+                planned_placement.?.identity = self.placements[index].identity;
                 self.placements[index] = planned_placement.?;
             } else {
+                planned_placement.?.identity = content_generation;
                 self.placements[self.placement_count] = planned_placement.?;
                 self.placement_count += 1;
             }
@@ -1079,15 +1113,44 @@ pub const Plane = struct {
             planned.row = 0;
             planned.col = 0;
         }
+        const replacing = self.placementIndex(retained.id, command_value.placement_id);
+        if (replacing) |index| {
+            const previous = self.placements[index];
+            if (self.hasChildren(previous.identity) and (planned.virtual or previous.bank != bank))
+                return .{ .response_id = command_value.id, .failure = .unsupported, .quiet = command_value.quiet };
+        }
+        if (command_value.parent_id != 0) {
+            if (planned.virtual) return .{ .response_id = command_value.id, .failure = .invalid, .quiet = command_value.quiet };
+            const parent_index = self.parentPlacementIndex(command_value.parent_id, command_value.parent_placement_id, bank) orelse
+                return .{ .response_id = command_value.id, .failure = .parent_missing, .quiet = command_value.quiet };
+            const parent = self.placements[parent_index];
+            // A virtual parent needs its Unicode-placeholder anchor from
+            // canonical text. Never fabricate a cursor location for it.
+            if (parent.virtual) return .{ .response_id = command_value.id, .failure = .unsupported, .quiet = command_value.quiet };
+            if (replacing) |index| if (parent.identity == self.placements[index].identity)
+                return .{ .response_id = command_value.id, .failure = .invalid, .quiet = command_value.quiet };
+            if (self.parentError(parent.identity, if (replacing) |index| self.placements[index].identity else 0)) |failure|
+                return .{ .response_id = command_value.id, .failure = failure, .quiet = command_value.quiet };
+            if (replacing) |index| {
+                if (self.hasChildren(self.placements[index].identity) and self.reparentExceedsDepth(index, parent_index))
+                    return .{ .response_id = command_value.id, .failure = .too_deep, .quiet = command_value.quiet };
+            }
+            planned.parent_identity = parent.identity;
+            planned.parent_slot = @intCast(parent_index);
+            planned.parent_col_offset = command_value.parent_col_offset;
+            planned.parent_row_offset = command_value.parent_row_offset;
+        }
         if (self.placement_count == max_placements)
-            if (self.placementIndex(retained.id, command_value.placement_id) == null)
+            if (replacing == null)
                 return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
         self.advance();
         const placement_generation = self.next_generation;
         planned.generation = placement_generation;
-        if (self.placementIndex(retained.id, command_value.placement_id)) |index| {
+        if (replacing) |index| {
+            planned.identity = self.placements[index].identity;
             self.placements[index] = planned;
         } else {
+            planned.identity = placement_generation;
             self.placements[self.placement_count] = planned;
             self.placement_count += 1;
         }
@@ -1095,7 +1158,7 @@ pub const Plane = struct {
             .changed = true,
             .response_id = retained.kitty_id,
             .response_number = retained.kitty_number,
-            .cursor_advance = if (!command_value.unicode_placement and command_value.compose_mode != 1) .{
+            .cursor_advance = if (!command_value.unicode_placement and command_value.parent_id == 0 and command_value.compose_mode != 1) .{
                 .cols = planned.cols,
                 .rows = planned.rows,
             } else null,
@@ -1144,8 +1207,13 @@ pub const Plane = struct {
             }
             const kitty_id = self.kittyIdForImage(placement_value.image_id);
             const kitty_number = self.kittyNumberForImage(placement_value.image_id);
+            const anchor = self.placementAnchor(placement_index) orelse {
+                placement_index += 1;
+                continue;
+            };
             if (kitty_id == null or placement_value.bank != bank or !deleteMatches(
                 placement_value,
+                anchor,
                 kitty_id,
                 kitty_number,
                 normalized,
@@ -1377,8 +1445,8 @@ pub const Plane = struct {
                 index += 1;
                 continue;
             }
-            if (retained.row < row_start or retained.row >= row_end or
-                retained.col >= columns)
+            if (retained.parent_identity == 0 and (retained.row < row_start or retained.row >= row_end or
+                retained.col >= columns))
             {
                 self.removePlacement(index);
                 changed = true;
@@ -1396,7 +1464,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = self.placements[index];
-            if (retained.bank != .primary or retained.row >= absolute_row) {
+            if (retained.bank != .primary or retained.parent_identity != 0 or retained.row >= absolute_row) {
                 index += 1;
                 continue;
             }
@@ -1422,7 +1490,7 @@ pub const Plane = struct {
             const retained = self.placements[index];
             const retained_bottom = retained.row + retained.rows - 1;
             const retained_right = @as(u32, retained.col) + retained.cols - 1;
-            if (retained.virtual or retained.bank != bank or retained.row > bottom or retained_bottom < top or
+            if (retained.virtual or retained.parent_identity != 0 or retained.bank != bank or retained.row > bottom or retained_bottom < top or
                 retained.col > right or retained_right < left)
             {
                 index += 1;
@@ -1493,7 +1561,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = &self.placements[index];
-            if (retained.virtual or retained.bank != bank or retained.row < top or retained.row > bottom) {
+            if (retained.virtual or retained.parent_identity != 0 or retained.bank != bank or retained.row < top or retained.row > bottom) {
                 index += 1;
                 continue;
             }
@@ -1614,7 +1682,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = &self.placements[index];
-            if (retained.virtual or retained.bank != bank or retained.row < top or retained.row > bottom or
+            if (retained.virtual or retained.parent_identity != 0 or retained.bank != bank or retained.row < top or retained.row > bottom or
                 retained.col > right)
             {
                 index += 1;
@@ -1923,6 +1991,7 @@ pub const Plane = struct {
             z,
             placement_generation,
         ) orelse return null;
+        self.placements[self.placement_count].identity = placement_generation;
         self.placement_count += 1;
     }
 
@@ -1931,6 +2000,101 @@ pub const Plane = struct {
         for (self.placements[0..self.placement_count], 0..) |retained, index|
             if (retained.image_id == image_id and retained.kitty_id == kitty_id) return index;
         return null;
+    }
+
+    fn identityIndex(self: *const Plane, identity: u64) ?usize {
+        if (identity == 0) return null;
+        for (self.placements[0..self.placement_count], 0..) |retained, index|
+            if (retained.identity == identity) return index;
+        return null;
+    }
+
+    fn hasChildren(self: *const Plane, identity: u64) bool {
+        if (identity == 0) return false;
+        for (self.placements[0..self.placement_count]) |value|
+            if (value.parent_identity == identity) return true;
+        return false;
+    }
+
+    fn parentPlacementIndex(self: *const Plane, kitty_image_id: u32, kitty_placement_id: u32, bank: Bank) ?usize {
+        const parent_image = self.kittyImageIndex(kitty_image_id) orelse return null;
+        const parent_id = self.images[parent_image].id;
+        var earliest: ?usize = null;
+        for (self.placements[0..self.placement_count], 0..) |retained, index| {
+            if (retained.image_id != parent_id or retained.bank != bank or
+                (kitty_placement_id != 0 and retained.kitty_id != kitty_placement_id)) continue;
+            if (earliest == null or retained.identity < self.placements[earliest.?].identity)
+                earliest = index;
+        }
+        return earliest;
+    }
+
+    fn parentError(self: *const Plane, parent_identity: u64, replacing_identity: u64) ?Failure {
+        var ancestor = parent_identity;
+        var depth: u8 = 0;
+        while (ancestor != 0) {
+            if (ancestor == replacing_identity) return .cycle;
+            if (depth == max_parent_depth) return .too_deep;
+            const index = self.identityIndex(ancestor) orelse return .parent_missing;
+            const value = self.placements[index];
+            if (value.virtual) return .unsupported;
+            ancestor = value.parent_identity;
+            depth += 1;
+        }
+        return null;
+    }
+
+    /// Reparenting an existing placement must preserve the depth of its
+    /// whole subtree, not only the new path above the modified root. This
+    /// admission-only scan is bounded by the placement quota and 16 links.
+    fn reparentExceedsDepth(self: *const Plane, replacing_index: usize, parent_index: usize) bool {
+        var new_depth: usize = 1;
+        var above = self.placements[parent_index].parent_slot;
+        while (above) |index| {
+            new_depth += 1;
+            above = self.placements[index].parent_slot;
+        }
+        const moving_identity = self.placements[replacing_index].identity;
+        for (self.placements[0..self.placement_count], 0..) |_, child_index| {
+            var current = child_index;
+            var distance: usize = 0;
+            while (self.placements[current].parent_slot) |ancestor_index| {
+                distance += 1;
+                if (self.placements[ancestor_index].identity == moving_identity) {
+                    if (new_depth + distance > max_parent_depth) return true;
+                    break;
+                }
+                current = ancestor_index;
+            }
+        }
+        return false;
+    }
+
+    /// Resolves one bounded physical parent chain without editing retained
+    /// anchors. Signed offsets can place children partially outside a view.
+    pub const Anchor = struct { row: i128, col: i128 };
+    /// Resolves one placement's effective physical anchor through the
+    /// validated, compaction-aware parent indices. A virtual parent remains
+    /// unsupported until it can be rooted in canonical Unicode placeholders.
+    pub fn placementAnchor(self: *const Plane, index: usize) ?Anchor {
+        if (index >= self.placement_count) return null;
+        var value = self.placements[index];
+        var row: i128 = 0;
+        var col: i128 = 0;
+        var depth: u8 = 0;
+        while (true) {
+            row += value.parent_row_offset;
+            col += value.parent_col_offset;
+            if (value.parent_identity == 0) return .{ .row = row + value.row, .col = col + value.col };
+            if (depth == max_parent_depth) return null;
+            const expected_parent = value.parent_identity;
+            const parent_index = value.parent_slot orelse return null;
+            if (parent_index >= self.placement_count) return null;
+            value = self.placements[parent_index];
+            if (value.identity != expected_parent) return null;
+            if (value.virtual) return null;
+            depth += 1;
+        }
     }
 
     fn makePlacement(
@@ -2073,16 +2237,71 @@ pub const Plane = struct {
     }
 
     fn removePlacement(self: *Plane, index: usize) void {
-        const image_id = self.placements[index].image_id;
-        self.placement_count -= 1;
-        if (index != self.placement_count) self.placements[index] = self.placements[self.placement_count];
-        if (!self.hasPlacement(image_id)) {
-            for (self.images[0..self.image_count]) |*image_value| {
-                if (image_value.id == image_id) {
-                    image_value.frame_started_ms = null;
-                    break;
+        std.debug.assert(index < self.placement_count);
+        const removed = self.placements[index];
+        if (!self.hasChildren(removed.identity)) {
+            // Ordinary leaf deletion must not allocate or run a full graph
+            // compaction. Only a moved parent's direct children need their
+            // validated dense slot updated after the swap.
+            self.placement_count -= 1;
+            if (index != self.placement_count) {
+                const moved = self.placements[self.placement_count];
+                self.placements[index] = moved;
+                if (self.hasChildren(moved.identity)) {
+                    for (self.placements[0..self.placement_count]) |*placement_value| {
+                        if (placement_value.parent_identity == moved.identity)
+                            placement_value.parent_slot = @intCast(index);
+                    }
                 }
             }
+            if (!self.hasPlacement(removed.image_id)) {
+                for (self.images[0..self.image_count]) |*image_value| {
+                    if (image_value.id == removed.image_id) {
+                        image_value.frame_started_ms = null;
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        // One bounded closure over parent links, not recursive per-child
+        // scans. At most 16 ancestry rounds over the declared 16K placement
+        // bound, regardless of a group's fan-out or dense slot ordering.
+        var doomed: [max_placements]bool = @splat(false);
+        doomed[index] = true;
+        for (0..max_parent_depth) |_| {
+            var extended = false;
+            for (self.placements[0..self.placement_count], 0..) |placement_value, i| {
+                if (doomed[i]) continue;
+                if (placement_value.parent_slot) |parent_slot| {
+                    std.debug.assert(parent_slot < self.placement_count);
+                    if (doomed[parent_slot]) {
+                        doomed[i] = true;
+                        extended = true;
+                    }
+                }
+            }
+            if (!extended) break;
+        }
+        var map: [max_placements]u16 = undefined;
+        var retained: usize = 0;
+        for (self.placements[0..self.placement_count], 0..) |placement_value, prior| {
+            if (doomed[prior]) continue;
+            map[prior] = @intCast(retained);
+            self.placements[retained] = placement_value;
+            retained += 1;
+        }
+        self.placement_count = @intCast(retained);
+        for (self.placements[0..retained]) |*placement_value| {
+            if (placement_value.parent_slot) |parent_slot| {
+                // The pre-commit link graph was cycle-free and bounded;
+                // every surviving child must still own a surviving parent.
+                std.debug.assert(!doomed[parent_slot]);
+                placement_value.parent_slot = map[parent_slot];
+            }
+        }
+        for (self.images[0..self.image_count]) |*image_value| {
+            if (!self.hasPlacement(image_value.id)) image_value.frame_started_ms = null;
         }
     }
 
@@ -2412,15 +2631,16 @@ fn parseCommand(bytes: []const u8) ?Command {
             'e' => if (value.len == 1 and std.ascii.isAlphabetic(value[0])) {
                 result.feature_action = value[0];
             } else return null,
-            // Query-only syntax for unimplemented parent-relative placement:
-            // validate, but never echo these keys or admit them as actions.
-            'P', 'Q' => if (std.fmt.parseInt(u32, value, 10)) |_| {} else |_| return null,
-            'H', 'V' => if (std.fmt.parseInt(i32, value, 10)) |_| {} else |_| return null,
+            'P' => result.parent_id = std.fmt.parseInt(u32, value, 10) catch return null,
+            'Q' => result.parent_placement_id = std.fmt.parseInt(u32, value, 10) catch return null,
+            'H' => result.parent_col_offset = std.fmt.parseInt(i32, value, 10) catch return null,
+            'V' => result.parent_row_offset = std.fmt.parseInt(i32, value, 10) catch return null,
             else => return null,
         }
     }
-    const unimplemented_placement: u32 = (1 << 26) | (1 << 27) | (1 << 28) | (1 << 29);
-    if (result.feature_action == 0 and seen & unimplemented_placement != 0) return null;
+    const parent_fields: u32 = (1 << 26) | (1 << 27) | (1 << 28) | (1 << 29);
+    if (result.feature_action == 0 and seen & parent_fields != 0 and
+        (result.action != 'p' or result.parent_id == 0)) return null;
     result.present = seen;
     return result;
 }
@@ -2529,7 +2749,9 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         if (present & (1 << 20) != 0 and command_value.compose_mode == 1) try out.number('C', 1);
         if (present & (1 << 23) != 0 and command_value.unicode_placement) try out.number('U', 1);
         if (present & (1 << 18) != 0 and command_value.z != 0) try out.number('z', command_value.z);
-        // P/Q/H/V parent-relative placements remain deliberately absent.
+        // Physical P/Q/H/V now works. Do not advertise complete relative
+        // placement query parity until Unicode-placeholder parents have
+        // their canonical text-derived anchor and lifetime implemented.
     }
     if (deleting and present & (1 << 8) != 0 and
         std.mem.indexOfScalar(u8, delete_selectors, std.ascii.toLower(command_value.delete)) != null)
@@ -2699,6 +2921,7 @@ fn composeRgba(
 
 fn deleteMatches(
     placement_value: Placement,
+    anchor: Plane.Anchor,
     kitty_id: ?u32,
     kitty_number: ?u32,
     selector: u8,
@@ -2707,8 +2930,8 @@ fn deleteMatches(
     cursor_row: u64,
     cursor_col: u16,
 ) bool {
-    const bottom = placement_value.row + placement_value.rows - 1;
-    const right = @as(u32, placement_value.col) + placement_value.cols - 1;
+    const bottom = anchor.row + placement_value.rows - 1;
+    const right = anchor.col + placement_value.cols - 1;
     const explicit_row = if (command_value.y == 0)
         null
     else
@@ -2721,18 +2944,18 @@ fn deleteMatches(
             (command_value.placement_id == 0 or placement_value.kitty_id == command_value.placement_id),
         'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
         'p' => command_value.x != 0 and explicit_row != null and
-            placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
-            placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+            anchor.col <= @as(i128, command_value.x - 1) and command_value.x - 1 <= right and
+            anchor.row <= explicit_row.? and explicit_row.? <= bottom,
         'q' => placement_value.z == command_value.z and command_value.x != 0 and explicit_row != null and
-            placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
-            placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+            anchor.col <= @as(i128, command_value.x - 1) and command_value.x - 1 <= right and
+            anchor.row <= explicit_row.? and explicit_row.? <= bottom,
         'x' => command_value.x != 0 and
-            placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right,
+            anchor.col <= @as(i128, command_value.x - 1) and command_value.x - 1 <= right,
         'y' => explicit_row != null and
-            placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+            anchor.row <= explicit_row.? and explicit_row.? <= bottom,
         'z' => placement_value.z == command_value.z,
-        'c' => placement_value.col <= cursor_col and cursor_col <= right and
-            placement_value.row <= cursor_row and cursor_row <= bottom,
+        'c' => anchor.col <= cursor_col and cursor_col <= right and
+            anchor.row <= cursor_row and cursor_row <= bottom,
         else => false,
     };
 }
@@ -3711,14 +3934,14 @@ test "Kitty geometric upper Q retires animation frames only after final matched 
     try std.testing.expect(plane.content_generation > generation);
 }
 
-test "Kitty relative parent placements remain an explicit unsupported branch" {
-    // The pinned Kitty reference admits P=parent image id and Q=parent
-    // placement id on put. Howl's bounded grammar intentionally does not
-    // invent parent identity, motion or cascading geometry ownership.
+test "Kitty virtual parent placement needs the Unicode anchor owner before admission" {
+    // Physical P/Q parents have stable placement identities. The separate
+    // U+10EEEE virtual parent needs text-run projection before relative puts
+    // can be accepted, so this case must remain an exact no-mutation failure.
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
     try std.testing.expect((try plane.command(
-        "a=T,f=32,s=1,v=1,i=91,p=3,C=1,q=2;AQIDBA==",
+        "a=T,f=32,s=1,v=1,i=91,p=3,U=1,C=1,q=2;AQIDBA==",
         .primary,
         0,
         0,
@@ -3748,7 +3971,7 @@ test "Kitty relative parent placements remain an explicit unsupported branch" {
         1,
         1,
     );
-    try std.testing.expectEqual(Failure.invalid, relative_put.failure.?);
+    try std.testing.expectEqual(Failure.unsupported, relative_put.failure.?);
     try std.testing.expect(!relative_put.changed);
     try std.testing.expectEqual(prior_generation, plane.generation());
     try std.testing.expectEqual(prior_content_generation, plane.content_generation);
@@ -3758,6 +3981,225 @@ test "Kitty relative parent placements remain an explicit unsupported branch" {
     try std.testing.expectEqual(@as(u16, 2), plane.image_count);
     try std.testing.expectEqual(@as(?u32, 91), plane.images[0].kitty_id);
     try std.testing.expectEqual(@as(?u32, 92), plane.images[1].kitty_id);
+}
+
+test "Kitty physical P Q placement admits signed offsets without moving the cursor and cascades deletion" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=91,p=3,C=1,q=2;AQIDBA==",
+        .primary,
+        0,
+        2,
+        3,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=92,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const generation = plane.generation();
+    const added = try plane.command("a=p,i=92,p=4,P=91,Q=3,H=2,V=1,q=2", .primary, 0, 1, 1, 1, 1);
+    try std.testing.expect(added.changed);
+    try std.testing.expect(added.failure == null);
+    try std.testing.expect(added.cursor_advance == null);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expect(plane.generation() > generation);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 3, .col = 5 }, plane.placementAnchor(1).?);
+
+    const missed = try plane.command("a=p,i=92,p=5,P=999,Q=3,H=1,q=2", .primary, 0, 1, 1, 1, 1);
+    try std.testing.expect(missed.failure != null);
+    try std.testing.expect(!missed.changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=i,i=91,p=3", .primary, 0, 2, 3, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+}
+
+test "Kitty physical ancestry keeps sixteen bounded parent links and rejects cycles transactionally" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=71,p=1,C=1,q=2;AQIDBA==",
+        .primary,
+        0,
+        2,
+        3,
+        1,
+        1,
+    )).changed);
+    const parent_identity = plane.placement(0).?.identity;
+    try std.testing.expect(parent_identity != 0);
+    var text: [96]u8 = undefined;
+    for (2..18) |placement_id| {
+        const put = try std.fmt.bufPrint(&text, "a=p,i=71,p={d},P=71,Q={d},H=1,V=0,q=2", .{ placement_id, placement_id - 1 });
+        const result = try plane.command(put, .primary, 0, 0, 0, 1, 1);
+        try std.testing.expect(result.changed and result.failure == null and result.cursor_advance == null);
+        try std.testing.expectEqualDeep(Plane.Anchor{ .row = 2, .col = @intCast(3 + placement_id - 1) }, plane.placementAnchor(placement_id - 1).?);
+    }
+    try std.testing.expectEqual(@as(u16, 17), plane.placement_count);
+    const last = plane.generation();
+    const too_deep = try plane.command("a=p,i=71,p=18,P=71,Q=17,H=1,q=2", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.too_deep, too_deep.failure.?);
+    try std.testing.expect(!too_deep.changed);
+    const self_reference = try plane.command("a=p,i=71,p=1,P=71,Q=1,q=2", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.invalid, self_reference.failure.?);
+    const cycle = try plane.command("a=p,i=71,p=1,P=71,Q=17,q=2", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.cycle, cycle.failure.?);
+    try std.testing.expect(!cycle.changed);
+    try std.testing.expectEqual(last, plane.generation());
+    try std.testing.expectEqual(parent_identity, plane.placement(0).?.identity);
+
+    // Reparenting the root of an already deep subtree must account for
+    // existing descendants, not merely validate its newly selected parent.
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=72,p=1,C=1,q=2;AQIDBA==",
+        .primary,
+        0,
+        7,
+        0,
+        1,
+        1,
+    )).changed);
+    const before_reparent = plane.generation();
+    const excessive_reparent = try plane.command("a=p,i=71,p=1,P=72,Q=1,q=2", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(@as(?Failure, .too_deep), excessive_reparent.failure);
+    try std.testing.expect(!excessive_reparent.changed);
+    try std.testing.expectEqual(before_reparent, plane.generation());
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 2, .col = 19 }, plane.placementAnchor(16).?);
+
+    // Re-put changes the root anchor, not any of its children's identity.
+    try std.testing.expect((try plane.command("a=p,i=71,p=1,C=1,q=2", .primary, 0, 5, 1, 1, 1)).changed);
+    try std.testing.expectEqual(parent_identity, plane.placement(0).?.identity);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 5, .col = 17 }, plane.placementAnchor(16).?);
+    try std.testing.expect(plane.scroll(.primary, 0, 9, 1, true));
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 4, .col = 17 }, plane.placementAnchor(16).?);
+    try std.testing.expect((try plane.command("a=d,d=i,i=71,p=1", .primary, 0, 4, 1, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=i,i=72,p=1", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+}
+
+test "Kitty physical P Q validates bank and ancestor lifetime without evicting unrelated data" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=81,p=1,C=1,q=2;AQIDBA==", .primary, 0, 2, 3, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=t,f=32,s=1,v=1,i=82,q=2;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+    const generation = plane.generation();
+    const bytes = plane.storage_bytes;
+    const other_bank = try plane.command("a=p,i=82,p=2,P=81,Q=1,q=2", .alternate, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.parent_missing, other_bank.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+    const unknown_ref = try plane.command("a=p,i=82,p=2,P=81,Q=9,q=2", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(Failure.parent_missing, unknown_ref.failure.?);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(bytes, plane.storage_bytes);
+    try std.testing.expect((try plane.command("a=p,i=82,p=2,P=81,Q=1,H=-5,V=-1,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 1, .col = -2 }, plane.placementAnchor(1).?);
+    const child_identity = plane.placement(1).?.identity;
+    const unsupported_bank_change = try plane.command("a=p,i=81,p=1,C=1,q=2", .alternate, 0, 1, 1, 1, 1);
+    try std.testing.expectEqual(Failure.unsupported, unsupported_bank_change.failure.?);
+    try std.testing.expectEqual(child_identity, plane.placement(1).?.identity);
+    try std.testing.expect((try plane.command("a=d,d=i,i=82,p=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 2, .col = 3 }, plane.placementAnchor(0).?);
+    try std.testing.expectEqual(bytes, plane.storage_bytes);
+}
+
+test "Kitty relative placement keeps parent identity across unrelated dense-slot retirement" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=80,p=9,C=1,q=2;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=82,p=2,C=1,q=2;AQIDBA==", .primary, 0, 1, 1, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=81,p=1,C=1,q=2;AQIDBA==", .primary, 0, 3, 4, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=p,i=82,p=2,P=81,Q=1,H=-1,V=2,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 5, .col = 3 }, plane.placementAnchor(1).?);
+    const parent_id = plane.placement(2).?.identity;
+    const child_id = plane.placement(1).?.identity;
+    try std.testing.expectEqual(@as(?u16, 2), plane.placement(1).?.parent_slot);
+    try std.testing.expect((try plane.command("a=d,d=i,i=80,p=9", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    const moved_parent = plane.identityIndex(parent_id) orelse return error.MissingParent;
+    const child = plane.identityIndex(child_id) orelse return error.MissingChild;
+    try std.testing.expectEqual(@as(?u16, @intCast(moved_parent)), plane.placement(child).?.parent_slot);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 5, .col = 3 }, plane.placementAnchor(child).?);
+    try std.testing.expect((try plane.command("a=d,d=i,i=81,p=1", .primary, 0, 3, 4, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+}
+
+test "Kitty relative placement deletes at resolved geometry and default Q selects oldest parent" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=51,p=1,C=1,q=2;AQIDBA==", .primary, 0, 2, 3, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=p,i=51,p=2,C=1,q=2", .primary, 0, 5, 2, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=t,f=32,s=1,v=1,i=52,q=2;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+    // Q omitted: select the oldest retained parent placement, not the
+    // newest or a coordinate copied from the current cursor.
+    try std.testing.expect((try plane.command("a=p,i=52,p=3,P=51,H=2,V=1,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 3, .col = 5 }, plane.placementAnchor(2).?);
+    const before = plane.generation();
+    const miss = try plane.command("a=d,d=p,x=1,y=1", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(!miss.changed);
+    try std.testing.expectEqual(before, plane.generation());
+    try std.testing.expectEqual(@as(u16, 3), plane.placement_count);
+    const hit = try plane.command("a=d,d=p,x=6,y=4", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(hit.changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 2, .col = 3 }, plane.placementAnchor(0).?);
+    try std.testing.expectEqualDeep(Plane.Anchor{ .row = 5, .col = 2 }, plane.placementAnchor(1).?);
+}
+
+test "Kitty physical parent retires a wide child fanout with one bounded graph closure" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=41,p=1,C=1,q=2;AQIDBA==", .primary, 0, 1, 1, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=t,f=32,s=1,v=1,i=42,q=2;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+    var text: [88]u8 = undefined;
+    for (2..258) |placement_id| {
+        const bytes = try std.fmt.bufPrint(&text, "a=p,i=42,p={d},P=41,Q=1,H=0,V=0,q=2", .{placement_id});
+        const result = try plane.command(bytes, .primary, 0, 0, 0, 1, 1);
+        try std.testing.expect(result.changed and result.failure == null);
+    }
+    try std.testing.expectEqual(@as(u16, 257), plane.placement_count);
+    const storage = plane.storage_bytes;
+    try std.testing.expect((try plane.command("a=d,d=i,i=41,p=1", .primary, 0, 1, 1, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    // Lowercase deletion retains image bytes; the graph closes without
+    // deleting unrelated decoded resources or leaking live placements.
+    try std.testing.expectEqual(storage, plane.storage_bytes);
+}
+
+test "Kitty physical relative placements participate in all six geometry deletion selectors" {
+    for ([_]struct { miss: []const u8, hit: []const u8 }{
+        .{ .miss = "a=d,d=p,x=2,y=4", .hit = "a=d,d=p,x=6,y=4" },
+        .{ .miss = "a=d,d=q,x=2,y=4,z=-7", .hit = "a=d,d=q,x=6,y=4,z=-7" },
+        .{ .miss = "a=d,d=x,x=2", .hit = "a=d,d=x,x=6" },
+        .{ .miss = "a=d,d=y,y=2", .hit = "a=d,d=y,y=4" },
+        .{ .miss = "a=d,d=z,z=2", .hit = "a=d,d=z,z=-7" },
+        .{ .miss = "a=d,d=c", .hit = "a=d,d=c" },
+    }) |case| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        try std.testing.expect((try plane.command("a=T,f=32,s=1,v=1,i=101,p=1,C=1,q=2;AQIDBA==", .primary, 0, 2, 3, 1, 1)).changed);
+        try std.testing.expect((try plane.command("a=t,f=32,s=1,v=1,i=102,q=2;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expect((try plane.command("a=p,i=102,p=2,P=101,Q=1,H=2,V=1,z=-7,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expectEqualDeep(Plane.Anchor{ .row = 3, .col = 5 }, plane.placementAnchor(1).?);
+        const generation = plane.generation();
+        const miss = try plane.command(case.miss, .primary, 0, 0, 0, 1, 1);
+        try std.testing.expect(!miss.changed);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+        const hit = try plane.command(case.hit, .primary, 0, 3, 5, 1, 1);
+        try std.testing.expect(hit.changed);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqualDeep(Plane.Anchor{ .row = 2, .col = 3 }, plane.placementAnchor(0).?);
+    }
 }
 
 test "Kitty clipped margin geometry respects all six matched-only deletion selectors" {
@@ -4696,7 +5138,8 @@ test "Kitty graphics feature queries return exact advertised keys without changi
         "a=q,i=31,e=p,x=4096,y=4096,w=4097,h=4097,X=4096,Y=4096,c=65536,r=65536",
         &output,
     ));
-    try std.testing.expect(parseCommand("a=p,i=31,P=123") == null);
+    try std.testing.expect(parseCommand("a=p,i=31,P=123") != null);
+    try std.testing.expect(parseCommand("a=T,i=31,P=123") == null);
     try std.testing.expect(parseCommand("a=q,i=31,e=p,P=4294967296") == null);
     try std.testing.expect(parseCommand("a=q,i=31,e=p,H=-2147483649") == null);
     try std.testing.expectEqualStrings(",e=T,p=2,x=1,w=2,U=1", try formatFeatureQuery("a=q,i=31,e=T,p=2,x=1,w=2,U=1", &output));

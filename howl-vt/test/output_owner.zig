@@ -140,6 +140,69 @@ test "native output retains SGR blink glyph tags and phase without reprojecting 
     try std.testing.expectEqualDeep(glyphs, current.snapshot.glyphs[0]);
 }
 
+test "native image output resolves physical P Q ancestry without mutating held cuts" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b[?25l\x1b[3;4H" ++
+        "\x1b_Ga=T,f=32,s=1,v=1,i=91,p=3,C=1,q=2;/wAA/w==\x1b\\" ++
+        "\x1b_Ga=t,f=32,s=1,v=1,i=92,q=2;AP8A/w==\x1b\\");
+    const before_cursor = owner.observation().semanticView(0);
+    const row = before_cursor.cursor_row;
+    const col = before_cursor.cursor_col;
+    try owner.feed("\x1b_Ga=p,i=92,p=4,P=91,Q=3,H=2,V=1,z=1,q=2\x1b\\");
+    const after_cursor = owner.observation().semanticView(0);
+    try std.testing.expectEqual(row, after_cursor.cursor_row);
+    try std.testing.expectEqual(col, after_cursor.cursor_col);
+    try owner.flush();
+    const first = try owner.hold();
+    var held = true;
+    defer if (held) release(owner, first);
+    try std.testing.expectEqual(@as(usize, 2), first.snapshot.graphics.positive.len);
+    const cell_width: i32 = first.snapshot.cell_width;
+    const cell_height: i32 = first.snapshot.cell_height;
+    const child = first.snapshot.graphics.positive[1].rgba.destination;
+    try std.testing.expectEqual(@as(i32, 5) * cell_width, child.x);
+    try std.testing.expectEqual(@as(i32, 3) * cell_height, child.y);
+    const previous = child;
+    const image_bytes = try a.dupe(u8, first.snapshot.graphics.images[1].pixels);
+    defer a.free(image_bytes);
+
+    // Re-put a physical root with the same placement ID. Its stable ref
+    // identity moves the child, without retransmitting the child's image.
+    try owner.feed("\x1b[6;2H\x1b_Ga=p,i=91,p=3,C=1,q=2\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualDeep(previous, first.snapshot.graphics.positive[1].rgba.destination);
+    try std.testing.expectEqualSlices(u8, image_bytes, first.snapshot.graphics.images[1].pixels);
+    release(owner, first);
+    held = false;
+    const moved = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 2), moved.snapshot.graphics.positive.len);
+    const moved_child = moved.snapshot.graphics.positive[1].rgba.destination;
+    try std.testing.expectEqual(@as(i32, 3) * cell_width, moved_child.x);
+    try std.testing.expectEqual(@as(i32, 6) * cell_height, moved_child.y);
+    release(owner, moved);
+
+    // Exact signed left clipping is not expressible by a u16 cell-column.
+    try owner.feed("\x1b_Ga=p,i=92,p=4,P=91,Q=3,H=-2,V=0,c=3,z=1,q=2\x1b\\");
+    try owner.flush();
+    const clipped = try owner.hold();
+    try std.testing.expectEqual(@as(usize, 2), clipped.snapshot.graphics.positive.len);
+    const negative = clipped.snapshot.graphics.positive[1].rgba.destination;
+    try std.testing.expectEqual(-cell_width, negative.x);
+    try std.testing.expectEqual(@as(i32, 5) * cell_height, negative.y);
+    release(owner, clipped);
+
+    // Parent deletion also retires all child draw commands.
+    try owner.feed("\x1b_Ga=d,d=i,i=91,p=3\x1b\\");
+    try owner.flush();
+    const deleted = try owner.hold();
+    defer release(owner, deleted);
+    try std.testing.expectEqual(@as(usize, 0), deleted.snapshot.graphics.positive.len);
+    try std.testing.expectEqual(@as(usize, 0), deleted.snapshot.graphics.images.len);
+}
+
 test "public output OOM preserves held output and retries newer canonical input" {
     const f = try font(12);
     defer f.deinit();

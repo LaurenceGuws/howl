@@ -84,19 +84,13 @@ fn findImage(images: VT.Images, image_id: u32) ?VT.Image {
 }
 
 // Temporary native placement keys; only final frame.Command reaches the lease.
-const Ordered = struct { placement: VT.ImagePlacement, top: i32, ordinal: u32 };
+const Ordered = struct { placement: VT.ImagePlacement, top: i32, left: i32, ordinal: u32 };
 fn orderLessThan(_: void, left: Ordered, right: Ordered) bool {
     const a = left.placement;
     const b = right.placement;
     if (a.z != b.z) return a.z < b.z;
     if (a.generation != b.generation) return a.generation < b.generation;
     return left.ordinal < right.ordinal;
-}
-
-fn checkedCoord(cell: u16, pixels: u16, offset: u32) error{UnsupportedScene}!i32 {
-    const base = std.math.mul(u64, cell, pixels) catch return error.UnsupportedScene;
-    const result = std.math.add(u64, base, offset) catch return error.UnsupportedScene;
-    return std.math.cast(i32, result) orelse error.UnsupportedScene;
 }
 
 /// Stages one complete final-command cut without modifying accepted state.
@@ -133,7 +127,8 @@ pub fn build(
         // Native geometry uses wide coordinates. Optional draw commands have
         // an i32 viewport vocabulary: reject unrepresentable visible facts.
         const top = std.math.cast(i32, visible.top) orelse return error.UnsupportedScene;
-        try order.append(allocator, .{ .placement = visible.placement, .top = top, .ordinal = @intCast(order.items.len) });
+        const left = std.math.cast(i32, visible.left) orelse return error.UnsupportedScene;
+        try order.append(allocator, .{ .placement = visible.placement, .top = top, .left = left, .ordinal = @intCast(order.items.len) });
     }
     if (order.items.len == 0) return result;
     std.sort.heap(Ordered, order.items, {}, orderLessThan);
@@ -197,7 +192,7 @@ pub fn build(
         if (width == 0 or height == 0) return error.UnsupportedScene;
         result.commands[command_index] = .{ .rgba = .{
             .destination = .{
-                .x = try checkedCoord(placement.col, cell_width, placement.cell_x),
+                .x = entry.left,
                 .y = entry.top,
                 .width = width,
                 .height = height,

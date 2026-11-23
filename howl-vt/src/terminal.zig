@@ -6144,14 +6144,15 @@ pub const Terminal = struct {
             const plane = self.backingPlane();
             if (index < plane.placement_count) {
                 const value = plane.placement(index) orelse return null;
-                if (value.virtual or value.bank != self.bank or value.row < self.visible_row_start or
-                    value.row >= self.visible_row_start + self.rows)
-                    return null;
+                if (value.virtual or value.bank != self.bank) return null;
+                const anchor = plane.placementAnchor(index) orelse return null;
+                if (anchor.row < self.visible_row_start or
+                    anchor.row >= @as(i128, self.visible_row_start) + self.rows) return null;
                 return .{
                     .image_id = value.image_id,
                     .generation = value.generation,
-                    .row = @intCast(value.row - self.visible_row_start),
-                    .col = value.col,
+                    .row = @intCast(anchor.row - self.visible_row_start),
+                    .col = std.math.cast(u16, anchor.col) orelse return null,
                     .source_x = value.source_x,
                     .source_y = value.source_y,
                     .source_width = value.source_width,
@@ -6173,7 +6174,7 @@ pub const Terminal = struct {
         pub const PlacementIterator = struct {
             /// The final-command destination Y may be negative when a tall
             /// physical image's anchor precedes the selected history viewport.
-            pub const VisiblePlacement = struct { placement: ImagePlacement, top: i128 };
+            pub const VisiblePlacement = struct { placement: ImagePlacement, top: i128, left: i128 };
             images: *const Images,
             physical_index: usize = 0,
             virtual_row: u16 = 0,
@@ -6187,30 +6188,38 @@ pub const Terminal = struct {
                     self.physical_index += 1;
                     const physical = plane.placement(index) orelse continue;
                     if (physical.virtual or physical.bank != self.images.bank) continue;
-                    const row_offset: i128 = @as(i128, physical.row) - @as(i128, self.images.visible_row_start);
+                    const anchor = plane.placementAnchor(index) orelse continue;
+                    const row_offset: i128 = anchor.row - @as(i128, self.images.visible_row_start);
                     const pixel_top = row_offset * self.images.cell_pixel_height + physical.cell_y;
                     const pixel_bottom = pixel_top + physical.pixel_height;
                     const viewport_bottom: i128 = @as(i128, self.images.rows) * self.images.cell_pixel_height;
                     if (pixel_bottom <= 0 or pixel_top >= viewport_bottom) continue;
-                    const pixel_left: i128 = @as(i128, physical.col) * self.images.cell_pixel_width + physical.cell_x;
+                    const pixel_left: i128 = anchor.col * self.images.cell_pixel_width + physical.cell_x;
                     const viewport_right: i128 = @as(i128, self.images.view.cols) * self.images.cell_pixel_width;
                     if (pixel_left >= viewport_right or pixel_left + physical.pixel_width <= 0) continue;
                     const relative_row: u16 = if (row_offset < 0) 0 else std.math.cast(u16, row_offset) orelse continue;
-                    return .{ .placement = .{
-                        .image_id = physical.image_id,
-                        .generation = physical.generation,
-                        .row = relative_row,
-                        .col = physical.col,
-                        .source_x = physical.source_x,
-                        .source_y = physical.source_y,
-                        .source_width = physical.source_width,
-                        .source_height = physical.source_height,
-                        .cell_x = physical.cell_x,
-                        .cell_y = physical.cell_y,
-                        .pixel_width = physical.pixel_width,
-                        .pixel_height = physical.pixel_height,
-                        .z = physical.z,
-                    }, .top = pixel_top };
+                    return .{
+                        .placement = .{
+                            .image_id = physical.image_id,
+                            .generation = physical.generation,
+                            .row = relative_row,
+                            // A negative partially visible anchor has no u16
+                            // terminal column, but left retains its exact signed
+                            // pixel location for the graphics command consumer.
+                            .col = std.math.cast(u16, anchor.col) orelse 0,
+                            .source_x = physical.source_x,
+                            .source_y = physical.source_y,
+                            .source_width = physical.source_width,
+                            .source_height = physical.source_height,
+                            .cell_x = physical.cell_x,
+                            .cell_y = physical.cell_y,
+                            .pixel_width = physical.pixel_width,
+                            .pixel_height = physical.pixel_height,
+                            .z = physical.z,
+                        },
+                        .top = pixel_top,
+                        .left = pixel_left,
+                    };
                 }
                 if (!plane.hasVirtualPlacement(self.images.bank)) return null;
                 while (self.virtual_row < self.images.view.rows) {
@@ -6225,7 +6234,7 @@ pub const Terminal = struct {
                                     top + placed.pixel_height <= 0 or
                                     left >= @as(i128, self.images.view.cols) * self.images.cell_pixel_width or
                                     left + placed.pixel_width <= 0) continue;
-                                return .{ .placement = placed, .top = top };
+                                return .{ .placement = placed, .top = top, .left = left };
                             }
                         }
                     }
