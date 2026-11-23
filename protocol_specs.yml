@@ -1304,6 +1304,17 @@ specifications:
       level: defined
       wire: CSI ? 1004 h/l
       rule: Enables or disables focus enter/leave events reported through the terminal.
+    - id: xtqmodkeys
+      section: Functions using CSI / Query key modifier options (XTQMODKEYS)
+      level: defined
+      wire: CSI ? Pp m
+      rule: Query xterm key-modifier configuration by Pp; Pp=4 requests modifyOtherKeys. Return its current setting encoded as an XTMODKEYS
+        reply, not a text-rendition mutation.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-4fe8991d89
+        source_line: 1349
+        wire: CSI ? Pp m
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -2645,11 +2656,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1323
       symbol: XTMODKEYS
-    - id: csi-4fe8991d89
-      wire: CSI ? Pp m
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1349
-      symbol: XTQMODKEYS
     - id: csi-e85c0202bf
       wire: CSI Ps n
       section: Functions using CSI , ordered by the final character(s)
@@ -3850,3 +3856,22 @@ reconciliation:
     CSI Ps J and CSI ? Ps J remain different wire identities.
   implementation_policy: unselected
   same_wire_conflict_winner: none
+- id: xtqmodkeys-vs-declaser-ppl2-sgr
+  wire: CSI ? 4 m
+  status: resolved-by-scope
+  approved_by: Captain
+  accepted_specification: xterm_controls.xtqmodkeys
+  accepted_effect: Query modifyOtherKeys setting and reply using XTMODKEYS.
+  other_specification:
+    document: DEClaser 1100 Printer Operator’s Guide
+    author: Digital Equipment Corporation
+    revision: Revised June 1991
+    order_number: EK-DCL11-OP-002
+    url: https://www.zx.net.nz/mirror/deathrow.vistech.net/_cvisors/DEC94MDS/dcl11op2.pdf
+    section: Appendix A, SGR (Select Graphic Rendition), page A–16
+    wire: CSI ? 4 m
+    effect: Superscript on; subscript off (printer page-formatting attribute).
+  scope_decision: DEClaser printer formatting is outside Howl video-terminal semantics for this collision. Preserve the competing source,
+    without adding a printer rendition profile.
+  compatibility_mode: none
+  scope_limit: Only this verified printer-versus-keyboard same-wire collision. Other DEC terminal controls require independent source review.
