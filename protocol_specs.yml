@@ -286,16 +286,49 @@ specifications:
       level: defined
       wire: CSI Pm h
       rule: Sets the specified standard modes.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-6912179284
+        source_line: 905
+        wire: CSI Pm h
+      source_specific_parameters:
+      - selector: 20
+        wire: CSI 20 h
+        original_ecma48: Selector 20 shall not be used (ECMA-48, section 8.3.125).
+        xterm: Selector 20 means Automatic Newline (LNM).
+        catalogue: xterm_ctlseqs
+        entry_id: csi-6912179284
+        source_line: 905
+        classification: xterm/DEC mode extension into ECMA-48 unassigned selector, not a second CSI command
     - id: rm
       section: 8.3.106
       level: defined
       wire: CSI Pm l
       rule: Resets the specified standard modes.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-5df72d65f1
+        source_line: 1056
+        wire: CSI Pm l
+      source_specific_parameters:
+      - selector: 20
+        wire: CSI 20 l
+        original_ecma48: Selector 20 shall not be used (ECMA-48, section 8.3.106).
+        xterm: Selector 20 means Normal Linefeed (LNM).
+        catalogue: xterm_ctlseqs
+        entry_id: csi-5df72d65f1
+        source_line: 1056
+        classification: xterm/DEC mode extension into ECMA-48 unassigned selector, not a second CSI command
     - id: dsr
       section: 8.3.35
       level: defined
       wire: CSI Ps n
       rule: Requests or reports device status as selected by the parameter.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-e85c0202bf
+        source_line: 1377
+        wire: CSI Ps n
     - id: cpr
       section: 8.3.14
       level: defined
@@ -316,6 +349,11 @@ specifications:
       level: defined
       wire: ESC c
       rule: Resets a receiving device to its initial state.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-4b7f14d66e
+        source_line: 408
+        wire: ESC c
     - id: hts
       section: 8.3.62
       level: defined
@@ -422,6 +460,22 @@ specifications:
       level: defined
       wire: CSI Ps c
       rule: DEVICE ATTRIBUTES (DA); ECMA-48 standardized control function, CSI form (source page 37).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-118f929579
+        source_line: 763
+        wire: CSI Ps c
+      source_specific_responses:
+      - request: CSI 0 c (or CSI c)
+        ecma48: Request identifying DA at Ps=0; nonzero Ps is a device-type identification code from the envisaged standard register.
+        xterm: Uses DEC-style CSI ? ... c primary DA responses, with terminal-type and optional capability parameters.
+        examples:
+        - CSI ? 1 ; 2 c
+        - CSI ? 6 2 ; Ps c
+        catalogue: xterm_ctlseqs
+        entry_id: csi-118f929579
+        source_line: 763
+        classification: same standard DA request family; distinct DEC response profile retained, not asserted wire-equivalent
     - id: daq
       section: 8.3.25
       level: defined
@@ -582,6 +636,11 @@ specifications:
       level: defined
       wire: CSI Pn1;Pn2 f
       rule: CHARACTER AND LINE POSITION (HVP); ECMA-48 standardized control function, CSI form (source page 46).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-878281c3fe
+        source_line: 840
+        wire: CSI Ps ; Ps f
     - id: idcs
       section: 8.3.65
       level: defined
@@ -2572,11 +2631,6 @@ discovery_catalogues:
       wire: ESC F
       section: Controls beginning with ESC
       source_line: 405
-    - id: esc-4b7f14d66e
-      wire: ESC c
-      section: Controls beginning with ESC
-      source_line: 408
-      symbol: RIS
     - id: esc-b77edc5658
       wire: ESC l
       section: Controls beginning with ESC
@@ -2674,10 +2728,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 744
       symbol: DECST8C
-    - id: csi-118f929579
-      wire: CSI Ps c
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 763
     - id: csi-538ff9fdc8
       wire: CSI = Ps c
       section: Functions using CSI , ordered by the final character(s)
@@ -2686,10 +2736,6 @@ discovery_catalogues:
       wire: CSI > Ps c
       section: Functions using CSI , ordered by the final character(s)
       source_line: 810
-    - id: csi-878281c3fe
-      wire: CSI Ps ; Ps f
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 840
     - id: csi-807c225322
       wire: CSI > Pp ; Pv f
       section: Functions using CSI , ordered by the final character(s)
@@ -2704,11 +2750,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 877
       symbol: XTQFMTKEYS
-    - id: csi-6912179284
-      wire: CSI Pm h
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 905
-      symbol: SM
     - id: csi-7f26dc7a37
       wire: CSI ? Pm h
       section: Functions using CSI , ordered by the final character(s)
@@ -2724,11 +2765,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1048
       symbol: MC
-    - id: csi-5df72d65f1
-      wire: CSI Pm l
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1056
-      symbol: RM
     - id: csi-8326970770
       wire: CSI ? Pm l
       section: Functions using CSI , ordered by the final character(s)
@@ -2748,11 +2784,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1323
       symbol: XTMODKEYS
-    - id: csi-e85c0202bf
-      wire: CSI Ps n
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1377
-      symbol: DSR
     - id: csi-8dcde60b89
       wire: CSI > Ps n
       section: Functions using CSI , ordered by the final character(s)
