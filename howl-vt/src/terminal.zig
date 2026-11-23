@@ -1078,7 +1078,7 @@ fn decodeCsi(
 ) ?SemanticEvent {
     // Frozen Kitty's one-parameter cursor, repeat, tab and cell-edit
     // controls reject extras before mutation. #P and SP @ remain separate;
-    // TBC mode 5 retains the already accepted libvterm all-clear policy.
+    // TBC selects the DEC/xterm 0/current and 3/all subset only.
     if (params.len > 1) switch (final) {
         '@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'P', 'X', 'Z', '`', 'a', 'b', 'd', 'e', 'g' => return null,
         else => {},
@@ -1099,7 +1099,7 @@ fn decodeCsi(
         'I' => return SemanticEvent{ .horizontal_tab_forward = paramAtOrDefault1(params, 0) },
         'g' => switch (paramAtOrDefault0(params, 0)) {
             0 => return SemanticEvent.tab_clear_current,
-            3, 5 => return SemanticEvent.tab_clear_all,
+            3 => return SemanticEvent.tab_clear_all,
             else => return null,
         },
         'Z' => return SemanticEvent{ .horizontal_tab_back = paramAtOrDefault1(params, 0) },
@@ -1107,7 +1107,7 @@ fn decodeCsi(
         'M' => return SemanticEvent{ .delete_lines = paramAtOrDefault1(params, 0) },
         'P' => return SemanticEvent{ .delete_chars = paramAtOrDefault1(params, 0) },
         'S' => return SemanticEvent{ .scroll_up_lines = scrollCount(params) orelse return null },
-        'T' => return SemanticEvent{ .scroll_down_lines = scrollCount(params) orelse return null },
+        'T', '^' => return SemanticEvent{ .scroll_down_lines = scrollCount(params) orelse return null },
         'h' => return SemanticEvent{ .ansi_mode_set = collectParams(params) },
         'l' => return SemanticEvent{ .ansi_mode_reset = collectParams(params) },
         'm' => return SemanticEvent{ .sgr = .{ .params = params, .separators = separators } },
@@ -1287,11 +1287,10 @@ fn decodePrivateEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEve
 }
 
 fn modeReport(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
-    // Policy: protocol_coverage.yml libvterm.csi.decsgr adjudication.
-    // CSI ?4m is xterm XTQMODKEYS, not old DEC printer DECSGR superscript:
-    // the same bytes cannot both report keyboard mode and change baseline.
-    // Modern key negotiation wins; do not introduce an implicit VT profile.
-    if (final == 'm' and paramAtOrDefault0(params, 0) == 4) return SemanticEvent.modify_other_keys_query;
+    // Accepted protocol_specs.yml collision: CSI ?4m is xterm XTQMODKEYS,
+    // not old DEC printer superscript. Xterm names one Pp resource; never
+    // reinterpret trailing operands as a successful query or rendition state.
+    if (final == 'm' and params.len == 1 and params[0] == 4) return SemanticEvent.modify_other_keys_query;
     if (final == 'p' and intermediates.len == 1 and intermediates[0] == '$') {
         const mode = queryParam(params) orelse return null;
         return SemanticEvent{ .dec_mode_query = mode };
@@ -10688,6 +10687,10 @@ const CsiMappingOwnerTests = struct {
         try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('b', 0, 0, 0)).?.repeat_preceding);
         try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('S', 2, 0, 1)).?.scroll_up_lines);
         try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('T', 0, 0, 0)).?.scroll_down_lines);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('^', 0, 0, 0)).?.scroll_down_lines);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('^', 2, 0, 1)).?.scroll_down_lines);
+        try std.testing.expect(routeParserEvent(makeStyleChange('^', 0, 0, 1)) == null);
+        try std.testing.expect(routeParserEvent(makeStyleChange('^', 2, 3, 2)) == null);
 
         var intermediates = @as([4]u8, @splat(0));
         intermediates[0] = '+';
@@ -10719,7 +10722,11 @@ const CsiMappingOwnerTests = struct {
         try std.testing.expect(routeParserEvent(makeStyleChangeWithIntermediate('p', '!')).? == .soft_reset);
         try std.testing.expect(routeParserEvent(makeStyleChange('g', 0, 0, 0)).? == .tab_clear_current);
         try std.testing.expect(routeParserEvent(makeStyleChange('g', 3, 0, 1)).? == .tab_clear_all);
-        try std.testing.expect(routeParserEvent(makeStyleChange('g', 5, 0, 1)).? == .tab_clear_all);
+        // Accepted DEC/xterm TBC subset: 1, 2, 4, 5 must leave stops intact.
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 1, 0, 1)) == null);
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 2, 0, 1)) == null);
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 4, 0, 1)) == null);
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 5, 0, 1)) == null);
         try std.testing.expect(routeParserEvent(makePrivateStyleChange('W', &.{5})).? == .reset_default_tab_stops);
         try std.testing.expect(routeParserEvent(makePrivateStyleChange('W', &.{ 5, 1 })) == null);
         try std.testing.expect(!routeParserEvent(makeStyleChange('J', 0, 0, 0)).?.erase_display_below);

@@ -13,10 +13,10 @@ policy:
     their original source and do not silently become Howl implementation mandates.
   measurement: Track original-source functions and discovery sequences separately during reconciliation. Inventory and dedup counts are not
     an implementation completion score or a claim of current runtime conformance.
-  mapping: The accepted, prioritized canonical behaviors recorded here will form the implementable Howl VT protocol contract. Once a command,
-    parameter variant or response is reconciled, its implementation intent and priority must be explicitly triaged in this same file. Untriaged
-    entries remain candidates, not implied obligations or exclusions. Tracking actual Howl code support belongs to a separate later implementation
-    audit.
+  mapping: Accepted, prioritized canonical behavior in this file forms Howl VT's implementation contract. Already-decided behaviors may receive
+    a narrowly scoped, source-and-test-backed implementation assessment in this same file, without converting raw discovery entries into
+    implementation mandates or treating tested behavior as full implementation coverage. Untriaged entries remain candidates, not implied
+    obligations or exclusions; a broader implementation audit is separate.
   prioritization: 'Use stable canonical identifiers and explicit per-behavior disposition and priority after source reconciliation: target
     for planned implementation, deferred for a still-intended later capability, excluded for deliberately unsupported behavior, or source-only
     for documented alternative/provenance. Record a reason and meaningful dependencies or interoperability evidence; do not assign invented
@@ -39,6 +39,13 @@ policy:
     difference does not by itself block consensus. Escalate when an important reference has a substantial semantic divergence, or when evidence
     is too mixed or incomplete to establish consensus. These decisions select intended protocol semantics only, never claim current Howl
     implementation conformance.
+  implementation_status: Statuses are per accepted behavior and always substantiated by exact originating-source semantics plus source/negative
+    tests. MISSING means the accepted behavior is absent; PARTIAL means behavior is demonstrable but source-complete conformance is unproved
+    or an accepted subcase differs; FULL requires original source authority, precise encoding/decoding and every relevant parameter default,
+    size limit, state interaction, reply frame, split input, invalid-input non-mutation and failure/cleanup condition mechanically qualified.
+    Never infer FULL from a parser branch, one passing assertion, general build success, or another terminal's behavior. Source-specific
+    sizing and ordering are verbatim requirements; do not reinterpret to fit current code. Unassessed capabilities carry no status and are
+    not silently counted or excluded.
 specifications:
   ecma48:
     title: 'ECMA-48: Control Functions for Coded Character Sets'
@@ -4268,8 +4275,29 @@ reconciliation:
   scope: ECMA-48 ED (CSI Ps J) and DECSED (CSI ? Ps J) with xterm Ps=3 extension
   principle: Parameter extensions stay within the originating command family; xterm source and meaning remain attached to the specific parameter.
     CSI Ps J and CSI ? Ps J remain different wire identities.
-  implementation_policy: unselected
+  implementation_policy: targeted
   same_wire_conflict_winner: none
+  id: ed-ps3-extension
+  implementation_assessment:
+    as_of: '2026-11-23'
+    scope: CSI Ps J / CSI ? Ps J, Ps=3; erase retained scrollback, not visible cells
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:decodeCsi
+    - howl-vt/src/terminal.zig:decodePrivateCsi
+    - howl-vt/src/screen.zig:eraseDisplay
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: libvterm ED3 callback gate differs from native scrollback clearing'
+    - file: howl-vt/src/screen/history_test.zig
+      test: 'screen history: ED 3 clears scrollback history'
+    verified_subset: Ordinary and DEC-private Ps=3 dispatch to the same VT-owned history-clearing action. Existing end-to-end tests assert
+      visible text survives and no-repeat is inert.
+    not_full_because: Original xterm/DEC parameter and bank/graphics/history lifecycle requirements have not been exhaustively enumerated
+      and proven against all relevant boundaries.
+    boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.
 - id: xtqmodkeys-vs-declaser-ppl2-sgr
   wire: CSI ? 4 m
   status: resolved-by-scope
@@ -4289,6 +4317,27 @@ reconciliation:
     without adding a printer rendition profile.
   compatibility_mode: none
   scope_limit: Only this verified printer-versus-keyboard same-wire collision. Other DEC terminal controls require independent source review.
+  implementation_assessment:
+    as_of: '2026-11-23'
+    scope: CSI ? 4 m sends xterm modifyOtherKeys resource-4 reply, not DEClaser superscript
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:modeReport
+    - howl-vt/src/terminal.zig:appendModifyOtherKeysReport
+    tests:
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: xterm XTQMODKEYS wins the DEC printer CSI question-mark 4 m collision
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: libvterm private DECSGR baseline collides with native modifyOtherKeys query
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: modifyOtherKeys set query disable and encoding
+    verified_subset: Query correctly replies for tested keyboard mode settings, fragmented and 8-bit framing; the single-resource query no
+      longer accepts unsourced trailing operands; printer baseline is not mutated.
+    not_full_because: Full source-parameter/state coverage for every relevant query result, invalid selector form, and bounded reply failure
+      has not been proved as one complete trace.
+    boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.
 - id: sgr21-ecma48-vs-linux-console
   wire: CSI 21 m
   status: resolved-by-explicit-choice
@@ -4306,7 +4355,23 @@ reconciliation:
   reason: Identical complete input sequence has incompatible text rendition meanings. Howl deliberately adopts the ECMA-48/xterm interpretation
     and does not support the competing Linux-console interpretation.
   scope_limit: Only SGR 21 on the Linux virtual console; no blanket rejection of other Linux-console sequences.
-  implementation_mapping: not part of specification index; this decision is not a claim that every other clause has been assessed
+  implementation_mapping: The protocol decision did not itself establish implementation conformance. See the separately scoped, evidence-qualified
+    implementation_assessment below.
+  implementation_assessment:
+    as_of: '2026-11-23'
+    scope: CSI 21 m selects ECMA-48 double underline rather than Linux console single underline
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/screen.zig:applySgr
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: SGR 21 means double underline rather than Linux console single underline'
+    verified_subset: Direct VT cell-attribute proof distinguishes SGR 4 single, SGR 21 double, and SGR 24 disabled, with idempotent reset.
+    not_full_because: Full source-to-renderer and all combined SGR attribute/reset interaction proof, including hosted presentation/negative
+      variants, is not yet complete.
+    boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.
 - id: ecma48-simd-vs-xterm-sd-caret
   wire: CSI Ps ^
   status: resolved-by-explicit-choice
@@ -4326,7 +4391,26 @@ reconciliation:
   uncontested_command:
     clause: ecma48.sd
     wire: CSI Pn T
-  implementation_mapping: Decision recorded in static index; Howl VT implementation remains separately assessable and is not changed here.
+  implementation_mapping: The protocol decision did not itself establish implementation conformance. See the separately scoped, evidence-qualified
+    implementation_assessment below.
+  implementation_assessment:
+    as_of: '2026-11-23'
+    scope: CSI Ps ^ is the xterm SD alias for CSI Ps T (not ECMA SIMD)
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:decodeCsi
+    - howl-vt/src/terminal.zig:scrollCount
+    - howl-vt/src/screen.zig:scrollDownRegion
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: CSI caret is an SD alias for CSI T within accepted count and region bounds'
+    verified_subset: Fragmented 7-/8-bit input, omitted and positive counts, scroll-region effects, cursor and cell state match CSI T; explicit
+      zero and extra operands are rejected exactly as the existing SD path.
+    not_full_because: The original xterm exact Ps=0 semantics and all source-defined count bounds/interactions have not been independently
+      qualified; using existing CSI T semantics is not by itself FULL.
+    boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.
 - id: ecma48-tbc-vs-xterm-subset
   wire: CSI Ps g
   status: resolved-by-explicit-reference-consensus
@@ -4380,7 +4464,29 @@ reconciliation:
     choice: xterm/DEC VT100 subset
     status: reopened because the Captain’s two-way-only condition was not met; no active winner
   scope_limit: Only the TBC Ps=1,2,4,5 interpretation. Ps=0 and Ps=3 agree across the relevant specifications.
-  implementation_mapping: Not part of this static specification index. Howl current behavior is not validated by this decision.
+  implementation_mapping: The protocol decision did not itself establish implementation conformance. See the separately scoped, evidence-qualified
+    implementation_assessment below.
+  implementation_assessment:
+    as_of: '2026-11-23'
+    scope: CSI Ps g clears current stop for 0 and all stops for 3; 1,2,4,5 do not alter stops
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:decodeCsi
+    - howl-vt/src/screen.zig:applyTabState
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: accepted DEC/xterm TBC unsupported selectors preserve state and tabs'
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: tab controls share exact stored-stop and clamping behavior'
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: accepted TBC subset rejects excess operands and ignores mode five'
+    verified_subset: All unsupported selectors now preserve the exact custom stop, mutation identity and reply queue, including C1 representation
+      and split input. Ps=0 and Ps=3 retain dedicated positive state tests.
+    not_full_because: Complete original DEC/xterm tab-stop lifetime, resizing/bank behavior, default/zero and all malformed parameter spellings
+      are not yet source-exhaustively proven.
+    boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.
 - id: dec-private-dsr-decxcpr-reply-shape
   request: CSI ? 6 n
   status: resolved-by-explicit-reference-consensus
@@ -4424,4 +4530,26 @@ reconciliation:
     application’s own scroll position. A single-page terminal can truthfully report page 1 without implementing multipage memory.
   scope_limit: Only the reply to DECXCPR CSI ? 6 n in a single-page profile. This does not select a multipage protocol, a scrollback page,
     or any other DEC-private DSR meanings.
-  implementation_mapping: Specification decision only. No claim about current Howl VT parser/reply behavior; implementation work is separate.
+  implementation_mapping: The protocol decision did not itself establish implementation conformance. See the separately scoped, evidence-qualified
+    implementation_assessment below.
+  implementation_assessment:
+    as_of: '2026-11-23'
+    scope: CSI ? 6 n replies CSI ? row ; col ; 1 R (one DEC display page, unrelated to scrollback)
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:report
+    - howl-vt/src/fixed_report.zig:appendDecCursorPosition
+    tests:
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: DECXCPR appends DEC cursor position report
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: fragmented mixed report families preserve order and per-query rollback
+    - file: howl-vt/src/fixed_report.zig
+      test: cursor reports clamp restored origins and preserve full u16 extent
+    verified_subset: Exact single-page reply, 7- and 8-bit CSI, mixed report order, origin mode and full u16 coordinate encoding pass; ordinary
+      non-private CPR is still distinct.
+    not_full_because: Complete DECXCPR source/VT-level variant matrix, reply-queue failure boundaries and all cursor save/restore/margin
+      interactions are not proven source-exhaustively.
+    boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.

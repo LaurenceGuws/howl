@@ -145,7 +145,7 @@ fn appendCursor(
     const row = cursorCoordinate(view.cursor_row, view.origin_top, view.origin_mode);
     const column = cursorCoordinate(view.cursor_col, view.origin_left, view.origin_mode);
     const payload = if (private)
-        std.fmt.bufPrint(encode_buffer, "?{d};{d}R", .{ row, column }) catch return error.ReplyLimit
+        std.fmt.bufPrint(encode_buffer, "?{d};{d};1R", .{ row, column }) catch return error.ReplyLimit
     else
         std.fmt.bufPrint(encode_buffer, "{d};{d}R", .{ row, column }) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
@@ -198,7 +198,7 @@ test "cursor reports clamp restored origins and preserve full u16 extent" {
         .origin_mode = true,
         .origin_top = 6,
     });
-    try std.testing.expectEqualStrings("\x1b[3;5R\x1b[?1;65536R", output.bytes());
+    try std.testing.expectEqualStrings("\x1b[3;5R\x1b[?1;65536;1R", output.bytes());
 }
 
 test "extent parameters title stack and checksum serialize exact payloads" {

@@ -1536,8 +1536,9 @@ test "terminal: tab controls share exact stored-stop and clamping behavior" {
 
     try std.testing.expect(!(try terminal.feed("\x1b[g\r\x09")).historyLost());
     try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
+    // TBC 5 is a no-op: the stop at column 10 survives the query.
     try std.testing.expect(!(try terminal.feed("\x1b[5g\r\x09")).historyLost());
-    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[6G\x1bH\x1b[3g\r\x09")).historyLost());
     try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
@@ -1638,15 +1639,34 @@ test "terminal: tab-stop growth differs from pinned iTerm2's retained offscreen 
     try std.testing.expectEqual(@as(u16, 24), terminal.semanticView(0).cursor_col);
 }
 
-test "terminal: TBC 5 libvterm all-clear contradicts iTerm2 and Kitty no-op" {
+test "terminal: accepted DEC/xterm TBC unsupported selectors preserve state and tabs" {
+    const ignored = [_][]const u8{
+        "\x1b[1g", "\x1b[2g", "\x1b[4g", "\x1b[5g", "\x9b5g",
+    };
+    for (ignored) |command| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 20);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[3g\x1b[6G\x1bH");
+        const identity = terminal.semanticSequence();
+        const first = command.len - 1;
+        try std.testing.expect(!(try terminal.feed(command[0..first])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(command[first..])).stateChanged());
+        try std.testing.expectEqual(identity, terminal.semanticSequence());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try feed(&terminal, "\r\t");
+        try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+    }
+}
+
+test "terminal: accepted DEC/xterm TBC 5 preserves a custom stop" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 20);
     defer terminal.deinit();
     try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\r\t");
     try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
-    // iTerm2 execute TBC checks modes 0/current and 3/all only; Kitty
-    // likewise ignores mode 5, but libvterm accepts 5 as all-clear.
+    // DEC/xterm, iTerm2 and Kitty retain the custom stop for Ps=5.
+    // libvterm's Ps=5 all-clear is recorded as an unsupported alternative.
     try feed(&terminal, "\x1b[5g\r\t");
-    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
 }
 
 test "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical cells" {
@@ -1665,16 +1685,15 @@ test "terminal: iTerm2 blank-span tab filler is not retained by Howl canonical c
     try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
 }
 
-test "terminal: TBC mode 5 selects libvterm all-clear instead of pinned Kitty no-op" {
+test "terminal: DEC/xterm TBC five remains a no-op after custom HTS" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 20);
     defer terminal.deinit();
 
     try feed(&terminal, "\x1b[3g\x1b[6G\x1bH\r\t");
     try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
-    // Pinned libvterm TBC 3 and 5 both clear all; pinned Kitty recognizes
-    // only 0 and 3 and logs the unsupported 5, retaining this stop.
+    // Ps=5 must preserve the stop; only 0 and 3 clear DEC/xterm tabs.
     try feed(&terminal, "\x1b[5g\r\t");
-    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
     try feed(&terminal, "\x1b[?5W\r\t");
     try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
 }
@@ -3319,6 +3338,65 @@ test "terminal: pinned iTerm2 CSI T extra-operand rejection now matches Howl" {
         try std.testing.expectEqualStrings("", terminal.replyBytes());
         try std.testing.expect((try terminal.feed("\x1b[T")).stateChanged());
         try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
+    }
+}
+
+test "terminal: SGR 21 means double underline rather than Linux console single underline" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 6);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[4mS\x1b[21mD\x1b[24mN");
+    const view = terminal.semanticView(0);
+    const single = view.cellInfoAt(0, 0).attrs;
+    const doubled = view.cellInfoAt(0, 1).attrs;
+    const none = view.cellInfoAt(0, 2).attrs;
+    try std.testing.expect(single.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.straight, single.underline_style);
+    try std.testing.expect(doubled.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.double, doubled.underline_style);
+    try std.testing.expect(!none.underline);
+    const identity = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[24m")).stateChanged());
+    try std.testing.expectEqual(identity, terminal.semanticSequence());
+}
+
+test "terminal: CSI caret is an SD alias for CSI T within accepted count and region bounds" {
+    const seed = "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD\x1b[2;4r\x1b[2;1H";
+    const cases = [_]struct {
+        caret: []const u8,
+        ordinary: []const u8,
+        changes: bool,
+    }{
+        .{ .caret = "\x1b[^", .ordinary = "\x1b[T", .changes = true },
+        .{ .caret = "\x1b[1^", .ordinary = "\x1b[1T", .changes = true },
+        .{ .caret = "\x1b[2^", .ordinary = "\x1b[2T", .changes = true },
+        .{ .caret = "\x9b2^", .ordinary = "\x9b2T", .changes = true },
+        .{ .caret = "\x1b[0^", .ordinary = "\x1b[0T", .changes = false },
+        .{ .caret = "\x1b[2;1^", .ordinary = "\x1b[2;1T", .changes = false },
+    };
+    for (cases) |case| {
+        var alias = try Terminal.init(std.testing.allocator, 4, 6);
+        defer alias.deinit();
+        var canonical = try Terminal.init(std.testing.allocator, 4, 6);
+        defer canonical.deinit();
+        try feed(&alias, seed);
+        try feed(&canonical, seed);
+        const sequence = alias.semanticSequence();
+        const prefix = case.caret.len - 1;
+        try std.testing.expect(!(try alias.feed(case.caret[0..prefix])).stateChanged());
+        const actual = try alias.feed(case.caret[prefix..]);
+        const expected = try canonical.feed(case.ordinary);
+        try std.testing.expectEqual(case.changes, actual.stateChanged());
+        try std.testing.expectEqual(case.changes, expected.stateChanged());
+        try std.testing.expectEqual(canonical.semanticSequence(), alias.semanticSequence());
+        if (!case.changes) try std.testing.expectEqual(sequence, alias.semanticSequence());
+        const a = alias.semanticView(0);
+        const b = canonical.semanticView(0);
+        try std.testing.expectEqual(b.cursor_row, a.cursor_row);
+        try std.testing.expectEqual(b.cursor_col, a.cursor_col);
+        for (0..4) |row| for (0..6) |col| {
+            try std.testing.expectEqualDeep(b.cellInfoAt(@intCast(row), @intCast(col)), a.cellInfoAt(@intCast(row), @intCast(col)));
+        };
+        try std.testing.expectEqualStrings("", alias.replyBytes());
     }
 }
 
@@ -5740,7 +5818,7 @@ test "terminal: pinned Kitty REP rejects excess counts without repeating or dist
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 0));
 }
 
-test "terminal: pinned Kitty TBC rejects excess operands while retaining libvterm mode five" {
+test "terminal: accepted TBC subset rejects excess operands and ignores mode five" {
     // Frozen Kitty vt-parser.c uses CALL_CSI_HANDLER1 with default 0 for g.
     // libvterm/iTerm2 consume the first parameter, even with a second.
     for ([_][]const u8{
@@ -5772,8 +5850,8 @@ test "terminal: pinned Kitty TBC rejects excess operands while retaining libvter
         .{ .bytes = "\x1b[3g", .expected_col = 19 },
         .{ .bytes = "\x1b[3;g", .expected_col = 19 },
         .{ .bytes = "\x9b3g", .expected_col = 19 },
-        .{ .bytes = "\x1b[5g", .expected_col = 19 },
-        .{ .bytes = "\x1b[5;g", .expected_col = 19 },
+        .{ .bytes = "\x1b[5g", .expected_col = 8 },
+        .{ .bytes = "\x1b[5;g", .expected_col = 8 },
     }) |case| {
         var terminal = try Terminal.init(std.testing.allocator, 2, 20);
         defer terminal.deinit();

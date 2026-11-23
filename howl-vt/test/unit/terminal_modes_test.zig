@@ -1409,7 +1409,7 @@ test "device and status queries retain exact scalar transcripts and origin coord
 
     try consumeReplies(&terminal);
     write(&terminal, "\x1b[2;5r\x1b[?69h\x1b[3;8s\x1b[?6h\x1b[2;3H\x1b[6n\x1b[?5n\x1b[?6n");
-    try std.testing.expectEqualStrings("\x1b[2;3R\x1b[0n\x1b[?2;3R", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;3R\x1b[0n\x1b[?2;3;1R", pendingOutput(&terminal));
     const view = visibleView(&terminal, 0);
     try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 4), view.cursor_col);
@@ -1441,7 +1441,7 @@ test "cursor reports bound restored positions against changed origin margins" {
     const view = visibleView(&terminal, 0);
     try std.testing.expectEqual(@as(u16, 4), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
-    try std.testing.expectEqualStrings("\x1b[1;1R\x1b[?1;1R", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[1;1R\x1b[?1;1;1R", pendingOutput(&terminal));
 }
 
 test "report query limit fails without partial pending output" {
@@ -1521,7 +1521,7 @@ test "fragmented mixed report families preserve order and per-query rollback" {
     try std.testing.expectEqual(@as(usize, 12), completed_queries);
     try std.testing.expectEqualStrings(
         "\x9b?62;22c\x90!|00000000\x9c" ++
-            "\x9b0n\x9b2;3R\x9b?2;3R\x9b?7;1$y\x9b4;2$y" ++
+            "\x9b0n\x9b2;3R\x9b?2;3;1R\x9b?7;1$y\x9b4;2$y" ++
             "\x901$r1;4r\x9c\x901+r436f=323536\x9c" ++
             "\x90>|howl-vt dev\x9c\x9b8;4;8t" ++
             "\x1b]1337;ReportCellSize=18;9;1\x1b\\",
@@ -2382,7 +2382,7 @@ test "DECXCPR appends DEC cursor position report" {
     defer terminal.deinit();
 
     write(&terminal, "\x1b[3;4H\x1b[?6n");
-    try std.testing.expectEqualStrings("\x1b[?3;4R", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[?3;4;1R", pendingOutput(&terminal));
 }
 
 test "DEC locator DSR replies status and type" {
@@ -3763,7 +3763,13 @@ test "libvterm private DECSGR baseline collides with native modifyOtherKeys quer
     try consumeReplies(&terminal);
     try std.testing.expect(!(try terminal.feed("\x1b[?5m\x1b[?24m")).stateChanged());
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
-    try std.testing.expect((try terminal.feed("\x1b[?4;5;24m")).stateChanged());
+    // Xterm specifies exactly one Pp resource; trailing DEClaser operands
+    // must neither mutate rendition nor accidentally trigger an XTQ reply.
+    const sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[?4;5;24m")).stateChanged());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed("\x1b[?4m")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[>4;0m", pendingOutput(&terminal));
     try consumeReplies(&terminal);
     // Ordinary rendition remains independent, with no unsolicited
