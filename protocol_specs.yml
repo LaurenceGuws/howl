@@ -12,7 +12,8 @@ policy:
     clause identifiers.
   interoperability: Secondary discovery catalogues do not become normative protocol requirements; trace their true source before declaring
     a conformance obligation.
-  collisions: Merge only source-confirmed equivalent semantics, preserving discovery provenance; keep differences unresolved for explicit Captain review without inventing a winner.
+  collisions: Merge only source-confirmed equivalent semantics, preserving discovery provenance; keep differences unresolved for explicit
+    Captain review without inventing a winner.
   revision: change a document pin deliberately; do not silently follow live references
 specifications:
   ecma48:
@@ -149,6 +150,20 @@ specifications:
       level: defined
       wire: CSI Ps J
       rule: Erases a selected part of the active page according to the parameter.
+      parameter_extensions:
+      - selector: Ps=3
+        effect: Erase saved lines (scrollback) with Ps=3
+        origin: xterm
+        source: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+        source_line: 611
+        discovery_entry: csi-d004c0f19d
+        source_wire: CSI Ps J
+        scope: Extension to the same wire command family, not an ECMA/DEC standard parameter
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d004c0f19d
+        source_line: 608
+        wire: CSI Ps J
     - id: el
       section: 8.3.41
       level: defined
@@ -1790,6 +1805,20 @@ specifications:
       level: defined
       wire: CSI ? Ps J
       rule: DECSED erases eligible unprotected cells within the selected part of the display.
+      parameter_extensions:
+      - selector: Ps=3
+        effect: Selective erase saved lines with Ps=3, as documented by xterm
+        origin: xterm
+        source: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+        source_line: 618
+        discovery_entry: csi-72d8c0a03a
+        source_wire: CSI ? Ps J
+        scope: Extension to the same wire command family, not an ECMA/DEC standard parameter
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-72d8c0a03a
+        source_line: 614
+        wire: CSI ? Ps J
     - id: selective-el
       section: Editing / Selective Erase in Line, p157
       level: defined
@@ -2420,16 +2449,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 606
       symbol: CHT
-    - id: csi-d004c0f19d
-      wire: CSI Ps J
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 608
-      symbol: ED
-    - id: csi-72d8c0a03a
-      wire: CSI ? Ps J
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 614
-      symbol: DECSED
     - id: csi-eefbb0a47d
       wire: CSI Ps K
       section: Functions using CSI , ordered by the final character(s)
@@ -3822,21 +3841,12 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation:
-    - id: xterm-ed-saved-lines
-      candidate_specification: ecma48.ed
-      discovery_entry: csi-d004c0f19d
-      status: unresolved
-      observation: ECMA-48 ED has defined erase-area parameters 0, 1 and 2. XTerm documents the same CSI Ps J family but also uses Ps=3 for
-        saved scrollback lines.
-      question: Should Ps=3 be a separately sourced XTerm extension attached to ED, or a distinct canonical semantic branch? No change until
-        reviewed.
-      decision: null
-    - id: xterm-decsed-saved-lines
-      candidate_specification: dec_vt420.selective-ed
-      discovery_entry: csi-72d8c0a03a
-      status: unresolved
-      observation: DEC selective erase documents the standard 0, 1 and 2 cases. XTerm also documents Ps=3 to clear selectively saved lines
-        for CSI ? Ps J.
-      question: How should the XTerm-only Ps=3 variant be represented without implying that it originates in the DEC specification?
-      decision: null
+    pending_reconciliation: []
+reconciliation:
+- choice: one-command-family-with-parameter-extensions
+  approved_by: Captain
+  scope: ECMA-48 ED (CSI Ps J) and DECSED (CSI ? Ps J) with xterm Ps=3 extension
+  principle: Parameter extensions stay within the originating command family; xterm source and meaning remain attached to the specific parameter.
+    CSI Ps J and CSI ? Ps J remain different wire identities.
+  implementation_policy: unselected
+  same_wire_conflict_winner: none
