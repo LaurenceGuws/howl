@@ -239,6 +239,10 @@ specifications:
         entry_id: csi-4d195f9861
         source_line: 720
         wire: CSI Ps T
+      alternative_encodings:
+      - clause: xterm_controls.sd-caret-alias
+        wire: CSI Ps ^
+        decision: ecma48-simd-vs-xterm-sd-caret
     - id: sgr
       section: 8.3.117
       level: defined
@@ -767,11 +771,10 @@ specifications:
       wire: CSI Ps ^
       rule: SELECT IMPLICIT MOVEMENT DIRECTION (SIMD); ECMA-48 standardized control function, CSI form (source page 63).
       competing_interpretations:
-      - catalogue: xterm_ctlseqs
-        entry_id: csi-6f39fa13a7
+      - clause: xterm_controls.sd-caret-alias
         wire: CSI Ps ^
-        effect: Scroll down Ps lines (xterm legacy SD alias).
-        pending_reconciliation: ecma48-simd-vs-xterm-sd-caret
+        effect: Scroll down Ps lines rather than select implicit movement direction.
+        decision: ecma48-simd-vs-xterm-sd-caret
     - id: sl
       section: 8.3.121
       level: defined
@@ -1383,6 +1386,19 @@ specifications:
         entry_id: csi-4fe8991d89
         source_line: 1349
         wire: CSI ? Pp m
+    - id: sd-caret-alias
+      section: Functions using CSI / SD (historical caret spelling)
+      level: defined
+      wire: CSI Ps ^
+      rule: Scroll down Ps lines (default 1); xterm accepts this legacy caret spelling as an alternative to CSI Ps T.
+      semantic_alias_of: ecma48.sd
+      competes_with: ecma48.simd
+      decision: ecma48-simd-vs-xterm-sd-caret
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-6f39fa13a7
+        source_line: 751
+        wire: CSI Ps ^
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -2579,13 +2595,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 744
       symbol: DECST8C
-    - id: csi-6f39fa13a7
-      wire: CSI Ps ^
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 751
-      symbol: SD
-      competes_with: ecma48.simd
-      pending_reconciliation: ecma48-simd-vs-xterm-sd-caret
     - id: csi-2fdadd1aba
       wire: CSI Ps `
       section: Functions using CSI , ordered by the final character(s)
@@ -3878,28 +3887,7 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation:
-    - id: ecma48-simd-vs-xterm-sd-caret
-      status: confirmed-semantic-conflict-awaiting-decision
-      wire: CSI Ps ^
-      interpretations:
-      - clause: ecma48.simd
-        source: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
-        section: 8.3.120 / printed page 63
-        effect: Select implicit movement direction (Ps=0 follows character progression; Ps=1 opposes it).
-      - discovery_entry: csi-6f39fa13a7
-        source: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-        source_line: 751
-        effect: Scroll down Ps lines (default 1), legacy xterm-compatible alias for SD.
-      uncontested_equivalent:
-        clause: ecma48.sd
-        wire: CSI Pn T
-        xterm_discovery_entry: csi-4d195f9861
-      observation: ECMA-48 fifth edition itself explicitly assigns CSI Ps 05/14 (^) to SIMD and CSI Pn 05/04 (T) to SD. Xterm recognizes
-        caret as SD and attributes that spelling to a publication error later corrected; the caret bytes cannot simultaneously have both
-        effects.
-      question: Which interpretation, if either, should Howl implement for CSI Ps ^? CSI Pn T remains SD regardless.
-      decision: null
+    pending_reconciliation: []
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
@@ -3945,3 +3933,23 @@ reconciliation:
     and does not support the competing Linux-console interpretation.
   scope_limit: Only SGR 21 on the Linux virtual console; no blanket rejection of other Linux-console sequences.
   implementation_mapping: not part of specification index; this decision is not a claim that every other clause has been assessed
+- id: ecma48-simd-vs-xterm-sd-caret
+  wire: CSI Ps ^
+  status: resolved-by-explicit-choice
+  approved_by: Captain
+  accepted_interpretation:
+    clause: xterm_controls.sd-caret-alias
+    source: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+    section: Functions using CSI / SD (source line 751)
+    effect: Scroll down Ps lines (default 1); legacy alias for the uncontested CSI Ps T Scroll Down command.
+  unsupported_competing_interpretation:
+    clause: ecma48.simd
+    source: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+    section: 8.3.120 / Select Implicit Movement Direction
+    effect: Select implicit movement direction instead of scrolling.
+  reason: The same complete CSI Ps ^ bytes cannot both change implicit movement direction and scroll down. Captain chose xterm’s longstanding
+    SD alias after reviewing pinned terminal implementations. ECMA-48 SIMD stays indexed as an explicitly unsupported competing interpretation.
+  uncontested_command:
+    clause: ecma48.sd
+    wire: CSI Pn T
+  implementation_mapping: Decision recorded in static index; Howl VT implementation remains separately assessable and is not changed here.
