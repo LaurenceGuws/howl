@@ -1658,7 +1658,7 @@ specifications:
         entry_id: csi-f2360e60be
         source_line: 1420
         wire: CSI ? Ps n
-      pending_reconciliation: dec-private-dsr-decxcpr-reply-shape
+      decision: dec-private-dsr-decxcpr-reply-shape
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -2388,7 +2388,6 @@ specifications:
       original_decxcpr: VT420 printed pages 236-237 independently repeat the DECXCPR response CSI Prow ; Pcol ; Ppage R without a private
         ? prefix.
       competing_reply_format: xterm_controls.decxcpr-xterm-reply
-      pending_reconciliation: dec-private-dsr-decxcpr-reply-shape
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-f2360e60be
@@ -2396,6 +2395,7 @@ specifications:
         wire: CSI ? Ps n
       scope_note: The DEC printer and keyboard response sets include states omitted from xterm examples. Omission alone is not conflicting
         semantics.
+      decision: dec-private-dsr-decxcpr-reply-shape
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -2690,7 +2690,7 @@ specifications:
         effect: Request extended cursor position including current page number.
         response: CSI Prow ; Pcol ; Ppage R (DEC source has no private ? prefix).
         competing_reply_format: xterm_controls.decxcpr-xterm-reply
-        pending_reconciliation: dec-private-dsr-decxcpr-reply-shape
+        decision: dec-private-dsr-decxcpr-reply-shape
       - selector: 15
         name: Printer status
         effect: Query printer-port status.
@@ -4248,35 +4248,7 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation:
-    - id: dec-private-dsr-decxcpr-reply-shape
-      status: confirmed-material-response-wire-difference-awaiting-decision
-      request: CSI ? 6 n
-      source_interpretations:
-      - clause: dec_vt3xx_text.dsr-dec-private
-        response: CSI Prow ; Pcol ; Ppage R
-        source: VT330/VT340 Text Programming (May 1988), Chapter 12, page 202
-      - clause: dec_vt420.device-status-reports-extended
-        response: CSI Prow ; Pcol ; Ppage R
-        source: VT420 Programmer Reference Manual (Feb 1992), Chapter 12, pages 236-237
-      - clause: xterm_controls.decxcpr-xterm-reply
-        response: CSI ? Prow ; Pcol [ ; Ppage ] R
-        source: Xterm ctlseqs line 1420 plus pinned xterm charproc.c; page field depends on emulated VT level
-      independent_implementations:
-      - name: Ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        response: CSI ? Prow ; Pcol ; 1 R
-        source_location: src/terminal/stream_terminal.zig, deviceStatus() and DECXCPR test
-      - name: Kitty
-        revision: a79f376b85fd95e3dfd0589877123996bacd4184
-        response: CSI ? Prow ; Pcol R
-        source_location: kitty/screen.c, report_device_status()
-      material_difference: The DEC manuals do not place ? in the reply, whereas xterm, Ghostty and Kitty do. The page field is defined by
-        DEC and present for VT420 xterm/Ghostty, but absent from Kitty and lower-level xterm output.
-      scope_limit: Only CSI ? 6 n response encoding; all other DEC-private DSR parameters retain their independently source-defined meanings.
-      question: Which reply prefix and page-field policy should Howl adopt for DECXCPR? This material divergence among important references
-        requires Captain review under the accepted reference-consensus rule.
-      decision: null
+    pending_reconciliation: []
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
@@ -4396,3 +4368,47 @@ reconciliation:
     status: reopened because the Captain’s two-way-only condition was not met; no active winner
   scope_limit: Only the TBC Ps=1,2,4,5 interpretation. Ps=0 and Ps=3 agree across the relevant specifications.
   implementation_mapping: Not part of this static specification index. Howl current behavior is not validated by this decision.
+- id: dec-private-dsr-decxcpr-reply-shape
+  request: CSI ? 6 n
+  status: resolved-by-explicit-reference-consensus
+  approved_by: Captain
+  accepted_interpretation:
+    profile: single DEC display page
+    reply: CSI ? Prow ; Pcol ; 1 R
+    effect: Reply with the current cursor row and column followed by DEC display-page number 1.
+    originating_family: dec_vt3xx_text.dsr-dec-private
+    reference_implementations:
+    - xterm (VT420-level DECXCPR)
+    - Ghostty
+    - GNOME VTE
+    - Contour
+  published_source_differences:
+  - clause: dec_vt3xx_text.dsr-dec-private
+    response: CSI Prow ; Pcol ; Ppage R
+    source: VT330/VT340 Text Programming (May 1988), Chapter 12, page 202
+  - clause: dec_vt420.device-status-reports-extended
+    response: CSI Prow ; Pcol ; Ppage R
+    source: VT420 Programmer Reference Manual (Feb 1992), Chapter 12, pages 236-237
+  - clause: xterm_controls.decxcpr-xterm-reply
+    response: CSI ? Prow ; Pcol [ ; Ppage ] R
+    source: Xterm ctlseqs line 1420 plus pinned xterm charproc.c; page field depends on emulated VT level
+  alternate_implementation_responses:
+  - name: Kitty
+    reply: CSI ? Prow ; Pcol R
+    distinction: private prefix but no page field
+  - name: libvterm
+    reply: CSI ? Prow ; Pcol R
+    distinction: private prefix but no page field
+  - name: xterm older emulation levels
+    reply: CSI ? Prow ; Pcol R
+    distinction: page field omitted below relevant DEC VT level
+  reason: Captain selected the private-prefixed three-parameter reply after source and current-usage review. The private prefix disambiguates
+    the response from ordinary cursor-position replies and modified function-key sequences; the complete page field is supported by major
+    independently maintained terminal references. Published DEC VT330/VT340 and VT420 programmer manuals print the same extended report without
+    the private prefix; their historical bytes remain indexed as written, while the chosen interoperable response includes ?. Modern applications
+    use CSI ? 6 n and some accept both two- and three-parameter responses.
+  page_semantics: The trailing 1 is DEC display-page number 1. DEC page memory is distinct from VT-owned scrollback history and from a TUI
+    application’s own scroll position. A single-page terminal can truthfully report page 1 without implementing multipage memory.
+  scope_limit: Only the reply to DECXCPR CSI ? 6 n in a single-page profile. This does not select a multipage protocol, a scrollback page,
+    or any other DEC-private DSR meanings.
+  implementation_mapping: Specification decision only. No claim about current Howl VT parser/reply behavior; implementation work is separate.
