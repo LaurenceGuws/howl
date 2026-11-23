@@ -169,31 +169,61 @@ specifications:
       level: defined
       wire: CSI Ps K
       rule: Erases a selected part of the active line according to the parameter.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-eefbb0a47d
+        source_line: 621
+        wire: CSI Ps K
     - id: ech
       section: 8.3.38
       level: defined
       wire: CSI Pn X
       rule: Erases a specified number of character positions from the active position.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-50cd35976d
+        source_line: 747
+        wire: CSI Ps X
     - id: ich
       section: 8.3.64
       level: defined
       wire: CSI Pn @
       rule: Inserts the specified number of character positions.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d144620701
+        source_line: 581
+        wire: CSI Ps @
     - id: dch
       section: 8.3.26
       level: defined
       wire: CSI Pn P
       rule: Deletes the specified number of character positions.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-5c6a7c2170
+        source_line: 636
+        wire: CSI Ps P
     - id: il
       section: 8.3.67
       level: defined
       wire: CSI Pn L
       rule: Inserts lines in the active page.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d0058a2bc2
+        source_line: 632
+        wire: CSI Ps L
     - id: dl
       section: 8.3.32
       level: defined
       wire: CSI Pn M
       rule: Deletes lines in the active page.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-e665b6e9f4
+        source_line: 634
+        wire: CSI Ps M
     - id: su
       section: 8.3.147
       level: defined
@@ -281,6 +311,11 @@ specifications:
       level: defined
       wire: CSI Pn Z
       rule: CURSOR BACKWARD TABULATION (CBT); ECMA-48 standardized control function, CSI form (source page 34).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-1a83ad912b
+        source_line: 749
+        wire: CSI Ps Z
     - id: cch
       section: 8.3.8
       level: defined
@@ -291,6 +326,11 @@ specifications:
       level: defined
       wire: CSI Pn I
       rule: CURSOR FORWARD TABULATION (CHT); ECMA-48 standardized control function, CSI form (source page 34).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-10f9ddce08
+        source_line: 606
+        wire: CSI Ps I
     - id: cmd
       section: 8.3.11
       level: defined
@@ -301,11 +341,21 @@ specifications:
       level: defined
       wire: CSI Pn E
       rule: CURSOR NEXT LINE (CNL); ECMA-48 standardized control function, CSI form (source page 35).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-e068e475ad
+        source_line: 597
+        wire: CSI Ps E
     - id: cpl
       section: 8.3.13
       level: defined
       wire: CSI Pn F
       rule: CURSOR PRECEDING LINE (CPL); ECMA-48 standardized control function, CSI form (source page 35).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-07ed9438c5
+        source_line: 599
+        wire: CSI Ps F
     - id: ctc
       section: 8.3.17
       level: defined
@@ -2448,11 +2498,6 @@ discovery_catalogues:
       section: Device-Control functions
       source_line: 539
       symbol: XTGETTCAP
-    - id: csi-d144620701
-      wire: CSI Ps @
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 581
-      symbol: ICH
     - id: csi-84d0e5591c
       wire: CSI Ps SP @
       section: Functions using CSI , ordered by the final character(s)
@@ -2463,51 +2508,16 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 588
       symbol: SR
-    - id: csi-e068e475ad
-      wire: CSI Ps E
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 597
-      symbol: CNL
-    - id: csi-07ed9438c5
-      wire: CSI Ps F
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 599
-      symbol: CPL
     - id: csi-656a665464
       wire: CSI Ps G
       section: Functions using CSI , ordered by the final character(s)
       source_line: 601
       symbol: CHA
-    - id: csi-10f9ddce08
-      wire: CSI Ps I
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 606
-      symbol: CHT
-    - id: csi-eefbb0a47d
-      wire: CSI Ps K
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 621
-      symbol: EL
     - id: csi-2e23147752
       wire: CSI ? Ps K
       section: Functions using CSI , ordered by the final character(s)
       source_line: 626
       symbol: DECSEL
-    - id: csi-d0058a2bc2
-      wire: CSI Ps L
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 632
-      symbol: IL
-    - id: csi-e665b6e9f4
-      wire: CSI Ps M
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 634
-      symbol: DL
-    - id: csi-5c6a7c2170
-      wire: CSI Ps P
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 636
-      symbol: DCH
     - id: csi-16a4dc30f6
       wire: 'CSI # P'
       section: Functions using CSI , ordered by the final character(s)
@@ -2563,16 +2573,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 744
       symbol: DECST8C
-    - id: csi-50cd35976d
-      wire: CSI Ps X
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 747
-      symbol: ECH
-    - id: csi-1a83ad912b
-      wire: CSI Ps Z
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 749
-      symbol: CBT
     - id: csi-6f39fa13a7
       wire: CSI Ps ^
       section: Functions using CSI , ordered by the final character(s)
@@ -3870,7 +3870,18 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: ecma48-sd-caret-vs-t
+      status: source-review-required
+      candidate_specification: ecma48.sd
+      discovery_entries:
+      - csi-4d195f9861
+      - csi-6f39fa13a7
+      observation: The pinned ECMA-48 fifth-edition SD entry uses CSI Pn T. The xterm control-sequence reference documents both CSI Ps T
+        and CSI Ps ^ as Scroll Down, attributing the latter to an ECMA-48 publication error corrected in 2003.
+      question: Verify the original error and published correction before deciding whether the caret form is a distinct compatibility alias
+        under SD. Both discovery entries remain indexed meanwhile.
+      decision: null
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
