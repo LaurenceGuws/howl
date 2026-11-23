@@ -1,17 +1,30 @@
 schema: 1
 kind: terminal-protocol-specifications
 as_of: '2026-11-23'
-scope: broad-source-inventory-not-exhaustive
+scope: howl-vt-implementation-specification-under-reconciliation
 policy:
+  purpose: This file is the single evolving specification of the VT protocols Howl intends to implement. Broad original-source indexing,
+    semantic deduplication, explicit behavior choices and implementation prioritization are stages of producing that specification, not a
+    separate historical catalogue followed by another specification. Only explicitly accepted and targeted canonical behavior becomes an
+    implementation requirement; the specification is not yet complete.
   authority: originating standard or protocol author's published specification
-  conformance: A defined control is not automatically mandatory to implement. In particular, ECMA-48 permits limited conformance to a declared
-    selection (clauses 2.1-2.3). MUST/SHOULD/MAY are used only where the originating document uses that force.
-  measurement: Index source-defined functions and secondary discovery sequences separately. This is not a Howl coverage percentage or implementation
-    mapping.
-  mapping: No Howl implementation or applicability mapping exists in this file. A separately requested future assessment can refer to stable
-    clause identifiers.
-  interoperability: Secondary discovery catalogues do not become normative protocol requirements; trace their true source before declaring
-    a conformance obligation.
+  conformance: A control defined by an originating standard is a candidate, not automatically mandatory for Howl. ECMA-48 permits a declared
+    selection (clauses 2.1-2.3). The adopted Howl behavior and its scope must be selected explicitly in this file. MUST/SHOULD/MAY reflect
+    their original source and do not silently become Howl implementation mandates.
+  measurement: Track original-source functions and discovery sequences separately during reconciliation. Inventory and dedup counts are not
+    an implementation completion score or a claim of current runtime conformance.
+  mapping: The accepted, prioritized canonical behaviors recorded here will form the implementable Howl VT protocol contract. Once a command,
+    parameter variant or response is reconciled, its implementation intent and priority must be explicitly triaged in this same file. Untriaged
+    entries remain candidates, not implied obligations or exclusions. Tracking actual Howl code support belongs to a separate later implementation
+    audit.
+  prioritization: 'Use stable canonical identifiers and explicit per-behavior disposition and priority after source reconciliation: target
+    for planned implementation, deferred for a still-intended later capability, excluded for deliberately unsupported behavior, or source-only
+    for documented alternative/provenance. Record a reason and meaningful dependencies or interoperability evidence; do not assign invented
+    priorities in bulk. Absence of these fields means not yet triaged, not excluded or implemented. Defer affects sequence of work, not the
+    existence of the accepted protocol obligation.'
+  interoperability: Secondary discovery entries are evidence and work items, never automatically normative requirements. Verify their originating
+    protocol and exact semantics, then merge equivalent commands with provenance, retain genuine extensions as distinct canonical behavior,
+    or document intentional exclusion. A reviewed and targeted behavior becomes part of the same implementation specification.
   collisions: Merge only source-confirmed equivalent semantics, preserving original definitions and discovery provenance. For incompatible
     complete wire sequences or parameter meanings, retain all sourced interpretations and their exact differences; resolve only under the
     approved evidence rules below or an explicit Captain choice. Otherwise leave the case pending.
