@@ -3706,6 +3706,7 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: Tekproc.c:446-451,1295-1322
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      pending_reconciliation: dectek-exit-profile
     - id: tek-copy-file
       section: Tektronix Mode, ctlseqs 3318-3319
       level: defined
@@ -3839,6 +3840,56 @@ specifications:
           competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
           decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
           status: unresolved; no automatic implementation priority or conformance
+    - id: pointer-shape-x11
+      section: OSC 22, ctlseqs 2117-2120
+      level: defined
+      wire: OSC 22 ; Pt (BEL | ST)
+      rule: Xterm original pointer shape selection using X11 cursor names; published empty or unknown name selects xterm default.
+        No stack or query operations in original profile.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-22
+        source_line: 2117
+        wire: OSC 22 ; Pt (BEL | ST)
+        previous_review:
+          classification: source-origin-or-semantic-review-required
+          reason: Xterm original proposal uses system cursor names and fallback; Kitty author explicitly extends it with portable
+            names, =, stack, queries and separate screen stacks. Pinned xterm rejects empty OSC 22 data before handler despite
+            published empty fallback. Retain both profiles, do not assume equivalence.
+          source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
+          related_source: kitty_pointer.set / stack / query; pinned kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/pointer-shapes.rst;
+            xterm misc.c:991-1029
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:991-1029,4097-4157,4288-4290
+      pending_reconciliation: osc22-pointer-reset-invalid-profile
+      source_note: Pinned parser rejects empty payload before handler; unknown nonempty name falls back to XC_xterm. Original
+        published empty fallback and actual admission are distinct.
+    - id: osc51-emacs-reservation
+      section: OSC 51, ctlseqs 2143
+      level: defined
+      wire: OSC 51 ; Pt (BEL | ST)
+      rule: Xterm reserves selector 51 for Emacs shell, defines no payload operation and ignores recognized selector in its
+        default action path.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-51
+        source_line: 2143
+        wire: OSC 51 ; Pt (BEL | ST)
+        previous_review:
+          classification: source-origin-or-semantic-review-required
+          reason: Reserved for Emacs shell in the xterm publication; pinned xterm has no recognized action. Do not invent an
+            Emacs protocol definition or claim implementation from a reserved selector.
+          source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3494,4343-4348
+      disposition: source-only
+      disposition_reason: Reservation is source provenance rather than an executable xterm protocol. Separate Emacs integration
+        uses its own payload grammar.
+      related_profiles:
+      - emacs_libvterm.prompt-directory
+      - emacs_libvterm.command-message
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -4150,16 +4201,69 @@ specifications:
       level: defined
       wire: OSC 22 ; [=]shape ST
       rule: Requests the documented mouse pointer shape by name.
+      exact_source_semantics: Optional = or no leader followed by one portable shape name; empty payload resets to terminal-selected
+        default. The original xterm shape names may be provided as aliases, not required by Kitty.
+      pinned_source_observation:
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        location: kitty/window.py:3120-3135; kitty/screen.c:2441-2548
+        behavior: Set replaces top or initializes it, empty selects INVALID_POINTER at top; unknown names raise KeyError and
+          are ignored; code also iterates comma-separated set items, beyond singular prose.
+      pending_reconciliation: osc22-pointer-reset-invalid-profile
     - id: stack
       section: Pushing and popping shapes onto the stack
       level: defined
       wire: OSC 22 ; >names / < ST
       rule: Push/pop requested pointer shapes; implementations choose a bound but support at least 16 stack entries.
+      exact_source_semantics: Push comma-separated names in order, last is current; evict bottom when full, minimum supported
+        depth 16. Pop exactly one, ignore suffix names; empty pops inert. Main and alternate stacks independent; terminal reset
+        clears both. Mouse reporting independent; host may override for selection/hyperlink hover.
+      pinned_source_observation:
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        location: kitty/screen.h:228-230; kitty/screen.c:226-227,2381-2384,2441-2548; kitty/window.py:3120-3135
+        behavior: Actual 16-entry arrays per bank; set/push/pop handler distinct. No implementation claim for Howl.
     - id: query
       section: Querying support
       level: defined
       wire: OSC 22 ; ?shape[,shape] ST
       rule: Reports current pointer shape or supported names using the documented response vocabulary.
+      exact_source_semantics: OSC 22 reply, same order as comma-separated names. Supported 1, unsupported 0; __current__ reports
+        selected name or 0, __default__ and __grabbed__ report configured shapes. Names consist of a-z, 0-9, underscore and
+        hyphen. Original required portable names in source table.
+      required_names:
+      - alias
+      - cell
+      - copy
+      - crosshair
+      - default
+      - e-resize
+      - ew-resize
+      - grab
+      - grabbing
+      - help
+      - move
+      - n-resize
+      - ne-resize
+      - nesw-resize
+      - no-drop
+      - not-allowed
+      - ns-resize
+      - nw-resize
+      - nwse-resize
+      - pointer
+      - progress
+      - s-resize
+      - se-resize
+      - sw-resize
+      - text
+      - vertical-text
+      - w-resize
+      - wait
+      - zoom-in
+      - zoom-out
+      pinned_source_observation:
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        location: kitty/window.py:3136-3151; kitty/screen.c:2381-2433
+        behavior: Each query token gets one response; implementation maps default/grabbed/current and validates CSS names.
   kitty_multi_cursor:
     title: Kitty multiple cursors protocol
     author: Kovid Goyal / kitty
@@ -4371,6 +4475,24 @@ specifications:
         '1': 1050
         '4': 1051
         '5': 1052
+    - id: tektronix-mode
+      section: 4010/4014, printed p.64 (PDF zero-based page 67, visually verified)
+      level: defined
+      wire: CSI ? 38 h / CSI ? 38 l
+      rule: SET enters 4010/4014 graphics emulation in alpha mode. RESET exits graphics emulation to VT200 with 7-bit controls.
+        Both SET-UP and these escape sequences select the mode. Original physical terminal profile, not standard Tektronix hardware
+        commands.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-38-h-line-936
+        source_line: 936
+        wire: CSI ? 38 h
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7657-7666; Tekproc.c:446-452,1315-1325
+      pending_reconciliation: dectek-exit-profile
+      source_note: Pinned xterm SET enters its Tek parser if not inhibited; its return command is ESC ETX, not the documented
+        DEC RESET. Entry identity reconciled; exit profile remains distinct.
   dec_sixel:
     title: Digital VT330/VT340 Programmer Pocket Guide, sixel graphics
     author: Digital Equipment Corporation
@@ -7804,6 +7926,119 @@ specifications:
       source_note: Pinned xterm treats encoding modes as mutually exclusive and RESET affects matching active mode only; decimal
         positions do not have the legacy byte ceiling. urxvt source gives SGR precedence over 1015 when both bits present,
         then UTF8; exact mixed-mode state and reset differences require separate qualification.
+  iso_ir196:
+    title: 'ISO-IR 196: UCS Transformation Format (UTF-8) with standard return'
+    author: ISO/IEC JTC1/SC2; ECMA sponsor
+    authority: registered-standard
+    revision: 22 April 1996, registration 196
+    url: https://itscj.ipsj.or.jp/ir/196.pdf
+    snapshot_sha256: cec9ddc085315b2825349ef1bef189e4f6d3752b53a5e7be4953fa1b91fe8a86
+    scope: Exact registered DOCS UTF-8 selection and standard return relationship. Registration does not identify an implementation
+      level. Original scanned registry page visually verified.
+    clauses:
+    - id: utf8-with-standard-return
+      section: Registration 196, 1996-04-22, single registry page
+      level: defined
+      wire: ESC % G
+      rule: Designate and invoke UCS transformation format UTF-8 with standard return. Registry escape suffix 02/05 04/07,
+        full 7-bit wire 0x1b 0x25 0x47. Implementation level unspecified. By ECMA-35 DOCS standard-return semantics, ESC %
+        @ returns to previous coding state; not an inherent switch to Latin-1.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-e2136b9e51
+        source_line: 310
+        wire: ESC % G
+      related_return: ecma35.return-from-other-coding-system
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6218-6249
+      source_note: Xterm changes wide/UTF-8 mode subject to resource policy. Selection identity reconciled, standard-return
+        state semantics remain pending. Registration 190/191/192 are different without-standard-return wires; not aliases.
+  att_610:
+    title: 610 Business Communications Terminal User Guide
+    author: AT&T
+    authority: protocol-author
+    revision: August 1985, 999-300-270IS
+    url: https://bitsavers.trailing-edge.com/pdf/att/610/999-300-270IS_610_Business_Communications_Terminal_Users_Guide_Aug1985.pdf
+    snapshot_sha256: 82cd72ac56c8bbd798e9a4bf47c946dc3b7fddf98a8dac3f614b95fd51071a75
+    scope: Selected Setup State private mode 12, with other profile-specific selectors recorded as context, not a complete
+      AT&T emulation contract.
+    clauses:
+    - id: cursor-blink-mode
+      section: Appendix D, pp.D-2/D-3; Setup State Set/Reset Private Mode
+      level: defined
+      wire: CSI ? 12 h / CSI ? 12 l
+      rule: SET selects blinking cursor; RESET selects steady cursor. Cursor type (block/underscore) is separate mode 11;
+        visibility is mode 25. Private 12 is not the unprefixed setup mode 12 local echo. Other private modes can appear in
+        a semicolon list in the original table.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-12-h-line-925
+        source_line: 925
+        wire: CSI ? 12 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-12-l-line-1074
+        source_line: 1074
+        wire: CSI ? 12 l
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7621-7626; misc.c:5512-5514
+      source_note: Xterm only changes the blink escape preference when SettableCursorBlink permits it. Original source establishes
+        mode identity and polarity, not host timer/visibility policy.
+    - id: setup-private-profile-context
+      section: Appendix D, pp.D-2/D-3
+      level: defined
+      wire: CSI ? Pm h / CSI ? Pm l
+      rule: Original setup private selectors have AT&T-specific meanings. Preserve relevant collisions rather than assume
+        xterm semantics are universal.
+      selectors:
+        '10':
+          set: Blank screen
+          reset: Unblank screen
+        '11':
+          set: Underscore cursor
+          reset: Block cursor
+        '13':
+          set: Labels off
+          reset: Labels on
+        '14':
+          set: Cartridge in use
+          reset: Cartridge idle
+        '15':
+          set: Check parity yes
+          reset: Check parity no
+        '16':
+          set: Keyclick on
+          reset: Keyclick off
+      source_note: Mode 10 is a third original profile beside rxvt menu/xterm toolbar. Modes 13/14 are AT&T setup state, not
+        xterm read-only blink preferences. Index as distinct hardware profile; no compatibility target selected.
+  emacs_libvterm:
+    title: Emacs libvterm integration, shell-side protocol
+    author: akermu/emacs-libvterm contributors
+    authority: protocol-author
+    revision: git 6d715a93fa0e5182bc137d4db09f376e06938aa5
+    url: https://github.com/akermu/emacs-libvterm/blob/6d715a93fa0e5182bc137d4db09f376e06938aa5/README.md
+    snapshot_sha256: ddc278939c3a6a92eaad1dfee7fa6f71f679e5efada05a0360e9462ad5bb8044
+    scope: Selected OSC 51 usage documented by this Emacs integration; not the origin of xterm reservation, not GNU Emacs
+      term.el protocol, not an implementation target.
+    clauses:
+    - id: prompt-directory
+      section: README Directory tracking and Prompt tracking, lines 619-668
+      level: defined
+      wire: OSC 51 ; Auser@host:directory ST
+      rule: 'Documented shell-to-Emacs integration: send user, host and directory with A prefix; identifies prompt end for
+        tracking. This is application-side metadata, not a generic xterm host chdir request.'
+      source_note: Pinned author README examples, not full parser admission or escaping proof. Original source-only reservation
+        distinct from this candidate.
+    - id: command-message
+      section: README Message passing, lines 671-690
+      level: defined
+      wire: OSC 51 ; Ecommand ST
+      rule: Documented Emacs integration uses E-prefixed messages for configured vterm-eval-cmds and parses arguments via
+        split-string-and-unquote. This is editor-specific action dispatch, not arbitrary host command execution or a terminal-core
+        capability.
+      source_note: Pinned author documentation only; command handler implementation was not retrieved at attempted source
+        path. No target, execution authority or conformance claim.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -7825,10 +8060,6 @@ discovery_catalogues:
         reason: ECMA-35 restores prior coding-system announcement, designation and invocation state. Xterm describes selecting
           default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally; restoration of prior state is
           not established.
-    - id: esc-e2136b9e51
-      wire: ESC % G
-      section: Controls beginning with ESC
-      source_line: 310
     - id: csi-a6bef4a803
       wire: CSI Ps SP t
       section: Functions using CSI , ordered by the final character(s)
@@ -7884,27 +8115,6 @@ discovery_catalogues:
           reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
             directory for next session. Obtain originating dtterm source before scope resolution.
           source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
-    - id: osc-selector-22
-      wire: OSC 22 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2117
-      review:
-        classification: source-origin-or-semantic-review-required
-        reason: Xterm original proposal uses system cursor names and fallback; Kitty author explicitly extends it with portable
-          names, =, stack, queries and separate screen stacks. Pinned xterm rejects empty OSC 22 data before handler despite
-          published empty fallback. Retain both profiles, do not assume equivalence.
-        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
-        related_source: kitty_pointer.set / stack / query; pinned kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/pointer-shapes.rst;
-          xterm misc.c:991-1029
-    - id: osc-selector-51
-      wire: OSC 51 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2143
-      review:
-        classification: source-origin-or-semantic-review-required
-        reason: Reserved for Emacs shell in the xterm publication; pinned xterm has no recognized action. Do not invent an Emacs
-          protocol definition or claim implementation from a reserved selector.
-        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: private-mode-10-h-line-924
       wire: CSI ? 10 h
       section: DEC Private Mode Set (DECSET)
@@ -7913,10 +8123,6 @@ discovery_catalogues:
         classification: source-confirmed-material-semantic-difference
         decision: rxvt-mode10-menu-vs-toolbar
         reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
-    - id: private-mode-12-h-line-925
-      wire: CSI ? 12 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 925
     - id: private-mode-35-h-line-935
       wire: CSI ? 35 h
       section: DEC Private Mode Set (DECSET)
@@ -7925,10 +8131,6 @@ discovery_catalogues:
         classification: source-confirmed-material-semantic-difference
         decision: rxvt-mode35-shift-actions-vs-font-only
         reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
-    - id: private-mode-38-h-line-936
-      wire: CSI ? 38 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 936
     - id: private-mode-44-h-line-943
       wire: CSI ? 44 h
       section: DEC Private Mode Set (DECSET)
@@ -7968,10 +8170,6 @@ discovery_catalogues:
         classification: source-confirmed-material-semantic-difference
         decision: rxvt-mode10-menu-vs-toolbar
         reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
-    - id: private-mode-12-l-line-1074
-      wire: CSI ? 12 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1074
     - id: private-mode-35-l-line-1084
       wire: CSI ? 35 l
       section: DEC Private Mode Reset (DECRST)
@@ -8318,6 +8516,39 @@ discovery_catalogues:
         source: charproc.c:4753-4766
         meaning: Xterm changes scrolling region top, not a separately established display-memory overflow protection state.
       question: If targeting HP memory lock, decide source scope and ensure actual memory/viewport behavior is explicit.
+      decision: null
+    - id: dectek-exit-profile
+      status: material-original-profile-versus-extension-difference
+      wire: CSI ? 38 h / CSI ? 38 l; ESC ETX in Tek mode
+      original_author_sources:
+      - clause: dec_vt240.tektronix-mode
+        meaning: SET enters alpha mode; RESET exits to VT200 7-bit.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7657-7666; Tekproc.c:446-452,1315-1325
+        meaning: SET enters Tek mode subject to inhibition; ESC ETX returns to VT parser.
+      question: If Tek mode is targeted, select explicit mode-exit profile or both nonconflicting exits; no automatic claim
+        of complete emulation.
+      decision: null
+    - id: osc22-pointer-reset-invalid-profile
+      status: material-original-profile-versus-extension-difference
+      wire: OSC 22 ; Pt (BEL | ST)
+      original_author_sources:
+      - clause: xterm_controls.pointer-shape-x11
+        meaning: System X11 names; unknown/empty documented default.
+      - clause: kitty_pointer.set
+        meaning: Portable CSS names, explicit empty reset, optional X11 aliases; stack/query extensions.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: misc.c:991-1029,4097-4157,4288-4290
+        meaning: Unknown name falls back to XC_xterm; empty rejected.
+      independent_implementation:
+        name: Kitty
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        source: kitty/window.py:3120-3151; kitty/screen.c:2441-2548
+        meaning: Unknown names ignored; empty resets selected pointer; stack state separate.
+      question: Select portable name semantics, legacy aliases and exact unknown/empty handling. Preserve original source, not
+        blanket Kitty parity.
       decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
