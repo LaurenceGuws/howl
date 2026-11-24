@@ -3248,7 +3248,7 @@ test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
     try std.testing.expect(alternate.is_alternate_screen);
     try std.testing.expectEqual(@as(u16, 5), alternate.rows);
     try std.testing.expectEqual(@as(u16, 10), alternate.cols);
-    try std.testing.expectEqual(@as(u21, 'A'), alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), alternate.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor_row);
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor_col);
 }
@@ -3289,6 +3289,53 @@ test "Kitty alternate-screen modes preserve banks and apply transition effects o
 
     try std.testing.expect((try terminal.feed("\x1b[?1049h")).stateChanged());
     try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "mode 1047 clears only alternate cells and placements on exit" {
+    for ([_][]const u8{ "\x1b[?1047l", "\x9b?1047l" }) |command| {
+        for (0..command.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+            defer terminal.deinit();
+            try terminal.setCellPixelSize(1, 6);
+            try feed(&terminal, "MAIN\x1b[2;3H\x1b7\x1b[?80h\x1bP7;1q~\x1b\\");
+            const primary_placement = terminal.images(0).placement(0).?;
+            try feed(&terminal, "\x1b[?47hALT\x1bP7;1q~\x1b\\");
+            try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+            try std.testing.expect(terminal.images(0).placement(1) != null);
+            try feed(&terminal, "\x1b[?47l");
+            // Resetting 1047 while primary is selected must not clear the
+            // retained alternate bank or change the primary savepoint.
+            try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+            try feed(&terminal, "\x1b[?1047h");
+            try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+            try std.testing.expect(terminal.images(0).placement(1) != null);
+            try std.testing.expect(!(try terminal.feed("\x1b[?1047h")).stateChanged());
+
+            const content_generation = terminal.images(0).content_generation;
+            try feed(&terminal, command[0..split]);
+            try feed(&terminal, command[split..]);
+            try std.testing.expect(!terminal.semanticView(0).is_alternate_screen);
+            try std.testing.expectEqual(@as(u21, 'M'), terminal.semanticView(0).cellAt(0, 0));
+            try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+            try std.testing.expectEqualDeep(primary_placement, terminal.images(0).placement(0).?);
+            try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+            try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+            try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+            try feed(&terminal, "\x1b[1;1H\x1b8");
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
+
+            try feed(&terminal, "\x1b[?47h");
+            const alt = terminal.semanticView(0);
+            for (0..alt.rows) |row| {
+                for (0..alt.cols) |col| {
+                    try std.testing.expectEqual(@as(u21, 0), alt.cellAt(@intCast(row), @intCast(col)));
+                }
+            }
+            try std.testing.expectEqual(@as(u32, 0), alt.history_count);
+            try std.testing.expect(terminal.images(0).placement(0) == null);
+        }
+    }
 }
 
 test "DEC screen origin and autowrap modes own exact repeated command effects" {

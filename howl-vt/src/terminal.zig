@@ -3728,10 +3728,10 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         },
         .restore_cursor => return vt.restoreCursor(),
         .enter_alt_screen => |opts| {
-            return vt.switchScreenMode(true, opts.clear, opts.save_cursor);
+            return vt.switchScreenMode(true, if (opts.clear) .entry else .none, opts.save_cursor);
         },
         .exit_alt_screen => |opts| {
-            return vt.switchScreenMode(false, false, opts.restore_cursor);
+            return vt.switchScreenMode(false, .none, opts.restore_cursor);
         },
         .size_report => |kind| {
             var scratch: input.Scratch = .{};
@@ -7633,24 +7633,24 @@ pub const Terminal = struct {
         self.charset.designations = savepoint.designations;
     }
 
-    /// Switches primary or alternate screen with explicit clear and cursor-save behavior.
-    fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
-        if (enable_alt) {
-            if (self.screen_state.alt_active) return false;
-            if (save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint(true);
-            self.screen_state.alt_active = true;
-            if (clear_alt) {
-                self.screen_state.alternate.clearVisibleCells();
-                const graphics_changed = self.graphics.clearBank(.alternate);
-                std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
-            }
-            self.screen_state.alternate.resetCursorForAltEntry();
-            return true;
+    /// Switches screen banks once, with explicit clear timing and cursor-save behavior.
+    fn switchScreenMode(
+        self: *Terminal,
+        enable_alt: bool,
+        clear_alt: enum { none, entry, exit },
+        save_restore_cursor: bool,
+    ) bool {
+        if (self.screen_state.alt_active == enable_alt) return false;
+        if (enable_alt and save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint(true);
+        if ((enable_alt and clear_alt == .entry) or (!enable_alt and clear_alt == .exit)) {
+            self.screen_state.alternate.clearVisibleCells();
+            const graphics_changed = self.graphics.clearBank(.alternate);
+            std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
         }
-
-        if (!self.screen_state.alt_active) return false;
-        self.screen_state.alt_active = false;
-        if (save_restore_cursor) {
+        self.screen_state.alt_active = enable_alt;
+        if (enable_alt) {
+            self.screen_state.alternate.resetCursorForAltEntry();
+        } else if (save_restore_cursor) {
             self.restoreCursorState();
             self.primary_savepoint.reflow_on_resize = false;
         }
@@ -7912,10 +7912,10 @@ pub const Terminal = struct {
             },
             45 => replaceBool(&self.modes.reverse_wraparound_mode, enabled),
             66 => replaceBool(&self.modes.application_keypad, enabled),
-            47 => self.switchScreenMode(enabled, false, false),
-            1047 => self.switchScreenMode(enabled, false, false),
+            47 => self.switchScreenMode(enabled, .none, false),
+            1047 => self.switchScreenMode(enabled, .exit, false),
             1048 => if (enabled) self.saveCursor() else self.restoreCursor(),
-            1049 => self.switchScreenMode(enabled, true, true),
+            1049 => self.switchScreenMode(enabled, .entry, true),
             1045 => replaceBool(&self.modes.extended_reverse_wraparound_mode, enabled),
             9 => self.setMouseTracking(if (enabled) .x10 else .off),
             1000 => self.setMouseTracking(if (enabled) .normal else .off),
