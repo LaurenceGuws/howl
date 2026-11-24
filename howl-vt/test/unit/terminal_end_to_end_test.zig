@@ -4753,6 +4753,49 @@ test "terminal: resize clips only graphics anchors outside replacement bounds" {
     try std.testing.expect(after.generation > graphics_generation);
 }
 
+test "terminal: Sixel discard without cell geometry releases decoded pixels" {
+    var terminal = try Terminal.init(std.testing.allocator, 8, 12);
+    defer terminal.deinit();
+    const packet = "\x1bP7;1q~\x1b\\";
+    const before = terminal.images(0).generation;
+    try std.testing.expect(!(try terminal.feed(packet)).stateChanged());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqual(before, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect((try terminal.feed(packet)).stateChanged());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+}
+
+test "terminal: Sixel discard at full plane releases decoded pixels" {
+    var terminal = try Terminal.init(std.testing.allocator, 8, 12);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b[?80h");
+    const packet = "\x1bP7;1q~\x1b\\";
+    const capacity = @import("../../src/graphics.zig").max_images;
+    for (0..capacity) |_| try std.testing.expect((try terminal.feed(packet)).stateChanged());
+    const before = terminal.images(0);
+    try std.testing.expectEqual(capacity, before.imageCount());
+    try std.testing.expectEqual(capacity, before.placementCount());
+
+    try std.testing.expect(!(try terminal.feed(packet)).stateChanged());
+    const after = terminal.images(0);
+    try std.testing.expectEqual(before.generation, after.generation);
+    try std.testing.expectEqual(before.content_generation, after.content_generation);
+    try std.testing.expectEqual(capacity, after.imageCount());
+    try std.testing.expectEqual(capacity, after.placementCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+
+    terminal.hardReset();
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect((try terminal.feed(packet)).stateChanged());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+}
+
 test "terminal: fragmented Sixel retains exact image placement and cursor lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 8, 12);
     defer terminal.deinit();

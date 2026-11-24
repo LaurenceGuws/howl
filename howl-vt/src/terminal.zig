@@ -5021,7 +5021,7 @@ const TerminalStream = struct {
             error.OutOfMemory => return error.OutOfMemory,
             error.Invalid, error.Unsupported, error.Quota => return discardedStringControl(),
         };
-        errdefer image.deinit(self.terminal.allocator);
+        defer image.deinit(self.terminal.allocator);
         const screen = self.terminal.screen_state.active();
         const cell_size = screen.cellPixelSize() orelse return discardedStringControl();
         const bank = graphicsBank(self.terminal);
