@@ -51,7 +51,7 @@ test_location_mapping:
     commit: 3bad29180ac08b486506ffc36c03845f7708eb33
     path: protocol_coverage.yml
     sha256: 94f4cabf656482255bbeb70b65ca37d2e3ad8f9ac5e93883436cd19277473411
-  declarations_checked_at: c518d500bd8f4601badefba2b8f98513c218319d
+  declarations_checked_at: 686b8d91d54ff46369b68d74d20bb825b53f3362
   meaning: Candidate test locations for navigating the implementation. Wire-family matching preserves command class, leader
     and intermediates, not complete grammar or behavior. Protocol-family locations are shared starting points, not proof
     of the individual clause. Accepted-decision locations refer to existing separately qualified assessments. Test declarations
@@ -5476,6 +5476,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: checksum extension affects rectangular checksum reply
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum flags distinguish undrawn space admission and combining totals
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum combining overflow storage and wide tails are counted only once
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum arithmetic uses source video weights and modular negation
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
     - id: window-operation-extensions
       section: XTWINOPS, ctlseqs 1616-1696; history table 3720-3749
       level: defined
@@ -8787,6 +8799,18 @@ specifications:
       - file: howl-vt/src/fixed_report.zig
         test: extent parameters title stack and checksum serialize exact payloads
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum flags distinguish undrawn space admission and combining totals
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum combining overflow storage and wide tails are counted only once
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum arithmetic uses source video weights and modular negation
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
     - id: active-status-display
       section: Chapter 11 / DECSASD, printed pp.219-220
       level: defined
@@ -10609,8 +10633,8 @@ specifications:
       level: defined
       wire: CSI Ps ; Pu ' z
       rule: Ps 0/default disables,1 enables,2 one shot (disable after next report). Pu omitted/0 or 2 character cells,1 device
-        physical pixels. Enable tracks independent input cursor; DECELR cancels prior filter rectangle. Pointer events are
-        host input, not text cursor movement.
+        physical pixels. Enable tracks independent input cursor; DECELR cancels prior filter rectangle. Pointer events are host
+        input, not text cursor movement.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-fa2af1e6b1
@@ -10626,6 +10650,14 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: pointer reporting interest includes DEC locator and leaves one-shot consumption canonical
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator query distinguishes active undefined and inactive without consuming a filter
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator undefined query preserves one-shot and filter under reply pressure
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
     - id: select-locator-events
       section: Selecting Locator Events (DECSLE)
       level: defined
@@ -10644,6 +10676,14 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: locator button and filter events append DECLRP
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator event selection admits only the originating single intermediate
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator undefined query preserves one-shot and filter under reply pressure
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
     - id: locator-report
       section: Locator Position Reporting (DECLRP)
       level: defined
@@ -10667,15 +10707,27 @@ specifications:
       - file: howl-vt/src/locator.zig
         test: locator one-based pixel reports preserve the full u32 coordinate domain
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator query distinguishes active undefined and inactive without consuming a filter
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator undefined query preserves one-shot and filter under reply pressure
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator event selection admits only the originating single intermediate
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
     - id: enable-filter-rectangle
       section: Filter Rectangles (DECEFR)
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr ' w
-      rule: Inclusive rectangle in current DECELR units, upper-left origin 1:1. Missing bounds default to current locator
-        position; all omitted means report any movement. Leaving rectangle generates event 10 and disables filter (one shot);
-        replacing rectangle reactivates and immediate outside report if pointer already outside. DECELR and DECSLE 0 cancel.
-        Explicit bounds with undefined position trigger immediately with omitted coordinates; omitted bounds while undefined
-        trigger on entry into defined space. Inactive session has corresponding undefined-position behavior.
+      rule: Inclusive rectangle in current DECELR units, upper-left origin 1:1. Missing bounds default to current locator position;
+        all omitted means report any movement. Leaving rectangle generates event 10 and disables filter (one shot); replacing
+        rectangle reactivates and immediate outside report if pointer already outside. DECELR and DECSLE 0 cancel. Explicit
+        bounds with undefined position trigger immediately with omitted coordinates; omitted bounds while undefined trigger
+        on entry into defined space. Inactive session has corresponding undefined-position behavior.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-d3c7ca5037
@@ -10684,9 +10736,9 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5511-5529; button.c:1019-1140
-      source_note: Pinned xterm InitLocatorFilter uses current coordinates for omitted bounds, clamps/sorts rectangle and
-        sends event 0 on some unavailable cases. Original inclusive geometry and undefined-coordinate semantics are retained,
-        not inferred from that code.
+      source_note: Pinned xterm InitLocatorFilter uses current coordinates for omitted bounds, clamps/sorts rectangle and sends
+        event 0 on some unavailable cases. Original inclusive geometry and undefined-coordinate semantics are retained, not
+        inferred from that code.
       test_locations:
       - file: howl-vt/src/locator.zig
         test: locator filter resolves omitted edges and preserves its valid latch
@@ -10694,6 +10746,14 @@ specifications:
       - file: howl-vt/src/locator.zig
         test: locator one-shot and filter latches commit only after reply append
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator query distinguishes active undefined and inactive without consuming a filter
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator undefined query preserves one-shot and filter under reply pressure
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
     - id: request-locator-position
       section: Requesting A Locator Position Report (DECRQLP)
       level: defined
@@ -10726,6 +10786,14 @@ specifications:
       - file: howl-vt/src/locator.zig
         test: locator one-shot and filter latches commit only after reply append
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator query distinguishes active undefined and inactive without consuming a filter
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator undefined query preserves one-shot and filter under reply pressure
+        relation: protocol-family
+        note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
   ecma35:
     title: 'ECMA-35: Character Code Structure and Extension Techniques'
     author: Ecma International
@@ -11976,6 +12044,18 @@ specifications:
       - file: howl-vt/src/fixed_report.zig
         test: extent parameters title stack and checksum serialize exact payloads
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum flags distinguish undrawn space admission and combining totals
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum combining overflow storage and wide tails are counted only once
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum arithmetic uses source video weights and modular negation
+        relation: protocol-family
+        note: Narrow regression evidence at f066679; not whole-clause qualification.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
