@@ -823,9 +823,10 @@ fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []
             // report owner; share the same bounded zero-query grammar as DA.
             'q' => if (zeroQuery(params)) SemanticEvent.xtversion else null,
             'm' => if (paramAtOrDefault0(params, 0) == 4)
-                SemanticEvent{ .modify_other_keys_set = @intCast(
+                SemanticEvent{ .modify_other_keys_set = std.math.cast(
+                    i8,
                     @max(if (params.len >= 2) params[1] else 0, 0),
-                ) }
+                ) orelse return null }
             else
                 null,
             'n' => if (paramAtOrDefault0(params, 0) == 4) SemanticEvent.modify_other_keys_disable else null,

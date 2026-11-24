@@ -3807,6 +3807,40 @@ test "modifyOtherKeys set query disable and encoding" {
     ));
 }
 
+test "modifyOtherKeys rejects unrepresentable values across every split" {
+    const invalid = [_][]const u8{
+        "\x1b[>4;128m",
+        "\x1b[>4;255m",
+        "\x1b[>4;2147483647m",
+        "\x9b>4;128m",
+    };
+    for (invalid) |command| {
+        for (0..command.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[>4;2m\x1b[5n");
+            try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+
+            try std.testing.expect(!(try terminal.feed(command[0..split])).stateChanged());
+            try std.testing.expect(!(try terminal.feed(command[split..])).stateChanged());
+            try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+            try std.testing.expectEqualStrings("\x1b[27;3;97~", encodeKey(
+                &terminal,
+                try Terminal.Key.initUnicode('a'),
+                .{ .alt = true },
+            ));
+            try feed(&terminal, "\x1b[?4m\x1b[>4;3mX");
+            try std.testing.expectEqualStrings("\x1b[0n\x1b[>4;2m", pendingOutput(&terminal));
+            try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+            try std.testing.expectEqualStrings("\x1b[27;1;97~", encodeKey(
+                &terminal,
+                try Terminal.Key.initUnicode('a'),
+                .{},
+            ));
+        }
+    }
+}
+
 test "xterm key format query reset and other-key encoding" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
