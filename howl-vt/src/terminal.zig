@@ -3989,11 +3989,11 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         => return applySemanticEvent(vt, event),
 
         .line_feed, .index, .next_line => {
-            const next_line = event == .next_line or
-                (event == .line_feed and vt.modes.newline_mode);
-            applyInputLineFeed(vt, next_line) catch |failure| {
+            const operation: stream_state_mod.LineFeed = if (event == .next_line or
+                (event == .line_feed and vt.modes.newline_mode)) .next_line else .index;
+            applyInputLineFeed(vt, operation) catch |failure| {
                 std.debug.assert(vt.stream_state.pending_input == null);
-                vt.stream_state.pending_input = .{ .work = .{ .line_feed = next_line }, .failure = failure };
+                vt.stream_state.pending_input = .{ .work = .{ .line_feed = operation }, .failure = failure };
                 return false;
             };
         },
@@ -4012,12 +4012,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .clear_buffer => return vt.clearBuffer(),
         .horizontal_tab => {
             const active = vt.screen_state.active();
-            if (vt.modes.more_fix and active.wrap_pending) {
-                if (!vt.screen_state.alt_active) {
-                    vt.screen_state.primary.finalizeOutputLine();
-                }
-                active.applyScreen(.next_line);
-                active.applyScreen(.horizontal_tab);
+            if (vt.modes.more_fix and active.wrap_pending and active.auto_wrap) {
+                applyInputLineFeed(vt, .next_line_tab) catch |failure| {
+                    std.debug.assert(vt.stream_state.pending_input == null);
+                    vt.stream_state.pending_input = .{ .work = .{ .line_feed = .next_line_tab }, .failure = failure };
+                    return false;
+                };
                 return true;
             }
             active.applyScreen(.horizontal_tab);
@@ -4308,7 +4308,7 @@ fn writeSizedTextGrowing(vt: *Terminal, payload: []const u8, offset: usize) Scre
 
 // A parsed LF/NEL is retried as one operation: history allocation happens
 // before logical-line, cursor, wrap, graphics, or cell state can change.
-fn applyInputLineFeed(vt: *Terminal, next_line: bool) error{ OutOfMemory, HistoryCapacity }!void {
+fn applyInputLineFeed(vt: *Terminal, operation: stream_state_mod.LineFeed) error{ OutOfMemory, HistoryCapacity }!void {
     const active = vt.screen_state.active();
     var prepared = active.prepareLineFeed() catch |failure| switch (failure) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -4318,11 +4318,12 @@ fn applyInputLineFeed(vt: *Terminal, next_line: bool) error{ OutOfMemory, Histor
     const scrolls = prepared.scrolls;
     const before = graphicsScreenOrigin(vt);
     if (!vt.screen_state.alt_active) vt.screen_state.primary.finalizeOutputLine();
-    active.commitLineFeed(&prepared, next_line);
+    active.commitLineFeed(&prepared, operation != .index);
     if (scrolls) {
         const changed = alignGraphicsAfterLineFeed(vt, active, before);
         std.debug.assert(!changed or vt.graphics.generation() != 0);
     }
+    if (operation == .next_line_tab) active.applyScreen(.horizontal_tab);
 }
 
 fn graphicsBank(vt: *const Terminal) graphics_mod.Bank {
@@ -4720,8 +4721,8 @@ const TerminalStream = struct {
                     input_blocked = failure;
                     break :blocked false;
                 },
-                .line_feed => |next_line| resumed: {
-                    applyInputLineFeed(self.terminal, next_line) catch |failure| {
+                .line_feed => |operation| resumed: {
+                    applyInputLineFeed(self.terminal, operation) catch |failure| {
                         self.terminal.stream_state.pending_input.?.failure = failure;
                         input_blocked = failure;
                         break :resumed false;

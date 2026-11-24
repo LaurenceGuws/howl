@@ -6088,6 +6088,93 @@ test "terminal: CSI row scrolls respect horizontal margins for graphics as for c
     }
 }
 
+const more_fix_scroll_fixture =
+    "\x1b[1;1HAAAAAAAAAA\x1b[2;1HBBBBBBBBBB\x1b[3;1HCCCCCCCCC\x1b[4;1HDDDDDDDDDD" ++
+    "\x1b[3;3H\x1b_Ga=T,f=32,s=1,v=1,i=90,C=1,q=2;AQIDBA==\x1b\\" ++
+    "\x1b[4;3H\x1b_Ga=T,f=32,s=1,v=1,i=91,C=1,q=2;AQIDBA==\x1b\\";
+
+test "terminal: mode 41 tab scroll keeps cells and graphics aligned" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 10, 0);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, more_fix_scroll_fixture);
+    try feed(&terminal, "\x1b[2;3r\x1b[?41h\x1b[3;10HC");
+    const before = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), before.placementCount());
+    try std.testing.expectEqual(@as(u16, 2), before.placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 3), before.placement(1).?.row);
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), after.cursor_col);
+    try std.testing.expectEqual(@as(u21, 'A'), after.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), after.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), after.cellAt(2, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), after.cellAt(3, 0));
+    const images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), images.placementCount());
+    try std.testing.expectEqual(@as(u16, 1), images.placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 3), images.placement(1).?.row);
+    try std.testing.expectEqual(before.content_generation, images.content_generation);
+}
+
+test "terminal: mode 41 tab admits history before scrolling and retries once" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 4, 10, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, more_fix_scroll_fixture);
+    try feed(&terminal, "\x1b[1;3r\x1b[?41h\x1b[3;10HC");
+    const before = terminal.semanticView(0);
+    const before_images = terminal.images(0);
+    const moving = before_images.placement(0).?;
+    const fixed = before_images.placement(1).?;
+    const sequence = terminal.semanticSequence();
+    const output_range = terminal.logicalOutputRange();
+
+    failing.fail_index = failing.alloc_index;
+    const bytes = "\tZ";
+    const blocked = try terminal.feedAtServiceBoundary(bytes, 1);
+    try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    try std.testing.expect(!blocked.summary.stateChanged());
+    try std.testing.expect(!blocked.summary.historyLost());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualDeep(output_range, terminal.logicalOutputRange());
+    try std.testing.expectEqual(before.history_count, terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(before.cursor_row, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(before.cursor_col, terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(2, 9));
+    try std.testing.expectEqual(before_images.generation, terminal.images(0).generation);
+    try std.testing.expectEqualDeep(moving, terminal.images(0).placement(0).?);
+    try std.testing.expectEqualDeep(fixed, terminal.images(0).placement(1).?);
+
+    const stalled = try terminal.feedAtServiceBoundary(bytes[blocked.consumed..], 2);
+    try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, stalled.input_blocked.?);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    failing.fail_index = std.math.maxInt(usize);
+    const recovered = try terminal.feedAtServiceBoundary(bytes[blocked.consumed..], 3);
+    try std.testing.expectEqual(@as(usize, 1), recovered.consumed);
+    try std.testing.expect(recovered.input_blocked == null);
+    try std.testing.expect(!recovered.summary.historyLost());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 1), after.history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(1).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), after.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), after.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'Z'), after.cellAt(2, 8));
+    try std.testing.expectEqual(@as(u21, 'D'), after.cellAt(3, 0));
+    try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
+    try std.testing.expectEqual(@as(u16, 9), after.cursor_col);
+    const images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), images.placementCount());
+    try std.testing.expectEqual(@as(u16, 1), images.placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 3), images.placement(1).?.row);
+    try std.testing.expectEqual(before_images.content_generation, images.content_generation);
+}
+
 test "terminal: no-history full-screen scroll retains the visible tail of a multirow image" {
     // Pinned Kitty's no-margin grman_scroll_images keeps an image whose
     // anchor leaves the viewport if part of it still intersects the screen.

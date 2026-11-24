@@ -246,11 +246,14 @@ pub const StringCapture = struct {
 
 /// Reports an input operation that cannot yet be retained.
 pub const InputBlock = error{ OutOfMemory, ScalarCapacity, HistoryCapacity };
+/// Line movement retained as one operation across history admission failure.
+pub const LineFeed = enum { index, next_line, next_line_tab };
+
 /// Owns decoded work until it can continue without replaying bytes.
 pub const PendingInput = struct {
     // Sized payload borrows the OSC parser buffer. No parser input may run
     // until the pending operation completes or is explicitly reset.
-    work: union(enum) { codepoint: u21, repeat: u16, scroll_up: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: bool },
+    work: union(enum) { codepoint: u21, repeat: u16, scroll_up: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: LineFeed },
     failure: InputBlock,
 };
 
