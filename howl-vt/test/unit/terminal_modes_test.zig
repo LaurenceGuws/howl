@@ -2248,6 +2248,42 @@ test "checksum page zero and omitted page preserve requested rectangle" {
     }
 }
 
+test "checksum legacy projection uses translated character without provenance" {
+    const cases = [_]struct {
+        text: []const u8,
+        legacy: []const u8,
+        full: []const u8,
+    }{
+        .{ .text = "A", .legacy = "0041", .full = "0041" },
+        .{ .text = "~", .legacy = "007E", .full = "007E" },
+        .{ .text = "\xc2\xa0", .legacy = "001B", .full = "00A0" },
+        .{ .text = "\xc2\xa1", .legacy = "0021", .full = "00A1" },
+        .{ .text = "\xc3\xa9", .legacy = "0069", .full = "00E9" },
+        .{ .text = "\xc3\xbe", .legacy = "007E", .full = "00FE" },
+        .{ .text = "\xc3\xbf", .legacy = "0000", .full = "00FF" },
+        .{ .text = "\xce\xa9", .legacy = "001B", .full = "03A9" },
+        .{ .text = "\x1b(0q\x1b(B", .legacy = "001B", .full = "2500" },
+        .{ .text = "\xe2\x94\x80", .legacy = "001B", .full = "2500" },
+    };
+    for (cases) |case| {
+        for (0..case.text.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+            defer terminal.deinit();
+            try feed(&terminal, case.text[0..split]);
+            try feed(&terminal, case.text[split..]);
+            try feed(&terminal, "\x1b[3#y\x1b[1;1;1;1;1;1*y");
+            try std.testing.expectEqualStrings("\x1bP1!~", pendingOutput(&terminal)[0..5]);
+            try std.testing.expectEqualStrings(case.legacy, pendingOutput(&terminal)[5..9]);
+            try std.testing.expectEqualStrings("\x1b\\", pendingOutput(&terminal)[9..]);
+            try consumeReplies(&terminal);
+            try feed(&terminal, "\x1b[19#y\x1b[2;1;1;1;1;1*y");
+            try std.testing.expectEqualStrings("\x1bP2!~", pendingOutput(&terminal)[0..5]);
+            try std.testing.expectEqualStrings(case.full, pendingOutput(&terminal)[5..9]);
+            try std.testing.expectEqualStrings("\x1b\\", pendingOutput(&terminal)[9..]);
+        }
+    }
+}
+
 test "checksum mode resets to its default on RIS and DECSTR" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

@@ -5461,6 +5461,7 @@ specifications:
         trimming changes totals. Exact arithmetic and flags are not accepted until reconciled.'
       accepted_reconciliations:
       - xtchecksum-bit3-and-unicode
+      - xtchecksum-legacy-character-provenance
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-eb0e648cf6
@@ -5500,7 +5501,14 @@ specifications:
         test: checksum page zero and omitted page preserve requested rectangle
         relation: protocol-family
         note: Positive no-attributes checksum witnesses for explicit/omitted page zero; not full arithmetic qualification.
-      pending_reconciliation: xtchecksum-legacy-character-provenance
+      - file: howl-vt/src/terminal.zig
+        test: checksum legacy value covers exact byte-domain boundaries
+        relation: protocol-family
+        note: Selected translated-character projection regression; does not qualify entire checksum family.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum legacy projection uses translated character without provenance
+        relation: protocol-family
+        note: Selected translated-character projection regression; does not qualify entire checksum family.
     - id: window-operation-extensions
       section: XTWINOPS, ctlseqs 1616-1696; history table 3720-3749
       level: defined
@@ -12144,61 +12152,7 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences: []
-    pending_reconciliation:
-    - id: xtchecksum-legacy-character-provenance
-      status: material-legacy-mapping-implementation-difference
-      wire: 'CSI Ps # y (bit 4 clear); subsequent DECRQCRA'
-      original_author_sources:
-      - clause: xterm_controls.checksum-extension
-        meaning: Original extension describes bit4 as selecting full rather than byte-domain checksum; selected prior decision
-          follows actual xterm code; DEC STD070 checksum clauses do not define complete arithmetic.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charsets.c:366-380,608-669; charsets.h:213-248; screen.c:986-987,3182-3195
-        meaning: Retains original normalized byte and selected charset per cell, maps DEC special-graphics q to 0x1D, direct
-          Unicode U+2500 to ESC 0x1B. Bit4 set uses visible scalar instead.
-      independent_implementations:
-      - implementation: ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        source: src/terminal/xt_checksum.zig:167-188
-        meaning: 'Translated-codepoint ASCII projection: no retained original byte/charset; both U+2500 inputs map to 0x1B.
-          Explicit approximation, not exact provenance.'
-      - implementation: windows_terminal
-        revision: 9853bc96076e811cef5eab4469095fc9be58201e
-        source: src/terminal/adapter/adaptDispatch.cpp:1308-1319
-        meaning: Feature-gated checksum uses Unicode scalar units and special U+2426 mapping; acknowledges missing custom original
-          charset mapping.
-      howl_observation:
-        revision: 81a286fd339fc5eec4799f6ad753792f36037ea8
-        source: howl-vt/src/charset.zig:mapCodepoint/mapDecSpecial; howl-vt/src/terminal.zig:computeRectChecksum; scratch/20261124-locator-filter/checksum-provenance.zig
-        meaning: Public Debug probe proves ESC ( 0 q ESC ( B and directly encoded U+2500 produce identical canonical Cell values.
-          Current legacy projection returns zero for both; exact xterm mapping cannot be reconstructed from these cell values
-          alone.
-      question: Select exact legacy provenance semantics or a deliberately limited translated-codepoint projection; bit4, trim
-        and combining decisions remain unchanged. If exact needed, qualify a compact derived identity or optional provenance,
-        including write/edit/copy/reflow/history/resize and any current-mode dependence, before changing cell layout.
-      recommendation: Do not add blanket raw-byte and charset fields. Keep legacy mapping unqualified until scope decision.
-        A Ghostty-style deterministic ASCII projection is an explicit limited compatibility alternative, not FULL exact xterm
-        semantics; if exact compatibility is required first investigate a compact derived representation.
-      decision: null
-      additional_reference_scope:
-        observations:
-        - implementation: kitty
-          revision: a79f376b85fd95e3dfd0589877123996bacd4184
-          source: kitty/vt-parser.c:1309-1504; kitty/control-codes.h:112-230
-          meaning: 'CSI final y has no implemented dispatch case (including *y and #y); default reports unknown CSI. No legacy
-            checksum arithmetic or retained checksum identity established.'
-        - implementation: alacritty
-          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
-          source: Cargo.lock:2124-2136; alacritty_terminal/Cargo.toml:28; vte 0.15.0 src/ansi.rs:1529-1769; alacritty_terminal/src/term/cell.rs:125-159
-          dependency:
-            version: vte 0.15.0
-            url: https://static.crates.io/crates/vte/vte-0.15.0.crate
-            sha256: a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd
-          meaning: Pinned VTE ANSI dispatch has no final-y match, falls through to unhandled CSI logging. Terminal Cell and
-            CellExtra retain display character/style/optional extras, not original DEC byte/charset provenance.
-        boundary: Source inspection of exact pinned revisions and lockfile-verified dependency; no foreign runtime probe or
-          performance benchmark. Unsupported operations supply no affirmative vote for any checksum arithmetic.
+    pending_reconciliation: []
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
@@ -14046,3 +14000,84 @@ reconciliation:
       operands; keep existing DECOM qualification separate. Explicitly review because original normative meaning materially
       diverges from modern references.
     decision: null
+- id: xtchecksum-legacy-character-provenance
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    legacy_base_character: Use the retained translated Unicode scalar, not the original incoming byte or charset identity.
+    mapping:
+      U+007F and U+00FF: '0'
+      U+0020..U+007E, U+0080..U+009F, U+00A1..U+00FE: scalar & 0x7F
+      all other drawn base scalars: '0x1B'
+    full_codepoint: Bit4 set uses full scalar modulo 65536; existing continuation, blank admission, combining and trim rules
+      remain unchanged.
+    representation: No new per-cell byte/charset provenance, allocation or ordinary-write tracking for this extension.
+  scope_limit: Select legacy base-character projection only. Not exact DEC hardware or full xterm provenance; not a whole
+    checksum arithmetic, geometry, grammar, reset, permission, or host security assessment.
+  reason: Captain accepted the deterministic Ghostty-style projection after examining Kitty and Alacritty. Both omit these
+    checksum controls; absence is not an affirmative semantic vote. The pinned Ghostty projection is explicit and compatible
+    with existing translated cells. Exact xterm mapping would need retained provenance; prior scratch diagnostic demonstrated
+    the information loss. No measured performance claim.
+  reference_evidence:
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/xt_checksum.zig:167-188
+    observation: Exact scalar-domain projection selected above.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: xtchecksum-legacy-character-provenance
+    status: material-legacy-mapping-implementation-difference
+    wire: 'CSI Ps # y (bit 4 clear); subsequent DECRQCRA'
+    original_author_sources:
+    - clause: xterm_controls.checksum-extension
+      meaning: Original extension describes bit4 as selecting full rather than byte-domain checksum; selected prior decision
+        follows actual xterm code; DEC STD070 checksum clauses do not define complete arithmetic.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charsets.c:366-380,608-669; charsets.h:213-248; screen.c:986-987,3182-3195
+      meaning: Retains original normalized byte and selected charset per cell, maps DEC special-graphics q to 0x1D, direct
+        Unicode U+2500 to ESC 0x1B. Bit4 set uses visible scalar instead.
+    independent_implementations:
+    - implementation: ghostty
+      revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+      source: src/terminal/xt_checksum.zig:167-188
+      meaning: 'Translated-codepoint ASCII projection: no retained original byte/charset; both U+2500 inputs map to 0x1B.
+        Explicit approximation, not exact provenance.'
+    - implementation: windows_terminal
+      revision: 9853bc96076e811cef5eab4469095fc9be58201e
+      source: src/terminal/adapter/adaptDispatch.cpp:1308-1319
+      meaning: Feature-gated checksum uses Unicode scalar units and special U+2426 mapping; acknowledges missing custom
+        original charset mapping.
+    howl_observation:
+      revision: 81a286fd339fc5eec4799f6ad753792f36037ea8
+      source: howl-vt/src/charset.zig:mapCodepoint/mapDecSpecial; howl-vt/src/terminal.zig:computeRectChecksum; scratch/20261124-locator-filter/checksum-provenance.zig
+      meaning: Public Debug probe proves ESC ( 0 q ESC ( B and directly encoded U+2500 produce identical canonical Cell
+        values. Current legacy projection returns zero for both; exact xterm mapping cannot be reconstructed from these
+        cell values alone.
+    question: Select exact legacy provenance semantics or a deliberately limited translated-codepoint projection; bit4,
+      trim and combining decisions remain unchanged. If exact needed, qualify a compact derived identity or optional provenance,
+      including write/edit/copy/reflow/history/resize and any current-mode dependence, before changing cell layout.
+    recommendation: Do not add blanket raw-byte and charset fields. Keep legacy mapping unqualified until scope decision.
+      A Ghostty-style deterministic ASCII projection is an explicit limited compatibility alternative, not FULL exact xterm
+      semantics; if exact compatibility is required first investigate a compact derived representation.
+    decision: null
+    additional_reference_scope:
+      observations:
+      - implementation: kitty
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        source: kitty/vt-parser.c:1309-1504; kitty/control-codes.h:112-230
+        meaning: 'CSI final y has no implemented dispatch case (including *y and #y); default reports unknown CSI. No legacy
+          checksum arithmetic or retained checksum identity established.'
+      - implementation: alacritty
+        revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+        source: Cargo.lock:2124-2136; alacritty_terminal/Cargo.toml:28; vte 0.15.0 src/ansi.rs:1529-1769; alacritty_terminal/src/term/cell.rs:125-159
+        dependency:
+          version: vte 0.15.0
+          url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          sha256: a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd
+        meaning: Pinned VTE ANSI dispatch has no final-y match, falls through to unhandled CSI logging. Terminal Cell and
+          CellExtra retain display character/style/optional extras, not original DEC byte/charset provenance.
+      boundary: Source inspection of exact pinned revisions and lockfile-verified dependency; no foreign runtime probe or
+        performance benchmark. Unsupported operations supply no affirmative vote for any checksum arithmetic.

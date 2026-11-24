@@ -2896,6 +2896,38 @@ fn appendSgrAttrs(
     try output.append("m");
 }
 
+// Selected translated-character projection: preserve the canonical Unicode
+// cell model rather than retain the original DEC byte and charset identity.
+// This deliberately differs from exact xterm legacy provenance.
+fn checksumLegacyValue(cp: u32) u16 {
+    return switch (cp) {
+        0x7f, 0xff => 0,
+        0x20...0x7e, 0x80...0x9f, 0xa1...0xfe => @intCast(cp & 0x7f),
+        else => 0x1b,
+    };
+}
+
+test "checksum legacy value covers exact byte-domain boundaries" {
+    const cases = [_]struct { cp: u32, expected: u16 }{
+        .{ .cp = 0, .expected = 0x1b },
+        .{ .cp = 0x1f, .expected = 0x1b },
+        .{ .cp = 0x20, .expected = 0x20 },
+        .{ .cp = 0x7e, .expected = 0x7e },
+        .{ .cp = 0x7f, .expected = 0 },
+        .{ .cp = 0x80, .expected = 0 },
+        .{ .cp = 0x9f, .expected = 0x1f },
+        .{ .cp = 0xa0, .expected = 0x1b },
+        .{ .cp = 0xa1, .expected = 0x21 },
+        .{ .cp = 0xfe, .expected = 0x7e },
+        .{ .cp = 0xff, .expected = 0 },
+        .{ .cp = 0x100, .expected = 0x1b },
+        .{ .cp = 0x2500, .expected = 0x1b },
+        .{ .cp = 0x1f600, .expected = 0x1b },
+        .{ .cp = 0x10ffff, .expected = 0x1b },
+    };
+    for (cases) |case| try std.testing.expectEqual(case.expected, checksumLegacyValue(case.cp));
+}
+
 fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, area: RectArea) u16 {
     const bounds = screen.rectBounds(area) orelse return 0;
     const no_trim = (xtchecksum_flags & (1 << 2)) != 0;
@@ -2916,9 +2948,6 @@ fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, area: RectA
             if (continuation and (full_codepoint or !cell.semantic_width)) continue;
             const undrawn = cell.codepoint == 0 and !continuation;
             if (undrawn and !include_undrawn) continue;
-            // The translated cell does not retain the original DEC byte and
-            // charset identity. Retain the existing low-byte projection until
-            // that separate legacy-character mapping is qualified.
             var value: u16 = if (undrawn)
                 ' '
             else if (continuation)
@@ -2926,7 +2955,7 @@ fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, area: RectA
             else if (full_codepoint)
                 @truncate(cell.codepoint)
             else
-                @intCast(cell.codepoint & 0xff);
+                checksumLegacyValue(cell.codepoint);
             if (include_attrs) {
                 // Xterm's original checksum extension sums VT100 video bits.
                 value +%= if (cell.attrs.protected != .none) 0x04 else 0;
