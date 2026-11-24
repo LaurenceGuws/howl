@@ -2217,11 +2217,55 @@ specifications:
       level: defined
       wire: CSI ? 6 h/l
       rule: Selects cursor addressing relative to the defined scrolling region or the display page.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-6-h-line-919
+        source_line: 919
+        wire: CSI ? 6 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-6-l-line-1069
+        source_line: 1069
+        wire: CSI ? 6 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 135; xterm ctlseqs set/reset lines 919/1069
+        selector: 6
+        name: DECOM
+        set_wire: CSI ? 6 h
+        reset_wire: CSI ? 6 l
+        original_default: origin addressing relative to the whole page, not margins
+        set_effect: Origin-relative cursor addressing is restricted to the scrolling margins.
+        reset_effect: Addressing uses page origin, independent of scrolling margins.
+        source_specific_constraints: The original defines home relative to margins when set and page when reset. Do not conflate the page
+          coordinate system with VT scrollback.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
     - id: autowrap
       section: Terminal Modes / Auto Wrap
       level: defined
       wire: CSI ? 7 h/l
       rule: Controls automatic line wrapping at the right display margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-7-h-line-920
+        source_line: 920
+        wire: CSI ? 7 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-7-l-line-1070
+        source_line: 1070
+        wire: CSI ? 7 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 191; xterm ctlseqs set/reset lines 920/1070
+        selector: 7
+        name: DECAWM
+        set_wire: CSI ? 7 h
+        reset_wire: CSI ? 7 l
+        original_default: no autowrap in the original VT420 reference
+        set_effect: At the right page border, subsequent graphic characters wrap to the next line, scrolling the region when appropriate.
+        reset_effect: At the right page border, subsequent graphics replace the border cell rather than wrapping.
+        source_specific_constraints: The DEC VT420 source explicitly says default no autowrap; do not silently substitute an independently
+          configured modern emulator startup default. This is source history, not Howl runtime conformance.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
     - id: stbm
       section: Set Top and Bottom Margins (DECSTBM), page 37
       level: defined
@@ -2371,6 +2415,29 @@ specifications:
       level: defined
       wire: CSI ? 3 h/l
       rule: DECCOLM switches between 80 and 132 terminal columns under the configured terminal mode.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-3-h-line-916
+        source_line: 916
+        wire: CSI ? 3 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-3-l-line-1066
+        source_line: 1066
+        wire: CSI ? 3 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 130-131; xterm ctlseqs set/reset lines 916/1066
+        selector: 3
+        name: DECCOLM
+        set_wire: CSI ? 3 h
+        reset_wire: CSI ? 3 l
+        original_default: 80 columns
+        set_effect: Choose 132 columns.
+        reset_effect: Choose 80 columns.
+        source_specific_constraints: On a change, original VT420 resets all scrolling margins, erases all page-memory data, disables DECVSSM
+          and clears a host-writable status line. The DEC manual recommends DECSCPP instead for applications requiring content preservation.
+          Current Howl host-geometry consequences are not inferred.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
     - id: left-right-margins
       section: Page Memory / Set Left and Right Margins, p133
       level: defined
@@ -2410,6 +2477,29 @@ specifications:
       level: defined
       wire: CSI ? 6 h/l
       rule: DECOM toggles origin-relative versus page-relative cursor addressing.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-6-h-line-919
+        source_line: 919
+        wire: CSI ? 6 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-6-l-line-1069
+        source_line: 1069
+        wire: CSI ? 6 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 135; xterm ctlseqs set/reset lines 919/1069
+        selector: 6
+        name: DECOM
+        set_wire: CSI ? 6 h
+        reset_wire: CSI ? 6 l
+        original_default: origin addressing relative to the whole page, not margins
+        set_effect: Origin-relative cursor addressing is restricted to the scrolling margins.
+        reset_effect: Addressing uses page origin, independent of scrolling margins.
+        source_specific_constraints: The original defines home relative to margins when set and page when reset. Do not conflate the page
+          coordinate system with VT scrollback.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
+      reaffirms: dec_vt240.origin
     - id: delete-column
       section: Editing / Delete Column, p149
       level: defined
@@ -2639,6 +2729,27 @@ specifications:
       level: defined
       wire: CSI ? 25 h/l
       rule: DECTCEM sets or clears presentation of the text cursor.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-25-h-line-933
+        source_line: 933
+        wire: CSI ? 25 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-25-l-line-1082
+        source_line: 1082
+        wire: CSI ? 25 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 176; xterm ctlseqs set/reset lines 933/1082
+        selector: 25
+        name: DECTCEM
+        set_wire: CSI ? 25 h
+        reset_wire: CSI ? 25 l
+        original_default: cursor visible
+        set_effect: Make the text cursor visible.
+        reset_effect: Make the text cursor invisible.
+        source_specific_constraints: Cursor presentation state, not grid text mutation; renderer/host presentation conformance is separate.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
     - id: back-index
       section: Cursor Movement / Back Index, p177
       level: defined
@@ -2664,21 +2775,90 @@ specifications:
       level: defined
       wire: CSI ? 67 h/l
       rule: DECBKM selects Backspace versus Delete input encoding for the backarrow key.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-67-h-line-957
+        source_line: 957
+        wire: CSI ? 67 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-67-l-line-1103
+        source_line: 1103
+        wire: CSI ? 67 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 188-189; xterm ctlseqs set/reset lines 957/1103
+        selector: 67
+        name: DECBKM
+        set_wire: CSI ? 67 h
+        reset_wire: CSI ? 67 l
+        original_default: backarrow sends DEL (0x7F)
+        set_effect: Backarrow key sends BS (0x08).
+        reset_effect: Backarrow key sends DEL (0x7F).
+        source_specific_constraints: Original DEC recommends reset for software compatibility. Key events and input encoding are owned by
+          the host input boundary; PTY only transports bytes. Neither is proven by this source inventory.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
     - id: autowrap
       section: Keyboard / Autowrap Mode, p191
       level: defined
       wire: CSI ? 7 h/l
       rule: DECAWM controls automatic continuation to the next line at the right margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-7-h-line-920
+        source_line: 920
+        wire: CSI ? 7 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-7-l-line-1070
+        source_line: 1070
+        wire: CSI ? 7 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 191; xterm ctlseqs set/reset lines 920/1070
+        selector: 7
+        name: DECAWM
+        set_wire: CSI ? 7 h
+        reset_wire: CSI ? 7 l
+        original_default: no autowrap in the original VT420 reference
+        set_effect: At the right page border, subsequent graphic characters wrap to the next line, scrolling the region when appropriate.
+        reset_effect: At the right page border, subsequent graphics replace the border cell rather than wrapping.
+        source_specific_constraints: The DEC VT420 source explicitly says default no autowrap; do not silently substitute an independently
+          configured modern emulator startup default. This is source history, not Howl runtime conformance.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
+      reaffirms: dec_vt240.autowrap
     - id: cursor-key-mode
       section: Keyboard / Cursor Keys Mode, p192
       level: defined
       wire: CSI ? 1 h/l
       rule: DECCKM chooses application versus normal cursor-key input encoding.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1-h-line-913
+        source_line: 913
+        wire: CSI ? 1 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1-l-line-1064
+        source_line: 1064
+        wire: CSI ? 1 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 192; xterm ctlseqs set/reset lines 913/1064
+        selector: 1
+        name: DECCKM
+        set_wire: CSI ? 1 h
+        reset_wire: CSI ? 1 l
+        original_default: normal cursor-key sequences
+        set_effect: Arrow keys send application cursor sequences.
+        reset_effect: Arrow keys send normal ANSI cursor sequences.
+        source_specific_constraints: Input-encoding behavior; not a cursor-movement command and not proof of Host input mapping.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
     - id: app-keypad
       section: Keyboard / Keypad Application and Numeric Modes, p192
       level: defined
       wire: ESC = / ESC >
       rule: DECKPAM and DECKPNM select application or numeric keypad behavior.
+      related_dec_private_mode: dec_vt420.numeric-keypad-mode
+      wire_relation: ESC = and ESC > directly select application/numeric keypad state; CSI ? 66 h/l selects the same state using a DEC-private
+        mode that supports DECRQM/DECRPM. They are distinct valid commands.
     - id: save-cursor
       section: Cursor and Presentation State / DECSC
       level: defined
@@ -2885,6 +3065,37 @@ specifications:
       source_parameters:
         request: dec_vt420.request-ansi-mode
         report_count: One mode per report; do not invent multi-report packing.
+    - id: numeric-keypad-mode
+      section: Chapter 11 / Numeric Keypad Mode (DECNKM), printed pages 193-194
+      level: defined
+      wire: CSI ? 66 h / CSI ? 66 l
+      rule: Sets application versus normal numeric-keypad input encoding. Same keypad state as DECKPAM (ESC =) / DECKPNM (ESC >), but a separate
+        DEC-private mode number that can be queried through DECRQM.
+      related_keyboard_commands:
+      - dec_vt420.app-keypad
+      - dec_vt420.request-mode
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-66-h-line-956
+        source_line: 956
+        wire: CSI ? 66 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-66-l-line-1102
+        source_line: 1102
+        wire: CSI ? 66 l
+      original_mode_semantics:
+        source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 193; xterm ctlseqs set/reset lines 956/1102
+        selector: 66
+        name: DECNKM
+        set_wire: CSI ? 66 h
+        reset_wire: CSI ? 66 l
+        original_default: numeric keypad characters
+        set_effect: Numeric keypad sends application sequences.
+        reset_effect: Numeric keypad sends normal keypad characters.
+        source_specific_constraints: Distinct queryable DEC private mode encoding with the same keypad-state effect as ESC = and ESC >; provided
+          mainly for DECRQM/DECRPM. Do not erase either valid command identity.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
+          side effects, sizing or response semantics.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -4132,18 +4343,10 @@ discovery_catalogues:
       wire: OSC 119 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2254
-    - id: private-mode-1-h-line-913
-      wire: CSI ? 1 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 913
     - id: private-mode-2-h-line-914
       wire: CSI ? 2 h
       section: DEC Private Mode Set (DECSET)
       source_line: 914
-    - id: private-mode-3-h-line-916
-      wire: CSI ? 3 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 916
     - id: private-mode-4-h-line-917
       wire: CSI ? 4 h
       section: DEC Private Mode Set (DECSET)
@@ -4152,14 +4355,6 @@ discovery_catalogues:
       wire: CSI ? 5 h
       section: DEC Private Mode Set (DECSET)
       source_line: 918
-    - id: private-mode-6-h-line-919
-      wire: CSI ? 6 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 919
-    - id: private-mode-7-h-line-920
-      wire: CSI ? 7 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 920
     - id: private-mode-8-h-line-921
       wire: CSI ? 8 h
       section: DEC Private Mode Set (DECSET)
@@ -4192,10 +4387,6 @@ discovery_catalogues:
       wire: CSI ? 19 h
       section: DEC Private Mode Set (DECSET)
       source_line: 931
-    - id: private-mode-25-h-line-933
-      wire: CSI ? 25 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 933
     - id: private-mode-30-h-line-934
       wire: CSI ? 30 h
       section: DEC Private Mode Set (DECSET)
@@ -4264,18 +4455,19 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-66-h-line-956
-      wire: CSI ? 66 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 956
-    - id: private-mode-67-h-line-957
-      wire: CSI ? 67 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 957
     - id: private-mode-69-h-line-959
       wire: CSI ? 69 h
       section: DEC Private Mode Set (DECSET)
       source_line: 959
+      review:
+        classification: similar-mode-purpose-but-original-side-effects-not-yet-reconciled
+        original_source: DEC VT420 Programmer Reference Manual (Feb 1992), printed pages 135-136; DECVSSM, selector 69
+        xterm_source: Pinned xterm ctlseqs line 959; DECLRMM, selector 69
+        shared_purpose: Enable or disable changes to left/right margins via DECSLRM.
+        original_dec_additional_effect: DECVSSM set forces all current session page-memory line attributes to single-width/single-height
+          and suppresses future DECDWL/DECDHL; reset restores page-border margins and permits these line attributes.
+        source_limit: Xterm entry alone confirms margin gating, not these additional line-attribute consequences. Keep this secondary discovery
+          until behavior is independently source-reconciled; do not automatically merge on numeric selector alone.
     - id: private-mode-80-h-line-961
       wire: CSI ? 80 h
       section: DEC Private Mode Set (DECSET)
@@ -4460,18 +4652,10 @@ discovery_catalogues:
       wire: CSI ? 2006 h
       section: DEC Private Mode Set (DECSET)
       source_line: 1039
-    - id: private-mode-1-l-line-1064
-      wire: CSI ? 1 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1064
     - id: private-mode-2-l-line-1065
       wire: CSI ? 2 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1065
-    - id: private-mode-3-l-line-1066
-      wire: CSI ? 3 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1066
     - id: private-mode-4-l-line-1067
       wire: CSI ? 4 l
       section: DEC Private Mode Reset (DECRST)
@@ -4480,14 +4664,6 @@ discovery_catalogues:
       wire: CSI ? 5 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1068
-    - id: private-mode-6-l-line-1069
-      wire: CSI ? 6 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1069
-    - id: private-mode-7-l-line-1070
-      wire: CSI ? 7 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1070
     - id: private-mode-8-l-line-1071
       wire: CSI ? 8 l
       section: DEC Private Mode Reset (DECRST)
@@ -4520,10 +4696,6 @@ discovery_catalogues:
       wire: CSI ? 19 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1080
-    - id: private-mode-25-l-line-1082
-      wire: CSI ? 25 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1082
     - id: private-mode-30-l-line-1083
       wire: CSI ? 30 l
       section: DEC Private Mode Reset (DECRST)
@@ -4588,18 +4760,19 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-66-l-line-1102
-      wire: CSI ? 66 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1102
-    - id: private-mode-67-l-line-1103
-      wire: CSI ? 67 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1103
     - id: private-mode-69-l-line-1105
       wire: CSI ? 69 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1105
+      review:
+        classification: similar-mode-purpose-but-original-side-effects-not-yet-reconciled
+        original_source: DEC VT420 Programmer Reference Manual (Feb 1992), printed pages 135-136; DECVSSM, selector 69
+        xterm_source: Pinned xterm ctlseqs line 1105; DECLRMM, selector 69
+        shared_purpose: Enable or disable changes to left/right margins via DECSLRM.
+        original_dec_additional_effect: DECVSSM set forces all current session page-memory line attributes to single-width/single-height
+          and suppresses future DECDWL/DECDHL; reset restores page-border margins and permits these line attributes.
+        source_limit: Xterm entry alone confirms margin gating, not these additional line-attribute consequences. Keep this secondary discovery
+          until behavior is independently source-reconciled; do not automatically merge on numeric selector alone.
     - id: private-mode-80-l-line-1107
       wire: CSI ? 80 l
       section: DEC Private Mode Reset (DECRST)
