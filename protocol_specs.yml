@@ -46,6 +46,10 @@ policy:
     Never infer FULL from a parser branch, one passing assertion, general build success, or another terminal's behavior. Source-specific
     sizing and ordering are verbatim requirements; do not reinterpret to fit current code. Unassessed capabilities carry no status and are
     not silently counted or excluded.
+  source_census: Originating-source census reopened by Captain, 2026-11-24. Enumerate all pages in each author protocol index, then inventory
+    each normative operation, metadata field, default, limit, reply, ordering, lifetime and linked specification before claiming source
+    closure. Distinguish document presence, clause review and conflict selection. Zero xterm discovery entries is not source completeness.
+    New candidates are untriaged unless explicitly selected. Implementation suspended; see workstream waves/20261124-originating-source-census.
 test_location_mapping:
   legacy_catalogue:
     commit: 3bad29180ac08b486506ffc36c03845f7708eb33
@@ -6026,8 +6030,8 @@ specifications:
       section: Progressive enhancement
       level: defined
       wire: CSI = flags [ ; mode ] u
-      rule: 'Sets, adds or clears the five progressive enhancement flags according to mode: 1 (default) replaces the flags,
-        2 sets specified bits, 3 clears specified bits.'
+      rule: 'Sets, adds or clears the five progressive enhancement flags according to mode: 1 (default) replaces the flags, 2 sets specified
+        bits, 3 clears specified bits.'
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard stack has exact flags depth mutation and replies
@@ -6072,7 +6076,8 @@ specifications:
       section: Progressive enhancement
       level: defined
       wire: CSI > flags u / CSI < count u
-      rule: Pushes or pops keyboard mode flags with bounded per-screen stacks, preserving independent primary/alternate modes.
+      rule: Push omitted flags default0, pop omitted count default1; empty resets flags; full push evicts oldest. Separate primary/alternate
+        stacks; bounded capacity.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard stack has exact flags depth mutation and replies
@@ -6092,6 +6097,7 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard flags stay separate across alternate screen
         relation: protocol-family
+      source_locator: docs/keyboard-protocol.rst:321-340
     - id: disambiguate
       section: Disambiguate escape codes
       level: defined
@@ -6224,6 +6230,24 @@ specifications:
       - file: howl-vt/src/input.zig
         test: legacy shift identity ignores num lock
         relation: protocol-family
+    - id: event-envelope
+      section: docs/keyboard-protocol.rst:125-146
+      level: defined
+      wire: CSI unicode-key[:alternate-keys] [ ; modifiers[:event-type] [ ; text-codepoints ] ] u
+      rule: Decimal fields semicolon separated, subfields colon separated; only primary key mandatory. Text vs encoded event depends on
+        progressive flags.
+    - id: modifier-mask
+      section: docs/keyboard-protocol.rst:186-219
+      level: defined
+      wire: modifier-field = 1 + bitmask
+      rule: Shift1 Alt2 Ctrl4 Super8 Hyper16 Meta32 CapsLock64 NumLock128; omitted defaults1. Actual modifier state includes current press/release
+        and other side still pressed.
+    - id: feature-detection
+      section: docs/keyboard-protocol.rst:441-458
+      level: defined
+      wire: CSI ? u followed by CSI c
+      rule: DA1 after enhancement query for detection; set desired flags then query current flags for supported subset. Source strongly
+        encourages complete enhancements.
   kitty_graphics:
     title: Kitty terminal graphics protocol
     author: Kovid Goyal / kitty
@@ -6485,6 +6509,72 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.graphics.feature_query
+    - id: direct-chunks
+      section: docs/graphics-protocol.rst:470-495
+      level: defined
+      wire: APC G ... ,m=1 ; base64 ST / APC G m=0 ; base64 ST
+      rule: Encoded chunks <=4096 bytes; nonfinal multiple of four; subsequent chunks only m and optional q, plus a=f for animation frames.
+        Finish before other graphics commands; final-chunk cursor used, no display before validation.
+    - id: feature-query
+      section: docs/graphics-protocol.rst:548-609
+      level: defined
+      wire: APC G a=q,i=id,e=action[,keys] ST / APC G i=id[,e=action,supported-keys] ; OK ST
+      rule: No data or state effect, including active transfer. Echo supported nondefault action-specific values; absent e means action
+        unsupported. Exclude a,i,I,m,q from feature field list (i response identity). e only in query; i required. DA1 ordering.
+    - id: image-number
+      section: docs/graphics-protocol.rst:967-996
+      level: defined
+      wire: APC G a=t|T,I=number ; data ST / APC G i=id,I=number ; OK ST
+      rule: Nonunique image number requests unique terminal-assigned id; later I selects newest matching image. Both i and I in request
+        EINVAL unless silenced.
+    - id: placement-identity
+      section: docs/graphics-protocol.rst:635-660
+      level: defined
+      wire: APC G a=p,i=id,p=placement ST
+      rule: Nonzero image/placement pair identifies replacement; p=0 or omitted allows multiple placements; p ignored for id=0. Retransmitting
+        explicit image id deletes old data and all placements.
+    - id: placement-layout
+      section: docs/graphics-protocol.rst:667-688
+      level: defined
+      wire: APC G a=p,x=...,y=...,w=...,h=...,X=...,Y=...,c=...,r=... ST
+      rule: Source crop intersection; X/Y offsets smaller than cell. c/r destination cell counts, one missing preserves aspect ratio,
+        both letterbox/pillarbox. Offsets not added to counts.
+    - id: placement-z-order
+      section: docs/graphics-protocol.rst:690-698
+      level: defined
+      wire: APC G a=p,z=signed-index ST
+      rule: Negative z below text; below -1073741824 below nondefault backgrounds. Equal z lower image id below higher; same z and id
+        undefined.
+    - id: placement-cursor-policy
+      section: docs/graphics-protocol.rst:700-710
+      level: defined
+      wire: APC G a=p|T,C=1 ... ST
+      rule: Default cursor moves right placement columns and down rows; out-of-screen/region implementation-defined. C=1 suppresses movement.
+    - id: delete-selectors
+      section: docs/graphics-protocol.rst:907-952
+      level: defined
+      wire: APC G a=d[,d=a|A|i|I|n|N|c|C|f|F|p|P|q|Q|r|R|x|X|y|Y|z|Z] ST
+      rule: Selectors distinguish visible placements, image id/latest number and optional placement, cursor, animation frame, cell, cell+z,
+        inclusive id range, column,row,z. Cells one-based; uppercase permits reclamation if unreferenced; any delete aborts unfinished
+        upload.
+    - id: file-read-privacy
+      section: docs/graphics-protocol.rst:388-443
+      level: defined
+      wire: APC G t=f|t|s[,S=size,O=offset] ; base64-name ST
+      rule: Regular files only; bounded symlink resolution; pre-open reject special files. Temporary deletion restricted to known directory
+        and protocol filename. POSIX SHM names passed unchanged incl no leading slash, read/unlink/close; Windows close. File-read failures
+        indistinguishable to client.
+    - id: usage-hints
+      section: docs/graphics-protocol.rst:1001-1017
+      level: defined
+      wire: APC G a=t|T|f,N=bitmask ... ST
+      rule: N bit1 transient hint, may ignore; caching/eviction, propagates through frame composition, no placement effect.
+    - id: terminal-interaction
+      section: docs/graphics-protocol.rst:1320-1337
+      level: defined
+      wire: RIS / ED 2 / DECSET 1049 / scrolling
+      rule: Reset clears visible images; 1049 entry clears alternate images. ED2 should clear images; other text erases must not. Scroll
+        images with text; margin index scroll only images wholly inside region, clipping boundary.
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
@@ -6552,6 +6642,35 @@ specifications:
       level: defined
       wire: id=...
       rule: Response metadata preserves the sanitized request id so a multiplexer can route responses.
+    - id: mime-alias
+      section: docs/clipboard.rst:162-173
+      level: defined
+      wire: OSC 5522 ; type=walias:mime=base64-target ; base64-alias-list ST
+      rule: Space-separated MIME aliases share already transmitted target data; between initial write and end-of-data.
+    - id: base64-admission
+      section: docs/clipboard.rst:23-45
+      level: defined
+      wire: OSC 5522 Base64 payload / mime / name / pw
+      rule: Standard padded Base64; no silent discard invalid characters. Invalid write EINVAL abort, invalid read ignored. wdata padding
+        applies to concatenation for one MIME.
+    - id: read-response
+      section: docs/clipboard.rst:47-102
+      level: defined
+      wire: OSC 5522 ; type=read:status=OK|DATA|DONE[:mime=base64] [ ; base64 ] ST
+      rule: loc=primary optional; Base64 period queries MIME list. OK then sequential MIME DATA chunks <=4096 decoded bytes each padded
+        as needed; DONE. Errors ENOSYS/EPERM/EBUSY instead of OK. Listing should not prompt.
+    - id: write-data
+      section: docs/clipboard.rst:105-160
+      level: defined
+      wire: OSC 5522 ; type=wdata:mime=base64 ; base64 ST / OSC 5522 ; type=wdata ST
+      rule: Sequential chunks per MIME after type=write; <=4096 decoded bytes; no MIME/data ends, DONE reply. EIO/EINVAL/ENOSYS/EPERM/EBUSY/EFBIG
+        abort and discard, ignore until next write. Source minimum acceptance64MB.
+    - id: paste-password
+      section: docs/clipboard.rst:200-221,264-266
+      level: defined
+      wire: DECSET 5522 unsolicited paste-event MIME list
+      rule: One-time Base64 pw recommended with name Paste event; unsolicited event no mux id. Exact event wire requires linked ancillary
+        specification.
   kitty_color:
     title: Kitty color control and color stack
     author: Kovid Goyal / kitty
@@ -6604,6 +6723,34 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.kitty_color
+    - id: named-slots
+      section: docs/color-stack.rst:58-82
+      level: defined
+      wire: OSC 21 ; key=value ST
+      rule: Palette0..255, foreground/background, selection_background/foreground,cursor/cursor_text,visual_bell,transparent_background_color1..7.
+        Palette cannot be dynamic; other dynamic meanings advisory.
+    - id: reset-dynamic
+      section: docs/color-stack.rst:124-147
+      level: defined
+      wire: OSC 21 ; key / key= / key=value / key=? (BEL | ST)
+      rule: Bare key restores configured default; key= dynamic/unset; explicit value sets; ordered set/query may coexist.
+    - id: unknown-query-field
+      section: docs/color-stack.rst:106-121
+      level: defined
+      wire: OSC 21 ; unknown=unpadded-base64(field-name) ST
+      rule: One encoded unknown-name field per unknown requested field, in request order; no verbatim echo or padding.
+    - id: color-encoding
+      section: docs/color-stack.rst:152-180
+      level: defined
+      wire: 'rgb:R/G/B / #RGB... / rgbi:r/g/b'
+      rule: rgb components1..4 hex digits scaled by precision; hash forms3/6/9/12 digits specify MSBs of 16-bit components, not replication.
+        rgbi floats with optional sign/exponent clipped [0,1].
+    - id: alpha
+      section: docs/color-stack.rst:72-76,182-191
+      level: defined
+      wire: color@alpha
+      rule: Default1; clip to [0,1], negative context-specific meaning (transparent-background slot uses configured opacity). Source example
+        rgb:ff0000@0.1 differs from slash grammar; preserve ambiguity.
   kitty_notification:
     title: Kitty desktop notifications (OSC 99)
     author: Kovid Goyal / kitty
@@ -6633,7 +6780,9 @@ specifications:
       section: Desktop notifications
       level: defined
       wire: i=notification-id d=0|1
-      rule: Multiple chunks with one id form a pending notification; the completion flag commits it.
+      rule: i identifies pending notification; d=0 holds,1/default completes. Concatenate title/body chunks; raw payload <=2048 bytes
+        before encoding or <=4096 encoded bytes. Encoding before/after chunking supported with stated padding rules.
+      source_locator: docs/desktop-notifications.rst:52-69,513-523
     - id: title-body
       section: Desktop notifications
       level: defined
@@ -6642,18 +6791,78 @@ specifications:
     - id: activation
       section: Being informed when user activates the notification
       level: defined
-      wire: activation-report fields
-      rule: A program can request host feedback when the user activates a notification.
+      wire: OSC 99 ; a=report[,focus] ; payload ST / OSC 99 ; i=id ; ST
+      rule: Default focus action; report requests client activation feedback; negative action disables it (a=-focus). Reply id0 when omitted.
+        Ignore unknown metadata keys; unknown values best effort or discard notification.
+      source_locator: docs/desktop-notifications.rst:102-130
     - id: close
       section: Updating or closing an existing notification
       level: defined
-      wire: notification identity / close
-      rule: An identified notification can be updated or explicitly retired using the prescribed metadata.
+      wire: OSC 99 ; i=id ; notification-payload ST / OSC 99 ; i=id:p=close ; ST
+      rule: Same id updates still displayed notification or creates new if gone. Absent i always distinct; closing nonexistent id or without
+        i is no-op.
+      source_locator: docs/desktop-notifications.rst:175-198
     - id: query
       section: Querying for support
       level: defined
-      wire: OSC 99 feature query
-      rule: Negotiates the subset of notification features the host offers.
+      wire: OSC 99 ; i=id:p=? ; ST / OSC 99 ; i=id:p=? ; capabilities ST
+      rule: Echo query i; supported a,c,o,p,s,u,w keys; omit unsupported actions/urgency, default o=always, p includes title; c=1 close
+        support, w=1 expiry support. DA1 ordering.
+      source_locator: docs/desktop-notifications.rst:367-424
+    - id: filtering
+      section: docs/desktop-notifications.rst:71-94,449-485
+      level: defined
+      wire: OSC 99 ; f=app:t=type[:t=type] ST
+      rule: Base64 UTF-8 app name and repeatable type/category for filtering; payload framing per envelope.
+    - id: close-report
+      section: docs/desktop-notifications.rst:133-160
+      level: defined
+      wire: OSC 99 ; i=id:c=1 ; payload ST / OSC 99 ; i=id:p=close ; [untracked] ST
+      rule: Close feedback; id0 if absent; untracked if platform cannot know closure; activation+close both when requested; update renews
+        close request.
+    - id: alive-query
+      section: docs/desktop-notifications.rst:161-172
+      level: defined
+      wire: OSC 99 ; i=id:p=alive ; ST / OSC 99 ; i=id:p=alive ; comma-separated-ids ST
+      rule: Poll live notifications with echoed correlation id.
+    - id: expiry
+      section: docs/desktop-notifications.rst:201-214
+      level: defined
+      wire: OSC 99 ; w=milliseconds ; payload ST
+      rule: -1 default OS policy; 0 best-effort never expire; positive ms guarantees closed by deadline, possibly earlier.
+    - id: icon-name
+      section: docs/desktop-notifications.rst:217-260
+      level: defined
+      wire: OSC 99 ; n=base64-name[:n=base64-name] ; payload ST
+      rule: Try names in order; standard symbol names required; app name fallback when icon absent.
+    - id: icon-data-cache
+      section: docs/desktop-notifications.rst:262-299
+      level: defined
+      wire: OSC 99 ; p=icon:e=1:g=id ; base64-image ST
+      rule: PNG/JPEG/GIF, recommended256x256; named icon precedence. g cache id independent of notification id, process lifetime bounded
+        eviction; mux recaches on reattach.
+    - id: buttons
+      section: docs/desktop-notifications.rst:303-324
+      level: defined
+      wire: OSC 99 ; p=buttons ; labels ST / OSC 99 ; i=id ; button-number ST
+      rule: Labels UTF-8 separated U+2028 or Base64; a=report returns one-based button, empty ordinary activation; no reply absent report
+        request.
+    - id: sound
+      section: docs/desktop-notifications.rst:336-364
+      level: defined
+      wire: OSC 99 ; s=base64-name ; payload ST
+      rule: Default system; silent suppresses sound; standard names system,silent,error,warn/warning,info,question; support query.
+    - id: occasion-urgency
+      section: docs/desktop-notifications.rst:465-491
+      level: defined
+      wire: OSC 99 ; o=always|unfocused|invisible:u=0|1|2 ; payload ST
+      rule: Default always; unfocused lacks keyboard focus; invisible also not shown. Urgency low/normal/critical, normal default.
+    - id: safe-values
+      section: docs/desktop-notifications.rst:513-554
+      level: defined
+      wire: OSC 99 metadata and payload encodings
+      rule: Safe UTF-8 excludes U+0000..001F, DEL,U+0080..009F; identifier ASCII letters/digits/_/-/+/.; reject or strip invalid chars
+        before echo; Base64 padding depends on chunking stage.
   kitty_text_size:
     title: Kitty text sizing protocol (OSC 66)
     author: Kovid Goyal / kitty
@@ -6665,8 +6874,8 @@ specifications:
     - id: envelope
       section: The escape code
       level: defined
-      wire: OSC 66 ; metadata ; safe-UTF8-text ST
-      rule: Accepts at most 4096 bytes of escape-safe UTF-8 text per command with bounded colon-separated sizing metadata.
+      wire: OSC 66 ; metadata ; text (BEL | ST)
+      rule: Colon-separated metadata and escape-safe UTF-8 text <=4096 bytes per command, longer strings split. BEL or ESC backslash terminator.
       test_locations:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically
@@ -6676,11 +6885,13 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 malformed and overlong cell text preserve terminal state
         relation: protocol-family
+      source_locator: docs/text-sizing-protocol.rst:49-82
     - id: scale
       section: How it works
       level: defined
       wire: s=1..7 w=0..7
-      rule: Reserves an explicitly sized group of terminal cells and renders the supplied text at the requested scale and width.
+      rule: s=1..7 default1; w=0..7 default0. Nonzero w reserves s*w columns by s rows for whole command text; zero uses normal text segmentation
+        and scales cells.
       test_locations:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically
@@ -6690,17 +6901,20 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 malformed and overlong cell text preserve terminal state
         relation: protocol-family
+      source_locator: docs/text-sizing-protocol.rst:69-74,85-145
     - id: fraction
       section: Fractional scaling
       level: defined
       wire: n numerator d denominator
-      rule: Uses validated fractional scaling and alignment metadata, with nonzero denominator larger than numerator.
+      rule: n,d=0..15 defaults0; nonzero d>n. Fraction changes rendering not cell occupancy. v=0 top,1 bottom,2 center; h=0 left,1 right,2
+        center; only with n<d.
       test_locations:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically
         relation: protocol-family
         legacy_records:
         - kitty.osc.text_size
+      source_locator: docs/text-sizing-protocol.rst:76-82,147-176
     - id: editing
       section: Wrapping and overwriting behavior
       level: defined
@@ -6728,8 +6942,60 @@ specifications:
     - id: detection
       section: Detecting if the terminal supports this protocol
       level: defined
-      wire: text-size feature probe
-      rule: Clients can discover whether OSC 66 sizing can be interpreted.
+      wire: CR ; CSI 6 n ; OSC 66 ; w=2 ; space BEL ; CSI 6 n ; OSC 66 ; s=2 ; space BEL ; CSI 6 n
+      rule: CPR before and after w=2 space and s=2 space; unchanged unsupported, respective +2 advance indicates width and scale support.
+      source_locator: docs/text-sizing-protocol.rst:257-271
+    - id: cursor-interaction
+      section: docs/text-sizing-protocol.rst:282-296
+      level: defined
+      wire: ordinary cursor controls / OSC 66
+      rule: Single-cell cursor motion includes multicell interior; creation advances s*w on same row. Cursor presentation covering complete
+        block recommended.
+    - id: horizontal-edits
+      section: docs/text-sizing-protocol.rst:307-325
+      level: defined
+      wire: CSI Pn @ / CSI Pn P / CSI Pn X with multicell text
+      rule: ICH/DCH erase multiline clusters intersecting affected row suffix and single-row clusters split at edit boundaries; ECH erases
+        whole intersecting clusters.
+    - id: display-line-edits
+      section: docs/text-sizing-protocol.rst:327-348
+      level: defined
+      wire: CSI Ps J / CSI Ps K / CSI Pn L / CSI Pn M with multicell text
+      rule: ED/EL erase intersecting clusters; ED22 first archives screen including clusters. IL removes clusters split at insertion or
+        bottom edge; DL removes clusters intersecting deleted rows.
+    - id: wrap-size
+      section: docs/text-sizing-protocol.rst:219-232
+      level: defined
+      wire: OSC 66 / DECAWM / resize
+      rule: Discard multicell block larger than screen in either dimension, including after resize. With wrap enabled move to next line
+        if width does not fit; without wrap move cursor back enough to fit before drawing.
+    - id: overwrite-order
+      section: docs/text-sizing-protocol.rst:234-253
+      level: defined
+      wire: text / OSC 66 intersecting multicell block
+      rule: 'Priority: combining attaches to existing block; top-left overwrite erases entire block; other top-row overwrite replaces
+        entire block by spaces; later-row overwrite skips past occupied cells before writing independently of DECAWM.'
+    - id: segmentation
+      section: docs/text-sizing-protocol.rst:353-425
+      level: defined
+      wire: UTF-8 stream to cell clusters
+      rule: 'Unicode17-based evolving algorithm: replace each maximal ill-formed UTF-8 subpart with U+FFFD, handle ASCII controls first,
+        discard NUL and invalid Cc/Cs/noncharacters; previous cell includes prior wrapped line if no line break. UAX29 boundary determines
+        append/new cell; zero-width attaches to previous even at boundary, discarded without previous. Nonzero SpacingMark U+0E33/U+0EB3
+        can widen prior single unscaled implicit-width cell. Exact algorithm dependency remains to qualify.'
+    - id: scalar-width
+      section: docs/text-sizing-protocol.rst:426-461
+      level: defined
+      wire: Unicode scalar width calculation
+      rule: 'Priority: regional indicators width2; EAW W/F and specified CJK ranges unless A width2; Basic_Emoji excluding FE0F-required
+        sequences and leading modifier/tag/flag codepoints width2; M/Cf and emoji modifiers width0; other width1. Exact ranges and pinned
+        Unicode data dependency still require enumeration.'
+    - id: variation-selectors
+      section: docs/text-sizing-protocol.rst:465-496
+      level: defined
+      wire: U+FE0E / U+FE0F
+      rule: Implicit-width emoji shrink2->1 for VS15 under Basic_Emoji rule; VS16 grows eligible single unscaled cell1->2. Explicit w
+        never resized by selectors or spacing marks. Wrapped wide emoji narrowed by VS15 does not move back to previous line.
   kitty_pointer:
     title: Kitty mouse pointer shape control
     author: Kovid Goyal / kitty
@@ -6743,13 +7009,13 @@ specifications:
       level: defined
       wire: OSC 22 ; [=]shape ST
       rule: Requests the documented mouse pointer shape by name.
-      exact_source_semantics: Optional = or no leader followed by one portable shape name; empty payload resets to terminal-selected
-        default. The original xterm shape names may be provided as aliases, not required by Kitty.
+      exact_source_semantics: Optional = or no leader followed by one portable shape name; empty payload resets to terminal-selected default.
+        The original xterm shape names may be provided as aliases, not required by Kitty.
       pinned_source_observation:
         revision: a79f376b85fd95e3dfd0589877123996bacd4184
         location: kitty/window.py:3120-3135; kitty/screen.c:2441-2548
-        behavior: Set replaces top or initializes it, empty selects INVALID_POINTER at top; unknown names raise KeyError and
-          are ignored; code also iterates comma-separated set items, beyond singular prose.
+        behavior: Set replaces top or initializes it, empty selects INVALID_POINTER at top; unknown names raise KeyError and are ignored;
+          code also iterates comma-separated set items, beyond singular prose.
       accepted_reconciliations:
       - osc22-pointer-reset-invalid-profile
       test_locations:
@@ -6767,10 +7033,11 @@ specifications:
       section: Pushing and popping shapes onto the stack
       level: defined
       wire: OSC 22 ; >names / < ST
-      rule: Push/pop requested pointer shapes; implementations choose a bound but support at least 16 stack entries.
-      exact_source_semantics: Push comma-separated names in order, last is current; evict bottom when full, minimum supported
-        depth 16. Pop exactly one, ignore suffix names; empty pops inert. Main and alternate stacks independent; terminal reset
-        clears both. Mouse reporting independent; host may override for selection/hyperlink hover.
+      rule: Push all listed names in order, last is top/current; evict bottom when full, capacity >=16. Pop one, ignore name list; empty
+        pop no-op, empty stack leaves host free to choose shape.
+      exact_source_semantics: Push comma-separated names in order, last is current; evict bottom when full, minimum supported depth 16.
+        Pop exactly one, ignore suffix names; empty pops inert. Main and alternate stacks independent; terminal reset clears both. Mouse
+        reporting independent; host may override for selection/hyperlink hover.
       pinned_source_observation:
         revision: a79f376b85fd95e3dfd0589877123996bacd4184
         location: kitty/screen.h:228-230; kitty/screen.c:226-227,2381-2384,2441-2548; kitty/window.py:3120-3135
@@ -6788,14 +7055,16 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.pointer
+      source_locator: docs/pointer-shapes.rst:46-65
     - id: query
       section: Querying support
       level: defined
-      wire: OSC 22 ; ?shape[,shape] ST
-      rule: Reports current pointer shape or supported names using the documented response vocabulary.
-      exact_source_semantics: OSC 22 reply, same order as comma-separated names. Supported 1, unsupported 0; __current__ reports
-        selected name or 0, __default__ and __grabbed__ report configured shapes. Names consist of a-z, 0-9, underscore and
-        hyphen. Original required portable names in source table.
+      wire: OSC 22 ; ?name[,name] ST / OSC 22 ; result[,result] ST
+      rule: Return 1/0 per requested ordinary name. __current__ returns current name or 0 if empty; __default__ returns default name;
+        __grabbed__ returns shape used when grabbed.
+      exact_source_semantics: OSC 22 reply, same order as comma-separated names. Supported 1, unsupported 0; __current__ reports selected
+        name or 0, __default__ and __grabbed__ report configured shapes. Names consist of a-z, 0-9, underscore and hyphen. Original required
+        portable names in source table.
       required_names:
       - alias
       - cell
@@ -6844,6 +7113,19 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.pointer
+      source_locator: docs/pointer-shapes.rst:69-104
+    - id: shape-roster
+      section: docs/pointer-shapes.rst:128-173
+      level: defined
+      wire: OSC 22 ; shape ST
+      rule: 'Required CSS-based names: alias,cell,copy,crosshair,default,e-resize,ew-resize,grab,grabbing,help,move,n-resize,ne-resize,nesw-resize,no-drop,not-allowed,ns-resize,nw-resize,nwse-resize,pointer,progress,s-resize,se-resize,sw-resize,text,vertical-text,w-resize,wait,zoom-in,zoom-out.
+        Valid characters a-z0-9_-. Optional legacy X11 aliases.'
+    - id: state-interaction
+      section: docs/pointer-shapes.rst:107-124
+      level: defined
+      wire: OSC 22 / screen switch / reset / mouse reporting
+      rule: Separate stacks main and alternate; reset empties both. Independent of mouse reporting. Selection dragging and hyperlink hovering
+        may override shape.
   kitty_multi_cursor:
     title: Kitty multiple cursors protocol
     author: Kovid Goyal / kitty
@@ -6855,14 +7137,16 @@ specifications:
     - id: syntax
       section: Quickstart
       level: defined
-      wire: CSI > shape ; position ... SP q
-      rule: Sets extra cursor shapes on declared cell points or rectangles.
+      wire: 'CSI > SHAPE ; TYPE : COORDINATES [ ; TYPE : COORDINATES ... ] SP q'
+      rule: Shape0 none,1 block,2 beam,3 underline,29 follow main; group0 main position,2 y:x pairs one-based,4 inclusive top:left:bottom:right
+        rectangles, no coords full screen. Repeat groups.
       test_locations:
       - file: howl-vt/test/unit/terminal_cursor_test.zig
         test: 'terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops'
         relation: wire-family
         legacy_records:
         - kitty.csi.multi_cursor
+      source_locator: docs/multiple-cursors-protocol.rst:29-82
     - id: clipping
       section: Quickstart
       level: must
@@ -6871,18 +7155,38 @@ specifications:
     - id: detection
       section: Querying for support
       level: defined
-      wire: multiple cursor support query
-      rule: Reports whether the extra-cursor feature and relevant shapes are available.
+      wire: CSI > SP q / CSI > supported-operations SP q
+      rule: Reply supported subset of 1,2,3,29,30,40,100,101; empty list unsupported. FIFO DA1 ordering.
+      source_locator: docs/multiple-cursors-protocol.rst:84-106
     - id: clear
       section: Clearing previously set multi-cursors
       level: defined
-      wire: extra cursor clear request
-      rule: Removes extra cursor positions without altering the ordinary primary cursor.
+      wire: CSI > 0 ; 4 SP q
+      rule: Shape0 clears selected cells; type4 with no coordinates clears all.
+      source_locator: docs/multiple-cursors-protocol.rst:108-119
     - id: color
       section: Changing the color of extra cursors
       level: defined
-      wire: extra cursor color control
-      rule: Allows optional extra cursor color and text-under-cursor color.
+      wire: CSI > 30|40 ; colorspace[:parameters] SP q
+      rule: Shared pair:30 text,40 cursor; space0 main cursor,1 special reverse,2 RGB triplet,5 indexed. Special cursor color overrides
+        text; special text alone uses cell background.
+      source_locator: docs/multiple-cursors-protocol.rst:123-164
+    - id: query-cursors
+      section: docs/multiple-cursors-protocol.rst:166-186
+      level: defined
+      wire: CSI > 100 SP q / CSI > 100 [ ; shape:type:coordinates ... ] SP q
+      rule: One response with all active shapes/positions; empty no blocks. FIFO.
+    - id: query-colors
+      section: docs/multiple-cursors-protocol.rst:188-202
+      level: defined
+      wire: CSI > 101 SP q / CSI > 101 ; 30:colorspace:params ; 40:colorspace:params SP q
+      rule: One response with both color specs; parameter count determined by color space.
+    - id: lifetime
+      section: docs/multiple-cursors-protocol.rst:205-235
+      level: defined
+      wire: ED 2/3/22 / RIS / alternate switch / IND / RI
+      rule: Clear extra cursors on specified ED/reset/bank switch; scroll leaves screen positions fixed. Main visibility not controlling
+        extras; opacity/blink follow main, color controls separately defined.
   kitty_unscroll:
     title: Kitty unscroll extension to SD
     author: Kovid Goyal / kitty
@@ -7294,8 +7598,8 @@ specifications:
     revision: second edition, February 1992, EK-VT420-RM.002
     url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
     snapshot_sha256: 6edca845f10c8fc10be87f111d0ad95130d6aa15a09de578bbb8d5133511ecd2
-    scope: Original DEC VT400 operations; existing ECMA-48 functions are not redefined here. Includes selected original mode,
-      keypad, geometry, report, presentation-state and UDK families.
+    scope: Original DEC VT400 operations; existing ECMA-48 functions are not redefined here. Includes selected original mode, keypad,
+      geometry, report, presentation-state and UDK families.
     clauses:
     - id: column-mode
       section: Page Memory / Selecting 80 or 132 Columns, p130
@@ -7323,8 +7627,8 @@ specifications:
         source_specific_constraints: On a change, original VT420 resets all scrolling margins, erases all page-memory data, disables DECVSSM
           and clears a host-writable status line. The DEC manual recommends DECSCPP instead for applications requiring content preservation.
           Current Howl host-geometry consequences are not inferred.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
       reset_mode_on_change: dec_vt420.vertical-split-screen-mode
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
@@ -7346,11 +7650,10 @@ specifications:
       original_parameters:
         source: VT420 Programmer Reference Manual (Feb 1992), page 133
         gate: DECVSSM (CSI ? 69 h); xterm names this setting DECLRMM
-        constraints: Pl defaults to 1; Pr defaults to current page width (80 or 132 in original). Pl must be less than Pr; region
-          width at least 2 columns and at most the page width.
+        constraints: Pl defaults to 1; Pr defaults to current page width (80 or 132 in original). Pl must be less than Pr; region width
+          at least 2 columns and at most the page width.
         effect: Sets horizontal scrolling margins and homes cursor to row 1, column 1 of the page.
-        xterm_context: Source line 1586 admits DECSLRM only when DECLRMM mode is enabled; the implementation is not assumed
-          source-complete.
+        xterm_context: Source line 1586 admits DECSLRM only when DECLRMM mode is enabled; the implementation is not assumed source-complete.
       requires_mode: dec_vt420.vertical-split-screen-mode
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
@@ -7378,8 +7681,8 @@ specifications:
         source: Original DEC VT420 Programmer Reference Manual, Chapter 6, printed page 134; xterm ctlseqs line 1560
         original_notation: 'CSI Pt ; Pb r: Pt top (default=1), Pb bottom (default=current lines per screen).'
         requirements: Pt must be less than Pb; region cannot exceed page; cursor homes to page row=1, column=1.
-        xterm_wording: CSI Ps ; Ps r and default full window; this is the same top/bottom region command but does not license ignoring page
-          constraints.
+        xterm_wording: CSI Ps ; Ps r and default full window; this is the same top/bottom region command but does not license ignoring
+          page constraints.
       reaffirms: dec_vt240.stbm
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
@@ -7422,8 +7725,8 @@ specifications:
         reset_effect: Addressing uses page origin, independent of scrolling margins.
         source_specific_constraints: The original defines home relative to margins when set and page when reset. Do not conflate the page
           coordinate system with VT scrollback.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
       reaffirms: dec_vt240.origin
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
@@ -7592,11 +7895,11 @@ specifications:
       original_parameters:
         source: VT420 Programmer Reference Manual (Feb 1992), pages 161-162
         fields: Source top/left/bottom/right/page and destination top/left/page; omitted page numbers default to 1.
-        limits: Coordinates are affected by DECOM and bounded to the page; inaccessible page indexes clamp to the last available page; off-page
-          destination is clipped.
+        limits: Coordinates are affected by DECOM and bounded to the page; inaccessible page indexes clamp to the last available page;
+          off-page destination is clipped.
         effect: Copies characters and visual attributes, taking destination line attributes; does not move cursor.
-        source_note: The printed notes have an inconsistent reversed-border inequality relative to the parameter constraints. Preserve the
-          literal source; resolve before implementation-target FULL proof.
+        source_note: The printed notes have an inconsistent reversed-border inequality relative to the parameter constraints. Preserve
+          the literal source; resolve before implementation-target FULL proof.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: DECCRA preserves cursor and overlapping source bytes'
@@ -7714,10 +8017,9 @@ specifications:
         attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the
           original default selector is 0.
         region_defaults: Top=1, left=1, bottom=last active-page line, right=last active-page column.
-        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular
-          operation.
-        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition;
-          DECSACE controls stream-versus-rectangle extent.
+        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular operation.
+        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition; DECSACE
+          controls stream-versus-rectangle extent.
         original_selectors:
           '0': reset visual attributes
           '1': bold on
@@ -7751,8 +8053,8 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rectangle attribute defaults distinguish change from reverse'
         relation: protocol-family
-        note: Updated for superseding shared-SGR reset selection; omitted admission retained, full reset now replaces original-four-only
-          expectation.
+        note: 'Originating Kitty corrected expectation: coordinate-only no-op, bare and explicit-zero reset. Historical RED repaired;
+          VT Debug 1129/1129. Narrow proof, not whole-family conformance.'
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
         relation: protocol-family
@@ -7768,6 +8070,7 @@ specifications:
       accepted_reconciliations:
       - deccara-omitted-selector-default
       - kitty-deccara-shared-sgr-rendition
+      - kitty-deccara-coordinate-only-no-op
     - id: attr-reverse-rect
       section: Rectangular Area Operations / Reverse Attributes in Rectangular Area, p169
       level: defined
@@ -7782,13 +8085,12 @@ specifications:
         source: Original DEC VT420 Programmer Reference Manual, Chapter 9, printed pages 169-171
         original_notation: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ t
         xterm_notation: CSI Pt ; Pl ; Pb ; Pr ; Pm $ t; Pm means an ordered list of SGR attributes.
-        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the
-          original default selector is 0.
+        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the original
+          default selector is 0.
         region_defaults: Top=1, left=1, bottom=last active-page line, right=last active-page column.
-        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular
-          operation.
-        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition;
-          DECSACE controls stream-versus-rectangle extent.
+        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular operation.
+        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition; DECSACE controls
+          stream-versus-rectangle extent.
         original_selectors:
           '0': reverse all original visual attributes
           '1': toggle bold
@@ -7798,8 +8100,8 @@ specifications:
         xterm_extension:
           '8': toggle conceal / invisible
           scope: xterm-specific addition, not in the original DEC VT420 selector table
-        source_note: The printed DECRARA description labels the left-column default as Pr=1 instead of Pl=1; preserve the literal
-          source typo and compare the DECCARA description before any FULL claim.
+        source_note: The printed DECRARA description labels the left-column default as Pr=1 instead of Pl=1; preserve the literal source
+          typo and compare the DECCARA description before any FULL claim.
         selector_default: '0: reverse all visual attributes'
       test_locations:
       - file: howl-vt/src/screen/main_test.zig
@@ -7841,8 +8143,8 @@ specifications:
         set_effect: Make the text cursor visible.
         reset_effect: Make the text cursor invisible.
         source_specific_constraints: Cursor presentation state, not grid text mutation; renderer/host presentation conformance is separate.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm screen and cursor property changes have no host veto in native mode policy
@@ -7910,10 +8212,10 @@ specifications:
         original_default: backarrow sends DEL (0x7F)
         set_effect: Backarrow key sends BS (0x08).
         reset_effect: Backarrow key sends DEL (0x7F).
-        source_specific_constraints: Original DEC recommends reset for software compatibility. Key events and input encoding are owned by
-          the host input boundary; PTY only transports bytes. Neither is proven by this source inventory.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        source_specific_constraints: Original DEC recommends reset for software compatibility. Key events and input encoding are owned
+          by the host input boundary; PTY only transports bytes. Neither is proven by this source inventory.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
     - id: autowrap
       section: Keyboard / Autowrap Mode, p191
       level: defined
@@ -7939,8 +8241,8 @@ specifications:
         reset_effect: At the right page border, subsequent graphics replace the border cell rather than wrapping.
         source_specific_constraints: The DEC VT420 source explicitly says default no autowrap; do not silently substitute an independently
           configured modern emulator startup default. This is source history, not Howl runtime conformance.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
       reaffirms: dec_vt240.autowrap
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
@@ -7978,8 +8280,8 @@ specifications:
         set_effect: Arrow keys send application cursor sequences.
         reset_effect: Arrow keys send normal ANSI cursor sequences.
         source_specific_constraints: Input-encoding behavior; not a cursor-movement command and not proof of Host input mapping.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm DECCKM keeps global key mode and exact phantom across both banks
@@ -7993,16 +8295,15 @@ specifications:
         - iterm2.mode.decckm
         - kitty.mode.decckm
     - id: app-keypad
-      section: Chapter 11 / Keypad Application and Numeric Modes, printed pp.192-193; DEC VT100 Tables 3-7/3-8, transcribed
-        PDF pp.121-122
+      section: Chapter 11 / Keypad Application and Numeric Modes, printed pp.192-193; DEC VT100 Tables 3-7/3-8, transcribed PDF pp.121-122
       level: defined
       wire: ESC = / ESC >
-      rule: DECKPAM selects application sequences, DECKPNM selects numeric keypad characters; VT420 resets/powers up in numeric
-        mode. PF1..PF4 send application sequences in either mode. Original VT100 ANSI and VT52 keypad tables define distinct
-        prefix encodings, not a claim that a modern PC keypad has the same mapping.
+      rule: DECKPAM selects application sequences, DECKPNM selects numeric keypad characters; VT420 resets/powers up in numeric mode.
+        PF1..PF4 send application sequences in either mode. Original VT100 ANSI and VT52 keypad tables define distinct prefix encodings,
+        not a claim that a modern PC keypad has the same mapping.
       related_dec_private_mode: dec_vt420.numeric-keypad-mode
-      wire_relation: ESC = and ESC > directly select application/numeric keypad state; CSI ? 66 h/l selects the same state using
-        a DEC-private mode that supports DECRQM/DECRPM. They are distinct valid commands.
+      wire_relation: ESC = and ESC > directly select application/numeric keypad state; CSI ? 66 h/l selects the same state using a DEC-private
+        mode that supports DECRQM/DECRPM. They are distinct valid commands.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-5948c81512
@@ -8034,8 +8335,8 @@ specifications:
           period: n
           enter: M
           PF1_through_PF4: ESC P / ESC Q / ESC R / ESC S
-      source_note: Pinned xterm keypad state is selected by both ESC controls and mode 66; xterm PC-style mapping and NumLock
-        overrides are separately documented. Original key tables are not silently replaced with the modern mapping.
+      source_note: Pinned xterm keypad state is selected by both ESC controls and mode 66; xterm PC-style mapping and NumLock overrides
+        are separately documented. Original key tables are not silently replaced with the modern mapping.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: application keypad modes affect keypad encoding and DECRQM
@@ -8206,8 +8507,8 @@ specifications:
         original_notation: CSI ? Pd $ p; Pd is the one DEC-private mode number to query.
         xterm_notation: CSI ? Ps $ p; Ps likewise selects one DEC-private mode number.
         reply: CSI ? Pd ; Ps $ y with Ps=0 unrecognized, 1 set, 2 reset, 3 permanently set, 4 permanently reset.
-        source_limit: Exactly one queried mode, including when multiple modes have been set by DECSET/DECRST. No bulk query or change of
-          terminal mode.
+        source_limit: Exactly one queried mode, including when multiple modes have been set by DECSET/DECRST. No bulk query or change
+          of terminal mode.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DEC mode queries append DECRPM replies
@@ -8242,12 +8543,13 @@ specifications:
       section: Chapter 11 / Keyboard, Printing, and Display Commands / Printing Functions, printed pages 212-214
       level: defined
       wire: CSI ? Ps i
-      rule: Documents additional DEC-private Media Copy selectors 10,11,18,19 in the VT420, while retaining the overlapping autoprint, cursor-line
-        and printer-to-host functions 1,4,5,8,9 from earlier DEC terminals.
+      rule: Documents additional DEC-private Media Copy selectors 10,11,18,19 in the VT420, while retaining the overlapping autoprint,
+        cursor-line and printer-to-host functions 1,4,5,8,9 from earlier DEC terminals.
       extends: dec_vt240.media-copy-dec-private
       parameters:
       - selector: 10
-        effect: Print the composed main display, including content from both sessions if composed; not affected by printer extent mode DECPEX.
+        effect: Print the composed main display, including content from both sessions if composed; not affected by printer extent mode
+          DECPEX.
       - selector: 11
         effect: Print all pages in the current session page memory; printer form-feed mode DECPFF may append FF after each page.
       - selector: 18
@@ -8259,8 +8561,8 @@ specifications:
         entry_id: csi-6dd886d3cc
         source_line: 1048
         wire: CSI ? Ps i
-      scope_note: These are additional documented DEC selectors, not a competing xterm definition; the pinned xterm reference does not document
-        DEC 18/19.
+      scope_note: These are additional documented DEC selectors, not a competing xterm definition; the pinned xterm reference does not
+        document DEC 18/19.
       xterm_documented_overlap:
       - 10
       - 11
@@ -8268,8 +8570,8 @@ specifications:
       section: Chapter 12 / Device Status Reports, printed pages 236-242
       level: defined
       wire: CSI ? Ps [ ; Pid ] n
-      rule: VT420 extends the DEC private DSR family with macro memory, data integrity and multiple-session queries, while preserving older
-        printer and keyboard status requests. Reply fields and values are source-defined.
+      rule: VT420 extends the DEC private DSR family with macro memory, data integrity and multiple-session queries, while preserving
+        older printer and keyboard status requests. Reply fields and values are source-defined.
       extends: dec_vt3xx_text.dsr-dec-private
       parameters:
       - selector: 62
@@ -8343,8 +8645,8 @@ specifications:
       section: Chapter 12 / Request Mode (DECRQM), ANSI branch, printed page 257
       level: defined
       wire: CSI Pa $ p
-      rule: Requests the state of exactly one ANSI mode Pa. Distinct from CSI ? Pd $ p for a DEC-private mode; the report is CSI Pa ; Ps
-        $ y.
+      rule: Requests the state of exactly one ANSI mode Pa. Distinct from CSI ? Pd $ p for a DEC-private mode; the report is CSI Pa ;
+        Ps $ y.
       source_parameters:
         request_count: Exactly one numeric ANSI mode per DECRQM request; no list.
         table: VT420 Table 12-2, printed page 259
@@ -8385,8 +8687,8 @@ specifications:
       section: Chapter 11 / Numeric Keypad Mode (DECNKM), printed pages 193-194
       level: defined
       wire: CSI ? 66 h / CSI ? 66 l
-      rule: Sets application versus normal numeric-keypad input encoding. Same keypad state as DECKPAM (ESC =) / DECKPNM (ESC >), but a separate
-        DEC-private mode number that can be queried through DECRQM.
+      rule: Sets application versus normal numeric-keypad input encoding. Same keypad state as DECKPAM (ESC =) / DECKPNM (ESC >), but
+        a separate DEC-private mode number that can be queried through DECRQM.
       related_keyboard_commands:
       - dec_vt420.app-keypad
       - dec_vt420.request-mode
@@ -8408,10 +8710,10 @@ specifications:
         original_default: numeric keypad characters
         set_effect: Numeric keypad sends application sequences.
         reset_effect: Numeric keypad sends normal keypad characters.
-        source_specific_constraints: Distinct queryable DEC private mode encoding with the same keypad-state effect as ESC = and ESC >; provided
-          mainly for DECRQM/DECRPM. Do not erase either valid command identity.
-        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
-          side effects, sizing or response semantics.
+        source_specific_constraints: Distinct queryable DEC private mode encoding with the same keypad-state effect as ESC = and ESC >;
+          provided mainly for DECRQM/DECRPM. Do not erase either valid command identity.
+        conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all
+          defaults, side effects, sizing or response semantics.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: input mode category preserves encoding gates screen stacks and reset lifetime
@@ -8423,8 +8725,8 @@ specifications:
       level: defined
       wire: CSI ? 69 h / CSI ? 69 l
       rule: Mode 69 gates DECSLRM. On set it selects left/right margin capability, resets existing page-memory line attributes to single-width/single-height
-        and blocks DECDWL/DECDHL; on reset it disables margin setting, restores left/right page-border margins and permits double-sized lines
-        again.
+        and blocks DECDWL/DECDHL; on reset it disables margin setting, restores left/right page-border margins and permits double-sized
+        lines again.
       original_mode_semantics:
         name: DECVSSM
         selector: 69
@@ -8434,8 +8736,8 @@ specifications:
         set_effect: Enable DECSLRM; reset all line attributes in the current session page memory to single width and single height; ignore
           DECDWL and DECDHL while enabled.
         reset_wire: CSI ? 69 l
-        reset_effect: Disable DECSLRM; restore horizontal margins to each page border; permit DECDWL/DECDHL again, without a new forced line-size
-          reset.
+        reset_effect: Disable DECSLRM; restore horizontal margins to each page border; permit DECDWL/DECDHL again, without a new forced
+          line-size reset.
         original_scope: All current-session page-memory lines, not merely visible rows; exact bounds and page arrangements belong to the
           original DEC page-memory model.
       also_documented:
@@ -8461,8 +8763,8 @@ specifications:
         important_coverage_limit: xterm_ResetDouble loops row < screen->max_row, whereas ptyx.h defines MaxRows=max_row+1, so it appears
           to skip the last visible line. It also resets the visible screen rather than proving DEC all-page-memory coverage. This possible
           source implementation defect must not be normalized into the canonical DEC requirement or treated as FULL.
-        modern_subset_observations: Ghostty, WezTerm and GNOME VTE mode-69 handlers explicitly gate margins/reset borders; this bounded check
-          does not establish DEC line-size reset/suppression in those implementations.
+        modern_subset_observations: Ghostty, WezTerm and GNOME VTE mode-69 handlers explicitly gate margins/reset borders; this bounded
+          check does not establish DEC line-size reset/suppression in those implementations.
       related_controls:
       - dec_vt420.left-right-margins
       - dec_vt420.column-mode
@@ -8483,8 +8785,8 @@ specifications:
       section: Chapter 11 / Autorepeat Mode (DECARM), printed pages 190-191
       level: defined
       wire: CSI ? 8 h / CSI ? 8 l
-      rule: Controls whether eligible keys held longer than 0.5 seconds generate repeated characters until release. The setting applies to
-        input key repeat, not terminal text output or TUI scrollback.
+      rule: Controls whether eligible keys held longer than 0.5 seconds generate repeated characters until release. The setting applies
+        to input key repeat, not terminal text output or TUI scrollback.
       original_mode_semantics:
         name: DECARM
         selector: 8
@@ -8495,8 +8797,8 @@ specifications:
         reset_wire: CSI ? 8 l
         reset_effect: Disable autorepeat for eligible keys.
         excluded_key_examples: Original ANSI/short ANSI keyboards exclude F1-F5, Return, Shift, Control, Set-Up and other modifier/control
-          keys; PC keyboards exclude Alt, AltGr, Caps Lock, Ctrl, Enter, Num Lock, Shift and other modifiers. Complete tables must be reread
-          for FULL.
+          keys; PC keyboards exclude Alt, AltGr, Caps Lock, Ctrl, Enter, Num Lock, Shift and other modifiers. Complete tables must be
+          reread for FULL.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: private-mode-8-h-line-921
@@ -8509,8 +8811,8 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:7602-7607; misc.c:5500-5502
-        implementation_divergence: Xterm explicitly ignores DECARM set/reset to avoid changing X11 autorepeat for the entire display; DECRQM
-          reports mode permanently reset. This is an implementation limitation, not a different normative command definition.
+        implementation_divergence: Xterm explicitly ignores DECARM set/reset to avoid changing X11 autorepeat for the entire display;
+          DECRQM reports mode permanently reset. This is an implementation limitation, not a different normative command definition.
       implementation_assessment_scope: Original source meaning recorded; platform-specific host keyboard autorepeat is outside unassessed
         VT parser conformance. No automatic implementation target.
       test_locations:
@@ -8590,9 +8892,9 @@ specifications:
       section: Chapter 12 / Setting or Resetting Modes, printed pp.263-265
       level: defined
       wire: CSI ? Pd [ ; Pd ... ] h
-      rule: Set one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own
-        unprefixed SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions
-        and supported defaults belong to their specific original mode clauses.
+      rule: Set one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own unprefixed
+        SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions and supported defaults
+        belong to their specific original mode clauses.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-7f26dc7a37
@@ -8616,9 +8918,9 @@ specifications:
       section: Chapter 12 / Setting or Resetting Modes, printed pp.263-265
       level: defined
       wire: CSI ? Pd [ ; Pd ... ] l
-      rule: Reset one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own
-        unprefixed SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions
-        and supported defaults belong to their specific original mode clauses.
+      rule: Reset one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own unprefixed
+        SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions and supported defaults
+        belong to their specific original mode clauses.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-8326970770
@@ -8642,8 +8944,8 @@ specifications:
       section: Chapter 4 / Sending C1 Controls to the Host, printed p.88
       level: defined
       wire: ESC SP F
-      rule: Select 7-bit escape equivalents for C1 controls transmitted to host in VT400 mode. Already selected mode unchanged.
-        VT100 and VT52 mode ignore these selectors. Does not by itself change admission of inbound C1 controls.
+      rule: Select 7-bit escape equivalents for C1 controls transmitted to host in VT400 mode. Already selected mode unchanged. VT100
+        and VT52 mode ignore these selectors. Does not by itself change admission of inbound C1 controls.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-6436a8e3dc
@@ -8663,8 +8965,8 @@ specifications:
       section: Chapter 4 / Sending C1 Controls to the Host, printed p.88
       level: defined
       wire: ESC SP G
-      rule: Select single 8-bit C1 bytes for C1 controls transmitted to host in VT400 mode. Already selected mode unchanged.
-        VT100 and VT52 mode ignore these selectors. Does not by itself change admission of inbound C1 controls.
+      rule: Select single 8-bit C1 bytes for C1 controls transmitted to host in VT400 mode. Already selected mode unchanged. VT100 and
+        VT52 mode ignore these selectors. Does not by itself change admission of inbound C1 controls.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-41198bce8d
@@ -8684,9 +8986,9 @@ specifications:
       section: Chapter 4 p.89 (DECNRCM) or Chapter 11 pp.216-217 (DECSCNM/DECSCLM); VT100 Chapter 3 for modes 4/5
       level: defined
       wire: CSI ? 4 h / CSI ? 4 l
-      rule: SET smooth scroll, RESET jump scroll. Original VT100 smooth maximum six lines/second; VT420 default smooth, with
-        slow/fast display SET-UP choices, and jump as fast as data arrives. This selects display scrolling behavior; do not
-        import physical scan timing into a modern compositor without scope selection.
+      rule: SET smooth scroll, RESET jump scroll. Original VT100 smooth maximum six lines/second; VT420 default smooth, with slow/fast
+        display SET-UP choices, and jump as fast as data arrives. This selects display scrolling behavior; do not import physical scan
+        timing into a modern compositor without scope selection.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: private-mode-4-h-line-917
@@ -8710,8 +9012,8 @@ specifications:
       section: Chapter 4 p.89 (DECNRCM) or Chapter 11 pp.216-217 (DECSCNM/DECSCLM); VT100 Chapter 3 for modes 4/5
       level: defined
       wire: CSI ? 5 h / CSI ? 5 l
-      rule: SET dark characters on light background; RESET light characters on dark background (VT420 default). Original DEC
-        explicitly says this affects appearance, not data in page memory. Distinct from cell-level inverse rendition.
+      rule: SET dark characters on light background; RESET light characters on dark background (VT420 default). Original DEC explicitly
+        says this affects appearance, not data in page memory. Distinct from cell-level inverse rendition.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: private-mode-5-h-line-918
@@ -8744,9 +9046,9 @@ specifications:
       section: Chapter 4 p.89 (DECNRCM) or Chapter 11 pp.216-217 (DECSCNM/DECSCLM); VT100 Chapter 3 for modes 4/5
       level: defined
       wire: CSI ? 42 h / CSI ? 42 l
-      rule: 'Worldwide VT420 model: SET national replacement mode, 7-bit input/output and one NRC set, resets character-set
-        designations to power-up/reset defaults. RESET multinational, 7/8-bit DEC Multinational or ISO Latin-1. Default multinational;
-        terminal ignores mode with North American/UK keyboard selected in SET-UP.'
+      rule: 'Worldwide VT420 model: SET national replacement mode, 7-bit input/output and one NRC set, resets character-set designations
+        to power-up/reset defaults. RESET multinational, 7/8-bit DEC Multinational or ISO Latin-1. Default multinational; terminal ignores
+        mode with North American/UK keyboard selected in SET-UP.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: private-mode-42-h-line-939
@@ -8769,15 +9071,15 @@ specifications:
       section: Chapter 4 / Selecting an Operating Level (DECSCL), printed p.87
       level: defined
       wire: CSI Pl [ ; Pc ] " p
-      rule: VT420 selects level 1 with Pl=61; Pl=62,63,64 select VT400-compatible levels (level 4 includes 2 and 3). For higher
-        levels omitted Pc or 0/2 selects 8-bit transmission, 1 selects 7-bit; factory default is level 4 with 7-bit controls.
-        Original manual explicitly requires hard reset (RIS) when changing operating level.
+      rule: VT420 selects level 1 with Pl=61; Pl=62,63,64 select VT400-compatible levels (level 4 includes 2 and 3). For higher levels
+        omitted Pc or 0/2 selects 8-bit transmission, 1 selects 7-bit; factory default is level 4 with 7-bit controls. Original manual
+        explicitly requires hard reset (RIS) when changing operating level.
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5081-5126,14314-14321
-      source_note: Pinned xterm explicitly invokes ReallyReset(xw,False,False), a soft reset retaining saved lines. Its source
-        comment cites VT220/DEC STD-070 soft reset versus VT300/420/520 hard reset; only the pinned VT420 manual and actual
-        xterm branch were independently verified here. Pl=65 is a later profile, not a VT420 selector.
+      source_note: Pinned xterm explicitly invokes ReallyReset(xw,False,False), a soft reset retaining saved lines. Its source comment
+        cites VT220/DEC STD-070 soft reset versus VT300/420/520 hard reset; only the pinned VT420 manual and actual xterm branch were
+        independently verified here. Pl=65 is a later profile, not a VT420 selector.
       accepted_reconciliations:
       - decscl-hard-vs-soft-reset
       also_documented:
@@ -8788,8 +9090,7 @@ specifications:
         previous_review:
           classification: source-confirmed-material-semantic-difference
           decision: decscl-hard-vs-soft-reset
-          reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
-            separate.
+          reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope separate.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DECRQSS reports conformance and page length across framing modes
@@ -8798,8 +9099,8 @@ specifications:
       section: Chapter 13 / DECSTR, printed pp.285-286, Table 13-1
       level: defined
       wire: CSI ! p
-      rule: VT400-mode soft reset changes only the functions listed in Table 13-1 to the stated defaults. Do not conflate with
-        RIS hard reset or silently reset unrelated modes. SET-UP Reset differs by not resetting DECNRCM.
+      rule: VT400-mode soft reset changes only the functions listed in Table 13-1 to the stated defaults. Do not conflate with RIS hard
+        reset or silently reset unrelated modes. SET-UP Reset differs by not resetting DECNRCM.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-1ddd518ae0
@@ -8826,8 +9127,8 @@ specifications:
         DECSASD: main display (first 24 lines)
         DECKPM: send character codes
         DECSMKR: modifier keys default functions
-      source_note: Pinned xterm invokes its soft reset path; it additionally calls ResetAnsiColorRequest and uses configured
-        defaults for cursor/keypad. The original exact reset scope remains preserved, not claimed equivalent.
+      source_note: Pinned xterm invokes its soft reset path; it additionally calls ResetAnsiColorRequest and uses configured defaults
+        for cursor/keypad. The original exact reset scope remains preserved, not claimed equivalent.
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -8844,9 +9145,9 @@ specifications:
       section: Chapter 6 / DECSCPP, printed pp.130-131
       level: defined
       wire: CSI Ps $ |
-      rule: Omitted/0/80 selects 80 columns per page; 132 selects 132. Default 80. Sets every page width and matching font without
-        clearing page memory or resetting scrolling regions (unlike DECCOLM). Cursor remains unless beyond new right edge, then
-        clamps. Columns lost when shrinking 132 to 80 are destructive. Page geometry is not a host-pixel size.
+      rule: Omitted/0/80 selects 80 columns per page; 132 selects 132. Default 80. Sets every page width and matching font without clearing
+        page memory or resetting scrolling regions (unlike DECCOLM). Cursor remains unless beyond new right edge, then clamps. Columns
+        lost when shrinking 132 to 80 are destructive. Page geometry is not a host-pixel size.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-5bce18dca3
@@ -8866,10 +9167,10 @@ specifications:
       section: Chapter 11 / DECSNLS, printed p.218
       level: defined
       wire: CSI Pn * |
-      rule: Pn=1..255 requests maximum display lines. Original VT420 supports 24,39,49 screen lines plus status line via three
-        font heights; choose next higher supported value or highest if above maximum. Active session space and current page
-        size further limit displayed lines; e.g. page 36 with display 39 leaves 3 blank lines. Do not reinterpret these as pixel
-        dimensions or arbitrary page-resize quotas.
+      rule: Pn=1..255 requests maximum display lines. Original VT420 supports 24,39,49 screen lines plus status line via three font heights;
+        choose next higher supported value or highest if above maximum. Active session space and current page size further limit displayed
+        lines; e.g. page 36 with display 39 leaves 3 blank lines. Do not reinterpret these as pixel dimensions or arbitrary page-resize
+        quotas.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-43f1b260e7
@@ -8878,8 +9179,7 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5740-5749
-      source_note: Pinned xterm directly requests host resize for 1..255 under window policy; not original discrete font/viewport
-        behavior.
+      source_note: Pinned xterm directly requests host resize for 1..255 under window policy; not original discrete font/viewport behavior.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences decline container geometry and window mutation without changing VT
@@ -8890,9 +9190,9 @@ specifications:
       section: Chapter 12 / DECRQDE and DECRPDE, printed pp.271-272
       level: defined
       wire: CSI " v
-      rule: 'Requests how much of the current page is displayed in the active session window, excluding status line. Reply fields:
-        displayed line count, displayed column count, leftmost page column, top page line, page number. Session windows may
-        display only part of a page.'
+      rule: 'Requests how much of the current page is displayed in the active session window, excluding status line. Reply fields: displayed
+        line count, displayed column count, leftmost page column, top page line, page number. Session windows may display only part of
+        a page.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-dd97c5f289
@@ -8907,11 +9207,10 @@ specifications:
       section: Chapter 12 / DECRQCRA and DECCKSR, printed pp.243-244
       level: defined
       wire: CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y
-      rule: VT400-mode request labels checksum by Pid. Page Pp=0 or omitted means all pages and ignores rectangle operands;
-        above available page count means last page. For a specified page, rectangle coordinates obey DECOM, top<=bottom and
-        left<=right; defaults printed top=1,bottom=page length,right=page width (left default not explicitly listed in the checked
-        text). Omitted rectangle reports whole selected page. Response exactly four uppercase hexadecimal digits; this section
-        does not specify the complete checksum arithmetic.
+      rule: VT400-mode request labels checksum by Pid. Page Pp=0 or omitted means all pages and ignores rectangle operands; above available
+        page count means last page. For a specified page, rectangle coordinates obey DECOM, top<=bottom and left<=right; defaults printed
+        top=1,bottom=page length,right=page width (left default not explicitly listed in the checked text). Omitted rectangle reports
+        whole selected page. Response exactly four uppercase hexadecimal digits; this section does not specify the complete checksum arithmetic.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-d3b76a1dbb
@@ -8921,8 +9220,8 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5619-5639; screen.c:xtermCheckRect
       reply: DCS Pid ! ~ HHHH ST
-      source_note: Pinned xterm uses window permission, computes a rectangular checksum and masks to 16 bits. Do not infer original
-        arithmetic, page semantics or admissible checksum extensions from that code.
+      source_note: Pinned xterm uses window permission, computes a rectangular checksum and masks to 16 bits. Do not infer original arithmetic,
+        page semantics or admissible checksum extensions from that code.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: checksum extension affects rectangular checksum reply
@@ -8960,8 +9259,8 @@ specifications:
       section: Chapter 11 / DECSASD, printed pp.219-220
       level: defined
       wire: CSI Ps $ }
-      rule: VT400 mode. Ps=0 default routes display data to main display only; Ps=1 routes to status line only. This selects
-        write destination, not visibility or status text content.
+      rule: VT400 mode. Ps=0 default routes display data to main display only; Ps=1 routes to status line only. This selects write destination,
+        not visibility or status text content.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-d29e668ba9
@@ -8974,10 +9273,10 @@ specifications:
       section: Chapter 11 / DECSSDT, printed pp.220-221
       level: defined
       wire: CSI Ps $ ~
-      rule: VT400 mode. Ps=0 no status line (parameter default; line becomes extra user-window line), 1 indicator (factory display
-        default), 2 host-writable. Switching indicator to host-writable starts empty. Main/status share character sets, scroll
-        mode, insert mode, tabs and autowrap; only column cursor operands act on status line; DECANM ignored there, DECSCL/DECSTR
-        exit it, RIS erases and exits. SET-UP always shows indicator.
+      rule: VT400 mode. Ps=0 no status line (parameter default; line becomes extra user-window line), 1 indicator (factory display default),
+        2 host-writable. Switching indicator to host-writable starts empty. Main/status share character sets, scroll mode, insert mode,
+        tabs and autowrap; only column cursor operands act on status line; DECANM ignored there, DECSCL/DECSTR exit it, RIS erases and
+        exits. SET-UP always shows indicator.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-0cc14c89d4
@@ -8986,14 +9285,14 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:6022-6027
-      source_note: VT420 summary p.227 appears to print a different final character; detailed format p.220 and report query
-        table identify $ ~. Preserve detailed form, do not normalize parameter default to factory state.
+      source_note: VT420 summary p.227 appears to print a different final character; detailed format p.220 and report query table identify
+        $ ~. Preserve detailed form, do not normalize parameter default to factory state.
     - id: request-presentation-state
       section: Chapter 12 / DECRQPSR and reports, printed pp.248-255
       level: defined
       wire: CSI Ps $ w
-      rule: VT400 mode. Ps=0 error ignored; 1 requests cursor information DECCIR; 2 requests tab-stop report DECTABSR. Report
-        is distinct from restoring state.
+      rule: VT400 mode. Ps=0 error ignored; 1 requests cursor information DECCIR; 2 requests tab-stop report DECTABSR. Report is distinct
+        from restoring state.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-f38f13fb1a
@@ -9014,15 +9313,15 @@ specifications:
         Pgl_Pgr: 0..3 select G0..G3
         Scss: bits 1..4 correspond G0..G3, zero=94 chars, one=96 chars
         Sdesig: concatenated intermediate/final designators in G0,G1,G2,G3 order, e.g. BB%5%5
-      source_note: Pinned xterm limits tab report to NPARAM and current visible columns; cursor field generation is code-specific.
-        Full report byte matrix, page count and restore interactions not proved.
+      source_note: Pinned xterm limits tab report to NPARAM and current visible columns; cursor field generation is code-specific. Full
+        report byte matrix, page count and restore interactions not proved.
     - id: restore-presentation-state
       section: Chapter 12 / DECRSPS, printed pp.255-257
       level: defined
       wire: DCS Ps $ t D...D ST
-      rule: 'Restore one presentation report per request: Ps=0 ignored error,1 DECCIR payload,2 DECTABSR payload. Use exactly
-        the original report data format (change u to t). Original DEC explicitly stops at invalid value and may leave partially
-        restored state; do not assume whole-command atomicity.'
+      rule: 'Restore one presentation report per request: Ps=0 ignored error,1 DECCIR payload,2 DECTABSR payload. Use exactly the original
+        report data format (change u to t). Original DEC explicitly stops at invalid value and may leave partially restored state; do
+        not assume whole-command atomicity.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: dcs-47fd6579ab
@@ -9032,8 +9331,8 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: misc.c:5323-5343,4647-4748
       related_command: dec_vt420.request-presentation-state
-      source_note: Pinned restore mutates fields sequentially; requires page 1, and tab restore clears existing stops before
-        processing. These observations are not proof of complete hardware restore semantics.
+      source_note: Pinned restore mutates fields sequentially; requires page 1, and tab restore clears existing stops before processing.
+        These observations are not proof of complete hardware restore semantics.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DECRSPS restores bounded cursor rendition wrap origin and line drawing
@@ -9049,15 +9348,14 @@ specifications:
       section: Chapter 5 / DECAUPSS, printed p.100; Chapter 12 / report p.273
       level: defined
       wire: DCS Ps ! u designator ST
-      rule: 'Assign standby supplemental set; original VT420 default DEC Supplemental Graphic. Chapter 5 prints DCS 0 ! u %
-        5 ST for DEC Supplemental and DCS 0 ! u A ST for ISO Latin-1; Chapter 12 prints DCS 1 ! u A ST for ISO Latin-1 report.
-        Assignment is not designation/mapping: designate G1/G2/G3 and map GR before use. Preserve literal conflicting selector
-        values.'
+      rule: 'Assign standby supplemental set; original VT420 default DEC Supplemental Graphic. Chapter 5 prints DCS 0 ! u % 5 ST for DEC
+        Supplemental and DCS 0 ! u A ST for ISO Latin-1; Chapter 12 prints DCS 1 ! u A ST for ISO Latin-1 report. Assignment is not designation/mapping:
+        designate G1/G2/G3 and map GR before use. Preserve literal conflicting selector values.'
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: misc.c:4812-4864,5305-5322
-      source_note: Pinned xterm table uses selector 1 with A for ISO Latin-1, selector 0 with A for an undocumented ASCII variant,
-        and ignores assignment in UTF-8 mode. Other later hardware sets require their own original source.
+      source_note: Pinned xterm table uses selector 1 with A for ISO Latin-1, selector 0 with A for an undocumented ASCII variant, and
+        ignores assignment in UTF-8 mode. Other later hardware sets require their own original source.
       accepted_reconciliations:
       - decaupss-latin1-assignment-selector
       also_documented:
@@ -9068,14 +9366,14 @@ specifications:
         previous_review:
           classification: source-confirmed-material-semantic-difference
           decision: decaupss-latin1-assignment-selector
-          reason: VT420 original assignment and report sections disagree on ISO Latin-1 selector; xterm distinguishes 0!uA and
-            1!uA. Retain secondary entry for explicit scope reconciliation.
+          reason: VT420 original assignment and report sections disagree on ISO Latin-1 selector; xterm distinguishes 0!uA and 1!uA. Retain
+            secondary entry for explicit scope reconciliation.
     - id: request-user-preferred-supplemental
       section: Chapter 12 / DECRQUPSS, printed p.273
       level: defined
       wire: CSI & u
-      rule: VT400 mode query. Original report DCS 0 ! u % 5 ST for DEC Supplemental Graphic, DCS 1 ! u A ST for ISO Latin-1.
-        Query only; report selector must not be silently rewritten to match Chapter 5 assignment example.
+      rule: VT400 mode query. Original report DCS 0 ! u % 5 ST for DEC Supplemental Graphic, DCS 1 ! u A ST for ISO Latin-1. Query only;
+        report selector must not be silently rewritten to match Chapter 5 assignment example.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-996d289cc3
@@ -9091,12 +9389,11 @@ specifications:
       section: Chapter 11 / DECUDK, printed pp.202-209, Tables 11-1/11-2
       level: defined
       wire: DCS Pc ; Pl [ ; Pm ] | Ky/St[;Ky/St...] ST
-      rule: VT420 VT400/PC TERM only, 48 UDKs sharing 768 bytes. Pc=0/omitted clears all before loading; 1 clears/reloads selected
-        keys in sequence with current free space. Pl=0/omitted locks after loading;1 leaves unlocked, cannot unlock already
-        locked keys except SET-UP. Pm=0/2/omitted shifted,1 unshifted,3/4 alternate unshifted/shifted PC only. Key selector
-        uses original tables; data consists of ASCII hex pairs encoding any 8-bit byte, semicolon between definitions. Invalid
-        pair stops load, keeps earlier definitions and sends rest to screen. RIS clears all UDKs. Do not confuse this with arbitrary
-        host input injection or modern key profiles.
+      rule: VT420 VT400/PC TERM only, 48 UDKs sharing 768 bytes. Pc=0/omitted clears all before loading; 1 clears/reloads selected keys
+        in sequence with current free space. Pl=0/omitted locks after loading;1 leaves unlocked, cannot unlock already locked keys except
+        SET-UP. Pm=0/2/omitted shifted,1 unshifted,3/4 alternate unshifted/shifted PC only. Key selector uses original tables; data consists
+        of ASCII hex pairs encoding any 8-bit byte, semicolon between definitions. Invalid pair stops load, keeps earlier definitions
+        and sends rest to screen. RIS clears all UDKs. Do not confuse this with arbitrary host input injection or modern key profiles.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: dcs-26ac144774
@@ -9152,17 +9449,17 @@ specifications:
         - 35
         - 36
         source: Tables 11-1/11-2; local ANSI F1-F5 restrictions remain separately specified.
-      source_note: Pinned xterm two-parameter discovery documents a narrower form, and describes Pc=1 as Erase Below; actual
-        code clears all only for Pc=0, then parses key/hex data, accepts nonempty definitions within MAX_UDK. It does not establish
-        original 768-byte quota, lock or modifier semantics. These are original hardware requirements, not target choices.
+      source_note: Pinned xterm two-parameter discovery documents a narrower form, and describes Pc=1 as Erase Below; actual code clears
+        all only for Pc=0, then parses key/hex data, accepts nonempty definitions within MAX_UDK. It does not establish original 768-byte
+        quota, lock or modifier semantics. These are original hardware requirements, not target choices.
     - id: character-set-designation-profile
       section: Chapter 5 / Selecting and Designating Character Sets, printed pp.91-95, Tables 5-2/5-3
       level: defined
       wire: ESC I1 [ I ... ] F
-      rule: VT420 designates a hard set into G0..G3 independently of mapping into GL/GR. The only 96-character hard set is ISO
-        Latin-1 supplemental. The 94-character designators in Table 5-3 include ASCII B, DEC supplemental %5, special graphics
-        0, technical >, and user-preferred <. Initial G0/G1 ASCII; G2/G3 DEC Supplemental Graphic. NRC sets require national
-        mode and the applicable worldwide hardware profile.
+      rule: VT420 designates a hard set into G0..G3 independently of mapping into GL/GR. The only 96-character hard set is ISO Latin-1
+        supplemental. The 94-character designators in Table 5-3 include ASCII B, DEC supplemental %5, special graphics 0, technical >,
+        and user-preferred <. Initial G0/G1 ASCII; G2/G3 DEC Supplemental Graphic. NRC sets require national mode and the applicable worldwide
+        hardware profile.
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:3806-3839,4853-4878,6256-6299
@@ -9182,8 +9479,8 @@ specifications:
         '=': Swiss
       original_96_designators:
         A: ISO Latin-1 supplemental
-      source_note: The size prefix distinguishes 94-set A (UK) from 96-set A (Latin-1). Xterm documents additional profile-specific
-        sets; they are not added to the VT420 table. Individual registered glyph maps require separate source verification.
+      source_note: The size prefix distinguishes 94-set A (UK) from 96-set A (Latin-1). Xterm documents additional profile-specific sets;
+        they are not added to the VT420 table. Individual registered glyph maps require separate source verification.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: four charset slots share locking single-shift save and reset ownership'
@@ -9210,9 +9507,9 @@ specifications:
       section: Chapter 12 / Secondary DA, printed pp.232-233
       level: defined
       wire: CSI > [ 0 ] c
-      rule: Request terminal identification, firmware level and hardware options. VT420 reply CSI > 41 ; Pv ; Po c; firmware
-        examples 10 and 20, option 0 no options and 1 PC keyboard/interface. Do not infer a universal third parameter of zero
-        from the reference table.
+      rule: Request terminal identification, firmware level and hardware options. VT420 reply CSI > 41 ; Pv ; Po c; firmware examples
+        10 and 20, option 0 no options and 1 PC keyboard/interface. Do not infer a universal third parameter of zero from the reference
+        table.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-4fe5c0a5a6
@@ -9223,8 +9520,8 @@ specifications:
         source: charproc.c:4218-4273
       reply: CSI > Ptype ; Pv ; Po c
       later_profile: 'DEC VT520/525 July 1994 p.5-11: type 64 mono,65 color; option 0 standard VT keyboard,1 PC keyboard.'
-      source_note: Pinned xterm chooses emulation type, patch number and options=0, also permits nonstandard VT100 type 0. Hardware
-        values are profile data, not mandatory Howl identity.
+      source_note: Pinned xterm chooses emulation type, patch number and options=0, also permits nonstandard VT100 type 0. Hardware values
+        are profile data, not mandatory Howl identity.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm device identity and status query grammar is deliberately nonparity
@@ -9240,8 +9537,8 @@ specifications:
       section: Chapter 12 / Tertiary DA, printed pp.233-234
       level: defined
       wire: CSI = [ 0 ] c
-      rule: 'VT400-mode request for factory terminal unit identifier. Reply DCS ! | followed by four hexadecimal pairs (eight
-        digits): first pair site 00..FF, last three pairs unit number unique within site. DEC VT520/525 p.5-12 retains format.'
+      rule: 'VT400-mode request for factory terminal unit identifier. Reply DCS ! | followed by four hexadecimal pairs (eight digits):
+        first pair site 00..FF, last three pairs unit number unique within site. DEC VT520/525 p.5-12 retains format.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: csi-538ff9fdc8
@@ -9251,8 +9548,8 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:4275-4292
       reply: DCS ! | HHHHHHHH ST
-      source_note: Pinned xterm returns eight zero digits, explicitly not a real manufacturing identifier. No target identity,
-        privacy disclosure or generated serial selected.
+      source_note: Pinned xterm returns eight zero digits, explicitly not a real manufacturing identifier. No target identity, privacy
+        disclosure or generated serial selected.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm device identity and status query grammar is deliberately nonparity
@@ -9263,9 +9560,8 @@ specifications:
       section: Chapter 12 / DECID, printed pp.234-235
       level: defined
       wire: ESC Z
-      rule: Original DEC manual identifies legacy primary DA request, advises using DA instead and says VT400 ignores DECID,
-        then states response is the primary DA response for all operating levels. Preserve source ambiguity. ANSI DECID is not
-        ECMA SCI or VT52 identification.
+      rule: Original DEC manual identifies legacy primary DA request, advises using DA instead and says VT400 ignores DECID, then states
+        response is the primary DA response for all operating levels. Preserve source ambiguity. ANSI DECID is not ECMA SCI or VT52 identification.
       pinned_source_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:4062-4097
@@ -9281,10 +9577,10 @@ specifications:
           meaning: DEC terminal-identification request (DECID), obsolete DA/CSI c spelling in xterm
           competes_with: ecma48.sci
           decision: esc-z-decid-vs-ecma48-sci
-          reason: ECMA-48 fifth edition SCI uses ESC Z to introduce a following character, whereas xterm uses ESC Z to request
-            terminal identity. These cannot both be the same terminal action.
-          scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction
-            remains to be verified for applicability.
+          reason: ECMA-48 fifth edition SCI uses ESC Z to introduce a following character, whereas xterm uses ESC Z to request terminal
+            identity. These cannot both be the same terminal action.
+          scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction remains
+            to be verified for applicability.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: pinned iTerm2 DECID is a no-op while Howl identifies itself'
@@ -9577,6 +9873,17 @@ specifications:
       level: defined
       wire: OSC 5113 ; pw=hash ST
       rule: Supports an explicitly configured pre-shared authorization method.
+    - id: quiet
+      section: docs/file-transfer-protocol.rst:212-227,573
+      level: defined
+      wire: OSC 5113 ; ac=send|receive ; id=... ; q=0|1|2 ST
+      rule: q0 verbose,1 errors only,2 suppress errors; actual data retained. Suppressing permission ack not permission bypass.
+    - id: metadata-grammar
+      section: docs/file-transfer-protocol.rst:545-608
+      level: defined
+      wire: OSC 5113 ; key=value ... ST
+      rule: Unknown keys ignored. ASCII alphanumeric/_ keys; safe_string excludes semicolon; signed decimal defaults q0,mod/prm/sz -1.
+        Base64 UTF-8 or binary. Keys ac,zip,ft,tt,id,fid,pw,q,mod,prm,sz,n,st,pr,d.
   kitty_misc:
     title: Kitty small terminal protocol extensions
     author: Kovid Goyal / kitty
@@ -9671,6 +9978,12 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.dcs.remote_color_scheme
+    - id: rex-status-profile
+      section: docs/misc-protocol.rst:57-86
+      level: defined
+      wire: OSC 7501 ; status-metadata ST
+      rule: Adopted Rex rev0.4; Kitty id limit263 vs source128. Working/blocked/idle clear on shell prompt or held process exit; done/error
+        kept until focus/key; full reset clears. Retain profile, not a replacement for Rex original.
   linux_console:
     title: Linux virtual console control sequences (console_codes(4))
     author: Linux virtual console; documented by the Linux man-pages project
@@ -12168,19 +12481,18 @@ specifications:
     title: DEC STD 070 Video Systems Reference Manual (selected Character Cell Display clauses)
     author: Digital Equipment Corporation
     authority: protocol-author
-    revision: A-MN-ELSM070-00-0000 Rev H, 03 December 1991; EL-00070-05 Character Cell Display pages dated 29 June 1990, for
-      review
+    revision: A-MN-ELSM070-00-0000 Rev H, 03 December 1991; EL-00070-05 Character Cell Display pages dated 29 June 1990, for review
     url: https://bitsavers.trailing-edge.com/pdf/dec/standards/EL-SM070-00_DEC_STD_070_Video_Systems_Reference_Manual_Dec91.pdf
     snapshot_sha256: d30c2ace1cebdd5a28454177d4d9610d9661110bbeb4b97773259313042962f2
-    scope: Selected original internal standard clauses from published archival scan; chapter-specific review/date markings
-      preserved. Text extraction read; no new visual page verification or claim of whole standard coverage.
+    scope: Selected original internal standard clauses from published archival scan; chapter-specific review/date markings preserved.
+      Text extraction read; no new visual page verification or claim of whole standard coverage.
     clauses:
     - id: request-status-string
       section: EL-00070-05 p.5-196
       level: defined
       wire: DCS $ q Pt ST
-      rule: Requests the state of one setting not encoded as SM/RM; Pt consists of its identifying intermediates and final
-        byte. Reports DECRPSS. Only one setting per request.
+      rule: Requests the state of one setting not encoded as SM/RM; Pt consists of its identifying intermediates and final byte. Reports
+        DECRPSS. Only one setting per request.
       related_command: dec_vt420.request-status-string
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
@@ -12211,9 +12523,9 @@ specifications:
       section: EL-00070-05 p.5-197, PDF zero-based page 451
       level: defined
       wire: DCS Ps $ r Pt ST
-      rule: Ps 1 means successful request, with complete setting control excluding CSI introducer and no omitted parameters;
-        Ps 0 means unknown or unsuccessful, with empty payload. Returned setting is sufficient to overwrite current selection,
-        including when there is no default. Example blinking and reversed rendition returns 0;5;7m as payload.
+      rule: Ps 1 means successful request, with complete setting control excluding CSI introducer and no omitted parameters; Ps 0 means
+        unknown or unsuccessful, with empty payload. Returned setting is sufficient to overwrite current selection, including when there
+        is no default. Example blinking and reversed rendition returns 0;5;7m as payload.
       accepted_reconciliations:
       - decrpss-validity-polarity
       test_locations:
@@ -12231,10 +12543,9 @@ specifications:
       section: EL-00070-05 pp.5-179,5-181
       level: defined
       wire: CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y
-      rule: Level 4. Pid identifies reply. Pp zero or omitted checks all page memory and ignores subsequent rectangle operands;
-        above highest page selects highest. Rectangle relative to DECOM; unordered bounds ignored. Defaults top=1,left=1,bottom=last
-        page line,right=last page column. Reply DCS Pid ! ~ HHHH ST (four uppercase hex digits). Complete checksum arithmetic
-        not defined here.
+      rule: Level 4. Pid identifies reply. Pp zero or omitted checks all page memory and ignores subsequent rectangle operands; above
+        highest page selects highest. Rectangle relative to DECOM; unordered bounds ignored. Defaults top=1,left=1,bottom=last page line,right=last
+        page column. Reply DCS Pid ! ~ HHHH ST (four uppercase hex digits). Complete checksum arithmetic not defined here.
       related_command: dec_vt420.request-rectangle-checksum
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
@@ -12288,8 +12599,8 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rectangle attribute defaults distinguish change from reverse'
         relation: protocol-family
-        note: Updated for superseding shared-SGR reset selection; omitted admission retained, full reset now replaces original-four-only
-          expectation.
+        note: 'Originating Kitty corrected expectation: coordinate-only no-op, bare and explicit-zero reset. Historical RED repaired;
+          VT Debug 1129/1129. Narrow proof, not whole-family conformance.'
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
         relation: protocol-family
@@ -12305,15 +12616,16 @@ specifications:
       accepted_reconciliations:
       - deccara-omitted-selector-default
       - kitty-deccara-shared-sgr-rendition
+      - kitty-deccara-coordinate-only-no-op
     - id: attr-reverse-rect
       section: EL-00070-05 pp.5-175–5-176
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ t
-      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition. Bounds
-        depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last page position,
-        exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors 0 toggles
-        all four video attributes, 1/4/5/7 toggle individual attributes; others ignored except defined extensions (color values
-        ignored). No default; command ignored when no valid selector received. Double-width row columns refer to character positions.
+      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition. Bounds depend
+        on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last page position, exceeding dimensions
+        clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors 0 toggles all four video attributes, 1/4/5/7
+        toggle individual attributes; others ignored except defined extensions (color values ignored). No default; command ignored when
+        no valid selector received. Double-width row columns refer to character positions.
       related_command: dec_vt420.attr-reverse-rect
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
@@ -12333,27 +12645,29 @@ specifications:
     revision: git a79f376b85fd95e3dfd0589877123996bacd4184
     url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/deccara.rst
     snapshot_sha256: 700d97077b7ff209f35a17651d4534ff2281669b4d70248a21083acf7218d605
-    scope: Author-defined extension of DECCARA to all SGR attributes, including color. Distinct from original DEC selector
-      domain; not a claim of full Howl support.
+    scope: Author-defined extension of DECCARA to all SGR attributes, including color. Distinct from original DEC selector domain; not
+      a claim of full Howl support.
     clauses:
     - id: all-sgr-attributes
       section: Setting text styles/colors in arbitrary regions of the screen
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r
-      rule: Extends DECCARA from the limited DEC rendition attributes to all SGR attributes, including foreground/background
-        colors. Documented example uses DECSACE rectangle mode and then restores stream extent.
+      rule: Extends DECCARA from the limited DEC rendition attributes to all SGR attributes, including foreground/background colors.
+        Documented example uses DECSACE rectangle mode and then restores stream extent.
       related_command: dec_vt420.attr-change-rect
-      source_note: Captain selected Kitty extended DECCARA over the original four-attribute domain, using Howl ordinary SGR
-        semantics. The earlier omitted-selector admission remains selected, but its four-only reset scope is superseded. Source-specific
-        clamping, grammar, unoccupied-cell, extent and rendering differences remain separately qualified.
+      source_note: Kitty extended DECCARA selected as originating modern extension. Bare form synthesizes reset; one to four coordinate
+        operands alone supply no SGR operation; explicit zero resets full rendition. Prior hybrid omission policy superseded;
+        coordinate-only defect repaired by command admission. Other grammar and geometry qualification open.
       accepted_reconciliations:
       - deccara-omitted-selector-default
       - kitty-deccara-shared-sgr-rendition
+      - kitty-deccara-coordinate-only-no-op
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rectangle attribute defaults distinguish change from reverse'
         relation: protocol-family
-        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+        note: 'Originating Kitty corrected expectation: coordinate-only no-op, bare and explicit-zero reset. Historical RED repaired;
+          VT Debug 1129/1129. Narrow proof, not whole-family conformance.'
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
         relation: protocol-family
@@ -12370,6 +12684,466 @@ specifications:
         test: shared SGR patch matches direct rendition across supported selectors
         relation: protocol-family
         note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+  kitty_underlines:
+    title: Kitty colored and styled underlines
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/underlines.rst
+    snapshot_sha256: 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+    scope: Originating SGR extensions and detection. Source-discovery candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: styles
+      section: lines 8-20
+      level: defined
+      wire: 'CSI 4 : Ps m'
+      rule: Ps 0 none, 1 straight, 2 double, 3 curly, 4 dotted, 5 dashed; ordinary SGR 4 and 24 remain compatibility forms.
+    - id: color
+      section: lines 22-27
+      level: defined
+      wire: CSI 58 color-parameters m
+      rule: Underline color follows the same color parameter forms as SGR 38 and 48.
+    - id: reset-color
+      section: lines 29-32
+      level: defined
+      wire: CSI 59 m
+      rule: Restore default underline color.
+    - id: reverse-video-color
+      section: lines 33-34
+      level: defined
+      wire: SGR 7 / 27 with underline color
+      rule: Explicit underline color remains unchanged under reverse video; default underline color follows foreground.
+    - id: detection
+      section: lines 36-37
+      level: defined
+      wire: terminfo Su
+      rule: Boolean terminfo capability identifies styled/colored underline support; not a new control sequence.
+  kitty_dnd:
+    title: Kitty drag and drop protocol (OSC 72)
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/dnd-protocol.rst
+    snapshot_sha256: 62e79ac9ef3e47cca624765182ce4dd57bc8b78b6e6f8b59167d104f9e8d9596
+    scope: Original bidirectional drag/drop and remote file transfer. DND_CODE=72 from kitty/control-codes.h:239, docs/conf.py:132. No
+      host permission implied. Source-discovery candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: envelope
+      section: lines 9-35,490-533
+      level: defined
+      wire: OSC 72 ; metadata ; payload ST / payloadless operations as individually defined
+      rule: Colon-separated metadata; decimal signed/unsigned 32-bit integers. At most 4096 encoded payload bytes, standard Base64 with
+        optional final padding. m=1 continues, m=0 ends. First chunk metadata governs, later chunks may omit all except m/i. No unrelated
+        messages in chunked transfer except query; source mentions q|Q here but defines q only.
+    - id: drop-enable
+      section: lines 38-55
+      level: defined
+      wire: OSC 72 ; t=a [ ; MIME-list ] ST / OSC 72 ; t=A ST
+      rule: Register/unregister ability to receive drops; optional space-separated MIME types.
+    - id: drop-motion
+      section: lines 57-77
+      level: defined
+      wire: OSC 72 ; t=m:x=x:y=y:X=X:Y=Y:o=O [ ; MIME-list ] ST
+      rule: Terminal motion reports zero-based cell/pixel positions, 1 copy,2 move,3 either. MIME list initially and on changes. Leave
+        x=y=-1 with empty list; no further movement until re-entry.
+    - id: drop-accept
+      section: lines 79-93
+      level: defined
+      wire: OSC 72 ; t=m:o=O [ ; MIME-list ] ST
+      rule: Client chooses 1 copy,2 move,0 reject; optional preference-ordered MIME list, omission retains previous list.
+    - id: drop-event
+      section: lines 95-115
+      level: defined
+      wire: OSC 72 ; t=M:x=x:y=y:X=X:Y=Y:o=O ; MIME-list ST
+      rule: Actual drop with complete MIME list. Requests before drop fail EPERM; leaving without dropping retires resources and invalidates
+        requests.
+    - id: drop-data
+      section: lines 117-135
+      level: defined
+      wire: OSC 72 ; t=r:x=idx ST / OSC 72 ; t=r:x=idx[:m=0|1] ; base64 ST / OSC 72 ; t=R:x=idx ; error[:description] ST
+      rule: One-based MIME index. Chunked data, empty payload with m=0 completes. Symbolic POSIX error or EUNKNOWN, optional safe UTF-8
+        description; normally terminates drop.
+    - id: drop-finish
+      section: lines 137-154
+      level: defined
+      wire: OSC 72 ; t=r:o=operation ST
+      rule: Finish and notify OS, discard queued requests; operation0 cancellation. Temporary host file lifetime may end with drop.
+    - id: remote-drop-machine
+      section: lines 159-171,536-573
+      level: defined
+      wire: OSC 72 ; t=a:x=1 ; machine-id ST
+      rule: Versioned HMAC-SHA256-derived hexadecimal machine identity. Unknown version treated as remote; remote URI-list response X=1.
+    - id: remote-drop-entry
+      section: lines 173-216
+      level: defined
+      wire: OSC 72 ; t=r:x=idx:y=subidx ST / OSC 72 ; t=r:x=idx:y=subidx ; base64 ST / OSC 72 ; t=R:x=idx:y=subidx ; error ST
+      rule: One-based URI-list entry, only after URI list retrieval. Regular files, symlinks, directories only. Same-window source forbidden.
+        Errors ENOENT,EINVAL,EUNKNOWN,EPERM,EIO,EMFILE. Correlate x,y,Y; FIFO recommended, interleaving allowed. x identifies the one-based
+        URI-list MIME type; y identifies the entry in that list. Source wording calls the URI entries an array of MIME types; exact intent
+        follows URI-list context, not an additional MIME index.
+    - id: remote-drop-directory
+      section: lines 219-260
+      level: defined
+      wire: OSC 72 ; t=r:x=idx:y=subidx:X=handle ; base64 ST / OSC 72 ; t=r:Y=handle:x=num ST
+      rule: NUL-separated directory entries; X=0 regular,1 symlink, other directory handle. One-based child lookup; response identifies
+        parent/child; t=r:Y=handle releases handle. Invalid EINVAL; resource exhaustion ENOMEM.
+    - id: drag-offer-enable
+      section: lines 264-303
+      level: defined
+      wire: OSC 72 ; t=o:x=1 [ ; machine-id ] ST / OSC 72 ; t=o:x=2 ST / OSC 72 ; t=o:x=x:y=y:X=X:Y=Y ST
+      rule: Register/unregister drag source. Terminal initiates negotiation from platform gesture; client responds t=o:o=flags with offered
+        MIME types and copy/move capability, before starting drag.
+    - id: drag-presend
+      section: lines 304-323
+      level: defined
+      wire: OSC 72 ; t=p:x=idx[:m=0|1] ; base64 ST
+      rule: Zero-based MIME index, chunked pre-send with empty final packet. Source requires acceptance of at least 64MB pre-sent data;
+        oversize EFBIG aborts.
+    - id: drag-images
+      section: lines 318-349
+      level: defined
+      wire: OSC 72 ; t=p:x=negative-index:y=format:X=width:Y=height[:o=opacity] ; base64 ST / OSC 72 ; t=P:x=idx ST
+      rule: Images consecutive negative x starting -1; formats24 RGB,32 RGBA,100 PNG,0 UTF-8 text; dimensions required, text X/Y scales
+        font and o/1024 opacity. Invalid EINVAL, excessive EFBIG. Zero-based image selection; out of range removes image. RGB/A samples
+        use sRGB.
+    - id: drag-start
+      section: lines 351-364
+      level: defined
+      wire: OSC 72 ; t=P:x=-1 ST / OSC 72 ; t=E ; OK|error ST
+      rule: Start actual drag after data/images; terminal replies OK or error; cancellation or disallowance EPERM.
+    - id: drag-events
+      section: lines 366-401
+      level: defined
+      wire: OSC 72 ; t=e:x=event[:y=idx][:o=O] ST / OSC 72 ; t=e:y=idx:m=0|1 ; base64 ST / OSC 72 ; t=E:y=idx ; error ST
+      rule: Events x:1 accepted MIME,2 operation change,3 dropped,4 finish with y=0/1 cancellation,5 request MIME. MIME indices zero-based.
+        Chunked response with empty final. E:y=-1 cancels drag; premature data/error EINVAL abort.
+    - id: remote-drag-data
+      section: lines 402-456
+      level: defined
+      wire: OSC 72 ; t=k:x=idx ST / OSC 72 ; t=k:x=idx[:X=kind][:Y=parent:y=num]:m=0|1 ; base64 ST
+      rule: Remote drag requires pre-sent URI list and directory slash; one-based URI entry, regular file/symlink/directory. Stream descendants
+        recursively without child requests; parent Y and entry y correlate. Errors t=E abort.
+    - id: feature-query
+      section: lines 459-479
+      level: defined
+      wire: OSC 72 ; t=q[:i=id] ST / OSC 72 ; t=q[:i=id] ; capabilities ST
+      rule: Echo optional id and colon-separated capability keys (currently empty). DA1 after query detects support.
+    - id: multiplexer
+      section: lines 481-488
+      level: defined
+      wire: OSC 72 ; t=a|o:i=id / response i=id
+      rule: Echo registration id on each terminal response for corresponding session.
+  kitty_shell_integration:
+    title: Kitty shell integration additions to OSC 133
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/shell-integration.rst
+    snapshot_sha256: 5a08659b89d58c58e77f5ea5d390e617a1a1a633e4519621875eee3e791a00a4
+    scope: Originating extra fields of shared FinalTerm command-zone protocol. Source-discovery candidate; not an implementation disposition
+      or completeness claim.
+    clauses:
+    - id: secondary-prompt
+      section: lines 424-476
+      level: defined
+      wire: OSC 133 ; A ; k=s ST
+      rule: Secondary PS2 prompt.
+      related_command: finalterm_shell.prompt-start
+    - id: prompt-redraw
+      section: lines 460-466
+      level: defined
+      wire: OSC 133 ; A ; redraw=0 ST
+      rule: Shell will not redraw prompt on resize; terminal should not erase it.
+    - id: prompt-special-key
+      section: lines 468-472
+      level: defined
+      wire: OSC 133 ; A ; special_key=1 ST
+      rule: Use special key bound by shell integration instead of synthesized arrow keys for prompt cursor positioning. Exact key encoding
+        requires source trace.
+    - id: prompt-click-events
+      section: lines 478-492
+      level: defined
+      wire: OSC 133 ; A ; click_events=1|2 ST
+      rule: Report prompt clicks with xterm SGR mouse encoding; 1 absolute y,2 relative to primary/secondary prompt top (top y=0). Otherwise
+        synthetic cursor keys may be used.
+    - id: command-line
+      section: lines 494-507
+      level: defined
+      wire: OSC 133 ; C ; cmdline=quoted ST / OSC 133 ; C ; cmdline_url=percent-encoded ST
+      rule: Optional command line using shell printf %q or UTF-8 URL percent encoding.
+  kitty_remote_control:
+    title: Kitty remote-control wire protocol
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/rc_protocol.rst
+    snapshot_sha256: 72594091d77338544710b8e9f8a557bd0e9a1d3225dc07a1fa8115022ea87eee
+    scope: Published host remote-control transport adjacent to VT. Host authority and generated command catalogue require scope review.
+      Source-discovery candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: envelope
+      section: lines 4-30
+      level: defined
+      wire: DCS @kitty-cmd JSON ST
+      rule: JSON cmd, version array, optional no_response, kitty_window_id, payload. Higher client major/minor version rejected; patch
+        ignored. Host permissions separate.
+    - id: encrypted-envelope
+      section: lines 50-84
+      level: defined
+      wire: DCS @kitty-cmd encrypted-JSON ST
+      rule: Versioned password-authenticated envelope with key agreement and authenticated encryption; encoded iv/tag/pubkey/encrypted
+        fields and time acceptance defined in source. Exact cryptographic and host scope qualification open.
+    - id: async
+      section: lines 86-99
+      level: defined
+      wire: DCS @kitty-cmd JSON(async=id[,cancel_async]) ST
+      rule: Request remains in flight until response; cancel by asynchronous identity.
+    - id: stream
+      section: lines 101-105
+      level: defined
+      wire: DCS @kitty-cmd JSON(stream=true,stream_id=id) ST
+      rule: Stable stream identity across chunks; empty data ends request. Generated command-specific payload schemas not yet inventoried.
+  contour_buffer_capture:
+    title: Contour buffer capture
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/buffer-capture.md
+    snapshot_sha256: 2e1affa1783f3b13f01d0be7e9ab9324e434eb6ae86d6e567b44f7cf5c736dca
+    scope: Author-documented buffer capture; host/data disclosure boundary open. Source-discovery candidate; not an implementation disposition
+      or completeness claim.
+    clauses:
+    - id: request
+      section: Request
+      level: defined
+      wire: CSI > Pl ; Pr t
+      rule: Pl=1 logical lines,0 visual; Pr line count.
+    - id: response
+      section: Response
+      level: defined
+      wire: PM 314 ; UTF-8-lines ST
+      rule: One or more chunks of UTF-8 lines with LF; final empty PM terminates.
+  contour_color_notifications:
+    title: Contour color palette notifications
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/color-palette-update-notifications.md
+    snapshot_sha256: 8c897d719dec8aef0b3d1f0dd26fe391403435b2316f923ff2302f61c15a855c
+    scope: Author-documented color preference query and update notifications. Source-discovery candidate; not an implementation disposition
+      or completeness claim.
+    clauses:
+    - id: query
+      section: Query
+      level: defined
+      wire: CSI ? 996 n / CSI ? 997 ; Ps n
+      rule: Report preference1 dark or2 light.
+    - id: updates
+      section: Enable/disable notification
+      level: defined
+      wire: CSI ? 2031 h / CSI ? 2031 l
+      rule: Subscribe/unsubscribe preference updates; ?997;1|2n when configured/OS palette preference changes.
+  contour_line_reflow:
+    title: Contour line reflow mode
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/line-reflow-mode.md
+    snapshot_sha256: b0da94cce62577ceb1914ae7943a81aa097125b66b120518bb4e3b8b0e998cf5
+    scope: Author-documented per-line reflow mode. Source-discovery candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: mode
+      section: Line reflow mode
+      level: defined
+      wire: CSI ? 2028 h / CSI ? 2028 l / CSI ? 2028 $ p
+      rule: Enable/disable reflow for current and subsequent lines; query private mode.
+  contour_semantic_blocks:
+    title: Contour semantic block query
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/semantic-block-query.md
+    snapshot_sha256: b432ca556f2d88bb313b8396bee8c58f06547548f789337bd92913265daac71d
+    scope: Author-documented OSC133-backed command zone queries. Not an authorization to disclose shell history. Source-discovery candidate;
+      not an implementation disposition or completeness claim.
+    clauses:
+    - id: enable
+      section: Activation
+      level: defined
+      wire: CSI ? 2034 h / DCS > 2034 ; 1 b T1;T2;T3;T4 ST
+      rule: Enable tracking; return four 16-bit authentication token values. Secure randomness recommended.
+    - id: disable
+      section: Activation
+      level: defined
+      wire: CSI ? 2034 l / CSI ? 2034 $ p
+      rule: Disable discards tracking and invalidates token; mode query 0 unsupported,1 enabled,2 disabled.
+    - id: query
+      section: Query syntax
+      level: defined
+      wire: CSI > Ps ; Pn ; T1 ; T2 ; T3 ; T4 b
+      rule: Ps1 last completed block,2 N completed blocks (N default1),3 current in-progress block. Authentication required.
+    - id: response
+      section: Response syntax
+      level: defined
+      wire: DCS > Ps b [ JSON ] ST
+      rule: Ps1 success JSON version1 with blocks containing command,prompt,output,exitCode,finished,outputLineCount; Ps0 no data/mode
+        off,2 missing auth,3 failed auth. JSON escapes prevent raw ST; bounded retained history implementation-defined.
+  contour_font_settings:
+    title: Contour font settings
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/font-settings.md
+    snapshot_sha256: 829d99de62ef51d981837ce1a978be771e20162eea20f2098633429d1115fdd8
+    scope: Originating font control; OSC60 collides with xterm allowed-feature query. Documentation/implementation field differences retained.
+      Source-discovery candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: query
+      section: Font settings; Screen.cpp:3280-3323
+      level: defined
+      wire: OSC 60 ST
+      rule: Query current font settings. Pinned implementation replies OSC60;size;regular;bold;italic;boldItalic;emoji ST, size in hundredths
+        of points. Document omits emoji field; both forms require review.
+    - id: set
+      section: Font settings; Screen.cpp:3280-3323
+      level: defined
+      wire: OSC 60 ; size ; regular ; bold ; italic ; bold-italic [ ; emoji ] ST
+      rule: Set font settings. Second document heading says query; implementation uses nonempty parameters to set, includes emoji field
+        and divides size by100. Host scope untriaged.
+  contour_sgr_storage:
+    title: Contour SGR storage
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/save-and-restore-sgr-attributes.md
+    snapshot_sha256: b9f163cc5be74d85322c1717175d9a3d47150dc7f37ee9a1ccd4d143d571a8e7
+    scope: Author-documented single rendition slot, distinct from xterm stack. Source-discovery candidate; not an implementation disposition
+      or completeness claim.
+    clauses:
+    - id: save
+      section: Save; Screen.cpp:1061-1070
+      level: defined
+      wire: 'CSI # {'
+      rule: Save current graphics rendition in one storage slot.
+    - id: restore
+      section: Restore; Screen.cpp:1061-1070
+      level: defined
+      wire: 'CSI # }'
+      rule: Restore saved graphics rendition; not xterm stack pop.
+  contour_vertical_marks:
+    title: Contour vertical line marks
+    author: Contour project
+    authority: protocol-author
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/vertical-line-marks.md
+    snapshot_sha256: 2fd46b4fea926934563eb986f0a123ee2860e24cf5f4e390886a4be5987e0f1a
+    scope: Author-documented marks; original lineage beyond Contour remains open. Source-discovery candidate; not an implementation disposition
+      or completeness claim.
+    clauses:
+    - id: mark
+      section: Mark
+      level: defined
+      wire: CSI > M
+      rule: Mark current line for terminal navigation; host presentation not specified here.
+  foot_extensions:
+    title: Foot-author extension definitions
+    author: Foot project
+    authority: protocol-author
+    revision: git cb2771788998f6a6288e2de8273c55a8214551e0
+    url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/doc/foot-ctlseqs.7.scd
+    snapshot_sha256: 137e77a57d07d7b728555a9a591cd2d5c1acb8a216542476dbc4045385747196
+    scope: Only entries attributed to Foot in its published control list. Other adopted controls require originating sources. Source-discovery
+      candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: ime-mode
+      section: lines 343-357
+      level: defined
+      wire: CSI ? 737769 h / CSI ? 737769 l
+      rule: Input method editor enable/disable mode; exact lifetime/query semantics require further source qualification.
+    - id: app-id
+      section: lines 790-797
+      level: defined
+      wire: OSC 176 ; app-id ST
+      rule: Set application ID; empty value restores default.
+    - id: flash
+      section: lines 790-797
+      level: defined
+      wire: OSC 555 ST
+      rule: Flash terminal.
+  rio_glyphs:
+    title: Rio Glyph Protocol
+    author: Raphael Amorim / Rio
+    authority: protocol-author
+    revision: git e1946a7b98a5a5a4074f384437f0256abf1df75b
+    url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/specs/glyph-protocol.md
+    snapshot_sha256: 2b3a9f5661d9a8d450e5ddb80c411d5fc87e2d55def255f3c6a3e0895535509e
+    scope: Raphael Amorim published glyph protocol, dated 2026-05-03 in pinned source. Font/raster/host boundaries untriaged. Source-discovery
+      candidate; not an implementation disposition or completeness claim.
+    clauses:
+    - id: envelope
+      section: section 3
+      level: defined
+      wire: APC 25a1 ; verb [ ; keys ] [ ; payload ] ST
+      rule: Verbs s,q,r,c. Structured key/value metadata and Base64 payload where specified.
+    - id: support
+      section: section 3
+      level: defined
+      wire: APC 25a1 ; s ST / APC 25a1 ; s ; fmt=... ST
+      rule: Discover supported formats glyf,colrv0,colrv1; unknown names ignored.
+    - id: query
+      section: sections 5.1-5.2
+      level: defined
+      wire: APC 25a1 ; q ; cp=hex ST / APC 25a1 ; q ; cp=hex ; status=list ST
+      rule: Any valid scalar including non-PUA. Echo cp. Coverage set empty,system,glossary,system+glossary (comma-separated). Glossary
+        overrides system on rendering. Non-PUA cannot have glossary coverage. Ignore unknown names.
+    - id: register
+      section: section 6.1
+      level: defined
+      wire: APC 25a1 ; r ; cp=...;fmt=...;... ; base64 ST
+      rule: Register PUA glyph in session glossary; replace same codepoint. fmt defaults glyf; upm default1000, aw/lh default upm; width1|2
+        default1 controls layout. Size modes height(default),advance,contain,cover,stretch; default align center,center and pad0. Further
+        exact key grammar and bounds need qualification.
+    - id: replies
+      section: section 6.2
+      level: defined
+      wire: APC 25a1 ; r ; cp=hex ; status=0 ST / APC 25a1 ; r ; cp=hex ; status=nonzero ; reason=code ST
+      rule: Registration reply policy0 silent,1 all(default),2 errors. Status0 success; errors include out_of_namespace,composite_unsupported,hinting_unsupported,malformed_payload,payload_too_large.
+        Unknown reply values default1; cp echoed.
+    - id: clear
+      section: sections 7.1-7.3
+      level: defined
+      wire: APC 25a1 ; c [ ; cp=hex ] ST / APC 25a1 ; c ; status=0 ST / APC 25a1 ; c ; status=1 ; reason=out_of_namespace ST
+      rule: Clear one PUA glyph or all when omitted; absent slot succeeds. Reject non-PUA. Invalidate cached rasters on clear, overwrite
+        and eviction.
+    - id: bounds-lifetime
+      section: sections 4,6.2-6.4
+      level: defined
+      wire: APC 25a1 registrations
+      rule: Only PUA E000..F8FF,F0000..FFFFD,100000..10FFFD. Limit1024 per session, FIFO eviction; decoded payload <=64KiB. No cross-session/persistent
+        registration. RIS may clear.
+    - id: glyf
+      section: sections 8.1-8.5
+      level: defined
+      wire: fmt=glyf
+      rule: OpenType simple glyph contours, no composite glyph or hinting; current foreground color.
+    - id: colrv0
+      section: section 8.6
+      level: defined
+      wire: fmt=colrv0
+      rule: Container with simple glyph records, COLR v0 and CPAL tables; source defines binary lengths and counts. Dynamic foreground
+        sentinel; full binary format qualification outstanding.
+    - id: colrv1
+      section: section 8.7
+      level: defined
+      wire: fmt=colrv1
+      rule: Same container with COLR v1 paint graph, optional CPAL; supported paint subset optional. Dynamic foreground requires appropriate
+        raster invalidation.
+    - id: text-ownership
+      section: section 9
+      level: defined
+      wire: glyph render versus cell text
+      rule: Registered visual glyph does not replace original cell codepoint in copying, selection or searching. No filesystem access
+        through protocol. Source rationale is not a blanket security guarantee.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -12381,7 +13155,31 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences: []
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: contour-osc60-font-vs-xterm-allowed
+      status: material-originating-extension-conflict
+      wire: OSC 60 ST
+      original_author_sources:
+      - clause: contour_font_settings.query
+        meaning: Font settings reply; pinned implementation returns size and font families.
+      - clause: xterm_controls.allowed-feature-query
+        meaning: Allowed runtime feature categories, not fonts.
+      question: Which OSC60 profile to select? Distinguish set form and Contour documented vs implemented response fields.
+      decision: null
+    - id: contour-sgr-slot-vs-xterm-stack
+      status: material-originating-extension-conflict
+      wire: 'CSI # { / CSI # }'
+      original_author_sources:
+      - clause: contour_sgr_storage.save
+        meaning: Save into one storage location, confirmed Screen.cpp:1061-1070.
+      - clause: contour_sgr_storage.restore
+        meaning: Restore same saved value without stack pop.
+      - clause: xterm_controls.sgr-stack-push
+        meaning: Push stack, optional selection.
+      - clause: xterm_controls.sgr-stack-pop
+        meaning: Pop stack.
+      question: Resolve identical no-parameter wire with different repeated-save and restore lifetime. No implementation decision in census.
+      decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
@@ -14319,33 +15117,32 @@ reconciliation:
     omitted_selector: 'Default selector0: reset the four original video attributes.'
     explicit_zero: Clear the four original video attributes, bold/underline/blink/reverse.
     other_attributes: Preserve unrelated attributes for zero. Original selector effects accumulate in order.
-  scope_limit: Omitted selector and explicit zero base attributes only. Existing nonzero selector extensions, invalid-only
-    lists, trailing empty subparameter interpretation, unoccupied cells, geometry/clamping, level gating, exact underline/blink
-    extension styles and rendering are not selected or qualified by this decision. Not adoption of the Kitty all-SGR extension.
-  reason: Captain selected original DEC omitted default0 despite divergent modern coordinate-only admission. Original four-bit
-    reset is shared by DEC, Foot, xterm and Termux; Kitty author documents a materially broader extension. No adoption of
-    all SGR.
+  scope_limit: Omitted selector and explicit zero base attributes only. Existing nonzero selector extensions, invalid-only lists, trailing
+    empty subparameter interpretation, unoccupied cells, geometry/clamping, level gating, exact underline/blink extension styles and
+    rendering are not selected or qualified by this decision. Not adoption of the Kitty all-SGR extension.
+  reason: Captain selected original DEC omitted default0 despite divergent modern coordinate-only admission. Original four-bit reset
+    is shared by DEC, Foot, xterm and Termux; Kitty author documents a materially broader extension. No adoption of all SGR.
   reference_evidence:
   - implementation: xterm_snapshots
     revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
     source: charproc.c:187,5694-5710; screen.c:2934-3048; ptyx.h:3772
-    meaning: No attribute iterations with absent selectors; exact rectangles may mark undrawn cells. Explicit0 clears/toggles
-      BOLD|BLINK|UNDERLINE|INVERSE. Conceal8/28 extension.
+    meaning: No attribute iterations with absent selectors; exact rectangles may mark undrawn cells. Explicit0 clears/toggles BOLD|BLINK|UNDERLINE|INVERSE.
+      Conceal8/28 extension.
   - implementation: foot
     revision: cb2771788998f6a6288e2de8273c55a8214551e0
     source: csi.c:1934-2017
-    meaning: Four original attributes, explicit0 reset/toggle; no selector iterations with absent list. Marks rows dirty;
-      no claim of exact nonmutation.
+    meaning: Four original attributes, explicit0 reset/toggle; no selector iterations with absent list. Marks rows dirty; no claim of
+      exact nonmutation.
   - implementation: kitty
     revision: a79f376b85fd95e3dfd0589877123996bacd4184
     source: docs/deccara.rst; kitty/vt-parser.c:1022-1069,1377-1404,1430-1444; kitty_tests/parser.py:1198-1241
-    meaning: Author extends DECCARA to all SGR attributes including colors. Bare CSI $ r supplies five zeros, a coordinate-only
-      list supplies no selector. DECRARA rejected as unsupported window-operation intermediate.
+    meaning: Author extends DECCARA to all SGR attributes including colors. Bare CSI $ r supplies five zeros, a coordinate-only list
+      supplies no selector. DECRARA rejected as unsupported window-operation intermediate.
   - implementation: windows_terminal
     revision: 9853bc96076e811cef5eab4469095fc9be58201e
     source: src/terminal/parser/OutputStateMachineEngine.cpp:630-635; adapter/adaptDispatch.cpp:1049-1137; adapter/adaptDispatchGraphics.cpp:404-411
-    meaning: Coordinate-only list yields no attribute iterations; DECCARA uses extended SGR/colour masks; DECRARA explicitly
-      excludes empty list, XORs extended rendition mask for explicit0.
+    meaning: Coordinate-only list yields no attribute iterations; DECCARA uses extended SGR/colour masks; DECRARA explicitly excludes
+      empty list, XORs extended rendition mask for explicit0.
   - implementation: contour
     revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
     source: src/vtbackend/Functions.h:604,615; Screen.cpp:4250-4309
@@ -14353,13 +15150,13 @@ reconciliation:
   - implementation: termux-app
     revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
     source: terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java:740-800
-    meaning: Original four bits, explicit0 reset/toggle. Fewer than five operands no-op. Inspected git object and matching
-      tracked file, checkout has unrelated untracked IDE files.
+    meaning: Original four bits, explicit0 reset/toggle. Fewer than five operands no-op. Inspected git object and matching tracked file,
+      checkout has unrelated untracked IDE files.
   - implementation: iterm2
     revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
     source: sources/VT100/VT100Terminal.m:1045-1076
-    meaning: Both commands return if fewer than five parameters. Selector dispatch delegated; complete downstream bit-mask
-      semantics not claimed.
+    meaning: Both commands return if fewer than five parameters. Selector dispatch delegated; complete downstream bit-mask semantics
+      not claimed.
   - implementation: ghostty
     revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
     source: src/terminal/stream.zig:2559-2599,2743-2747
@@ -14372,8 +15169,8 @@ reconciliation:
       version: vte 0.15.0
       sha256: a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd
       url: https://static.crates.io/crates/vte/vte-0.15.0.crate
-  reference_boundary: Pinned source inspection, not foreign runtime or performance benchmarking. Unsupported operations
-    are not semantic votes.
+  reference_boundary: Pinned source inspection, not foreign runtime or performance benchmarking. Unsupported operations are not semantic
+    votes.
   implementation_policy: semantic-selection-only; disposition and priority not yet triaged
   superseded_pending_record:
     id: deccara-omitted-selector-default
@@ -14383,14 +15180,13 @@ reconciliation:
     - clause: dec_vt420.attr-change-rect
       meaning: Omitted selector defaults to 0; unsupported selectors ignored.
     - clause: dec_std070.attr-change-rect
-      meaning: If no valid subsequent selector is received, default0 clears the four original video attributes; defined
-        extensions excepted.
+      meaning: If no valid subsequent selector is received, default0 clears the four original video attributes; defined extensions excepted.
     independent_implementations:
     - implementation: xterm_snapshots
       revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
       source: charproc.c:187,5694-5701; screen.c:2934-3048
-      meaning: Passes remaining parameter list from index4. No attribute-selector iterations when absent; exact rectangle
-        can still mark undrawn cells.
+      meaning: Passes remaining parameter list from index4. No attribute-selector iterations when absent; exact rectangle can still
+        mark undrawn cells.
     - implementation: iterm2
       revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
       source: sources/VT100/VT100Terminal.m:1045-1060
@@ -14399,14 +15195,14 @@ reconciliation:
       revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
       source: src/vtbackend/Functions.h:604; Screen.cpp:4250-4279
       meaning: Dispatch definition minimum five operands, SGR application from index4.
-    question: 'Select omitted DECCARA selector behavior: original default0 reset or existing no-admission. Invalid-only
-      list fallback and empty final substring versus absent selector separately qualify; do not infer all SGR selectors
-      or unoccupied-cell policy.'
+    question: 'Select omitted DECCARA selector behavior: original default0 reset or existing no-admission. Invalid-only list fallback
+      and empty final substring versus absent selector separately qualify; do not infer all SGR selectors or unoccupied-cell policy.'
     decision: null
   superseded_in_part:
     by: kitty-deccara-shared-sgr-rendition
-    scope: 'DECCARA reset domain only: omitted and explicit zero now use complete shared SGR reset. Omitted-selector admission
-      remains selected. Original DEC meaning and previous decision preserved.'
+    scope: 'DECCARA reset domain only: omitted and explicit zero now use complete shared SGR reset. Omitted-selector admission remains
+      selected. Original DEC meaning and previous decision preserved.'
+    further_correction: kitty-deccara-coordinate-only-no-op
 - id: decrara-omitted-selector-default
   status: resolved-by-explicit-captain-choice
   decision_rule: explicit-captain-choice
@@ -14510,42 +15306,98 @@ reconciliation:
   approved_by: Captain
   approved_on: '2026-11-24'
   accepted_interpretation:
-    deccara: Apply the full currently admitted ordinary SGR vocabulary, in parameter order, to existing selected cell rendition.
-      Include foreground/background/underline colors and styles, existing ordinary font/baseline/conceal, and originating
-      Kitty 221/222 independent bold/faint resets.
-    reset: Omitted selector remains admitted as reset. Explicit zero and omission now reset all SGR-owned rendition fields
-      to ordinary SGR defaults, preserving per-cell protection and OSC 8 hyperlink identity.
-    grammar: Retain SGR colon adjacency for the suffix after four coordinate operands. Coordinate operands are not SGR groups.
-      Use the same ordinary SGR color and style interpretation, rather than flattening color payload into separate rendition
-      selectors.
-    ownership: Preserve text, scalar/cluster geometry, current write rendition, cursor and pending wrap. Apply selected
-      extent; no new cell provenance, storage, allocation or renderer dependence.
-    decrara: Separate reverse-selector operation; prior omitted-no-default and explicit-zero four-original-attributes decision
-      retained. No adoption of all-SGR reversal.
+    deccara: Apply the full currently admitted ordinary SGR vocabulary, in parameter order, to existing selected cell rendition. Include
+      foreground/background/underline colors and styles, existing ordinary font/baseline/conceal, and originating Kitty 221/222 independent
+      bold/faint resets.
+    reset: Omitted selector remains admitted as reset. Explicit zero and omission now reset all SGR-owned rendition fields to ordinary
+      SGR defaults, preserving per-cell protection and OSC 8 hyperlink identity.
+    grammar: Retain SGR colon adjacency for the suffix after four coordinate operands. Coordinate operands are not SGR groups. Use the
+      same ordinary SGR color and style interpretation, rather than flattening color payload into separate rendition selectors.
+    ownership: Preserve text, scalar/cluster geometry, current write rendition, cursor and pending wrap. Apply selected extent; no new
+      cell provenance, storage, allocation or renderer dependence.
+    decrara: Separate reverse-selector operation; prior omitted-no-default and explicit-zero four-original-attributes decision retained.
+      No adoption of all-SGR reversal.
   supersedes:
   - decision: deccara-omitted-selector-default
     scope: Only original-four reset domain. Keep omission admission and original source record; complete SGR reset now selected.
-  scope_limit: Adopt originating extended DECCARA for Howl shared SGR repertoire, not byte-for-byte Kitty parser equivalence.
-    Kitty coordinate-only no-op differs from our deliberately retained omission-reset behavior. Complete invalid-only fallback,
-    trailing omissions, exact source numeric/color clamping, all malformed SGR admission, DECOM/page/margins/double-width
-    geometry, display integration and unsupported ordinary SGR extensions remain separate. No full implementation-status
-    assessment or general DECRARA expansion.
-  reason: Captain accepted full Kitty extended DECCARA after verified production consumers and the proposal to reuse ordinary
-    SGR. Originating Kitty documentation explicitly defines the extension; its diff application sends real foreground/background
-    color updates. Prior nine-reference comparison preserved in earlier records; unsupported reference commands are not
-    votes against this originating extension.
+  scope_limit: Adopt originating extended DECCARA for Howl shared SGR repertoire, not byte-for-byte Kitty parser equivalence. Kitty
+    coordinate-only no-op differs from our deliberately retained omission-reset behavior. Complete invalid-only fallback, trailing omissions,
+    exact source numeric/color clamping, all malformed SGR admission, DECOM/page/margins/double-width geometry, display integration
+    and unsupported ordinary SGR extensions remain separate. No full implementation-status assessment or general DECRARA expansion.
+  reason: Captain accepted full Kitty extended DECCARA after verified production consumers and the proposal to reuse ordinary SGR. Originating
+    Kitty documentation explicitly defines the extension; its diff application sends real foreground/background color updates. Prior
+    nine-reference comparison preserved in earlier records; unsupported reference commands are not votes against this originating extension.
   reference_evidence:
   - implementation: kitty
     revision: a79f376b85fd95e3dfd0589877123996bacd4184
     source: docs/deccara.rst; docs/misc-protocol.rst:25-30; kitty/cursor.c:89-224; kitty/vt-parser.c:1022-1069,1074-1136,1430-1444;
       kitty/screen.c:1897-1950; kitty_tests/parser.py:1198-1241
-    observation: Original all-SGR regional change extension, with independent 221/222 intensity controls. Region application
-      operates on retained GPU cell attributes rather than replacing text; bare form supplies zero, coordinate-only does
-      not. Howl reuses its own ordinary SGR rules and retained omission policy.
+    observation: Original all-SGR regional change extension, with independent 221/222 intensity controls. Region application operates
+      on retained GPU cell attributes rather than replacing text; bare form supplies zero, coordinate-only does not. Howl reuses its
+      own ordinary SGR rules and retained omission policy.
   - implementation: kitty
     revision: a79f376b85fd95e3dfd0589877123996bacd4184
     source: kittens/diff/render.go:271-279; kittens/diff/search.go:132-143; kittens/diff/mouse.go:220-227; tools/tui/mouse.go:156-166;
       tools/tui/loop/api.go:306-324
-    observation: Diff search/selection use color SGR in DECCARA; toolkit provides StyleRegion/StyleRectangle. Production
-      call sites, not external adoption statistics or runtime measurements.
+    observation: Diff search/selection use color SGR in DECCARA; toolkit provides StyleRegion/StyleRectangle. Production call sites,
+      not external adoption statistics or runtime measurements.
   implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_in_part:
+    by: kitty-deccara-coordinate-only-no-op
+    scope: Coordinate-only DECCARA must not supply an implicit zero selector. Bare form and explicit zero still reset full SGR. Earlier
+      hybrid is a defect, not a product constraint.
+- id: kitty-deccara-coordinate-only-no-op
+  status: resolved-by-explicit-captain-choice
+  decision_rule: explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  accepted_interpretation:
+    bare: CSI $ r supplies default coordinates and selector0, resetting complete SGR rendition.
+    coordinates_only: One to four coordinate operands without SGR selectors do not alter rendition.
+    explicit_zero: Supplied SGR 0 resets complete selected-region rendition, preserving protection and hyperlink ownership.
+    reverse: DECRARA remains separate.
+  supersedes:
+  - decision: kitty-deccara-shared-sgr-rendition
+    scope: Coordinate-only implicit reset.
+  - decision: deccara-omitted-selector-default
+    scope: Remaining historical omitted-selector admission when coordinates supplied.
+  scope_limit: Bare versus coordinate-only versus explicit-zero only. Trailing omission grammar and other source requirements
+    still need qualification.
+  reason: Captain stopped implementation and required the divergent behavior to be marked a defect and the encouraging test
+    reversed. Earlier hybrid was agent judgment without demonstrated product constraint.
+  reference_evidence:
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: docs/deccara.rst; kitty/vt-parser.c:1022-1069,1074-1136,1430-1444; kitty_tests/parser.py:1198-1201
+    observation: Bare command fills five zero parameters; parse_region consumes coordinates; SEND_SGR requires nonempty SGR
+      group. Coordinate-only lists do not apply SGR.
+  implementation_policy: Known coordinate-only defect repaired; retain PARTIAL and original red evidence. Other implementation
+    frozen pending originating-source census.
+  implementation_assessment:
+    as_of: '2026-11-24'
+    scope: Coordinate-only extended DECCARA omission
+    intent: target
+    priority: not-yet-triaged
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:rectAttrsChange
+    - howl-vt/src/screen.zig:changeRectAttrs
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: rectangle attribute defaults distinguish change from reverse'
+    verified_subset: 'Corrected regression now passes all 1129 VT Debug tests: supplied 1..4 coordinate operands without SGR
+      leave rendition and tested row/semantic identities unchanged; bare request and explicit zero reset shared SGR. Exact
+      split input coverage and both CSI representations. Earlier shared-SGR color/style/reset proofs remain.'
+    not_full_because: Only the coordinate-only defect and the narrow bare/explicit-zero distinction are repaired and proved
+      here; complete originating grammar (including trailing omissions), bounds, extent/geometry and renderer qualification
+      remain open.
+    boundary: Implementation exception authorized by Captain solely for this defect and dogfood promotion. Broader source
+      census and protocol implementation remain suspended.
+    red_evidence: waves/20261124-originating-source-census/deccara-red.stderr
+    test_patch: waves/20261124-originating-source-census/DECCARA-DEFECT-TEST.patch
+    historical_defect:
+      baseline: e8ef7182387a6e1a8e8aa356f62709506c313e09
+      observation: 'KNOWN DEFECT: coordinate-only request supplies empty SGR operand slice and resets existing attributes.
+        Corrected test fails on indexed foreground becoming default. Debug 1128 pass, 1 fail.'
+      red_evidence: waves/20261124-originating-source-census/deccara-red.stderr
+      test_patch: waves/20261124-originating-source-census/DECCARA-DEFECT-TEST.patch
