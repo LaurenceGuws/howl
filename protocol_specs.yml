@@ -2947,8 +2947,8 @@ specifications:
       - selector: 47
         symbol: DECGRPM
         originating_effect: graphics rotated print
-      source_limit: Volume 1 identifies mode numbers and SM/RM use. It explicitly refers to Volume 2, Chapter 16 for complete graphics printing
-        behavior, not verified here. Implementation sizing, state and response semantics remain untriaged.
+      source_limit: Volume 1 Table 12-3 identifies the DEC modes; their full print-format effects, approximate dimensions and printer-level
+        sixel output grammar are now indexed from Volume 2 Chapter 16.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: private-mode-43-h-line-941
@@ -2991,6 +2991,86 @@ specifications:
       - dec-vt3xx-graphics-print-vs-xterm-mode-45
       - dec-vt3xx-graphics-print-vs-xterm-mode-46
       - dec-vt3xx-graphics-print-vs-xterm-mode-47
+      detailed_source: dec_vt3xx_graphics.graphics-print-modes
+  dec_vt3xx_graphics:
+    title: 'DEC VT330/VT340 Programmer Reference Manual, Volume 2: Graphics Programming'
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: Second edition, May 1988 (EK-VT3XX-GP-002)
+    url: https://mirrors.meulie.net/bitsavers.org/pdf/dec/terminal/vt340/EK-VT3XX-GP-002_VT330_VT340_Graphics_Programming_198805.pdf
+    snapshot_sha256: e4b2a69d1425db5e216d372cd080c3cff6dd216dc8acbb47f58b699fa2338669
+    scope: Original graphics printing controls and sixel printer-level output contracts in Chapter 16, printed pages 255-261; not all Volume
+      2 graphics semantics.
+    clauses:
+    - id: graphics-print-modes
+      section: Chapter 16 / Selecting a Format for Printing, printed pages 255-257
+      level: defined
+      wire: CSI ? Pd h / CSI ? Pd l (Pd=43..47)
+      rule: On DEC VT300, these selectors control graphics printing, not xterm margin bell, reverse-wraparound, logging or alternate-screen
+        behavior. The terminal ignores these print-formatting functions when no printer is connected.
+      reaffirms: dec_vt3xx_text.graphics-print-dec-private-modes
+      parameters:
+      - selector: 43
+        symbol: DECGEPM
+        set: Expanded image, approximately 300 x 200 mm (12 x 8 in), for 13-inch paper.
+        reset: Compressed image, approximately 150 x 75 mm (6 x 3 in), for A4 or 8.5-inch paper.
+        default: reset / compressed
+      - selector: 44
+        symbol: DECGPCM
+        set: Color output (VT340 only).
+        reset: Black-and-white output.
+        default: reset / black and white
+      - selector: 45
+        symbol: DECGPCS
+        set: RGB color coordinate system.
+        reset: HLS color coordinate system.
+        default: reset / HLS
+        gate: Select only with VT340 color-print mode DECGPCM.
+      - selector: 46
+        symbol: DECGPBM
+        set: Include the graphics background in printing.
+        reset: Exclude the graphics background.
+        default: reset / no background
+        gate: Operates only when DECGPCM color-print mode is set.
+      - selector: 47
+        symbol: DECGRPM
+        set: 90-degree rotated image, approximately 200 x 300 mm (8 x 12 in).
+        reset: Compressed image, approximately 150 x 75 mm (6 x 3 in).
+        default: reset / compressed
+      size_note: Printed dimensions are approximate physical paper output sizes, never VT cell counts or exact image pixel quotas. Sixel
+        output encoding depends on selected printer level; see graphics-printer-sixel-output.
+      collisions:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-44
+      - dec-vt3xx-graphics-print-vs-xterm-mode-45
+      - dec-vt3xx-graphics-print-vs-xterm-mode-46
+      - dec-vt3xx-graphics-print-vs-xterm-mode-47
+      implementation_status: unassessed source semantics, not a selected Howl implementation requirement or proof of printer I/O
+    - id: graphics-printer-sixel-output
+      section: Chapter 16 / Sending Graphics and Sixel Graphics Levels, printed pages 258-261
+      level: defined
+      wire: CSI ? Ps i (hardcopy route) followed by printer-level sixel DCS
+      rule: MC CSI ? 2 i routes subsequent ReGIS hardcopy to the host. CSI ? i or CSI ? 0 i routes it to printer. For a Media Copy request
+        the terminal emits only sixel DCS (no preceding CR); pressing Local Print sends a preceding CR.
+      printer_levels:
+      - level: level-1
+        format: 7-bit ESC P 1 q sixel-data ESC backslash
+        device_aspect_ratio: 2 horizontal pixels to 1 vertical
+        constraints: No set-raster-attributes, background-select, horizontal-grid-size or macro-parameter commands. Level-1 uses fixed print
+          format and macro 1.
+      - level: level-2
+        format: 7-bit sixel DCS with macro, background, grid-size and raster-attribute parameters
+        macro_parameter: '0'
+        background_select: 1 = disabled, 2 = enabled
+        grid_size_default: 6 for compressed, 9 for expanded or rotated
+        pixel_aspect_ratio_default: numerator=1, denominator=1
+        raster_extents: Pn6 and Pn7 are horizontal and vertical image pixel extents, not printed paper measurements.
+      - level: LA210
+        format: 'Special printer profile: macro 9 for expanded/rotated 1:1 aspect; level-1 form for compressed output'
+        grid_size: 338 x 0.025 mm (13.5 x 0.001 in) for expanded/rotated
+        compatibility: LA75 needs level-1 format for expanded or rotated output due to firmware differences.
+      source_limit: Original printer-level grammar and physical sizing are documentary evidence. No target implementation or equivalence
+        to VT text geometry is implied.
+      related_original_media_copy: dec_vt240.media-copy-dec-private
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -4468,7 +4548,7 @@ discovery_catalogues:
         source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
         name: DECGPCM
         meaning: graphics print color
-        detailed_source_pending: DEC Volume 2, Chapter 16
+        detailed_source: dec_vt3xx_graphics.graphics-print-modes
       xterm:
         source: Pinned xterm ctlseqs DECSET/DECRST tables
         meaning: margin bell
@@ -4493,8 +4573,8 @@ discovery_catalogues:
       reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
         independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
         automatically.
-      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
-        regardless.
+      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
+        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-45
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
@@ -4505,7 +4585,7 @@ discovery_catalogues:
         source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
         name: DECGPCS
         meaning: graphics print color syntax
-        detailed_source_pending: DEC Volume 2, Chapter 16
+        detailed_source: dec_vt3xx_graphics.graphics-print-modes
       xterm:
         source: Pinned xterm ctlseqs DECSET/DECRST tables
         meaning: reverse-wraparound mode (XTREVWRAP)
@@ -4530,8 +4610,8 @@ discovery_catalogues:
       reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
         independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
         automatically.
-      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
-        regardless.
+      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
+        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-46
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
@@ -4542,7 +4622,7 @@ discovery_catalogues:
         source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
         name: DECGPBM
         meaning: graphics print background
-        detailed_source_pending: DEC Volume 2, Chapter 16
+        detailed_source: dec_vt3xx_graphics.graphics-print-modes
       xterm:
         source: Pinned xterm ctlseqs DECSET/DECRST tables
         meaning: session logging (XTLOGGING), subject to compile-time options
@@ -4563,8 +4643,8 @@ discovery_catalogues:
       reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
         independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
         automatically.
-      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
-        regardless.
+      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
+        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-47
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
@@ -4575,7 +4655,7 @@ discovery_catalogues:
         source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
         name: DECGRPM
         meaning: graphics rotated print
-        detailed_source_pending: DEC Volume 2, Chapter 16
+        detailed_source: dec_vt3xx_graphics.graphics-print-modes
       xterm:
         source: Pinned xterm ctlseqs DECSET/DECRST tables
         meaning: alternate screen buffer, subject to titeInhibit resource
@@ -4600,8 +4680,8 @@ discovery_catalogues:
       reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
         independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
         automatically.
-      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
-        regardless.
+      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
+        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
