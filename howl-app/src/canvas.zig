@@ -1190,7 +1190,7 @@ test "cursor shapes blink and outline above selection at fractional scales witho
     };
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
-        .command = "stty -echo; printf 'W\\033[1;1H\\033]0;CURSOR-READY\\007'; while read line; do printf '\\033[%s q' \"$line\"; done",
+        .command = "stty -echo; printf 'W\\033[1;1H\\033]0;CURSOR-READY\\007'; while read line; do printf '\\033[%s q\\033]0;%s\\007' \"$line\" \"$line\"; done",
         .rows = 2,
         .columns = 4,
         .color_defaults = .{
@@ -1211,6 +1211,18 @@ test "cursor shapes blink and outline above selection at fractional scales witho
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
+    // The shell must finish stty and publish its initial text before input.
+    // Each subsequent cursor command has its own ordered completion marker.
+    var ready_attempts: u16 = 0;
+    while (ready_attempts < 5000) : (ready_attempts += 1) {
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (status.presentation_failure) |failure| return failure;
+        if (std.mem.eql(u8, status.title[0..status.title_len], "CURSOR-READY")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    if (ready_attempts == 5000) return error.Timeout;
+
     var retained_revision: ?u64 = null;
     var retained_texture: ?*c.SDL_Texture = null;
     for ([_][]const u8{ "2", "1", "4", "3", "6", "5" }) |style| {
@@ -1223,7 +1235,7 @@ test "cursor shapes blink and outline above selection at fractional scales witho
             const status = owner.snapshot();
             if (status.failure) |failure| return failure;
             if (status.presentation_failure) |failure| return failure;
-            if (status.revision > previous) {
+            if (status.revision > previous and std.mem.eql(u8, status.title[0..status.title_len], style)) {
                 if (backend.frame()) |frame| if (frame.terminal_revision == status.revision) break;
             }
             owner.requestFrame();
