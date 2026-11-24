@@ -1857,19 +1857,42 @@ test "terminal: IND ignores ANSI newline mode while LF and NEL retain their own 
     }
 }
 
-test "terminal: parameterless CSI s remains a savepoint under DECLRMM" {
-    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
-    defer terminal.deinit();
+test "terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM" {
+    for ([_][]const u8{ "\x1b[s", "\x9bs" }) |command| {
+        for (0..command.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+            defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[?69h\x1b[2;7s\x1b[2;5H")).stateChanged());
-    try std.testing.expect(!(try terminal.feed("\x1b[")).stateChanged());
-    try std.testing.expect((try terminal.feed("s")).stateChanged());
-    try std.testing.expect(!(try terminal.feed("\x1b[s")).stateChanged());
+            // With DECLRMM disabled, CSI s and ESC 8 share the DEC savepoint.
+            try feed(&terminal, "\x1b[2;5H\x1b[1m");
+            try feed(&terminal, command[0..split]);
+            try feed(&terminal, command[split..]);
+            try feed(&terminal, "\x1b[0m\x1b[3;6H\x1b8");
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+            try feed(&terminal, "S");
+            try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 4).attrs.bold);
 
-    try std.testing.expect((try terminal.feed("\x1b[3;8s\x1b[1;3H\x1b[u")).stateChanged());
-    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
-    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
-    try std.testing.expect(!(try terminal.feed("\x1b[u")).stateChanged());
+            // With DECLRMM enabled, bare CSI s resets the horizontal margins
+            // without replacing an independent ESC 7 savepoint.
+            try feed(&terminal, "\x1b[?69h\x1b[2;7s\x1b[2;5H\x1b7\x1b[3;6H");
+            try feed(&terminal, command[0..split]);
+            try feed(&terminal, command[split..]);
+            try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+            try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+            try feed(&terminal, "\x1b[?6h\x1b[1;8H");
+            try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_col);
+
+            try feed(&terminal, "\x1b[u");
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+
+            // Private Kitty negotiation is independent of ordinary CSI u.
+            try feed(&terminal, "\x1b[=1u\x1b[?u");
+            try std.testing.expectEqualStrings("\x1b[?1u", terminal.replyBytes());
+        }
+    }
 }
 
 test "terminal: HPB and VPB retain bounded cursor movement and exact mutation" {

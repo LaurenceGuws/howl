@@ -408,6 +408,7 @@ const SemanticEvent = union(enum) {
     enter_alt_screen: struct { clear: bool, save_cursor: bool },
     exit_alt_screen: struct { restore_cursor: bool },
     save_cursor,
+    save_cursor_or_default_margins,
     restore_cursor,
     insert_lines: u16,
     delete_lines: u16,
@@ -1113,7 +1114,7 @@ fn decodeCsi(
         'l' => return SemanticEvent{ .ansi_mode_reset = collectParams(params) },
         'm' => return SemanticEvent{ .sgr = .{ .params = params, .separators = separators } },
         's' => if (params.len == 0)
-            return SemanticEvent.save_cursor
+            return SemanticEvent.save_cursor_or_default_margins
         else
             return SemanticEvent{ .set_left_right_margins = .{
                 .left = paramAtOrDefault1(params, 0) - 1,
@@ -3506,7 +3507,7 @@ fn semanticMutationSet(
         .soft_reset => {
             mutations.mode = changed;
         },
-        .save_cursor => mutations.mode = changed,
+        .save_cursor, .save_cursor_or_default_margins => mutations.mode = changed,
         .auto_wrap,
         .origin_mode,
         .insert_mode,
@@ -3718,6 +3719,13 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .hard_reset => vt.applyHardReset(),
         .soft_reset => return vt.softReset(),
         .save_cursor => return vt.saveCursor(),
+        .save_cursor_or_default_margins => {
+            const active = vt.screen_state.active();
+            return if (active.left_right_margin_mode)
+                active.setLeftRightMargins(0, null)
+            else
+                vt.saveCursor();
+        },
         .restore_cursor => return vt.restoreCursor(),
         .enter_alt_screen => |opts| {
             return vt.switchScreenMode(true, opts.clear, opts.save_cursor);
@@ -10881,7 +10889,7 @@ const CsiMappingOwnerTests = struct {
 
     test "csi mapping: cursor style, save restore aliases, and invalid sequence" {
         try std.testing.expectEqual(@as(?SemanticEvent, null), routeParserEvent(ParserEvent.invalid_sequence));
-        try std.testing.expect(routeParserEvent(makeStyleChange('s', 0, 0, 0)).? == .save_cursor);
+        try std.testing.expect(routeParserEvent(makeStyleChange('s', 0, 0, 0)).? == .save_cursor_or_default_margins);
         try std.testing.expect(routeParserEvent(makeStyleChange('u', 0, 0, 0)).? == .restore_cursor);
         var sem = routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 0, ' ')).?;
         try std.testing.expect(sem.cursor_style == .restore_default);
