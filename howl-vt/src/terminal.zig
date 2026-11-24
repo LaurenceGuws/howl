@@ -260,7 +260,7 @@ const SemanticEvent = union(enum) {
     cursor_up: u16,
     cursor_down: u16,
     cursor_forward: u16,
-    cursor_back: u16,
+    cursor_back: struct { count: u16, reverse_wrap: bool },
     cursor_next_line: u16,
     cursor_prev_line: u16,
     cursor_horizontal_absolute: u16,
@@ -453,7 +453,6 @@ fn screenAction(event: SemanticEvent) ?Screen.Action {
         .cursor_up => |value| .{ .cursor_up = value },
         .cursor_down => |value| .{ .cursor_down = value },
         .cursor_forward => |value| .{ .cursor_forward = value },
-        .cursor_back => |value| .{ .cursor_back = value },
         .cursor_next_line => |value| .{ .cursor_next_line = value },
         .cursor_prev_line => |value| .{ .cursor_prev_line = value },
         .cursor_horizontal_absolute => |value| .{ .cursor_horizontal_absolute = value },
@@ -464,7 +463,6 @@ fn screenAction(event: SemanticEvent) ?Screen.Action {
         .line_feed => .line_feed,
         .next_line => .next_line,
         .carriage_return => .carriage_return,
-        .backspace => .backspace,
         .horizontal_tab => .horizontal_tab,
         .horizontal_tab_forward => |value| .{ .horizontal_tab_forward = value },
         .horizontal_tab_back => |value| .{ .horizontal_tab_back = value },
@@ -1091,8 +1089,8 @@ fn decodeCsi(
         'B', 'e' => return SemanticEvent{ .cursor_down = paramAtOrDefault1(params, 0) },
         'C', 'a' => return SemanticEvent{ .cursor_forward = paramAtOrDefault1(params, 0) },
         'b' => return SemanticEvent{ .repeat_preceding = paramAtOrDefault1(params, 0) },
-        'D' => return SemanticEvent{ .cursor_back = paramAtOrDefault1(params, 0) },
-        'j' => return SemanticEvent{ .cursor_back = paramAtOrDefault1(params, 0) },
+        'D' => return SemanticEvent{ .cursor_back = .{ .count = paramAtOrDefault1(params, 0), .reverse_wrap = true } },
+        'j' => return SemanticEvent{ .cursor_back = .{ .count = paramAtOrDefault1(params, 0), .reverse_wrap = false } },
         'k' => return SemanticEvent{ .cursor_up = paramAtOrDefault1(params, 0) },
         'E' => return SemanticEvent{ .cursor_next_line = paramAtOrDefault1(params, 0) },
         'F' => return SemanticEvent{ .cursor_prev_line = paramAtOrDefault1(params, 0) },
@@ -3925,7 +3923,18 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 return false;
             };
         },
-        .backspace => return vt.screen_state.active().backspace(vt.modes.reverse_wraparound_mode),
+        .backspace, .cursor_back => {
+            const count = if (event == .backspace) 1 else event.cursor_back.count;
+            const wrap: Screen.ReverseWrap = if (event == .cursor_back and !event.cursor_back.reverse_wrap)
+                .none
+            else if (vt.modes.extended_reverse_wraparound_mode)
+                .extended
+            else if (vt.modes.reverse_wraparound_mode)
+                .logical
+            else
+                .none;
+            return vt.screen_state.active().moveCursorBack(count, wrap);
+        },
         .clear_buffer => return vt.clearBuffer(),
         .horizontal_tab => {
             const active = vt.screen_state.active();
@@ -4125,7 +4134,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .cursor_up,
         .cursor_down,
         .cursor_forward,
-        .cursor_back,
         .cursor_next_line,
         .cursor_prev_line,
         .cursor_horizontal_absolute,
@@ -10666,7 +10674,7 @@ const CsiMappingOwnerTests = struct {
         try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('C', 2, 0, 1)).?.cursor_forward);
         try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('a', 2, 0, 1)).?.cursor_forward);
         try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('a', 0, 0, 1)).?.cursor_forward);
-        try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('D', 4, 0, 1)).?.cursor_back);
+        try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('D', 4, 0, 1)).?.cursor_back.count);
         try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChange('E', 3, 0, 1)).?.cursor_next_line);
         try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('E', 0, 0, 1)).?.cursor_next_line);
         try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('F', 2, 0, 1)).?.cursor_prev_line);

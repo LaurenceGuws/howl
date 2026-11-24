@@ -1604,7 +1604,7 @@ pub const Screen = struct {
             .cursor_up => |n| self.setCursorRowClamped(@max(self.cursor.row -| n, self.cursorTopBoundary())),
             .cursor_down => |n| self.setCursorRowClamped(@min(self.cursor.row +| n, self.cursorBottomBoundary())),
             .cursor_forward => |n| self.cursor.setColByClient(@min(self.cursor.col +| n, self.cursorRightBoundary())),
-            .cursor_back => |n| self.cursor.setColByClient(@max(self.cursor.col -| n, self.cursorLeftBoundary())),
+            .cursor_back => |n| self.applyCursorBack(n, .none),
             .cursor_next_line => |n| self.cursor.setPositionByClient(
                 @min(self.cursor.row +| n, self.cursorBottomBoundary()),
                 self.relativeLineHomeCol(),
@@ -1677,7 +1677,7 @@ pub const Screen = struct {
                 self.lineFeed();
             },
             .carriage_return => self.cursor.setColByClient(0),
-            .backspace => self.applyBackspace(false),
+            .backspace => self.applyCursorBack(1, .none),
             .horizontal_tab => self.horizontalTabForward(1),
             .horizontal_tab_forward => |count| self.horizontalTabForward(count),
             .horizontal_tab_back => |count| self.horizontalTabBack(count),
@@ -1699,43 +1699,53 @@ pub const Screen = struct {
         }
     }
 
-    // Applies iTerm2's reverse-wrap policy to one C0 BS and reports exact cursor or phantom mutation.
-    /// Applies backspace with the terminal-selected reverse-wrap mode.
-    pub fn backspace(self: *Screen, reverse_wraparound: bool) bool {
+    /// Backward movement follows the selected terminal wrapping mode.
+    pub const ReverseWrap = enum { none, logical, extended };
+
+    /// Applies BS/CUB motion and reports exact cursor or pending-wrap mutation.
+    pub fn moveCursorBack(self: *Screen, count: u16, requested: ReverseWrap) bool {
         const cursor_before = self.cursor;
         const pending_before = self.wrap_pending;
-        self.applyBackspace(reverse_wraparound);
+        self.applyCursorBack(count, requested);
         return !std.meta.eql(cursor_before, self.cursor) or pending_before != self.wrap_pending;
     }
 
-    fn applyBackspace(self: *Screen, reverse_wraparound: bool) void {
-        if (self.wrap_pending) {
-            self.wrap_pending = false;
-            if (!reverse_wraparound or !self.auto_wrap) {
-                self.cursor.setColByClient(self.cursor.col -| 1);
-            }
-        } else if (self.shouldReverseWrap(reverse_wraparound)) {
-            const previous_row = self.cursor.row - 1;
-            const right = if (self.left_right_margin_mode)
-                @min(self.right_margin, self.lineRightBoundary(previous_row))
-            else
-                self.lineRightBoundary(previous_row);
-            self.cursor.setPositionByClient(previous_row, right);
-        } else {
-            const left = if (self.left_right_margin_mode) self.left_margin else 0;
-            if (self.cursor.col > left or (self.cursor.col < left and self.cursor.col > 0)) {
-                self.cursor.setColByClient(self.cursor.col - 1);
-            }
-        }
-    }
+    fn applyCursorBack(self: *Screen, count: u16, requested: ReverseWrap) void {
+        const wrap: ReverseWrap = if (self.auto_wrap) requested else .none;
+        var remaining = count;
+        if (wrap != .none and self.wrap_pending) remaining -|= 1;
+        self.wrap_pending = false;
 
-    fn shouldReverseWrap(self: *const Screen, reverse_wraparound: bool) bool {
-        if (!self.auto_wrap) return false;
-        const left = if (self.left_right_margin_mode) self.left_margin else 0;
-        if (self.cursor.col != left and self.cursor.col != 0) return false;
-        if (self.cursor.row == 0 or self.cursor.row == self.scroll_top) return false;
-        if (reverse_wraparound) return true;
-        return !self.left_right_margin_mode and self.rowWrapped(self.cursor.row - 1);
+        const left = self.cursorLeftBoundary();
+        if (wrap == .none or self.rows == 0 or self.cols == 0) {
+            self.cursor.setColByClient(@max(self.cursor.col -| remaining, left));
+            return;
+        }
+
+        const top = self.cursorTopBoundary();
+        var row = self.cursor.row;
+        var col = self.cursor.col;
+        while (remaining != 0) {
+            const within_row = @min(remaining, col -| left);
+            col -= within_row;
+            remaining -= within_row;
+            if (remaining == 0) break;
+
+            const previous_row = if (row == top) next: {
+                if (wrap != .extended or top != self.scroll_top) break;
+                break :next self.scrollBottom();
+            } else next: {
+                if (wrap == .logical and !self.rowWrapped(row - 1)) break;
+                break :next row - 1;
+            };
+            const line_right = self.lineRightBoundary(previous_row);
+            const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
+            if (right < left) break;
+            row = previous_row;
+            col = right;
+            remaining -= 1;
+        }
+        self.cursor.setPositionByClient(row, col);
     }
 
     fn applyScreenState(self: *Screen, event: Screen.Action) void {

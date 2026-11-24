@@ -3988,16 +3988,22 @@ test "reverse wrap owns backspace margins phantom state query save and reset" {
 
     terminal.hardReset();
     try std.testing.expect((try terminal.feed("abcdef\r")).stateChanged());
-    try std.testing.expect((try terminal.feed("\x08")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?45h\x08");
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
 
     terminal.hardReset();
     try std.testing.expect((try terminal.feed("\x1b[?69h\x1b[2;4s\x1b[?45h\x1b[2;2H")).stateChanged());
-    try std.testing.expect((try terminal.feed("\x08")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?1045h\x08");
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[2;2H")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1045l\x1b[2;4r\x1b[2;2H")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
@@ -4023,6 +4029,55 @@ test "reverse wrap owns backspace margins phantom state query save and reset" {
     try std.testing.expect((try terminal.feed("\x1b[!p\x1b[?45$p\x1b[?1045$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?45;2$y\x1b[?1045;2$y", pendingOutput(&terminal));
     try std.testing.expect(!(try terminal.feed("\x1b[!p")).stateChanged());
+}
+
+test "ordinary and extended reverse wrap share bounded BS and CUB movement" {
+    const cases = [_]struct { setup: []const u8, row: u16, col: u16 }{
+        // Ordinary wrapping is gated by both mode 45 and autowrap, and
+        // crosses only a row which actually continues into the current row.
+        .{ .setup = "abcdef\r", .row = 1, .col = 0 },
+        .{ .setup = "\x1b[?45habcdef\r", .row = 0, .col = 4 },
+        .{ .setup = "\x1b[?45h\x1b[2;1H", .row = 1, .col = 0 },
+        .{ .setup = "\x1b[?45habcdef\r\x1b[?7l", .row = 1, .col = 0 },
+        .{ .setup = "\x1b[?45h", .row = 0, .col = 0 },
+        // Extended wrapping is independent of ordinary mode 45.
+        .{ .setup = "\x1b[?1045h\x1b[2;1H", .row = 0, .col = 4 },
+        .{ .setup = "\x1b[?1045h", .row = 3, .col = 4 },
+        .{ .setup = "\x1b[?1045h\x1b[?7l\x1b[2;1H", .row = 1, .col = 0 },
+        .{ .setup = "\x1b[?69h\x1b[2;4s\x1b[2;3r\x1b[?1045h\x1b[2;2H", .row = 2, .col = 3 },
+        // Consume a latent wrap before spending a backward step.
+        .{ .setup = "\x1b[?45habcde", .row = 0, .col = 4 },
+        .{ .setup = "\x1b[?1045habcde", .row = 0, .col = 4 },
+        .{ .setup = "abcde", .row = 0, .col = 3 },
+        // A double-width predecessor has a smaller logical right edge.
+        .{ .setup = "\x1b#6\x1b[?1045h\x1b[2;1H", .row = 0, .col = 1 },
+    };
+    for (cases) |case| {
+        for ([_][]const u8{ "\x08", "\x1b[D", "\x9b1D" }) |command| {
+            for (0..command.len + 1) |split| {
+                var terminal = try Terminal.init(std.testing.allocator, 4, 5);
+                defer terminal.deinit();
+                try feed(&terminal, case.setup);
+                try feed(&terminal, command[0..split]);
+                try feed(&terminal, command[split..]);
+                try std.testing.expectEqual(case.row, terminal.semanticView(0).cursor_row);
+                try std.testing.expectEqual(case.col, terminal.semanticView(0).cursor_col);
+            }
+        }
+    }
+
+    var terminal = try Terminal.init(std.testing.allocator, 4, 5);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[?45habcdefghijk\r\x1b[7D");
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+    try feed(&terminal, "\x1b[?45l\x1b[?1045h\x1b[1;1H\x1b[7D");
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+    // HPB remains its existing non-wrapping position operation.
+    try feed(&terminal, "\x1b[2;1H\x1b[j");
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
 }
 
 test "DEC column modes own permission preservation query save and reset lifetime" {
