@@ -2080,11 +2080,28 @@ specifications:
       level: defined
       wire: CSI Ps " q
       rule: Selects whether subsequently written characters are protected against selective erasure.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-8e923aba42
+        source_line: 1549
+        wire: CSI Ps " q
+      original_parameters:
+        source: VT420 Programmer Reference Manual, page 155; xterm ctlseqs lines 1549-1554
+        selectors: 0 (default) erasable, 1 protected, 2 erasable (same as 0)
+        scope: Protection of subsequently written characters for DEC selective erase; does not change SGR visual attributes.
     - id: sel
       section: Erasing / Selective Erase in Line (DECSEL), page 37
       level: defined
       wire: CSI ? Ps K
       rule: Erases eligible unprotected characters within the selected part of the line.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-2e23147752
+        source_line: 626
+        wire: CSI ? Ps K
+      original_parameters:
+        source: VT420 Programmer Reference Manual, page 157; xterm ctlseqs lines 626-630
+        selectors: 0 (default) cursor to right end; 1 line start to cursor; 2 whole line; protected characters remain untouched.
     - id: sed
       section: Erasing / Selective Erase in Display (DECSED), page 37
       level: defined
@@ -2095,6 +2112,11 @@ specifications:
       level: defined
       wire: 'ESC # 8'
       rule: Displays the screen-alignment pattern for checking video cell geometry.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-d654f4f54c
+        source_line: 306
+        wire: 'ESC # 8'
     - id: media-copy-dec-private
       section: Printing / Auto print, Print cursor line and ReGIS hardcopy routing, printed pages 38-39
       level: defined
@@ -2187,6 +2209,18 @@ specifications:
       level: defined
       wire: CSI Pl ; Pr s
       rule: DECSLRM sets left and right scrolling-region margins.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-c4ca9bb4cf
+        source_line: 1586
+        wire: CSI Pl ; Pr s
+      original_parameters:
+        source: VT420 Programmer Reference Manual (Feb 1992), page 133
+        gate: DECVSSM (CSI ? 69 h); xterm names this setting DECLRMM
+        constraints: Pl defaults to 1; Pr defaults to current page width (80 or 132 in original). Pl must be less than Pr; region width at
+          least 2 columns and at most the page width.
+        effect: Sets horizontal scrolling margins and homes cursor to row 1, column 1 of the page.
+        xterm_context: Source line 1586 admits DECSLRM only when DECLRMM mode is enabled; the implementation is not assumed source-complete.
     - id: top-bottom-margins
       section: Page Memory / Set Top and Bottom Margins, p134
       level: defined
@@ -2212,6 +2246,17 @@ specifications:
       level: defined
       wire: CSI Ps " q
       rule: DECSCA chooses protection on subsequently written characters for DEC selective erasure.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-8e923aba42
+        source_line: 1549
+        wire: CSI Ps " q
+      reaffirms: dec_vt240.sca
+      semantic_scope: Later DEC specification restating the original family; not a second independent Howl implementation requirement.
+      original_parameters:
+        source: VT420 Programmer Reference Manual, page 155; xterm ctlseqs lines 1549-1554
+        selectors: 0 (default) erasable, 1 protected, 2 erasable (same as 0)
+        scope: Protection of subsequently written characters for DEC selective erase; does not change SGR visual attributes.
     - id: selective-ed
       section: Editing / Selective Erase in Display, p156
       level: defined
@@ -2236,31 +2281,91 @@ specifications:
       level: defined
       wire: CSI ? Ps K
       rule: DECSEL erases eligible unprotected cells within the selected part of the line.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-2e23147752
+        source_line: 626
+        wire: CSI ? Ps K
+      reaffirms: dec_vt240.sel
+      semantic_scope: Later DEC specification restating the original family; not a second independent Howl implementation requirement.
+      original_parameters:
+        source: VT420 Programmer Reference Manual, page 157; xterm ctlseqs lines 626-630
+        selectors: 0 (default) cursor to right end; 1 line start to cursor; 2 whole line; protected characters remain untouched.
     - id: copy-rect
       section: Rectangular Area Operations / Copy Rectangular Area, p161
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
       rule: DECCRA copies a rectangular region between pages with origin and destination coordinates.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-78d54c142e
+        source_line: 1746
+        wire: CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
+      original_parameters:
+        source: VT420 Programmer Reference Manual (Feb 1992), pages 161-162
+        fields: Source top/left/bottom/right/page and destination top/left/page; omitted page numbers default to 1.
+        limits: Coordinates are affected by DECOM and bounded to the page; inaccessible page indexes clamp to the last available page; off-page
+          destination is clipped.
+        effect: Copies characters and visual attributes, taking destination line attributes; does not move cursor.
+        source_note: The printed notes have an inconsistent reversed-border inequality relative to the parameter constraints. Preserve the
+          literal source; resolve before implementation-target FULL proof.
     - id: fill-rect
       section: Rectangular Area Operations / Fill Rectangular Area, p162
       level: defined
       wire: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
       rule: DECFRA fills a rectangular region with the supplied character.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f5310073dd
+        source_line: 1809
+        wire: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
+      original_constraints:
+        source: VT420 Programmer Reference Manual, pages 162-163
+        behavior: Use the current SGR attributes for the fill character; page-bounded coordinates respect DECOM, not the margins; cursor
+          unchanged.
+        status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl conformance.
     - id: erase-rect
       section: Rectangular Area Operations / Erase Rectangular Area, p164
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr $ z
       rule: DECERA erases all characters in the selected rectangle.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-48e8cc62da
+        source_line: 1846
+        wire: CSI Pt ; Pl ; Pb ; Pr $ z
+      original_constraints:
+        source: VT420 Programmer Reference Manual, page 164
+        behavior: Erase characters and visual attributes within the requested rectangle, constrained to the active page; cursor unchanged.
+        status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl conformance.
     - id: selective-erase-rect
       section: Rectangular Area Operations / Selective Erase Rectangular Area, p165
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr $ {
       rule: DECSERA erases unprotected characters in the selected rectangle.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-57e171e687
+        source_line: 1882
+        wire: CSI Pt ; Pl ; Pb ; Pr $ {
+      original_constraints:
+        source: VT420 Programmer Reference Manual, page 165
+        behavior: Erase only characters allowed by DECSCA, retaining protected characters and current rendition/protection state; cursor
+          unchanged.
+        status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl conformance.
     - id: attr-change-extent
       section: Rectangular Area Operations / Select Attribute Change Extent, p166
       level: defined
       wire: CSI Ps * x
       rule: DECSACE selects whether attribute operations act on stream or rectangular extents.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-a9140b3a2a
+        source_line: 1791
+        wire: CSI Ps * x
+      original_parameters:
+        source: VT420 Programmer Reference Manual, pages 166-167; xterm ctlseqs lines 1791-1795
+        selectors: 0 (default) or 1 selects stream extent; 2 selects exact rectangle extent for DECCARA/DECRARA.
     - id: attr-change-rect
       section: Rectangular Area Operations / Change Attributes in Rectangular Area, p167
       level: defined
@@ -2281,11 +2386,21 @@ specifications:
       level: defined
       wire: ESC 6
       rule: DECBI shifts the active line to the right at its left margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-92abac61a2
+        source_line: 393
+        wire: ESC 6
     - id: forward-index
       section: Cursor Movement / Forward Index, p177
       level: defined
       wire: ESC 9
       rule: DECFI shifts the active line to the left at its right margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-f863048dbd
+        source_line: 399
+        wire: ESC 9
     - id: backarrow-mode
       section: Keyboard / Backarrow Key Mode, p188
       level: defined
@@ -2311,16 +2426,60 @@ specifications:
       level: defined
       wire: ESC 7
       rule: DECSC saves cursor position and the specified cursor presentation state.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-ae31dbf9e2
+        source_line: 395
+        wire: ESC 7
     - id: restore-cursor
       section: Cursor and Presentation State / DECRC
       level: defined
       wire: ESC 8
       rule: DECRC restores the previously saved cursor state.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-7a60c48e15
+        source_line: 397
+        wire: ESC 8
     - id: request-status-string
       section: Reports / Request Selection or Setting
       level: defined
       wire: DCS $ q Pt ST
       rule: DECRQSS queries selected rendition or margin state by control-function descriptor.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-2bfa63903e
+        source_line: 474
+        wire: DCS $ q Pt ST
+      source_specific_descriptors:
+        source: VT420 Programmer Reference Manual, Table 12-4 and pages 266-268; xterm ctlseqs lines 474-497
+        original_gate: One control-function descriptor per request; intermediate and final bytes only, including for controls with additional
+          numeric parameters.
+        original_dec_descriptors:
+        - +q
+        - '*}'
+        - $}
+        - '*x'
+        - m
+        - +r
+        - '"q'
+        - $|
+        - '"p'
+        - s
+        - t
+        - '*|'
+        - $~
+        - r
+        xterm_additional_examples:
+        - SP q (DECSCUSR)
+        - ) { (DECSTGLT)
+        - ', | (DECAC)'
+        - ', } (DECATC)'
+        - '> Pm f (XTQFMTKEYS)'
+        - '> Pm m (XTQMODKEYS)'
+        - '> Pm t (XTSMTITLE)'
+        source_note: The xterm selector set differs from original DEC Table 12-4. Merge the request-family identity, not the sets of valid
+          descriptors or guaranteed responses.
     - id: reply-status-string
       section: Reports / Report Selection or Setting
       level: defined
@@ -2873,11 +3032,6 @@ discovery_catalogues:
       section: Controls beginning with ESC
       source_line: 304
       symbol: DECDWL
-    - id: esc-d654f4f54c
-      wire: 'ESC # 8'
-      section: Controls beginning with ESC
-      source_line: 306
-      symbol: DECALN
     - id: esc-93bf6694ea
       wire: ESC % @
       section: Controls beginning with ESC
@@ -2914,26 +3068,6 @@ discovery_catalogues:
       wire: ESC / C
       section: Controls beginning with ESC
       source_line: 390
-    - id: esc-92abac61a2
-      wire: ESC 6
-      section: Controls beginning with ESC
-      source_line: 393
-      symbol: DECBI
-    - id: esc-ae31dbf9e2
-      wire: ESC 7
-      section: Controls beginning with ESC
-      source_line: 395
-      symbol: DECSC
-    - id: esc-7a60c48e15
-      wire: ESC 8
-      section: Controls beginning with ESC
-      source_line: 397
-      symbol: DECRC
-    - id: esc-f863048dbd
-      wire: ESC 9
-      section: Controls beginning with ESC
-      source_line: 399
-      symbol: DECFI
     - id: esc-5948c81512
       wire: ESC =
       section: Controls beginning with ESC
@@ -2970,11 +3104,6 @@ discovery_catalogues:
       section: Device-Control functions
       source_line: 451
       symbol: DECAUPSS
-    - id: dcs-2bfa63903e
-      wire: DCS $ q Pt ST
-      section: Device-Control functions
-      source_line: 474
-      symbol: DECRQSS
     - id: dcs-47fd6579ab
       wire: DCS Ps $ t Pt ST
       section: Device-Control functions
@@ -2995,11 +3124,6 @@ discovery_catalogues:
       section: Device-Control functions
       source_line: 539
       symbol: XTGETTCAP
-    - id: csi-2e23147752
-      wire: CSI ? Ps K
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 626
-      symbol: DECSEL
     - id: csi-16a4dc30f6
       wire: 'CSI # P'
       section: Functions using CSI , ordered by the final character(s)
@@ -3139,11 +3263,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1539
       symbol: DECSCUSR
-    - id: csi-8e923aba42
-      wire: CSI Ps " q
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1549
-      symbol: DECSCA
     - id: csi-9274687a13
       wire: 'CSI # q'
       section: Functions using CSI , ordered by the final character(s)
@@ -3167,11 +3286,6 @@ discovery_catalogues:
       wire: CSI s
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1583
-    - id: csi-c4ca9bb4cf
-      wire: CSI Pl ; Pr s
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1586
-      symbol: DECSLRM
     - id: csi-64d9c20f92
       wire: CSI > Ps s
       section: Functions using CSI , ordered by the final character(s)
@@ -3220,11 +3334,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1736
       symbol: DECRQDE
-    - id: csi-78d54c142e
-      wire: CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1746
-      symbol: DECCRA
     - id: csi-f38f13fb1a
       wire: CSI Ps $ w
       section: Functions using CSI , ordered by the final character(s)
@@ -3240,16 +3349,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1779
       symbol: DECREQTPARM
-    - id: csi-a9140b3a2a
-      wire: CSI Ps * x
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1791
-      symbol: DECSACE
-    - id: csi-f5310073dd
-      wire: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1809
-      symbol: DECFRA
     - id: csi-eb0e648cf6
       wire: 'CSI Ps # y'
       section: Functions using CSI , ordered by the final character(s)
@@ -3265,11 +3364,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1833
       symbol: DECELR
-    - id: csi-48e8cc62da
-      wire: CSI Pt ; Pl ; Pb ; Pr $ z
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1846
-      symbol: DECERA
     - id: csi-091043d69e
       wire: CSI Pm ' {
       section: Functions using CSI , ordered by the final character(s)
@@ -3284,11 +3378,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1862
       symbol: XTPUSHSGR
-    - id: csi-57e171e687
-      wire: CSI Pt ; Pl ; Pb ; Pr $ {
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1882
-      symbol: DECSERA
     - id: csi-156199d0b1
       wire: 'CSI Pt ; Pl ; Pb ; Pr # |'
       section: Functions using CSI , ordered by the final character(s)
@@ -3412,18 +3501,54 @@ discovery_catalogues:
       wire: ESC `
       section: Tektronix 4014 Mode
       source_line: 3343
+      review:
+        classification: distinct-mode-command-not-a-duplicate
+        mode: Tektronix 4014 graphics mode (xterm)
+        meaning: Normal Z axis, solid vectors
+        overlapping_vt_command: ecma48.dmi
+        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
+          mode is part of the command identity.
+        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
+          Do not merge or imply implementation support.
     - id: esc-9823d68ac5
       wire: ESC a
       section: Tektronix 4014 Mode
       source_line: 3345
+      review:
+        classification: distinct-mode-command-not-a-duplicate
+        mode: Tektronix 4014 graphics mode (xterm)
+        meaning: Normal Z axis, dotted vectors
+        overlapping_vt_command: ecma48.int
+        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
+          mode is part of the command identity.
+        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
+          Do not merge or imply implementation support.
     - id: esc-de8e5a4e5d
       wire: ESC b
       section: Tektronix 4014 Mode
       source_line: 3347
+      review:
+        classification: distinct-mode-command-not-a-duplicate
+        mode: Tektronix 4014 graphics mode (xterm)
+        meaning: Normal Z axis, dot-dashed vectors
+        overlapping_vt_command: ecma48.emi
+        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
+          mode is part of the command identity.
+        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
+          Do not merge or imply implementation support.
     - id: esc-b1b6adbc06
       wire: ESC d
       section: Tektronix 4014 Mode
       source_line: 3351
+      review:
+        classification: distinct-mode-command-not-a-duplicate
+        mode: Tektronix 4014 graphics mode (xterm)
+        meaning: Normal Z axis, long-dashed vectors
+        overlapping_vt_command: ecma48.cmd
+        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
+          mode is part of the command identity.
+        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
+          Do not merge or imply implementation support.
     - id: esc-a8a6034fa8
       wire: ESC h
       section: Tektronix 4014 Mode
