@@ -438,7 +438,7 @@ const SemanticEvent = union(enum) {
     rect_selective_erase: RectArea,
     rect_fill: struct { area: RectArea, ch: u21 },
     rect_copy: RectCopy,
-    rect_attrs_change: struct { area: RectArea, attrs: AttrParams, reverse: bool },
+    rect_attrs_change: struct { area: RectArea, operands: Screen.SgrOperands, reverse: bool },
     insert_columns: u16,
     delete_columns: u16,
     attr_change_extent_rect: bool,
@@ -634,7 +634,7 @@ fn csiProcess(
     if (is_private) return decodePrivateCsi(final, params, leader_byte, intermediates);
     if (leader_byte != 0) return decodeCsiLeader(final, params, leader_byte, intermediates);
     if (intermediates.len != 0) {
-        if (decodeCsiIntermediate(final, params, intermediates)) |event| return event;
+        if (decodeCsiIntermediate(final, params, separators, intermediates)) |event| return event;
         // An unsupported intermediate does not turn its final byte into an
         // ordinary CSI operation. DECSTR (CSI ! p) remains its own exact route.
         if (intermediates.len != 1 or intermediates[0] != '!' or final != 'p') return null;
@@ -643,11 +643,11 @@ fn csiProcess(
 }
 
 // Decodes one CSI sequence with intermediates; unsupported forms return null.
-fn decodeCsiIntermediate(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
+fn decodeCsiIntermediate(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList, intermediates: []const u8) ?SemanticEvent {
     if (intermediates.len != 1) return null;
     return switch (intermediates[0]) {
         '"' => processQuote(final, params),
-        '$' => processDollar(final, params),
+        '$' => processDollar(final, params, separators),
         '*' => processStar(final, params),
         '+' => processPlus(final, params),
         '#' => processHash(final, params),
@@ -669,11 +669,11 @@ fn processQuote(final: u8, params: []const i32) ?SemanticEvent {
     return null;
 }
 
-fn processDollar(final: u8, params: []const i32) ?SemanticEvent {
+fn processDollar(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList) ?SemanticEvent {
     return switch (final) {
         'p' => if (queryParam(params)) |mode| SemanticEvent{ .ansi_mode_query = mode } else null,
-        'r' => rectAttrsChange(params, false),
-        't' => rectAttrsChange(params, true),
+        'r' => rectAttrsChange(params, separators, false),
+        't' => rectAttrsChange(params, separators, true),
         'v' => rectCopy(params),
         'x' => rectFill(params),
         'z' => rectErase(params, false),
@@ -772,19 +772,22 @@ fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
     };
 }
 
-fn rectAttrsChange(params: []const i32, reverse: bool) ?SemanticEvent {
-    // Selected original defaults differ: DECCARA resets on omission,
-    // DECRARA has no omitted selector. Explicit zero is valid in both.
+fn rectAttrsChange(params: []const i32, separators: parser_mod.CsiSeparatorList, reverse: bool) ?SemanticEvent {
+    // DECCARA defaults to shared SGR reset. DECRARA has no omitted selector.
     if (reverse and params.len < 5) return null;
     const area = rectArea(params, 0, .zero_or_omitted) orelse return null;
-    var attrs = attrParams(params, 4);
-    if (attrs.param_count == 0) {
-        attrs.params[0] = 0;
-        attrs.param_count = 1;
-    }
+    const start = @min(params.len, 4);
+    for (0..start) |i| if (separators.isSet(i)) return null;
+    const sgr = screenSgrOperands(params, separators);
+    const operands: Screen.SgrOperands = .{
+        .values = params[start..],
+        .colon_after = sgr.colon_after >> @as(u5, @intCast(start)),
+    };
+    // Reverse selectors are not SGR subparameter groups.
+    if (reverse and operands.colon_after != 0) return null;
     return .{ .rect_attrs_change = .{
         .area = area,
-        .attrs = attrs,
+        .operands = operands,
         .reverse = reverse,
     } };
 }
@@ -941,12 +944,6 @@ fn restoreSelectedSgr(current: *ScreenCellAttrs, entry: SgrStackEntry) void {
     if (entry.selection & (1 << 10) != 0) current.bg = entry.attrs.bg;
 }
 
-// Stores a bounded suffix of clamped u16 rectangular attribute values.
-const AttrParams = struct {
-    params: [parser_mod.max_params]u16,
-    param_count: u8,
-};
-
 fn paramCount32(items: []const i32) u32 {
     std.debug.assert(items.len <= std.math.maxInt(u32));
     return @intCast(items.len);
@@ -984,21 +981,6 @@ fn rectArea(params: []const i32, start_idx: u8, comptime edge_defaults: enum { o
     if (area.bottom) |bottom| if (area.top > bottom) return null;
     if (area.right) |right| if (area.left > right) return null;
     return area;
-}
-
-// Copies a bounded parameter suffix into rectangular attribute storage.
-fn attrParams(params: []const i32, start_idx: u8) AttrParams {
-    var out = @as([parser_mod.max_params]u16, @splat(0));
-    const param_len = paramCount32(params);
-    var idx: u8 = start_idx;
-    var dst: u8 = 0;
-    while (idx < param_len and dst < parser_mod.max_params) : ({
-        idx += 1;
-        dst += 1;
-    }) {
-        out[@intCast(dst)] = paramOrDefault0(params[@intCast(idx)]);
-    }
-    return .{ .params = out, .param_count = @intCast(dst) };
 }
 
 // Accepts the ECMA-48 graphic ranges permitted by DECFRA.
@@ -4136,7 +4118,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .rect_copy => |request| return vt.screen_state.active().copyRect(request),
         .rect_attrs_change => |request| return vt.screen_state.active().changeRectAttrs(
             request.area,
-            request.attrs.params[0..request.attrs.param_count],
+            request.operands,
             request.reverse,
         ),
         .attr_change_extent_rect => |enabled| {
@@ -10943,7 +10925,7 @@ const CsiMappingOwnerTests = struct {
             .intermediates_len = 1,
         } }).?;
         try std.testing.expect(!change.rect_attrs_change.reverse);
-        try std.testing.expectEqual(@as(u16, 1), change.rect_attrs_change.attrs.params[0]);
+        try std.testing.expectEqualSlices(i32, &.{1}, change.rect_attrs_change.operands.values);
 
         const reverse = routeParserEvent(ParserEvent{ .style_change = .{
             .final = 't',

@@ -2071,14 +2071,21 @@ pub const Screen = struct {
         return true;
     }
 
-    /// Change only rendition at the selected character positions.
+    /// Apply shared SGR changes or DEC reverse selectors to existing cells.
     /// Cluster geometry and scalar ownership remain intact even at an edge.
-    /// Returns exact cell-attribute or pending-wrap mutation.
-    pub fn changeRectAttrs(self: *Screen, area: RectArea, attrs: []const u16, reverse: bool) bool {
-        var changed = self.cancelPendingWrap();
+    pub fn changeRectAttrs(self: *Screen, area: RectArea, operands: SgrOperands, reverse: bool) bool {
+        // DECCARA is a rendition-only operation, including pending wrap.
+        // Retain the existing distinct DECRARA motion policy.
+        var changed = if (reverse) self.cancelPendingWrap() else false;
         const cells = self.cells orelse return changed;
-        if (attrs.len == 0) return changed;
+        if (reverse and operands.values.len == 0) return changed;
         const bounds = self.rectBounds(area) orelse return changed;
+        var patch: SgrPatch = .{};
+        if (!reverse) {
+            Sgr(SgrPatch).apply(&patch, operands);
+            if (patch.written == 0) return changed;
+        }
+
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const row_start = self.rowStart(row);
@@ -2088,7 +2095,12 @@ pub const Screen = struct {
             var col = start_col;
             while (col <= end_col) : (col += 1) {
                 const idx = row_start + @as(u32, col);
-                row_changed = applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse) or row_changed;
+                const target = &cells[@intCast(idx)].attrs;
+                const cell_changed = if (reverse)
+                    reverseRectAttrOps(target, operands.values)
+                else
+                    patch.apply(target);
+                row_changed = cell_changed or row_changed;
             }
             changed = self.noteRowChange(row, row_changed) or changed;
         }
@@ -3675,132 +3687,197 @@ pub const Screen = struct {
 
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
     pub fn applySgr(self: *Screen, operands: SgrOperands) bool {
-        const params = operands.values;
         const before = self.current_attrs;
-        if (params.len == 0) {
-            self.resetRendition();
-            return !std.meta.eql(before, self.current_attrs);
-        }
-
-        std.debug.assert(params.len <= SgrOperands.capacity);
-        const param_len: u8 = @intCast(params.len);
-        var idx: u8 = 0;
-        while (idx < param_len) : (idx += 1) {
-            const param = params[idxOf(idx)];
-            switch (param) {
-                4 => self.applyUnderlineStyle(operands, &idx),
-                38 => self.applyExtendedColor(operands, &idx, true),
-                48 => self.applyExtendedColor(operands, &idx, false),
-                58 => self.applyUnderlineColor(operands, &idx),
-                else => self.applyBasicSgr(param),
-            }
-        }
+        Sgr(CellAttrs).apply(&self.current_attrs, operands);
         return !std.meta.eql(before, self.current_attrs);
     }
 
-    // SGR owns neither character protection nor the active OSC 8 link.
-    // Both remain attached to subsequently written cells until their
-    // respective protocol closes or resets them.
-    fn resetRendition(self: *Screen) void {
-        const protection = self.current_attrs.protected;
-        const link_id = self.current_attrs.link_id;
-        self.current_attrs = initial_cell_attrs;
-        self.current_attrs.protected = protection;
-        self.current_attrs.link_id = link_id;
-    }
+    // One bounded set of absolute field assignments for a region. SGR
+    // commands set/reset fields; they never derive a new value from a cell.
+    // Decode once, without retaining another rendition state or reparsing
+    // color groups for each cell. Protection and hyperlink are not SGR fields.
+    const SgrPatch = struct {
+        const fields = std.meta.fieldNames(CellAttrs);
 
-    fn applyBasicSgr(self: *Screen, param: i32) void {
-        switch (param) {
-            0 => self.resetRendition(),
-            1 => self.current_attrs.bold = true,
-            2 => self.current_attrs.dim = true,
-            3 => self.current_attrs.italic = true,
-            5 => self.current_attrs.blink = true,
-            7 => self.current_attrs.reverse = true,
-            8 => self.current_attrs.invisible = true,
-            9 => self.current_attrs.strikethrough = true,
-            10...19 => self.current_attrs.font = @intCast(param - 10),
-            21 => self.setUnderline(.double),
-            22 => {
-                self.current_attrs.bold = false;
-                self.current_attrs.dim = false;
-            },
-            23 => self.current_attrs.italic = false,
-            24 => self.clearUnderline(),
-            25 => self.clearBlink(),
-            27 => self.current_attrs.reverse = false,
-            28 => self.current_attrs.invisible = false,
-            29 => self.current_attrs.strikethrough = false,
-            30...37 => self.current_attrs.fg = screenAnsi16Color(@intCast(param - 30)),
-            39 => self.current_attrs.fg = initial_cell_attrs.fg,
-            40...47 => self.current_attrs.bg = screenAnsi16Color(@intCast(param - 40)),
-            49 => self.current_attrs.bg = initial_cell_attrs.bg,
-            59 => self.current_attrs.underline_color = default_cell_underline_color,
-            73 => self.current_attrs.baseline = .raised,
-            74 => self.current_attrs.baseline = .lowered,
-            75 => self.current_attrs.baseline = .normal,
-            90...97 => self.current_attrs.fg = screenAnsi16Color(@intCast((param - 90) + 8)),
-            100...107 => self.current_attrs.bg = screenAnsi16Color(@intCast((param - 100) + 8)),
-            else => {},
+        comptime {
+            if (fields.len > 32) @compileError("SGR patch field mask exceeds u32");
         }
-    }
 
-    fn applyUnderlineStyle(self: *Screen, operands: SgrOperands, idx: *u8) void {
-        const params = operands.values;
-        const next = idx.* + 1;
-        if (next < params.len and operands.colonAfter(idx.*)) {
-            self.setUnderlineStyle(params[idxOf(next)]);
-            idx.* += 1;
-            return;
+        values: CellAttrs = initial_cell_attrs,
+        written: u32 = 0,
+
+        fn fieldBit(comptime name: []const u8) u32 {
+            inline for (fields, 0..) |field, index| {
+                if (comptime std.mem.eql(u8, name, field))
+                    return @as(u32, 1) << @as(u5, @intCast(index));
+            }
+            @compileError("unknown SGR field");
         }
-        self.current_attrs.underline = true;
-        self.current_attrs.underline_style = .straight;
-    }
 
-    fn setUnderlineStyle(self: *Screen, value: i32) void {
-        switch (value) {
-            0 => self.clearUnderline(),
-            1 => self.setUnderline(.straight),
-            2 => self.setUnderline(.double),
-            3 => self.setUnderline(.curly),
-            4 => self.setUnderline(.dotted),
-            5 => self.setUnderline(.dashed),
-            else => {},
+        inline fn set(self: *SgrPatch, comptime name: []const u8, value: @FieldType(CellAttrs, name)) void {
+            @field(self.values, name) = value;
+            self.written |= comptime fieldBit(name);
         }
+
+        fn apply(self: *const SgrPatch, target: *CellAttrs) bool {
+            var changed = false;
+            inline for (fields) |field| {
+                if (comptime isRenditionField(field)) {
+                    if (self.written & (comptime fieldBit(field)) != 0) {
+                        const value = @field(self.values, field);
+                        const existing = &@field(target.*, field);
+                        if (!std.meta.eql(existing.*, value)) {
+                            existing.* = value;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            return changed;
+        }
+    };
+
+    fn isRenditionField(comptime name: []const u8) bool {
+        return !std.mem.eql(u8, name, "protected") and !std.mem.eql(u8, name, "link_id");
     }
 
-    fn setUnderline(self: *Screen, underline_style: UnderlineStyle) void {
-        self.current_attrs.underline = true;
-        self.current_attrs.underline_style = underline_style;
-    }
+    // Compile one decoder for the two exact mutation targets. Ordinary SGR
+    // writes current_attrs directly; DECCARA records bounded field assignments.
+    fn Sgr(comptime Target: type) type {
+        comptime {
+            if (Target != CellAttrs and Target != SgrPatch)
+                @compileError("invalid SGR rendition target");
+        }
+        return struct {
+            inline fn setRenditionField(target: *Target, comptime name: []const u8, value: @FieldType(CellAttrs, name)) void {
+                comptime {
+                    if (!isRenditionField(name)) @compileError("SGR cannot mutate non-rendition identity");
+                }
+                if (Target == CellAttrs) {
+                    @field(target.*, name) = value;
+                } else {
+                    target.set(name, value);
+                }
+            }
 
-    fn clearUnderline(self: *Screen) void {
-        self.current_attrs.underline = false;
-        self.current_attrs.underline_style = .straight;
-    }
+            fn apply(target: *Target, operands: SgrOperands) void {
+                const params = operands.values;
+                if (params.len == 0) {
+                    resetRendition(target);
+                    return;
+                }
 
-    fn clearBlink(self: *Screen) void {
-        self.current_attrs.blink = false;
-        self.current_attrs.blink_fast = false;
-    }
+                std.debug.assert(params.len <= SgrOperands.capacity);
+                const param_len: u8 = @intCast(params.len);
+                var idx: u8 = 0;
+                while (idx < param_len) : (idx += 1) {
+                    const param = params[idxOf(idx)];
+                    switch (param) {
+                        4 => applyUnderlineStyle(target, operands, &idx),
+                        38 => applyExtendedColor(target, operands, &idx, "fg"),
+                        48 => applyExtendedColor(target, operands, &idx, "bg"),
+                        58 => applyExtendedColor(target, operands, &idx, "underline_color"),
+                        else => applyBasicSgr(target, param),
+                    }
+                }
+            }
 
-    fn applyExtendedColor(
-        self: *Screen,
-        operands: SgrOperands,
-        idx: *u8,
-        is_fg: bool,
-    ) void {
-        const sgr_color = decodeExtendedColor(operands, idx) orelse return;
-        if (is_fg) self.current_attrs.fg = sgr_color else self.current_attrs.bg = sgr_color;
-    }
+            // SGR owns neither character protection nor OSC 8 link identity.
+            fn resetRendition(target: *Target) void {
+                if (Target == CellAttrs) {
+                    const protection = target.protected;
+                    const link_id = target.link_id;
+                    target.* = initial_cell_attrs;
+                    target.protected = protection;
+                    target.link_id = link_id;
+                } else {
+                    inline for (SgrPatch.fields) |field| {
+                        if (comptime isRenditionField(field))
+                            setRenditionField(target, field, @field(initial_cell_attrs, field));
+                    }
+                }
+            }
 
-    fn applyUnderlineColor(
-        self: *Screen,
-        operands: SgrOperands,
-        idx: *u8,
-    ) void {
-        const sgr_color = decodeExtendedColor(operands, idx) orelse return;
-        self.current_attrs.underline_color = sgr_color;
+            fn applyBasicSgr(target: *Target, param: i32) void {
+                switch (param) {
+                    0 => resetRendition(target),
+                    1 => setRenditionField(target, "bold", true),
+                    2 => setRenditionField(target, "dim", true),
+                    3 => setRenditionField(target, "italic", true),
+                    5 => setRenditionField(target, "blink", true),
+                    7 => setRenditionField(target, "reverse", true),
+                    8 => setRenditionField(target, "invisible", true),
+                    9 => setRenditionField(target, "strikethrough", true),
+                    10...19 => setRenditionField(target, "font", @intCast(param - 10)),
+                    21 => setUnderline(target, .double),
+                    22 => {
+                        setRenditionField(target, "bold", false);
+                        setRenditionField(target, "dim", false);
+                    },
+                    221 => setRenditionField(target, "bold", false),
+                    222 => setRenditionField(target, "dim", false),
+                    23 => setRenditionField(target, "italic", false),
+                    24 => clearUnderline(target),
+                    25 => {
+                        setRenditionField(target, "blink", false);
+                        setRenditionField(target, "blink_fast", false);
+                    },
+                    27 => setRenditionField(target, "reverse", false),
+                    28 => setRenditionField(target, "invisible", false),
+                    29 => setRenditionField(target, "strikethrough", false),
+                    30...37 => setRenditionField(target, "fg", screenAnsi16Color(@intCast(param - 30))),
+                    39 => setRenditionField(target, "fg", initial_cell_attrs.fg),
+                    40...47 => setRenditionField(target, "bg", screenAnsi16Color(@intCast(param - 40))),
+                    49 => setRenditionField(target, "bg", initial_cell_attrs.bg),
+                    59 => setRenditionField(target, "underline_color", default_cell_underline_color),
+                    73 => setRenditionField(target, "baseline", .raised),
+                    74 => setRenditionField(target, "baseline", .lowered),
+                    75 => setRenditionField(target, "baseline", .normal),
+                    90...97 => setRenditionField(target, "fg", screenAnsi16Color(@intCast((param - 90) + 8))),
+                    100...107 => setRenditionField(target, "bg", screenAnsi16Color(@intCast((param - 100) + 8))),
+                    else => {},
+                }
+            }
+
+            fn applyUnderlineStyle(target: *Target, operands: SgrOperands, idx: *u8) void {
+                const params = operands.values;
+                const next = idx.* + 1;
+                if (next < params.len and operands.colonAfter(idx.*)) {
+                    switch (params[idxOf(next)]) {
+                        0 => clearUnderline(target),
+                        1 => setUnderline(target, .straight),
+                        2 => setUnderline(target, .double),
+                        3 => setUnderline(target, .curly),
+                        4 => setUnderline(target, .dotted),
+                        5 => setUnderline(target, .dashed),
+                        else => {},
+                    }
+                    idx.* += 1;
+                    return;
+                }
+                setUnderline(target, .straight);
+            }
+
+            fn setUnderline(target: *Target, underline_style: UnderlineStyle) void {
+                setRenditionField(target, "underline", true);
+                setRenditionField(target, "underline_style", underline_style);
+            }
+
+            fn clearUnderline(target: *Target) void {
+                setRenditionField(target, "underline", false);
+                setRenditionField(target, "underline_style", .straight);
+            }
+
+            fn applyExtendedColor(
+                target: *Target,
+                operands: SgrOperands,
+                idx: *u8,
+                comptime field: []const u8,
+            ) void {
+                const sgr_color = decodeExtendedColor(operands, idx) orelse return;
+                setRenditionField(target, field, sgr_color);
+            }
+        };
     }
 
     // -------------------------------------------------------------------------
@@ -7811,81 +7888,30 @@ fn screenResizeColCount(cols: u16) u32 {
     return cols;
 }
 
-// Rectangular rendition helper shared by Screen editing paths.
-fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool) bool {
+// DECRARA reverses selected attributes rather than applying SGR setters.
+fn reverseRectAttrOps(target: *ScreenCellAttrs, attrs: []const i32) bool {
     const before = target.*;
     for (attrs) |attr| {
         switch (attr) {
             0 => {
-                // DEC selector zero addresses the original four video
-                // attributes, not every modern SGR rendition.
-                target.bold = reverse and !target.bold;
-                target.underline = reverse and !target.underline;
+                target.bold = !target.bold;
+                target.underline = !target.underline;
                 target.underline_style = .straight;
-                target.blink = reverse and !target.blink;
+                target.blink = !target.blink;
                 target.blink_fast = false;
-                target.reverse = reverse and !target.reverse;
+                target.reverse = !target.reverse;
             },
-            1 => {
-                if (reverse) target.bold = !target.bold else target.bold = true;
-            },
-            2 => {
-                if (reverse) target.dim = !target.dim else target.dim = true;
-            },
-            3 => {
-                if (reverse) target.italic = !target.italic else target.italic = true;
-            },
+            1 => target.bold = !target.bold,
+            2 => target.dim = !target.dim,
+            3 => target.italic = !target.italic,
             4 => {
-                if (reverse) {
-                    target.underline = !target.underline;
-                    if (target.underline) target.underline_style = .straight;
-                } else {
-                    target.underline = true;
-                    target.underline_style = .straight;
-                }
+                target.underline = !target.underline;
+                if (target.underline) target.underline_style = .straight;
             },
-            5 => {
-                if (reverse) target.blink = !target.blink else target.blink = true;
-            },
-            7 => {
-                if (reverse) target.reverse = !target.reverse else target.reverse = true;
-            },
-            8 => {
-                if (reverse) target.invisible = !target.invisible else target.invisible = true;
-            },
-            9 => {
-                if (reverse) target.strikethrough = !target.strikethrough else target.strikethrough = true;
-            },
-            22 => {
-                if (!reverse) {
-                    target.bold = false;
-                    target.dim = false;
-                }
-            },
-            23 => {
-                if (!reverse) target.italic = false;
-            },
-            24 => {
-                if (!reverse) {
-                    target.underline = false;
-                    target.underline_style = .straight;
-                }
-            },
-            25 => {
-                if (!reverse) {
-                    target.blink = false;
-                    target.blink_fast = false;
-                }
-            },
-            27 => {
-                if (!reverse) target.reverse = false;
-            },
-            28 => {
-                if (!reverse) target.invisible = false;
-            },
-            29 => {
-                if (!reverse) target.strikethrough = false;
-            },
+            5 => target.blink = !target.blink,
+            7 => target.reverse = !target.reverse,
+            8 => target.invisible = !target.invisible,
+            9 => target.strikethrough = !target.strikethrough,
             else => {},
         }
     }
@@ -7895,6 +7921,60 @@ fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool)
 // =============================================================================
 // Projected history and logical-output proofs
 // =============================================================================
+
+test "shared SGR patch matches direct rendition across supported selectors" {
+    var styled = initial_cell_attrs;
+    styled.fg = .indexed(231);
+    styled.bg = .rgbComponents(7, 8, 9);
+    styled.font = 4;
+    styled.baseline = .raised;
+    styled.bold = true;
+    styled.dim = true;
+    styled.italic = true;
+    styled.blink = true;
+    styled.blink_fast = true;
+    styled.reverse = true;
+    styled.invisible = true;
+    styled.underline = true;
+    styled.strikethrough = true;
+    styled.underline_style = .curly;
+    styled.underline_color = .rgbComponents(1, 2, 3);
+    styled.protected = .dec;
+    styled.link_id = 42;
+
+    const cases = [_]Screen.SgrOperands{
+        .{ .values = &.{} },
+        .{ .values = &.{ 0, 1, 38, 5, 17, 4, 3 }, .colon_after = 1 << 5 },
+        .{ .values = &.{ 38, 2, 1, 2, 3, 48, 5, 11, 58, 2, 9, 8, 7 } },
+        .{ .values = &.{ 38, 2, 0, 4, 5, 6, 48, 5, 99, 58, 5, 17 }, .colon_after = 0b011_011_011111 },
+        .{ .values = &.{ 4, 0 }, .colon_after = 1 },
+        .{ .values = &.{ 4, 5 }, .colon_after = 1 },
+        .{ .values = &.{ 38, 2, 1, 2 } },
+        .{ .values = &.{ 48, 2, 1, 2 }, .colon_after = 0b111 },
+        .{ .values = &.{ 1, 2, 221, 222, 1, 0, 7, 104, 22, 59 } },
+    };
+    const seeds = [_]ScreenCellAttrs{ initial_cell_attrs, styled };
+    for (seeds) |seed| {
+        for (0..256) |param| {
+            const value: i32 = @intCast(param);
+            try expectSgrPatchMatches(seed, .{ .values = &.{value} });
+        }
+        for (cases) |case| try expectSgrPatchMatches(seed, case);
+    }
+}
+
+fn expectSgrPatchMatches(seed: ScreenCellAttrs, operands: Screen.SgrOperands) !void {
+    var direct = seed;
+    Screen.Sgr(ScreenCellAttrs).apply(&direct, operands);
+    var patch: Screen.SgrPatch = .{};
+    Screen.Sgr(Screen.SgrPatch).apply(&patch, operands);
+    var actual = seed;
+    try std.testing.expectEqual(!std.meta.eql(seed, direct), patch.apply(&actual));
+    try std.testing.expectEqualDeep(direct, actual);
+    try std.testing.expectEqual(seed.protected, actual.protected);
+    try std.testing.expectEqual(seed.link_id, actual.link_id);
+    try std.testing.expect(!patch.apply(&actual));
+}
 
 test "styled blank state survives projected history and newest restore" {
     var screen = try Screen.initWithCellsAndHistory(

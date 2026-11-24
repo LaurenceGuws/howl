@@ -838,10 +838,7 @@ test "terminal: rectangle attribute defaults distinguish change from reverse" {
             const other = before.cellInfoAt(0, 1);
             const row_before = before.cellInfoAt(1, 1);
             try std.testing.expect(expected.attrs.bold and expected.attrs.underline and expected.attrs.blink and expected.attrs.reverse);
-            expected.attrs.bold = false;
-            expected.attrs.underline = false;
-            expected.attrs.blink = false;
-            expected.attrs.reverse = false;
+            expected.attrs = Terminal.default_cell_attrs;
             try feed(&terminal, case.wire[0..split]);
             try feed(&terminal, case.wire[split..]);
             const after = terminal.semanticView(0);
@@ -860,6 +857,154 @@ test "terminal: rectangle attribute defaults distinguish change from reverse" {
             try feed(&terminal, "Z");
             try std.testing.expectEqualDeep(other.attrs, terminal.semanticView(0).cellInfoAt(2, 0).attrs);
         }
+    }
+}
+
+test "terminal: extended DECCARA applies complete shared rendition to existing cells" {
+    const cases = [_]struct { sgr: []const u8, fg: Terminal.Color, bg: Terminal.Color, underline: Terminal.UnderlineStyle, ul_color: Terminal.Color }{
+        .{ .sgr = "38;2;1;2;3;48;2;4;5;6;4:3;58:5:17", .fg = .rgbComponents(1, 2, 3), .bg = .rgbComponents(4, 5, 6), .underline = .curly, .ul_color = .indexed(17) },
+        .{ .sgr = "38:2::7:8:9;48:5:23;4:5;58;2;10;11;12", .fg = .rgbComponents(7, 8, 9), .bg = .indexed(23), .underline = .dashed, .ul_color = .rgbComponents(10, 11, 12) },
+        .{ .sgr = "91;104;21;59", .fg = .indexed(9), .bg = .indexed(12), .underline = .double, .ul_color = Terminal.default_cell_attrs.underline_color },
+    };
+    for (cases) |case| {
+        for ([_][]const u8{ "\x1b[", "\x9b" }) |introducer| {
+            var command_buf: [128]u8 = undefined;
+            const command = try std.fmt.bufPrint(&command_buf, "{s}1;2;2;3;{s}$r", .{ introducer, case.sgr });
+            for (0..command.len + 1) |split| {
+                var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+                defer terminal.deinit();
+                try feed(&terminal, "\x1b[1;31mA\x1b[0;3;32mB\x1b[0;33mCD\x1b[2;1HEFGH\x1b[3;1H\x1b[0;35m\x1b[2*x");
+                const before = terminal.semanticView(0);
+                var cells: [2][4]Terminal.Cell = undefined;
+                for (0..2) |r| for (0..4) |c| {
+                    cells[r][c] = before.cellInfoAt(@intCast(r), @intCast(c));
+                };
+                const row_generation = before.rowGeneration(2);
+                try feed(&terminal, "\x1b[5n");
+                try std.testing.expect(!(try terminal.feed(command[0..split])).stateChanged() or split == command.len);
+                try feed(&terminal, command[split..]);
+                const view = terminal.semanticView(0);
+                for (0..2) |r| for (0..4) |c| {
+                    var expected = cells[r][c];
+                    if (c == 1 or c == 2) {
+                        expected.attrs.fg = case.fg;
+                        expected.attrs.bg = case.bg;
+                        expected.attrs.underline = true;
+                        expected.attrs.underline_style = case.underline;
+                        expected.attrs.underline_color = case.ul_color;
+                    }
+                    try std.testing.expectEqualDeep(expected, view.cellInfoAt(@intCast(r), @intCast(c)));
+                };
+                try std.testing.expectEqual(row_generation, view.rowGeneration(2));
+                try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
+                try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+                try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
+                try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+                try feed(&terminal, "Z");
+                try std.testing.expectEqual(Terminal.Color.indexed(5), terminal.semanticView(0).cellInfoAt(2, 0).attrs.fg);
+                try std.testing.expect(!terminal.semanticView(0).cellInfoAt(2, 0).attrs.underline);
+            }
+        }
+    }
+}
+
+test "terminal: extended DECCARA reset preserves protection links and cluster scalars" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1;3;31;44;4:3;58:5:29m\x1b[1\"q\x1b]8;;https://example.invalid\x1b\\");
+    try feed(&terminal, "\xe4\xb8\xad\xcc\x81\xcc\xa7\xcc\x88\xcc\x84");
+    try feed(&terminal, "\x1b[2;3H\x1b]66;s=2;X\xcc\x81\xcc\xa7\xcc\x88\xcc\x84\x07\x1b[1;1H\x1b[2*x");
+    const before = terminal.semanticView(0);
+    var cells: [3][8]Terminal.Cell = undefined;
+    for (0..3) |r| for (0..8) |c| {
+        cells[r][c] = before.cellInfoAt(@intCast(r), @intCast(c));
+    };
+    try std.testing.expect(cells[0][0].attrs.link_id != 0);
+    try std.testing.expect(cells[0][0].attrs.protected == .dec);
+    try feed(&terminal, "\x1b[1;1;3;8;0$r");
+    const after = terminal.semanticView(0);
+    for (0..3) |r| for (0..8) |c| {
+        var expected = cells[r][c];
+        expected.attrs = Terminal.default_cell_attrs;
+        expected.attrs.protected = cells[r][c].attrs.protected;
+        expected.attrs.link_id = cells[r][c].attrs.link_id;
+        try std.testing.expectEqualDeep(expected, after.cellInfoAt(@intCast(r), @intCast(c)));
+    };
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{ 0x4e2d, 0x301, 0x327, 0x308, 0x304 }, after.cellScalarsAt(0, 1, &scalars));
+    try std.testing.expectEqualSlices(u21, &.{ 'X', 0x301, 0x327, 0x308, 0x304 }, after.cellScalarsAt(2, 3, &scalars));
+    try feed(&terminal, "\x1b[1;4HZ");
+    try std.testing.expectEqualDeep(cells[0][0].attrs, terminal.semanticView(0).cellInfoAt(0, 3).attrs);
+}
+
+test "terminal: extended DECCARA restyles pending wrap without allocation or cursor movement" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 3, 4, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1;2;31mABCD");
+    const before = terminal.semanticView(0);
+    const cursor_row = before.cursor_row;
+    const cursor_col = before.cursor_col;
+    const row_generation = before.rowGeneration(0);
+    const background_generation = before.rowBackgroundGeneration(0);
+    const unaffected = before.rowGeneration(1);
+    const output_range = terminal.logicalOutputRange();
+    const image_generation = terminal.images(0).generation;
+    const sequence = terminal.semanticSequence();
+    failing.fail_index = failing.alloc_index;
+    // Neither malformed region coordinates nor incomplete color groups may
+    // reinterpret a payload component as a rendition selector.
+    for ([_][]const u8{
+        "\x1b[1:1;1;1;44$r",
+        "\x1b[1;2;1;3;38:2:1:2$r",
+        "\x1b[1;2;1;3;48;2;4;5$r",
+        "\x1b[1;2;1;3;4:3$t",
+    }) |wire| {
+        try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    }
+    try std.testing.expect((try terminal.feed("\x1b[1;2;1;3;221;48:2::12:34:56$r")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(cursor_row, after.cursor_row);
+    try std.testing.expectEqual(cursor_col, after.cursor_col);
+    try std.testing.expect(row_generation != after.rowGeneration(0));
+    try std.testing.expect(background_generation != after.rowBackgroundGeneration(0));
+    try std.testing.expectEqual(unaffected, after.rowGeneration(1));
+    try std.testing.expectEqualDeep(output_range, terminal.logicalOutputRange());
+    try std.testing.expectEqual(image_generation, terminal.images(0).generation);
+    for (1..3) |col| {
+        const cell = after.cellInfoAt(0, @intCast(col));
+        try std.testing.expect(!cell.attrs.bold);
+        try std.testing.expect(cell.attrs.dim);
+        try std.testing.expectEqual(Terminal.Color.rgbComponents(12, 34, 56), cell.attrs.bg);
+    }
+    try std.testing.expect(!(try terminal.feed("\x1b[1;2;1;3;221;48:2::12:34:56$r")).stateChanged());
+    try std.testing.expect(!failing.has_induced_failure);
+    failing.fail_index = std.math.maxInt(usize);
+
+    // The latent wrap and ordinary write rendition must survive the edit.
+    try feed(&terminal, "X");
+    const written = terminal.semanticView(0).cellInfoAt(1, 0);
+    try std.testing.expectEqual(@as(u32, 'X'), written.codepoint);
+    try std.testing.expect(written.attrs.bold and written.attrs.dim);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.bg, written.attrs.bg);
+    try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(0, 3));
+
+    try feed(&terminal, "\x1b[1;2;1;3;222;49$r");
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 1).attrs.dim);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.bg, terminal.semanticView(0).cellInfoAt(0, 1).attrs.bg);
+    try feed(&terminal, "\x1b[221mY\x1b[1;222mZ");
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(1, 1).attrs.bold);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 1).attrs.dim);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 2).attrs.bold);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(1, 2).attrs.dim);
+
+    // Background styling on blank cells must not materialize characters.
+    try feed(&terminal, "\x1b[2*x\x1b[3;1;3;4;44$r");
+    for (0..4) |col| {
+        const blank = terminal.semanticView(0).cellInfoAt(2, @intCast(col));
+        try std.testing.expectEqual(@as(u32, 0), blank.codepoint);
+        try std.testing.expectEqual(Terminal.Color.indexed(4), blank.attrs.bg);
     }
 }
 

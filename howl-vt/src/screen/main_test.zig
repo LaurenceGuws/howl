@@ -583,7 +583,7 @@ test "screen: DECCARA stream mode spans full middle rows" {
     apply(&s, Action{ .write_text = "ABCDEFGHI" });
     try std.testing.expect(s.changeRectAttrs(
         .{ .top = 0, .left = 1, .bottom = 2, .right = 1 },
-        &.{1},
+        operands(&.{1}),
         false,
     ));
 
@@ -605,7 +605,7 @@ test "screen: DECSACE rectangle mode constrains DECCARA to exact bounds" {
     try std.testing.expect(s.setRectAttrExtent(true));
     try std.testing.expect(s.changeRectAttrs(
         .{ .top = 0, .left = 0, .bottom = 1, .right = 1 },
-        &.{1},
+        operands(&.{1}),
         false,
     ));
 
@@ -625,7 +625,7 @@ test "screen: DECRARA toggles supported attrs" {
     apply(&s, Action{ .write_text = "ABCDEF" });
     try std.testing.expect(s.changeRectAttrs(
         .{ .top = 0, .left = 0, .bottom = 1, .right = 1 },
-        &.{ 1, 4 },
+        operands(&.{ 1, 4 }),
         true,
     ));
 

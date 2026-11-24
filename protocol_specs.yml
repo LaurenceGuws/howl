@@ -7693,6 +7693,10 @@ specifications:
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
         note: Narrow regression evidence at a89ed30; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
     - id: attr-change-rect
       section: Rectangular Area Operations / Change Attributes in Rectangular Area, p167
       level: defined
@@ -7747,9 +7751,23 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rectangle attribute defaults distinguish change from reverse'
         relation: protocol-family
-        note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+        note: Updated for superseding shared-SGR reset selection; omitted admission retained, full reset now replaces original-four-only
+          expectation.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA reset preserves protection links and cluster scalars'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA restyles pending wrap without allocation or cursor movement'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
       accepted_reconciliations:
       - deccara-omitted-selector-default
+      - kitty-deccara-shared-sgr-rendition
     - id: attr-reverse-rect
       section: Rectangular Area Operations / Reverse Attributes in Rectangular Area, p169
       level: defined
@@ -9584,11 +9602,29 @@ specifications:
       level: defined
       wire: CSI 221 m
       rule: Resets bold without clearing faint.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA restyles pending wrap without allocation or cursor movement'
+        relation: protocol-family
+        note: Direct ordinary SGR and DECCARA independent bold/faint clear assertions.
+      - file: howl-vt/src/screen.zig
+        test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
+        note: Shared direct/patch field-equivalence evidence; not whole-clause admission qualification.
     - id: clear-faint-only
       section: Independent control of bold and faint SGR properties
       level: defined
       wire: CSI 222 m
       rule: Resets faint without clearing bold.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA restyles pending wrap without allocation or cursor movement'
+        relation: protocol-family
+        note: Direct ordinary SGR and DECCARA independent bold/faint clear assertions.
+      - file: howl-vt/src/screen.zig
+        test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
+        note: Shared direct/patch field-equivalence evidence; not whole-clause admission qualification.
     - id: mouse-leave
       section: Reporting when the mouse leaves the window
       level: defined
@@ -12252,9 +12288,23 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rectangle attribute defaults distinguish change from reverse'
         relation: protocol-family
-        note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+        note: Updated for superseding shared-SGR reset selection; omitted admission retained, full reset now replaces original-four-only
+          expectation.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA reset preserves protection links and cluster scalars'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA restyles pending wrap without allocation or cursor movement'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
       accepted_reconciliations:
       - deccara-omitted-selector-default
+      - kitty-deccara-shared-sgr-rendition
     - id: attr-reverse-rect
       section: EL-00070-05 pp.5-175–5-176
       level: defined
@@ -12293,10 +12343,33 @@ specifications:
       rule: Extends DECCARA from the limited DEC rendition attributes to all SGR attributes, including foreground/background
         colors. Documented example uses DECSACE rectangle mode and then restores stream extent.
       related_command: dec_vt420.attr-change-rect
-      source_note: The accepted default/zero-selector choice retains original DEC four attributes rather than full SGR reset.
-        The remaining nonzero extension scope is untriaged; no implementation verdict inferred.
+      source_note: Captain selected Kitty extended DECCARA over the original four-attribute domain, using Howl ordinary SGR
+        semantics. The earlier omitted-selector admission remains selected, but its four-only reset scope is superseded. Source-specific
+        clamping, grammar, unoccupied-cell, extent and rendering differences remain separately qualified.
       accepted_reconciliations:
       - deccara-omitted-selector-default
+      - kitty-deccara-shared-sgr-rendition
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle attribute defaults distinguish change from reverse'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA applies complete shared rendition to existing cells'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA reset preserves protection links and cluster scalars'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: extended DECCARA restyles pending wrap without allocation or cursor movement'
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/src/screen.zig
+        test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
+        note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -14330,6 +14403,10 @@ reconciliation:
       list fallback and empty final substring versus absent selector separately qualify; do not infer all SGR selectors
       or unoccupied-cell policy.'
     decision: null
+  superseded_in_part:
+    by: kitty-deccara-shared-sgr-rendition
+    scope: 'DECCARA reset domain only: omitted and explicit zero now use complete shared SGR reset. Omitted-selector admission
+      remains selected. Original DEC meaning and previous decision preserved.'
 - id: decrara-omitted-selector-default
   status: resolved-by-explicit-captain-choice
   decision_rule: explicit-captain-choice
@@ -14427,3 +14504,48 @@ reconciliation:
     recommendation: Retain no default for DECRARA, consistent with original STD070 and independent modern empty-list admission;
       qualify explicit0 separately.
     decision: null
+- id: kitty-deccara-shared-sgr-rendition
+  status: resolved-by-explicit-captain-choice
+  decision_rule: explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  accepted_interpretation:
+    deccara: Apply the full currently admitted ordinary SGR vocabulary, in parameter order, to existing selected cell rendition.
+      Include foreground/background/underline colors and styles, existing ordinary font/baseline/conceal, and originating
+      Kitty 221/222 independent bold/faint resets.
+    reset: Omitted selector remains admitted as reset. Explicit zero and omission now reset all SGR-owned rendition fields
+      to ordinary SGR defaults, preserving per-cell protection and OSC 8 hyperlink identity.
+    grammar: Retain SGR colon adjacency for the suffix after four coordinate operands. Coordinate operands are not SGR groups.
+      Use the same ordinary SGR color and style interpretation, rather than flattening color payload into separate rendition
+      selectors.
+    ownership: Preserve text, scalar/cluster geometry, current write rendition, cursor and pending wrap. Apply selected
+      extent; no new cell provenance, storage, allocation or renderer dependence.
+    decrara: Separate reverse-selector operation; prior omitted-no-default and explicit-zero four-original-attributes decision
+      retained. No adoption of all-SGR reversal.
+  supersedes:
+  - decision: deccara-omitted-selector-default
+    scope: Only original-four reset domain. Keep omission admission and original source record; complete SGR reset now selected.
+  scope_limit: Adopt originating extended DECCARA for Howl shared SGR repertoire, not byte-for-byte Kitty parser equivalence.
+    Kitty coordinate-only no-op differs from our deliberately retained omission-reset behavior. Complete invalid-only fallback,
+    trailing omissions, exact source numeric/color clamping, all malformed SGR admission, DECOM/page/margins/double-width
+    geometry, display integration and unsupported ordinary SGR extensions remain separate. No full implementation-status
+    assessment or general DECRARA expansion.
+  reason: Captain accepted full Kitty extended DECCARA after verified production consumers and the proposal to reuse ordinary
+    SGR. Originating Kitty documentation explicitly defines the extension; its diff application sends real foreground/background
+    color updates. Prior nine-reference comparison preserved in earlier records; unsupported reference commands are not
+    votes against this originating extension.
+  reference_evidence:
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: docs/deccara.rst; docs/misc-protocol.rst:25-30; kitty/cursor.c:89-224; kitty/vt-parser.c:1022-1069,1074-1136,1430-1444;
+      kitty/screen.c:1897-1950; kitty_tests/parser.py:1198-1241
+    observation: Original all-SGR regional change extension, with independent 221/222 intensity controls. Region application
+      operates on retained GPU cell attributes rather than replacing text; bare form supplies zero, coordinate-only does
+      not. Howl reuses its own ordinary SGR rules and retained omission policy.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: kittens/diff/render.go:271-279; kittens/diff/search.go:132-143; kittens/diff/mouse.go:220-227; tools/tui/mouse.go:156-166;
+      tools/tui/loop/api.go:306-324
+    observation: Diff search/selection use color SGR in DECCARA; toolkit provides StyleRegion/StyleRectangle. Production
+      call sites, not external adoption statistics or runtime measurements.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
