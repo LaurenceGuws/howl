@@ -741,7 +741,7 @@ fn processHash(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processTick(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'w' => SemanticEvent{ .locator_filter = locatorFilterArea(params) },
+        'w' => if (locatorFilterArea(params)) |area| SemanticEvent{ .locator_filter = area } else null,
         '}' => SemanticEvent{ .insert_columns = paramAtOrDefault1(params, 0) },
         'z' => SemanticEvent{ .locator_reporting = .{
             .mode = paramAtOrDefault0(params, 0),
@@ -944,12 +944,13 @@ fn paramCount32(items: []const i32) u32 {
 }
 
 // Projects positive one-based parameters into optional zero-based rectangle edges.
-fn locatorFilterArea(params: []const i32) locator_mod.FilterArea {
+fn locatorFilterArea(params: []const i32) ?locator_mod.FilterArea {
+    if (params.len > 4) return null;
     return .{
-        .top = if (params.len >= 1 and params[0] > 0) paramOrDefault1(params[0]) - 1 else null,
-        .left = if (params.len >= 2 and params[1] > 0) paramOrDefault1(params[1]) - 1 else null,
-        .bottom = if (params.len >= 3 and params[2] > 0) paramOrDefault1(params[2]) - 1 else null,
-        .right = if (params.len >= 4 and params[3] > 0) paramOrDefault1(params[3]) - 1 else null,
+        .top = if (params.len >= 1 and params[0] > 0) @intCast(params[0] - 1) else null,
+        .left = if (params.len >= 2 and params[1] > 0) @intCast(params[1] - 1) else null,
+        .bottom = if (params.len >= 3 and params[2] > 0) @intCast(params[2] - 1) else null,
+        .right = if (params.len >= 4 and params[3] > 0) @intCast(params[3] - 1) else null,
     };
 }
 
@@ -2300,7 +2301,7 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
             .payload = command.payload,
         }),
         .locator_reporting => |cfg| vt.locator.setReporting(cfg.mode, cfg.unit),
-        .locator_filter => |area| vt.locator.setFilter(area),
+        .locator_filter => |area| return try vt.locator.setFilter(&vt.reply_buffer, scratch.buf[0..], area),
         .locator_events => |modes| vt.locator.setEvents(modes.params[0..modes.param_count]),
         .locator_request => |param| try vt.locator.appendReportForRequest(
             &vt.reply_buffer,
@@ -3607,6 +3608,8 @@ fn routeParserEvent(event: parser_mod.Event) ?SemanticEvent {
                 (sc.leader == '=' or sc.leader == '>' or sc.leader == '<')) return null;
             const params = sc.params[0..sc.param_count];
             const intermediates = sc.intermediates[0..sc.intermediates_len];
+            if (sc.final == 'w' and std.mem.eql(u8, intermediates, "'") and
+                (sc.numeric_overflow or !sc.separators.eql(parser_mod.CsiSeparatorList.empty))) return null;
             return csiProcess(sc.final, params, sc.separators, sc.leader, sc.private, intermediates);
         },
         .invoke_charset, .configure_charset => return null,
@@ -10603,8 +10606,8 @@ const RouteOwnerTests = struct {
             .intermediates = intermediates[0..],
             .intermediates_len = 1,
         } }) orelse return error.NoEvent;
-        try std.testing.expectEqual(@as(?u16, 1), filter.locator_filter.top);
-        try std.testing.expectEqual(@as(?u16, 4), filter.locator_filter.right);
+        try std.testing.expectEqual(@as(?u32, 1), filter.locator_filter.top);
+        try std.testing.expectEqual(@as(?u32, 4), filter.locator_filter.right);
 
         params = @as([csi_max_params]i32, @splat(0));
         params[0] = 1;

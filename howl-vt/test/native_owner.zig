@@ -208,9 +208,12 @@ test "native paste overlap rejects while adjacent and unused tail ranges remain 
 test "native mouse mask and capacity admission precede stateful locator effects" {
     const value = try create(std.testing.allocator);
     defer owner.destroy(value);
-    try feedAll(value, "\x1b[1;0'z\x1b[1;1;1;1'w");
-    const event = try native.mouseInput(c.HVT_MOUSE_PRESS, c.HVT_BUTTON_LEFT, 0, 1, 2, 3, 0, 0xffffffff, 0xffffffff);
+    try feedAll(value, "\x1b[1;0'z");
     var bytes: [c.HVT_INPUT_BUFFER_BYTES]u8 = @splat(0xa5);
+    const inside = try native.mouseInput(c.HVT_MOUSE_MOVE, c.HVT_BUTTON_NONE, 0, 0, 0, 0, 0, 0xffffffff, 0xffffffff);
+    try std.testing.expectEqual(@as(usize, 0), try owner.encode(value, inside, &bytes));
+    try feedAll(value, "\x1b[1;1;1;1'w");
+    const event = try native.mouseInput(c.HVT_MOUSE_PRESS, c.HVT_BUTTON_LEFT, 0, 1, 2, 3, 0, 0xffffffff, 0xffffffff);
     const before = owner.observe(value, 0);
     try std.testing.expectError(error.BufferTooSmall, owner.encode(value, event, bytes[0 .. bytes.len - 1]));
     try std.testing.expectEqualDeep(before, owner.observe(value, 0));

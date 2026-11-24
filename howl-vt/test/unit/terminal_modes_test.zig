@@ -2309,8 +2309,64 @@ test "locator button and filter events append DECLRP" {
 
     try consumeReplies(&terminal);
     write(&terminal, "\x1b[2;2;2;2'w");
+    try std.testing.expectEqualStrings("\x1b[10;0;2;3;1&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 3, .col = 3, .mod = .{}, .buttons_down = 0 }).len);
-    try std.testing.expectEqualStrings("\x1b[10;0;4;4;1&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+}
+
+test "locator filters trigger immediately or on selected coordinate movement" {
+    for ([_][]const u8{ "\x1b['w", "\x9b'w" }) |command| {
+        for (0..command.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[1;1'z");
+            const point: MouseEvent = .{ .kind = .move, .button = .none, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0, .pixel_x = 70000, .pixel_y = 80000 };
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, point));
+            try feed(&terminal, "\x1b[1;1;1;1'w");
+            try std.testing.expectEqualStrings("\x1b[10;0;80001;70001;1&w", pendingOutput(&terminal));
+            try consumeReplies(&terminal);
+            try feed(&terminal, command[0..split]);
+            try feed(&terminal, command[split..]);
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, point));
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+            var moved = point;
+            moved.pixel_x = 70001;
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, moved));
+            try std.testing.expectEqualStrings("\x1b[10;0;80001;70002;1&w", pendingOutput(&terminal));
+            try consumeReplies(&terminal);
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, point));
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+            // Explicit physical bounds beyond u16 are not truncated.
+            try feed(&terminal, "\x1b[80001;70001;80001;70002'w");
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, moved));
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+            moved.pixel_x = 70002;
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, moved));
+            try std.testing.expectEqualStrings("\x1b[10;0;80001;70003;1&w", pendingOutput(&terminal));
+        }
+    }
+}
+
+test "locator filter and button reports are ordered within a sample" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    const inside: MouseEvent = .{ .kind = .move, .button = .none, .row = 1, .col = 1, .mod = .{}, .buttons_down = 0 };
+    const outside: MouseEvent = .{ .kind = .press, .button = .left, .row = 2, .col = 2, .mod = .{}, .buttons_down = 1 };
+    try feed(&terminal, "\x1b[1'z\x1b[1'{");
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, inside));
+    try feed(&terminal, "\x1b[2;2;2;2'w");
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, outside));
+    try std.testing.expectEqualStrings("\x1b[2;4;3;3;1&w\x1b[10;4;3;3;1&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    try feed(&terminal, "\x1b[2'z");
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, inside));
+    try feed(&terminal, "\x1b[2;2;2;2'w");
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, outside));
+    try std.testing.expectEqualStrings("\x1b[2;4;3;3;1&w", pendingOutput(&terminal));
 }
 
 test "locator ignores rows outside its retained coordinate domain" {
