@@ -3686,6 +3686,85 @@ specifications:
       pinned_source_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: misc.c:4175-4179,6375-6397
+    - id: tek-return-to-vt
+      section: Tektronix 4014 Mode, ctlseqs 3289-3292,3308
+      level: defined
+      wire: ESC ETX
+      rule: Xterm-specific exit from Tek graphics mode to VT parser. The original Tektronix hardware has no ANSI VT mode to
+        return to; do not claim original Tektronix command. DEC VT240 mode-switch provenance remains separate.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-14df8c1237
+        source_line: 3308
+        wire: ESC ETX
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:446-451,1295-1322
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+    - id: tek-copy-file
+      section: Tektronix Mode, ctlseqs 3318-3319
+      level: defined
+      wire: ESC ETB
+      rule: 'Xterm adaptation of Tek hardcopy: saves recorded Tektronix codes to timestamped COPY file when compiled and permitted.
+        Host file operation is not a terminal output entitlement.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-305fd317a7
+        source_line: 3318
+        wire: ESC ETB
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:544-551,1964-2005
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      related_original: tek_4015.hardcopy
+      pending_reconciliation: tek-hardcopy-vs-code-file
+    - id: rxvt-toolbar-profile
+      section: ctlseqs 924,1073
+      level: defined
+      wire: CSI ? 10 h / CSI ? 10 l
+      rule: Xterm published toolbar visibility adaptation of rxvt mode 10. Build-gated ShowToolbar; distinct from original rxvt
+        menu bar.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7613-7618
+      related_original: rxvt.menu-bar
+      pending_reconciliation: rxvt-mode10-menu-vs-toolbar
+    - id: rxvt-font-shift-profile
+      section: ctlseqs 935,1084
+      level: defined
+      wire: CSI ? 35 h / CSI ? 35 l
+      rule: Xterm adaptation toggles shift_fonts, not the full rxvt Shift-key action family.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7652-7655
+      related_original: rxvt.shift-key-actions
+      pending_reconciliation: rxvt-mode35-shift-actions-vs-font-only
+    - id: rxvt-scroll-output-profile
+      section: ctlseqs 978-979,1124-1125
+      level: defined
+      wire: CSI ? 1010 h / CSI ? 1010 l
+      rule: Xterm SET enables scroll-to-bottom on tty output; RESET disables. Opposite polarity from original rxvt/urxvt.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7846-7849
+      related_original: rxvt.scroll-output-inhibit
+      pending_reconciliation: rxvt-mode1010-inverse-polarity
+    - id: hp-lower-left-workaround
+      section: ctlseqs 405-406
+      level: defined
+      wire: ESC F
+      rule: 'Xterm-authored HP-UX compatibility workaround: move cursor to lower-left screen position only when hpLowerleftBugCompat
+        enabled. Source explicitly calls this an application assumption; no original HP ESC F semantics established. Not VT52
+        graphics-enter.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-64947902c6
+        source_line: 405
+        wire: ESC F
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:3976-3984
+      mode_context: ANSI xterm profile; distinct from VT52 ESC F.
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -7062,6 +7141,499 @@ specifications:
       rule: Set working directory for later session restart, not immediate shell chdir; the terminal attempts to restart there.
         This is CDE profile semantics, not xterm X property behavior or permission to access arbitrary host paths.
       pending_reconciliation: osc3-cde-directory-vs-xterm-xproperty
+  tek_4015:
+    title: 4015 and 4015-1 Computer Display Terminal Users Instruction Manual
+    author: Tektronix
+    authority: protocol-author
+    revision: First printing August 1974; 070-1649-00
+    url: https://bitsavers.trailing-edge.com/pdf/tektronix/401x/070-1649-00_4015_and_4015-1_Computer_Display_Terminal_Users_Instruction_Manual_Aug1974.pdf
+    snapshot_sha256: 86b4628fc59885c4ac961dbeb0b443c9ffd699207ba64b5b2eb481e4adfdd219
+    scope: Selected 4015/4015-1 Tek graphics control profiles, including Option 34. Not a complete 4014/4015 protocol or a
+      claim that all hardware profiles match. Source text extraction verified; visual verification of relevant pages unavailable.
+    clauses:
+    - id: status-address-query
+      section: Table 2-1 p.2-7; GIN Mode Summary pp.3-29/30
+      level: defined
+      wire: ESC ENQ
+      rule: 'In alpha/graph mode, transmit status byte followed by four address bytes for alpha cursor lower-left or graph
+        beam; return to prior mode after transmission. Crosshair displayed in GIN: transmit four address bytes without status
+        and return to alpha. CR optional; EOT optional only after CR. Bypass suppresses echoed data. Original hardware status
+        bit meanings and timing are profile-specific, not generic VT cursor report.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-bf0cdf83e7
+        source_line: 3310
+        wire: ESC ENQ
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:431-444,1268-1292
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      original_status_bits:
+        '8': strap dependent
+        '7': '0'
+        '6': '1'
+        '5': 0 available hardcopy unit
+        '4': 1 graph mode
+        '3': 0 graph mode
+        '2': 1 margin 2; apply 512 X adjustment if needed
+        '1': 0 auxiliary unit active
+      source_note: Pinned xterm uses fixed octal 064 with margin 2 flag in non-GIN branch; GIN branch omits status. Four 5-bit
+        address chunks plus optional CR/EOT; exact original status bit behavior not established.
+    - id: page
+      section: Table 2-1 p.2-7
+      level: defined
+      wire: ESC FF
+      rule: Erase graphics display, select alpha mode, home cursor, choose margin 1 and clear bypass. Preserve selected character
+        size unless other reset changes it. Not ECMA FF.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-24ece2028e
+        source_line: 3312
+        wire: ESC FF
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:553-558,1011-1040
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+    - id: apl-select
+      section: Table 2-1 p.2-8
+      level: defined
+      wire: ESC SO
+      rule: Select APL character set on 4015 when character-set switch permits program selection. This is Tek APL selection,
+        not ANSI locking shift.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-06cd9b82d6
+        source_line: 3314
+        wire: ESC SO
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:580-584
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      source_note: Pinned xterm explicitly ignores APL selection; original hardware behavior preserved.
+    - id: ascii-select
+      section: Table 2-1 p.2-8
+      level: defined
+      wire: ESC SI
+      rule: Select ASCII character set on 4015 when character-set switch permits program selection. Distinct from ANSI locking
+        shift.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-8d5915fa7a
+        source_line: 3316
+        wire: ESC SI
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:574-578
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      source_note: Pinned xterm explicitly ignores ASCII selection; original hardware behavior preserved.
+    - id: hardcopy
+      section: Table 2-1 p.2-7
+      level: defined
+      wire: ESC ETB
+      rule: Request physical display hard copy if attached and energized; clear bypass. No effect while crosshair displayed.
+        Original operation is a device request, not a file-write command.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:544-551,1964-2005
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      source_note: Pinned xterm uses ALLOWLOGGING-gated copy of recorded Tek codes to timestamped file and turns off GIN if
+        active. This is materially different from hardware hardcopy.
+      pending_reconciliation: tek-hardcopy-vs-code-file
+    - id: bypass
+      section: Table 2-1 p.2-6; GIN Summary pp.3-29/30
+      level: defined
+      wire: ESC CAN
+      rule: Enter bypass condition to inhibit printing echoed input/GIN response bytes. Cleared by documented BEL, BS, CR,
+        ESC ETB, ESC FF, HT, LF, US, VT or vector execution; bypass is not ANSI cancellation.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-3824a5834a
+        source_line: 3321
+        wire: ESC CAN
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:565-568
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+    - id: gin-enter
+      section: Table 2-1 p.2-8; GIN Summary pp.3-29/30
+      level: defined
+      wire: ESC SUB
+      rule: Enter graphics input mode, show crosshair, leave graph mode and enable bypass. Crosshair address can be requested
+        by ESC ENQ or keyboard character; optional CR/EOT suffix follows four address bytes. Original hardware requires settling
+        time except documented serial/coordinate cases.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-c7468fd1fd
+        source_line: 3323
+        wire: ESC SUB
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:460-472,431-444
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      related_query: tek_4015.status-address-query
+    - id: special-point-plot
+      section: Option 34, Appendix F p.F-7
+      level: defined
+      wire: ESC FS
+      rule: Select special point plot with Enhanced Graphics Module. Intensity byte precedes each point address and selects
+        stored spot size for grayscale; intensity differs from normal point mode.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-dd3f49ca71
+        source_line: 3325
+        wire: ESC FS
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:453-458,660-667
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      source_note: Pinned xterm selects special-point parser but explicitly ignores intensity byte; full original point-size
+        behavior not established.
+    - id: character-size
+      section: Table 2-2 p.2-9
+      level: defined
+      wire: 'ESC 8 / ESC 9 / ESC : / ESC ;'
+      rule: Select one of four character sizes. Original 4015 table lists 74x35,81x38,121x58,132x64 characters by lines. These
+        are hardware profile capacities, not ANSI cell resizing.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-cd1aed3d58
+        source_line: 3331
+        wire: 'ESC :'
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-769d1ab47b
+        source_line: 3333
+        wire: ESC ;
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:140-150,586-590
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      source_note: Pinned xterm uses 133 columns for smallest size, unlike the checked 4015 manual table 132. 4014 and later
+        hardware revision capacities not independently verified.
+      pending_reconciliation: tek-small-character-capacity
+    - id: beam-vector-select
+      section: Tables 2-3 and F-3/F-4, pp.2-9/10,F-6
+      level: defined
+      wire: ESC Fbyte (0x60..0x77 selected values)
+      rule: 'Basic hardware selects normal focus (0x60..0x67), defocus (0x68..0x6f) or write-through (0x70..0x77). Option
+        34 adds distinct vector types: low selector 0 solid,1 dotted,2 dot-dash,3 short dash,4 long dash; low selector 7 selects
+        beam condition only in the published F-3 table. The wire is mode-specific; 0x60 is backtick, not backslash. No behavior
+        inferred for unpublished low values 5/6 with Option 34.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-de2946a98b
+        source_line: 3343
+        wire: ESC `
+        previous_review:
+          classification: distinct-mode-command-not-a-duplicate
+          mode: Tektronix 4014 graphics mode (xterm)
+          meaning: Normal Z axis, solid vectors
+          overlapping_vt_command: ecma48.dmi
+          reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context;
+            the active mode is part of the command identity.
+          next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently
+            triaged. Do not merge or imply implementation support.
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-9823d68ac5
+        source_line: 3345
+        wire: ESC a
+        previous_review:
+          classification: distinct-mode-command-not-a-duplicate
+          mode: Tektronix 4014 graphics mode (xterm)
+          meaning: Normal Z axis, dotted vectors
+          overlapping_vt_command: ecma48.int
+          reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context;
+            the active mode is part of the command identity.
+          next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently
+            triaged. Do not merge or imply implementation support.
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-de8e5a4e5d
+        source_line: 3347
+        wire: ESC b
+        previous_review:
+          classification: distinct-mode-command-not-a-duplicate
+          mode: Tektronix 4014 graphics mode (xterm)
+          meaning: Normal Z axis, dot-dashed vectors
+          overlapping_vt_command: ecma48.emi
+          reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context;
+            the active mode is part of the command identity.
+          next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently
+            triaged. Do not merge or imply implementation support.
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-b1b6adbc06
+        source_line: 3351
+        wire: ESC d
+        previous_review:
+          classification: distinct-mode-command-not-a-duplicate
+          mode: Tektronix 4014 graphics mode (xterm)
+          meaning: Normal Z axis, long-dashed vectors
+          overlapping_vt_command: ecma48.cmd
+          reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context;
+            the active mode is part of the command identity.
+          next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently
+            triaged. Do not merge or imply implementation support.
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-a8a6034fa8
+        source_line: 3353
+        wire: ESC h
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-a91a43c484
+        source_line: 3355
+        wire: ESC i
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-d0945ffb28
+        source_line: 3357
+        wire: ESC j
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-e65506d255
+        source_line: 3359
+        wire: ESC k
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-c33d9b5f2e
+        source_line: 3363
+        wire: ESC p
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-80c9217580
+        source_line: 3365
+        wire: ESC q
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-8a00bdff3e
+        source_line: 3367
+        wire: ESC r
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-3b38272ec5
+        source_line: 3369
+        wire: ESC s
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-11eeeae5d0
+        source_line: 3371
+        wire: ESC t
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: Tekproc.c:592-603
+      mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      selectors:
+        normal:
+        - '0x60'
+        - a
+        - b
+        - c
+        - d
+        - g
+        defocused:
+        - h
+        - i
+        - j
+        - k
+        - l
+        - o
+        write_through:
+        - p
+        - q
+        - r
+        - s
+        - t
+        - w
+      source_note: Pinned xterm masks character to LINEMASK, changes line type only and does not implement physical focus/defocus
+        or temporary write-through storage. The original source table and xterm discovery spellings retained; this is not
+        equivalence of hardware and emulator effects.
+      pending_reconciliation: tek-beam-state-vs-line-pattern
+  hp_2624b:
+    title: 2624B Display Terminal Reference Manual
+    author: Hewlett-Packard
+    authority: protocol-author
+    revision: September 1981; 02624-90008
+    url: https://bitsavers.trailing-edge.com/pdf/hp/terminal/262x/2624/02624-90008_2624B_Display_Terminal_Reference_Manual_Sep1981.pdf
+    snapshot_sha256: 55cd5733ceb70805a5a9fd0605f94791d87f413c7e1658220a77fd1e187c08a6
+    scope: Selected memory-lock behavior; original display memory distinct from xterm scrolling region. Text extraction verified.
+    clauses:
+    - id: memory-lock
+      section: Section III Memory Lock Mode, pp.3-3/4
+      level: defined
+      wire: ESC l
+      rule: 'With cursor home, protect display memory against overflow: reject attempts to exceed available memory with error/beep.
+        With cursor below top, lock rows above cursor while later lines scroll past; remains enabled until disabled, hard
+        reset or power off.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-b77edc5658
+        source_line: 410
+        wire: ESC l
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:4753-4766
+      source_note: Pinned xterm models lock/unlock as changing top scrolling margin to current row or zero, preserving bottom
+        margin and flushing pending scroll; no original HP overflow protection established.
+      pending_reconciliation: hp-memory-lock-overflow-protect
+    - id: memory-unlock
+      section: Section III Memory Lock Mode, pp.3-3/4
+      level: defined
+      wire: ESC m
+      rule: Disable original memory lock mode, removing overflow/display locking. Not an instruction to erase screen or change
+        cursor position.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-f9bab55706
+        source_line: 413
+        wire: ESC m
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:4753-4766
+      source_note: Pinned xterm models lock/unlock as changing top scrolling margin to current row or zero, preserving bottom
+        margin and flushing pending scroll; no original HP overflow protection established.
+      pending_reconciliation: hp-memory-lock-overflow-protect
+  sco_console:
+    title: screen(HW), SCO OpenDesktop console manual
+    author: Santa Cruz Operation
+    authority: protocol-publisher-profile
+    revision: OpenDesktop 3.0.0; historical vendor manual reproduction
+    url: https://www.typewritten.org/Manual/SCO/OpenDesktop/3.0.0/manHW/screen.html
+    snapshot_sha256: 53fa3e8d32faa436e3f9d088cbfc0046d708dd0ea951ab714dfe9095eff09b5f
+    scope: Published SCO console cursor-position save/restore. Not proof that this is the earliest implementation, or that
+      DEC and ANSI.SYS save identical state.
+    clauses:
+    - id: save-cursor-position
+      section: screen(HW) CSIs/CSIu, HTML lines 831-832
+      level: defined
+      wire: CSI s
+      rule: Save current cursor position in SCO console. Original vendor manual describes position only.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-2198aed027
+        source_line: 1583
+        wire: CSI s
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:4880-4901
+      source_note: DEC VT520 July 1994 p.6-9 SCO emulation describes DECSC/DECRC-like behavior except page not saved/restored.
+        Xterm uses CursorSave/CursorRestore (CSI s dispatches DECSLRM when LRMM enabled); exact saved rendition, character-set
+        and position semantics require separate scope selection.
+      pending_reconciliation: sco-cursor-position-vs-dec-state
+    - id: restore-cursor-position
+      section: screen(HW) CSIs/CSIu, HTML lines 831-832
+      level: defined
+      wire: CSI u
+      rule: Restore saved cursor position in SCO console. Original vendor manual describes position only.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-1fcd21cd8e
+        source_line: 1725
+        wire: CSI u
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:4908-4920
+      source_note: DEC VT520 July 1994 p.6-9 SCO emulation describes DECSC/DECRC-like behavior except page not saved/restored.
+        Xterm uses CursorSave/CursorRestore (CSI s dispatches DECSLRM when LRMM enabled); exact saved rendition, character-set
+        and position semantics require separate scope selection.
+      pending_reconciliation: sco-cursor-position-vs-dec-state
+  rxvt:
+    title: rxvt reference and implementation
+    author: rxvt authors
+    authority: protocol-author
+    revision: 2.7.10, 26 March 2003; release archive SHA-256
+    url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+    snapshot_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    scope: Selected rxvt private modes from doc/rxvtRef.txt and src/command.c; archive pin covers both. Do not treat xterm
+      compatibility adaptations as original rxvt semantics.
+    clauses:
+    - id: menu-bar
+      section: rxvtRef.txt:357-359; command.c:2679-2681,2767-2771
+      level: defined
+      wire: CSI ? 10 h / CSI ? 10 l
+      rule: SET displays rxvt menuBar, RESET hides it. Compile-gated menuBar_esc=10 (rxvt.h:183). Menu bar is not necessarily
+        xterm toolbar.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7613-7618
+      pending_reconciliation: rxvt-mode10-menu-vs-toolbar
+    - id: scrollbar
+      section: rxvtRef.txt:365-367; command.c:2682-2684,2772-2778
+      level: defined
+      wire: CSI ? 30 h / CSI ? 30 l
+      rule: SET shows scrollbar, RESET hides it. rxvt resizes windows and marks screen for refresh if mapping changes; host
+        widget effect, not changing scrollback ownership.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-30-h-line-934
+        source_line: 934
+        wire: CSI ? 30 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-30-l-line-1083
+        source_line: 1083
+        wire: CSI ? 30 l
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7648-7651
+    - id: shift-key-actions
+      section: rxvtRef.txt:369-371; command.c:172-200,2686
+      level: defined
+      wire: CSI ? 35 h / CSI ? 35 l
+      rule: Enable/disable rxvt Shift-key action family. With Shift and no Ctrl/Meta, mode permits Shift+Insert selection
+        paste and Shift+keypad Add/Subtract font changes. Shift+F1..F10 mapping to F11..F20 is a separate branch.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7652-7655
+      pending_reconciliation: rxvt-mode35-shift-actions-vs-font-only
+    - id: scroll-output-inhibit
+      section: rxvtRef.txt:409-411; command.c:2694,2798-2803
+      level: defined
+      wire: CSI ? 1010 h / CSI ? 1010 l
+      rule: SET inhibits scroll-to-bottom on tty output, RESET enables it. rxvt source uses inverse state to Opt_scrollTtyOutput.
+        urxvt 9.31 doc/rxvt.7.pod:2010-2017 and command.C:3888-3890 corroborate original polarity. This controls viewport
+        following, not canonical scrollback contents.
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7846-7849
+      pending_reconciliation: rxvt-mode1010-inverse-polarity
+    - id: scroll-keypress
+      section: rxvtRef.txt:413-415; command.c:2695,2804-2809
+      level: defined
+      wire: CSI ? 1011 h / CSI ? 1011 l
+      rule: SET enables viewport scroll-to-bottom on keypress, RESET disables. Independent of output-follow mode; urxvt doc/rxvt.7.pod:2019-2026,
+        command.C:3891-3893 corroborate.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1011-h-line-980
+        source_line: 980
+        wire: CSI ? 1011 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1011-l-line-1126
+        source_line: 1126
+        wire: CSI ? 1011 l
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7850-7853
+  urxvt:
+    title: rxvt-unicode reference and implementation
+    author: rxvt-unicode authors
+    authority: protocol-author
+    revision: 9.31; release archive SHA-256
+    url: https://deb.debian.org/debian/pool/main/r/rxvt-unicode/rxvt-unicode_9.31.orig.tar.bz2
+    snapshot_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    scope: Selected urxvt decimal mouse encoding and corroboration of inherited rxvt modes from doc/rxvt.7.pod and src/command.C.
+    clauses:
+    - id: decimal-mouse-encoding
+      section: doc/rxvt.7.pod:2028-2035, Mode 1015; src/command.C:1330-1371,3743
+      level: defined
+      wire: CSI ? 1015 h / CSI ? 1015 l
+      rule: Enable/disable urxvt decimal mouse encoding. Reports CSI b;x;y M where b retains legacy +32 offset (release code
+        3 plus modifiers then +32), x/y are one-based decimal cell coordinates without +32. Shift-left press at column80,row1
+        -> CSI 36;80;1M. Encoding does not enable tracking by itself.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1015-h-line-983
+        source_line: 983
+        wire: CSI ? 1015 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1015-l-line-1129
+        source_line: 1129
+        wire: CSI ? 1015 l
+      pinned_xterm_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7825-7842; button.c:219-292,5428-5434,5610-5625
+      reply: CSI Pb ; Px ; Py M
+      source_note: Pinned xterm treats encoding modes as mutually exclusive and RESET affects matching active mode only; decimal
+        positions do not have the legacy byte ceiling. urxvt source gives SGR precedence over 1015 when both bits present,
+        then UTF8; exact mixed-mode state and reset differences require separate qualification.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -7101,18 +7673,6 @@ discovery_catalogues:
       wire: ESC % G
       section: Controls beginning with ESC
       source_line: 310
-    - id: esc-64947902c6
-      wire: ESC F
-      section: Controls beginning with ESC
-      source_line: 405
-    - id: esc-b77edc5658
-      wire: ESC l
-      section: Controls beginning with ESC
-      source_line: 410
-    - id: esc-f9bab55706
-      wire: ESC m
-      section: Controls beginning with ESC
-      source_line: 413
     - id: dcs-1903109226
       wire: DCS Ps ! u Pt ST
       section: Device-Control functions
@@ -7133,10 +7693,6 @@ discovery_catalogues:
         decision: decscl-hard-vs-soft-reset
         reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
           separate.
-    - id: csi-2198aed027
-      wire: CSI s
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1583
     - id: csi-a6bef4a803
       wire: CSI Ps SP t
       section: Functions using CSI , ordered by the final character(s)
@@ -7147,10 +7703,6 @@ discovery_catalogues:
         decision: decswbv-zero-volume-polarity
         reason: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6. Pinned xterm zero/default
           falls through to off and 5..8 high.
-    - id: csi-1fcd21cd8e
-      wire: CSI u
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1725
     - id: csi-f8ef357623
       wire: CSI Ps SP u
       section: Functions using CSI , ordered by the final character(s)
@@ -7182,138 +7734,6 @@ discovery_catalogues:
           (event 0); query is a position request, not a documented filter-cancel command. Pinned xterm returns event 0 for out-of-range
           pointer and explicitly disables locator and clears filter/events on request while filter active, emulating observed
           DECterm behavior.
-    - id: esc-14df8c1237
-      wire: ESC ETX
-      section: Tektronix 4014 Mode
-      source_line: 3308
-    - id: esc-bf0cdf83e7
-      wire: ESC ENQ
-      section: Tektronix 4014 Mode
-      source_line: 3310
-    - id: esc-24ece2028e
-      wire: ESC FF
-      section: Tektronix 4014 Mode
-      source_line: 3312
-    - id: esc-06cd9b82d6
-      wire: ESC SO
-      section: Tektronix 4014 Mode
-      source_line: 3314
-    - id: esc-8d5915fa7a
-      wire: ESC SI
-      section: Tektronix 4014 Mode
-      source_line: 3316
-    - id: esc-305fd317a7
-      wire: ESC ETB
-      section: Tektronix 4014 Mode
-      source_line: 3318
-    - id: esc-3824a5834a
-      wire: ESC CAN
-      section: Tektronix 4014 Mode
-      source_line: 3321
-    - id: esc-c7468fd1fd
-      wire: ESC SUB
-      section: Tektronix 4014 Mode
-      source_line: 3323
-    - id: esc-dd3f49ca71
-      wire: ESC FS
-      section: Tektronix 4014 Mode
-      source_line: 3325
-    - id: esc-cd1aed3d58
-      wire: 'ESC :'
-      section: Tektronix 4014 Mode
-      source_line: 3331
-    - id: esc-769d1ab47b
-      wire: ESC ;
-      section: Tektronix 4014 Mode
-      source_line: 3333
-    - id: esc-de2946a98b
-      wire: ESC `
-      section: Tektronix 4014 Mode
-      source_line: 3343
-      review:
-        classification: distinct-mode-command-not-a-duplicate
-        mode: Tektronix 4014 graphics mode (xterm)
-        meaning: Normal Z axis, solid vectors
-        overlapping_vt_command: ecma48.dmi
-        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
-          mode is part of the command identity.
-        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
-          Do not merge or imply implementation support.
-    - id: esc-9823d68ac5
-      wire: ESC a
-      section: Tektronix 4014 Mode
-      source_line: 3345
-      review:
-        classification: distinct-mode-command-not-a-duplicate
-        mode: Tektronix 4014 graphics mode (xterm)
-        meaning: Normal Z axis, dotted vectors
-        overlapping_vt_command: ecma48.int
-        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
-          mode is part of the command identity.
-        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
-          Do not merge or imply implementation support.
-    - id: esc-de8e5a4e5d
-      wire: ESC b
-      section: Tektronix 4014 Mode
-      source_line: 3347
-      review:
-        classification: distinct-mode-command-not-a-duplicate
-        mode: Tektronix 4014 graphics mode (xterm)
-        meaning: Normal Z axis, dot-dashed vectors
-        overlapping_vt_command: ecma48.emi
-        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
-          mode is part of the command identity.
-        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
-          Do not merge or imply implementation support.
-    - id: esc-b1b6adbc06
-      wire: ESC d
-      section: Tektronix 4014 Mode
-      source_line: 3351
-      review:
-        classification: distinct-mode-command-not-a-duplicate
-        mode: Tektronix 4014 graphics mode (xterm)
-        meaning: Normal Z axis, long-dashed vectors
-        overlapping_vt_command: ecma48.cmd
-        reason: The same 7-bit spelling has a different meaning in Tektronix graphics mode than in the ECMA-48 control context; the active
-          mode is part of the command identity.
-        next_step: Retain as source discovery until originating Tektronix specification and Howl scope/priority are independently triaged.
-          Do not merge or imply implementation support.
-    - id: esc-a8a6034fa8
-      wire: ESC h
-      section: Tektronix 4014 Mode
-      source_line: 3353
-    - id: esc-a91a43c484
-      wire: ESC i
-      section: Tektronix 4014 Mode
-      source_line: 3355
-    - id: esc-d0945ffb28
-      wire: ESC j
-      section: Tektronix 4014 Mode
-      source_line: 3357
-    - id: esc-e65506d255
-      wire: ESC k
-      section: Tektronix 4014 Mode
-      source_line: 3359
-    - id: esc-c33d9b5f2e
-      wire: ESC p
-      section: Tektronix 4014 Mode
-      source_line: 3363
-    - id: esc-80c9217580
-      wire: ESC q
-      section: Tektronix 4014 Mode
-      source_line: 3365
-    - id: esc-8a00bdff3e
-      wire: ESC r
-      section: Tektronix 4014 Mode
-      source_line: 3367
-    - id: esc-3b38272ec5
-      wire: ESC s
-      section: Tektronix 4014 Mode
-      source_line: 3369
-    - id: esc-11eeeae5d0
-      wire: ESC t
-      section: Tektronix 4014 Mode
-      source_line: 3371
     - id: osc-selector-3
       wire: OSC 3 ; Pt (BEL | ST)
       section: Operating System Commands
@@ -7353,18 +7773,22 @@ discovery_catalogues:
       wire: CSI ? 10 h
       section: DEC Private Mode Set (DECSET)
       source_line: 924
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: rxvt-mode10-menu-vs-toolbar
+        reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
     - id: private-mode-12-h-line-925
       wire: CSI ? 12 h
       section: DEC Private Mode Set (DECSET)
       source_line: 925
-    - id: private-mode-30-h-line-934
-      wire: CSI ? 30 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 934
     - id: private-mode-35-h-line-935
       wire: CSI ? 35 h
       section: DEC Private Mode Set (DECSET)
       source_line: 935
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: rxvt-mode35-shift-actions-vs-font-only
+        reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
     - id: private-mode-38-h-line-936
       wire: CSI ? 38 h
       section: DEC Private Mode Set (DECSET)
@@ -7430,30 +7854,31 @@ discovery_catalogues:
       wire: CSI ? 1010 h
       section: DEC Private Mode Set (DECSET)
       source_line: 978
-    - id: private-mode-1011-h-line-980
-      wire: CSI ? 1011 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 980
-    - id: private-mode-1015-h-line-983
-      wire: CSI ? 1015 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 983
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: rxvt-mode1010-inverse-polarity
+        reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
+          sets scrollttyoutput to mode state, opposite polarity.
     - id: private-mode-10-l-line-1073
       wire: CSI ? 10 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1073
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: rxvt-mode10-menu-vs-toolbar
+        reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
     - id: private-mode-12-l-line-1074
       wire: CSI ? 12 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1074
-    - id: private-mode-30-l-line-1083
-      wire: CSI ? 30 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1083
     - id: private-mode-35-l-line-1084
       wire: CSI ? 35 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1084
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: rxvt-mode35-shift-actions-vs-font-only
+        reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
     - id: private-mode-44-l-line-1091
       wire: CSI ? 44 l
       section: DEC Private Mode Reset (DECRST)
@@ -7515,14 +7940,11 @@ discovery_catalogues:
       wire: CSI ? 1010 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1124
-    - id: private-mode-1011-l-line-1126
-      wire: CSI ? 1011 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1126
-    - id: private-mode-1015-l-line-1129
-      wire: CSI ? 1015 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1129
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: rxvt-mode1010-inverse-polarity
+        reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
+          sets scrollttyoutput to mode state, opposite polarity.
     pending_reconciliation:
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-44
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
@@ -7957,6 +8379,120 @@ discovery_catalogues:
         meaning: Macro 2 uses 450:100 and macro 7 uses 130:100 before update_sixel_aspect.
       question: If macro aspect-ratio behavior is targeted, qualify original source and modern references, including final aspect
         calculation and raster overrides; no silent ratio reinterpretation.
+      decision: null
+    - id: tek-hardcopy-vs-code-file
+      status: material-source-difference-awaiting-scope
+      wire: ESC ETB
+      original_author_sources:
+      - clause: tek_4015.hardcopy
+        revision: First printing August 1974; 070-1649-00
+        meaning: Original Tek hardcopy request to physical unit, ignored during crosshair GIN.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: Tekproc.c:544-551,1964-2005
+        meaning: Xterm cancels active GIN and writes recorded codes to a file, gated by build.
+      question: If Tek hardcopy is targeted, define explicit host effect and scope; do not silently replace device request with
+        filesystem write.
+      decision: null
+    - id: tek-small-character-capacity
+      status: material-source-difference-awaiting-scope
+      wire: ESC ;
+      original_author_sources:
+      - clause: tek_4015.character-size
+        revision: First printing August 1974; 070-1649-00
+        meaning: 4015/4015-1 August 1974 Table 2-2 specifies 132 characters,64 lines.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: Tekproc.c:140-150
+        meaning: Pinned xterm TekChar smallest profile is 133 characters,64 lines.
+      question: Verify other original 4014/4015 manual revisions if targeting exact Tek text geometry.
+      decision: null
+    - id: tek-beam-state-vs-line-pattern
+      status: material-source-difference-awaiting-scope
+      wire: ESC beam/vector selector
+      original_author_sources:
+      - clause: tek_4015.beam-vector-select
+        revision: First printing August 1974; 070-1649-00
+        meaning: Original hardware beam focus/write-through state and optional EGM vector pattern are separate consequences.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: Tekproc.c:592-603
+        meaning: Pinned xterm masks beam state and uses only line type.
+      question: If Tek graphics targeted, choose explicit emulation scope for storage, focus and temporary drawing, rather than
+        equating line pattern to original beam state.
+      decision: null
+    - id: rxvt-mode10-menu-vs-toolbar
+      status: material-source-difference-awaiting-scope
+      wire: CSI ? 10 h/l
+      original_author_sources:
+      - clause: rxvt.menu-bar
+        revision: 2.7.10, 26 March 2003; release archive SHA-256
+        meaning: Original rxvt mode selects menuBar visibility.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7613-7618
+        meaning: Xterm selects toolbar visibility when compiled.
+      question: Choose intended host UI effect or scope exclusion if this historical mode is targeted.
+      decision: null
+    - id: rxvt-mode35-shift-actions-vs-font-only
+      status: material-source-difference-awaiting-scope
+      wire: CSI ? 35 h/l
+      original_author_sources:
+      - clause: rxvt.shift-key-actions
+        revision: 2.7.10, 26 March 2003; release archive SHA-256
+        meaning: rxvt controls Shift+Insert paste and font actions.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7652-7655
+        meaning: Xterm handler toggles shift_fonts resource.
+      question: Select original action set, xterm subset or explicit exclusion if targeted.
+      decision: null
+    - id: rxvt-mode1010-inverse-polarity
+      status: material-source-difference-awaiting-scope
+      wire: CSI ? 1010 h/l
+      original_author_sources:
+      - clause: rxvt.scroll-output-inhibit
+        revision: 2.7.10, 26 March 2003; release archive SHA-256
+        meaning: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7846-7849
+        meaning: Pinned xterm directly sets scrollttyoutput to mode state, opposite polarity.
+      question: Apply relevant independently maintained references before selecting intended viewport follow polarity; rxvt
+        and urxvt are related, not two independent votes.
+      decision: null
+    - id: hp-memory-lock-overflow-protect
+      status: material-source-difference-awaiting-scope
+      wire: ESC l / ESC m
+      original_author_sources:
+      - clause: hp_2624b.memory-lock
+        revision: September 1981; 02624-90008
+        meaning: HP original defines overflow protection when homed and display lock when below top.
+      - clause: hp_2624b.memory-unlock
+        revision: September 1981; 02624-90008
+        meaning: HP original defines overflow protection when homed and display lock when below top.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4753-4766
+        meaning: Xterm changes scrolling region top, not a separately established display-memory overflow protection state.
+      question: If targeting HP memory lock, decide source scope and ensure actual memory/viewport behavior is explicit.
+      decision: null
+    - id: sco-cursor-position-vs-dec-state
+      status: material-source-difference-awaiting-scope
+      wire: CSI s / CSI u
+      original_author_sources:
+      - clause: sco_console.save-cursor-position
+        revision: OpenDesktop 3.0.0; historical vendor manual reproduction
+        meaning: SCO vendor manual describes cursor position; DEC SCO emulation profile documents DECSC/DECRC except page.
+      - clause: sco_console.restore-cursor-position
+        revision: OpenDesktop 3.0.0; historical vendor manual reproduction
+        meaning: SCO vendor manual describes cursor position; DEC SCO emulation profile documents DECSC/DECRC except page.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4880-4920
+        meaning: Xterm uses DEC save/restore helpers and mode69 disambiguation for CSI s.
+      question: Select exact saved-state fields with independent modern references; do not merge position-only and full DEC
+        state by name.
       decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
