@@ -839,6 +839,12 @@ specifications:
       - clause: dec_vt240.media-copy-dec-private
         wire: CSI ? Ps i
         description: DEC-private media-copy parameter family; not the unprefixed ECMA-48 wire form.
+      xterm_selector_lines:
+        '0': 1042
+        '4': 1043
+        '5': 1044
+        '10': 1045
+        '11': 1046
     - id: mw
       section: 8.3.83
       level: defined
@@ -2152,6 +2158,10 @@ specifications:
       - 1
       - 4
       - 5
+      xterm_selector_lines:
+        '1': 1050
+        '4': 1051
+        '5': 1052
   dec_sixel:
     title: Digital VT330/VT340 Programmer Pocket Guide, sixel graphics
     author: Digital Equipment Corporation
@@ -2854,7 +2864,8 @@ specifications:
     revision: Second edition, May 1988 (EK-VT3XX-TP-002)
     url: https://mirrors.meulie.net/bitsavers.org/pdf/dec/terminal/vt340/EK-VT3XX-TP-002_VT330_VT340_Text_Programming_198805.pdf
     snapshot_sha256: 518676ad1188d4f75d0780e25f0a8fda2bb4a1a591902c6d62e1b9fde8042978
-    scope: Original DEC-private Device Status Reports in Chapter 12, printed pages 201-205; not the complete VT300 text repertoire.
+    scope: Selected DEC-private DSR and graphics-printer mode numbers in Chapter 12, printed pages 201-205 and 220-221; full Volume 2 graphics
+      printing semantics are not yet indexed.
     clauses:
     - id: dsr-dec-private
       section: Chapter 12 / Device Status Reports (DSR), printed pages 201-205
@@ -2914,6 +2925,72 @@ specifications:
         wire: CSI ? Ps n
       later_dec_documentation: dec_vt420.device-status-reports-extended
       source_note: Source defines CSI ? 6 n request but no private prefix in its DECXCPR response; this is not silently normalized to xterm.
+    - id: graphics-print-dec-private-modes
+      section: Chapter 12 / Table 12-3, DEC Private Modes for DECRQM, DECRPM, SM and RM, printed pages 220-221
+      level: defined
+      wire: CSI ? Pd h / CSI ? Pd l
+      rule: DEC VT330/VT340 assigns private mode selectors 43-47 to graphics-printer controls. The same input bytes collide with unrelated
+        xterm-specific meanings for 44-47. A mode-number label is not sufficient to select implementation behavior.
+      parameters:
+      - selector: 43
+        symbol: DECGEPM
+        originating_effect: graphics expanded print
+      - selector: 44
+        symbol: DECGPCM
+        originating_effect: graphics print color
+      - selector: 45
+        symbol: DECGPCS
+        originating_effect: graphics print color syntax
+      - selector: 46
+        symbol: DECGPBM
+        originating_effect: graphics print background
+      - selector: 47
+        symbol: DECGRPM
+        originating_effect: graphics rotated print
+      source_limit: Volume 1 identifies mode numbers and SM/RM use. It explicitly refers to Volume 2, Chapter 16 for complete graphics printing
+        behavior, not verified here. Implementation sizing, state and response semantics remain untriaged.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-43-h-line-941
+        source_line: 941
+        wire: CSI ? 43 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-43-l-line-1089
+        source_line: 1089
+        wire: CSI ? 43 l
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-44-h-line-944
+        source_line: 944
+        wire: CSI ? 44 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-44-l-line-1092
+        source_line: 1092
+        wire: CSI ? 44 l
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-45-h-line-947
+        source_line: 947
+        wire: CSI ? 45 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-45-l-line-1095
+        source_line: 1095
+        wire: CSI ? 45 l
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-46-h-line-951
+        source_line: 951
+        wire: CSI ? 46 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-47-h-line-954
+        source_line: 954
+        wire: CSI ? 47 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-47-l-line-1100
+        source_line: 1100
+        wire: CSI ? 47 l
+      collisions:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-44
+      - dec-vt3xx-graphics-print-vs-xterm-mode-45
+      - dec-vt3xx-graphics-print-vs-xterm-mode-46
+      - dec-vt3xx-graphics-print-vs-xterm-mode-47
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -3837,42 +3914,50 @@ discovery_catalogues:
       wire: CSI ? 42 h
       section: DEC Private Mode Set (DECSET)
       source_line: 939
-    - id: private-mode-43-h-line-941
-      wire: CSI ? 43 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 941
     - id: private-mode-44-h-line-943
       wire: CSI ? 44 h
       section: DEC Private Mode Set (DECSET)
       source_line: 943
-    - id: private-mode-44-h-line-944
-      wire: CSI ? 44 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 944
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: margin bell
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-45-h-line-946
       wire: CSI ? 45 h
       section: DEC Private Mode Set (DECSET)
       source_line: 946
-    - id: private-mode-45-h-line-947
-      wire: CSI ? 45 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 947
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: reverse-wraparound mode (XTREVWRAP)
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-45
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-46-h-line-949
       wire: CSI ? 46 h
       section: DEC Private Mode Set (DECSET)
       source_line: 949
-    - id: private-mode-46-h-line-951
-      wire: CSI ? 46 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 951
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: session logging (XTLOGGING), subject to compile-time options
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-47-h-line-952
       wire: CSI ? 47 h
       section: DEC Private Mode Set (DECSET)
       source_line: 952
-    - id: private-mode-47-h-line-954
-      wire: CSI ? 47 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 954
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: alternate screen buffer, subject to titeInhibit resource
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-66-h-line-956
       wire: CSI ? 66 h
       section: DEC Private Mode Set (DECSET)
@@ -4069,38 +4154,6 @@ discovery_catalogues:
       wire: CSI ? 2006 h
       section: DEC Private Mode Set (DECSET)
       source_line: 1039
-    - id: private-mode-0-h-line-1042
-      wire: CSI ? 0 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1042
-    - id: private-mode-4-h-line-1043
-      wire: CSI ? 4 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1043
-    - id: private-mode-5-h-line-1044
-      wire: CSI ? 5 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1044
-    - id: private-mode-10-h-line-1045
-      wire: CSI ? 10 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1045
-    - id: private-mode-11-h-line-1046
-      wire: CSI ? 11 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1046
-    - id: private-mode-1-h-line-1050
-      wire: CSI ? 1 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1050
-    - id: private-mode-4-h-line-1051
-      wire: CSI ? 4 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1051
-    - id: private-mode-5-h-line-1052
-      wire: CSI ? 5 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1052
     - id: private-mode-1-l-line-1064
       wire: CSI ? 1 l
       section: DEC Private Mode Reset (DECRST)
@@ -4185,38 +4238,50 @@ discovery_catalogues:
       wire: CSI ? 42 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1087
-    - id: private-mode-43-l-line-1089
-      wire: CSI ? 43 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1089
     - id: private-mode-44-l-line-1091
       wire: CSI ? 44 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1091
-    - id: private-mode-44-l-line-1092
-      wire: CSI ? 44 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1092
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: margin bell
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-45-l-line-1094
       wire: CSI ? 45 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1094
-    - id: private-mode-45-l-line-1095
-      wire: CSI ? 45 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1095
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: reverse-wraparound mode (XTREVWRAP)
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-45
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-46-l-line-1097
       wire: CSI ? 46 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1097
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: session logging (XTLOGGING), subject to compile-time options
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-47-l-line-1099
       wire: CSI ? 47 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1099
-    - id: private-mode-47-l-line-1100
-      wire: CSI ? 47 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1100
+      review:
+        classification: source-confirmed-same-wire-semantic-conflict
+        origin: xterm terminal/window convention
+        meaning: alternate screen buffer, subject to titeInhibit resource
+        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+        decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
+        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-66-l-line-1102
       wire: CSI ? 66 l
       section: DEC Private Mode Reset (DECRST)
@@ -4393,7 +4458,200 @@ discovery_catalogues:
       wire: CSI ? 2006 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1181
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: dec-vt3xx-graphics-print-vs-xterm-mode-44
+      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+      selector: 44
+      wire: CSI ? 44 h / CSI ? 44 l
+      original_dec:
+        clause: dec_vt3xx_text.graphics-print-dec-private-modes
+        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+        name: DECGPCM
+        meaning: graphics print color
+        detailed_source_pending: DEC Volume 2, Chapter 16
+      xterm:
+        source: Pinned xterm ctlseqs DECSET/DECRST tables
+        meaning: margin bell
+        entries:
+        - entry_id: private-mode-44-h-line-943
+          wire: CSI ? 44 h
+          source_line: 943
+          interpretation: 'xterm: margin bell'
+        - entry_id: private-mode-44-l-line-1091
+          wire: CSI ? 44 l
+          source_line: 1091
+          interpretation: 'xterm: margin bell'
+      original_dec_xterm_mentions:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-44-h-line-944
+        source_line: 944
+        wire: CSI ? 44 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-44-l-line-1092
+        source_line: 1092
+        wire: CSI ? 44 l
+      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
+        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
+        automatically.
+      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
+        regardless.
+      decision: null
+    - id: dec-vt3xx-graphics-print-vs-xterm-mode-45
+      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+      selector: 45
+      wire: CSI ? 45 h / CSI ? 45 l
+      original_dec:
+        clause: dec_vt3xx_text.graphics-print-dec-private-modes
+        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+        name: DECGPCS
+        meaning: graphics print color syntax
+        detailed_source_pending: DEC Volume 2, Chapter 16
+      xterm:
+        source: Pinned xterm ctlseqs DECSET/DECRST tables
+        meaning: reverse-wraparound mode (XTREVWRAP)
+        entries:
+        - entry_id: private-mode-45-h-line-946
+          wire: CSI ? 45 h
+          source_line: 946
+          interpretation: 'xterm: reverse-wraparound mode (XTREVWRAP)'
+        - entry_id: private-mode-45-l-line-1094
+          wire: CSI ? 45 l
+          source_line: 1094
+          interpretation: 'xterm: reverse-wraparound mode (XTREVWRAP)'
+      original_dec_xterm_mentions:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-45-h-line-947
+        source_line: 947
+        wire: CSI ? 45 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-45-l-line-1095
+        source_line: 1095
+        wire: CSI ? 45 l
+      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
+        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
+        automatically.
+      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
+        regardless.
+      decision: null
+    - id: dec-vt3xx-graphics-print-vs-xterm-mode-46
+      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+      selector: 46
+      wire: CSI ? 46 h / CSI ? 46 l
+      original_dec:
+        clause: dec_vt3xx_text.graphics-print-dec-private-modes
+        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+        name: DECGPBM
+        meaning: graphics print background
+        detailed_source_pending: DEC Volume 2, Chapter 16
+      xterm:
+        source: Pinned xterm ctlseqs DECSET/DECRST tables
+        meaning: session logging (XTLOGGING), subject to compile-time options
+        entries:
+        - entry_id: private-mode-46-h-line-949
+          wire: CSI ? 46 h
+          source_line: 949
+          interpretation: 'xterm: session logging (XTLOGGING), subject to compile-time options'
+        - entry_id: private-mode-46-l-line-1097
+          wire: CSI ? 46 l
+          source_line: 1097
+          interpretation: 'xterm: session logging (XTLOGGING), subject to compile-time options'
+      original_dec_xterm_mentions:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-46-h-line-951
+        source_line: 951
+        wire: CSI ? 46 h
+      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
+        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
+        automatically.
+      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
+        regardless.
+      decision: null
+    - id: dec-vt3xx-graphics-print-vs-xterm-mode-47
+      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+      selector: 47
+      wire: CSI ? 47 h / CSI ? 47 l
+      original_dec:
+        clause: dec_vt3xx_text.graphics-print-dec-private-modes
+        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+        name: DECGRPM
+        meaning: graphics rotated print
+        detailed_source_pending: DEC Volume 2, Chapter 16
+      xterm:
+        source: Pinned xterm ctlseqs DECSET/DECRST tables
+        meaning: alternate screen buffer, subject to titeInhibit resource
+        entries:
+        - entry_id: private-mode-47-h-line-952
+          wire: CSI ? 47 h
+          source_line: 952
+          interpretation: 'xterm: alternate screen buffer, subject to titeInhibit resource'
+        - entry_id: private-mode-47-l-line-1099
+          wire: CSI ? 47 l
+          source_line: 1099
+          interpretation: 'xterm: alternate screen buffer, subject to titeInhibit resource'
+      original_dec_xterm_mentions:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-47-h-line-954
+        source_line: 954
+        wire: CSI ? 47 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-47-l-line-1100
+        source_line: 1100
+        wire: CSI ? 47 l
+      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
+        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
+        automatically.
+      next_step: Resolve modern VT target scope with DEC Volume 2 details and independent terminal references; preserve printer-mode provenance
+        regardless.
+      decision: null
+    extraction_corrections:
+    - original_id: private-mode-0-h-line-1042
+      source_line: 1042
+      incorrect_wire: CSI ? 0 h
+      actual_wire: CSI 0 i
+      canonical_clause: ecma48.mc
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-4-h-line-1043
+      source_line: 1043
+      incorrect_wire: CSI ? 4 h
+      actual_wire: CSI 4 i
+      canonical_clause: ecma48.mc
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-5-h-line-1044
+      source_line: 1044
+      incorrect_wire: CSI ? 5 h
+      actual_wire: CSI 5 i
+      canonical_clause: ecma48.mc
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-10-h-line-1045
+      source_line: 1045
+      incorrect_wire: CSI ? 10 h
+      actual_wire: CSI 10 i
+      canonical_clause: ecma48.mc
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-11-h-line-1046
+      source_line: 1046
+      incorrect_wire: CSI ? 11 h
+      actual_wire: CSI 11 i
+      canonical_clause: ecma48.mc
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-1-h-line-1050
+      source_line: 1050
+      incorrect_wire: CSI ? 1 h
+      actual_wire: CSI ? 1 i
+      canonical_clause: dec_vt240.media-copy-dec-private
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-4-h-line-1051
+      source_line: 1051
+      incorrect_wire: CSI ? 4 h
+      actual_wire: CSI ? 4 i
+      canonical_clause: dec_vt240.media-copy-dec-private
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-5-h-line-1052
+      source_line: 1052
+      incorrect_wire: CSI ? 5 h
+      actual_wire: CSI ? 5 i
+      canonical_clause: dec_vt240.media-copy-dec-private
+      cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
