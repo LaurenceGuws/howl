@@ -3656,7 +3656,19 @@ specifications:
       source_note: 'Pinned bit3 csDRAWN does the opposite of published prose: include uninitialized cells as spaces (also included
         with bit2); bit4 csBYTE chooses charData instead of DEC char mapping, while combining chars added when bit4 clear, and
         trimming changes totals. Exact arithmetic and flags are not accepted until reconciled.'
-      pending_reconciliation: xtchecksum-bit3-and-unicode
+      accepted_reconciliations:
+      - xtchecksum-bit3-and-unicode
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-eb0e648cf6
+        wire: 'CSI Ps # y'
+        source_line: 1814
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: xtchecksum-bit3-and-unicode
+          reason: Published xterm table says bit 3 omits uninitialized cells and bit 4 retains combining characters. Pinned
+            csDRAWN includes uninitialized cells; combining addition occurs when csBYTE is clear and can be lost by trimmed
+            total.
     - id: window-operation-extensions
       section: XTWINOPS, ctlseqs 1616-1696; history table 3720-3749
       level: defined
@@ -3691,6 +3703,25 @@ specifications:
       pinned_source_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: misc.c:4175-4179,6375-6397
+      accepted_reconciliations:
+      - osc3-cde-directory-vs-xterm-xproperty
+      disposition: source-only
+      disposition_reason: No terminal-controlled native property or restart-directory mutation in intended profile.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-3
+        wire: OSC 3 ; Pt (BEL | ST)
+        source_line: 2028
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: osc3-cde-directory-vs-xterm-xproperty
+          reason: CDE dtterm sets directory for a restarted session. Pinned xterm changes or deletes a top-level X property
+            under ewSetXprop permission.
+          previous_review:
+            classification: source-origin-or-semantic-review-required
+            reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
+              directory for next session. Obtain originating dtterm source before scope resolution.
+            source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: tek-return-to-vt
       section: Tektronix 4014 Mode, ctlseqs 3289-3292,3308
       level: defined
@@ -3706,7 +3737,10 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: Tekproc.c:446-451,1295-1322
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
-      pending_reconciliation: dectek-exit-profile
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Captain accepted retention of historical profiles without partial Tektronix emulation.
     - id: tek-copy-file
       section: Tektronix Mode, ctlseqs 3318-3319
       level: defined
@@ -3723,7 +3757,11 @@ specifications:
         location: Tekproc.c:544-551,1964-2005
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       related_original: tek_4015.hardcopy
-      pending_reconciliation: tek-hardcopy-vs-code-file
+      accepted_reconciliations:
+      - tek-hardcopy-vs-code-file
+      disposition: source-only
+      disposition_reason: Captain accepted legacy Tektronix profile as source-only, not a partial emulation or arbitrary file
+        write.
     - id: rxvt-toolbar-profile
       section: ctlseqs 924,1073
       level: defined
@@ -3734,7 +3772,27 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7613-7618
       related_original: rxvt.menu-bar
-      pending_reconciliation: rxvt-mode10-menu-vs-toolbar
+      accepted_reconciliations:
+      - rxvt-mode10-menu-vs-toolbar
+      disposition: source-only
+      disposition_reason: No escape-driven arbitrary host chrome or AT&T blanking in intended profile.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-10-h-line-924
+        wire: CSI ? 10 h
+        source_line: 924
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: rxvt-mode10-menu-vs-toolbar
+          reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-10-l-line-1073
+        wire: CSI ? 10 l
+        source_line: 1073
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: rxvt-mode10-menu-vs-toolbar
+          reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
     - id: rxvt-font-shift-profile
       section: ctlseqs 935,1084
       level: defined
@@ -3744,7 +3802,27 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7652-7655
       related_original: rxvt.shift-key-actions
-      pending_reconciliation: rxvt-mode35-shift-actions-vs-font-only
+      accepted_reconciliations:
+      - rxvt-mode35-shift-actions-vs-font-only
+      disposition: source-only
+      disposition_reason: No application-controlled host font/Shift-key actions in intended profile.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-35-h-line-935
+        wire: CSI ? 35 h
+        source_line: 935
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: rxvt-mode35-shift-actions-vs-font-only
+          reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-35-l-line-1084
+        wire: CSI ? 35 l
+        source_line: 1084
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: rxvt-mode35-shift-actions-vs-font-only
+          reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
     - id: rxvt-scroll-output-profile
       section: ctlseqs 978-979,1124-1125
       level: defined
@@ -3754,7 +3832,8 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7846-7849
       related_original: rxvt.scroll-output-inhibit
-      pending_reconciliation: rxvt-mode1010-inverse-polarity
+      accepted_reconciliations:
+      - rxvt-mode1010-inverse-polarity
     - id: hp-lower-left-workaround
       section: ctlseqs 405-406
       level: defined
@@ -3862,9 +3941,10 @@ specifications:
       pinned_xterm_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: misc.c:991-1029,4097-4157,4288-4290
-      pending_reconciliation: osc22-pointer-reset-invalid-profile
       source_note: Pinned parser rejects empty payload before handler; unknown nonempty name falls back to XC_xterm. Original
         published empty fallback and actual admission are distinct.
+      accepted_reconciliations:
+      - osc22-pointer-reset-invalid-profile
     - id: osc51-emacs-reservation
       section: OSC 51, ctlseqs 2143
       level: defined
@@ -3890,6 +3970,78 @@ specifications:
       related_profiles:
       - emacs_libvterm.prompt-directory
       - emacs_libvterm.command-message
+    - id: margin-bell-mode
+      section: DECSET/DECRST mode 44, ctlseqs 943/1091
+      level: defined
+      wire: CSI ? 44 h / CSI ? 44 l
+      rule: Xterm non-printer profile SET enables margin bell, RESET disables and disarms pending margin bell. Separate from
+        bell volume. Original DEC print-mode interpretation remains distinct.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7687-7694
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-44
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-44-h-line-943
+        wire: CSI ? 44 h
+        source_line: 943
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: margin bell
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
+          status: unresolved; no automatic implementation priority or conformance
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-44-l-line-1091
+        wire: CSI ? 44 l
+        source_line: 1091
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: margin bell
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
+          status: unresolved; no automatic implementation priority or conformance
+    - id: session-logging-mode
+      section: DECSET/DECRST mode 46, ctlseqs 949/1097
+      level: defined
+      wire: CSI ? 46 h / CSI ? 46 l
+      rule: Xterm non-printer profile can start/close session logging under compile-time and policy gates. Without logging on/off
+        support the handler can ring the bell instead. Original DEC print background and Contour debug-category logging are
+        distinct.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7704-7726
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-46
+      disposition: source-only
+      disposition_reason: Historical printer and host logging effects are not intended in this profile; terminal output must
+        not silently initiate host capture.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-46-h-line-949
+        wire: CSI ? 46 h
+        source_line: 949
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: session logging (XTLOGGING), subject to compile-time options
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
+          status: unresolved; no automatic implementation priority or conformance
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-46-l-line-1097
+        wire: CSI ? 46 l
+        source_line: 1097
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: session logging (XTLOGGING), subject to compile-time options
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
+          status: unresolved; no automatic implementation priority or conformance
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -4208,7 +4360,8 @@ specifications:
         location: kitty/window.py:3120-3135; kitty/screen.c:2441-2548
         behavior: Set replaces top or initializes it, empty selects INVALID_POINTER at top; unknown names raise KeyError and
           are ignored; code also iterates comma-separated set items, beyond singular prose.
-      pending_reconciliation: osc22-pointer-reset-invalid-profile
+      accepted_reconciliations:
+      - osc22-pointer-reset-invalid-profile
     - id: stack
       section: Pushing and popping shapes onto the stack
       level: defined
@@ -4221,6 +4374,8 @@ specifications:
         revision: a79f376b85fd95e3dfd0589877123996bacd4184
         location: kitty/screen.h:228-230; kitty/screen.c:226-227,2381-2384,2441-2548; kitty/window.py:3120-3135
         behavior: Actual 16-entry arrays per bank; set/push/pop handler distinct. No implementation claim for Howl.
+      accepted_reconciliations:
+      - osc22-pointer-reset-invalid-profile
     - id: query
       section: Querying support
       level: defined
@@ -4264,6 +4419,8 @@ specifications:
         revision: a79f376b85fd95e3dfd0589877123996bacd4184
         location: kitty/window.py:3136-3151; kitty/screen.c:2381-2433
         behavior: Each query token gets one response; implementation maps default/grabbed/current and validates CSS names.
+      accepted_reconciliations:
+      - osc22-pointer-reset-invalid-profile
   kitty_multi_cursor:
     title: Kitty multiple cursors protocol
     author: Kovid Goyal / kitty
@@ -4490,9 +4647,12 @@ specifications:
       pinned_xterm_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7657-7666; Tekproc.c:446-452,1315-1325
-      pending_reconciliation: dectek-exit-profile
       source_note: Pinned xterm SET enters its Tek parser if not inhibited; its return command is ESC ETX, not the documented
         DEC RESET. Entry identity reconciled; exit profile remains distinct.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Captain accepted retention of historical profiles without partial Tektronix emulation.
   dec_sixel:
     title: Digital VT330/VT340 Programmer Pocket Guide, sixel graphics
     author: Digital Equipment Corporation
@@ -4514,6 +4674,8 @@ specifications:
       corroborating_original_source:
         clause: dec_vt3xx_graphics.sixel-envelope-profile
         source: DEC VT330/VT340 Graphics Programming May 1988, pp.232-235
+      accepted_reconciliations:
+      - sixel-original-macro-aspect-vs-xterm
     - id: six-dots
       section: 2.14 / Sixel Data Format, page 96
       level: defined
@@ -6209,21 +6371,22 @@ specifications:
       section: Chapter 3 / Valid ANSI Mode Control Sequences / DECANM (original VT100 User Guide, transcribed PDF page 41)
       level: defined
       wire: CSI ? 2 h / CSI ? 2 l
-      rule: DECANM sets or resets the ANSI/VT52 control-code interpretation regime. Set selects ANSI-compatible sequences; reset enters VT52
-        compatibility mode. In VT52 mode CSI controls cannot normally be used, so the separate ESC < exits back to ANSI.
+      rule: DECANM sets or resets the ANSI/VT52 control-code interpretation regime. Set selects ANSI-compatible sequences; reset
+        enters VT52 compatibility mode. In VT52 mode CSI controls cannot normally be used, so the separate ESC < exits back
+        to ANSI.
       original_mode_semantics:
         name: DECANM
         selector: 2
-        source: Original DEC VT100 User Guide, Chapter 3, DECANM / ANSI-VT52 Mode; reaffirmed by DEC VT330/VT340 Text Programming (May 1988)
-          Appendix A and DEC VT420 Programmer Reference (Feb 1992) Appendix A
+        source: Original DEC VT100 User Guide, Chapter 3, DECANM / ANSI-VT52 Mode; reaffirmed by DEC VT330/VT340 Text Programming
+          (May 1988) Appendix A and DEC VT420 Programmer Reference (Feb 1992) Appendix A
         default: ANSI mode under normal VT100 operation; reset is the explicit transition into VT52 mode.
         set_wire: CSI ? 2 h
         set_effect: Use ANSI-compatible escape and control sequences rather than VT52-only commands.
         reset_wire: CSI ? 2 l
-        reset_effect: Enter VT52 compatibility mode, where ANSI private controls, C1 controls, Latin-1 supplemental and NRC sets are unavailable;
-          G0 defaults to ASCII.
-        mode_boundaries: In VT52 mode, the terminal uses VT52-specific escape sequences; an ordinary ANSI CSI ? 2 h cannot be assumed usable
-          to leave VT52 mode. ESC < is the author-defined exit.
+        reset_effect: Enter VT52 compatibility mode, where ANSI private controls, C1 controls, Latin-1 supplemental and NRC
+          sets are unavailable; G0 defaults to ASCII.
+        mode_boundaries: In VT52 mode, the terminal uses VT52-specific escape sequences; an ordinary ANSI CSI ? 2 h cannot be
+          assumed usable to leave VT52 mode. ESC < is the author-defined exit.
         related_vt52_exit: dec_vt100.vt52-return-to-ansi
       also_documented:
       - catalogue: xterm_ctlseqs
@@ -6237,24 +6400,28 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:7507-7551, xterm ctlseqs lines 914-915 and 1065
-        behavior: xterm executes CSI ? 2 l by saving a subset of modes/charsets and entering VT52 parser mode. CSI ? 2 h is a no-op when
-          already in ANSI, since it cannot be reached from VT52. The xterm textual line claiming USASCII G0-G3 designation should not be
-          promoted over the concrete code without an explicit test.
-        limits: Xterm mode transition may resize to 80 columns if enabled by host policy; its own comment says some DEC STD-070 VT52 transition
-          mode restorations are undefined. Not proof of whole-hardware VT52 emulation.
-      implementation_note: Original protocol identity only; neither complete VT52 parsing nor Host migration is automatically selected or
-        FULL.
+        behavior: xterm executes CSI ? 2 l by saving a subset of modes/charsets and entering VT52 parser mode. CSI ? 2 h is
+          a no-op when already in ANSI, since it cannot be reached from VT52. The xterm textual line claiming USASCII G0-G3
+          designation should not be promoted over the concrete code without an explicit test.
+        limits: Xterm mode transition may resize to 80 columns if enabled by host policy; its own comment says some DEC STD-070
+          VT52 transition mode restorations are undefined. Not proof of whole-hardware VT52 emulation.
+      implementation_note: Original protocol identity only; neither complete VT52 parsing nor Host migration is automatically
+        selected or FULL.
+      accepted_reconciliations:
+      - vt52-exit-restored-conformance-level
     - id: vt52-return-to-ansi
-      section: Chapter 3 / Valid VT52 Mode Control Sequences / Enter ANSI Mode (original VT100 User Guide, transcribed PDF page 54)
+      section: Chapter 3 / Valid VT52 Mode Control Sequences / Enter ANSI Mode (original VT100 User Guide, transcribed PDF page
+        54)
       level: defined
       wire: ESC <
-      rule: While in VT52 mode, ESC < leaves VT52 compatibility mode and resumes ANSI interpretation of subsequent control sequences. This
-        is a distinct command from CSI ? 2 h/l.
+      rule: While in VT52 mode, ESC < leaves VT52 compatibility mode and resumes ANSI interpretation of subsequent control sequences.
+        This is a distinct command from CSI ? 2 h/l.
       original_source_variants:
         VT100: Enter ANSI mode; subsequent escape/control sequences are interpreted according to ANSI X3.64-1977 and X3.41-1974.
-        VT330_VT340: 'May 1988 Text Programming, Appendix A printed pages 257-258: returns to the mode active before entry to VT52.'
-        VT420: 'February 1992 Programmer Reference, Appendix A printed pages 327-328: returns to the mode active before entry to VT52, which
-          may be VT400 rather than merely VT100.'
+        VT330_VT340: 'May 1988 Text Programming, Appendix A printed pages 257-258: returns to the mode active before entry to
+          VT52.'
+        VT420: 'February 1992 Programmer Reference, Appendix A printed pages 327-328: returns to the mode active before entry
+          to VT52, which may be VT400 rather than merely VT100.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-457e1dc272
@@ -6263,11 +6430,12 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5039-5059; xterm ctlseqs line 3388
-        behavior: Exits VT52 and selects ANSI parser, explicitly invokes set_vtXX_level(screen,1), then restores selected saved flags and
-          charsets. The xterm prose calls this Enter VT100 mode.
-        material_limit: The later DEC VT300/VT420 author text says return to prior mode, not necessarily VT100 level 1. Reconcile this restoration-level
-          difference before implementing a full VT420-compatible VT52 cycle.
-      pending_reconciliation: vt52-exit-restored-conformance-level
+        behavior: Exits VT52 and selects ANSI parser, explicitly invokes set_vtXX_level(screen,1), then restores selected saved
+          flags and charsets. The xterm prose calls this Enter VT100 mode.
+        material_limit: The later DEC VT300/VT420 author text says return to prior mode, not necessarily VT100 level 1. Reconcile
+          this restoration-level difference before implementing a full VT420-compatible VT52 cycle.
+      accepted_reconciliations:
+      - vt52-exit-restored-conformance-level
     - id: double-height-line
       section: Chapter 3 / DECDHL (transcribed PDF page 42)
       level: defined
@@ -6706,6 +6874,8 @@ specifications:
       accepted_reconciliations:
       - dec-vt3xx-graphics-print-vs-xterm-mode-45
       - dec-vt3xx-graphics-print-vs-xterm-mode-47
+      - dec-vt3xx-graphics-print-vs-xterm-mode-44
+      - dec-vt3xx-graphics-print-vs-xterm-mode-46
   dec_vt3xx_graphics:
     title: 'DEC VT330/VT340 Programmer Reference Manual, Volume 2: Graphics Programming'
     author: Digital Equipment Corporation
@@ -6763,6 +6933,8 @@ specifications:
       accepted_reconciliations:
       - dec-vt3xx-graphics-print-vs-xterm-mode-45
       - dec-vt3xx-graphics-print-vs-xterm-mode-47
+      - dec-vt3xx-graphics-print-vs-xterm-mode-44
+      - dec-vt3xx-graphics-print-vs-xterm-mode-46
     - id: graphics-printer-sixel-output
       section: Chapter 16 / Sending Graphics and Sixel Graphics Levels, printed pages 258-261
       level: defined
@@ -6827,7 +6999,6 @@ specifications:
       related_command: dec_sixel.envelope
       source_note: Pinned xterm uses different macro table [200,200,450,300,250,183,150,130,112,100] vs horizontal 100; P2 non-1
         background register 0. Do not replace source macro values or reinterpret raster extents as clipping limits.
-      pending_reconciliation: sixel-original-macro-aspect-vs-xterm
       pinned_xterm_rendered_aspect_observation:
         implementation: xterm_snapshots
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -6835,6 +7006,8 @@ specifications:
         observation: The macro table is an intermediate representation only. update_sixel_aspect unconditionally overrides final
           pixw and pixh to 1 at lines 268-272 (#if 1 FIXME). The checked renderer therefore does not implement the documented
           non-square aspect ratios.
+      accepted_reconciliations:
+      - sixel-original-macro-aspect-vs-xterm
     - id: regis-envelope
       section: Chapter 1 / Entering and Exiting ReGIS, printed pp.13-14
       level: defined
@@ -7035,22 +7208,43 @@ specifications:
       level: defined
       wire: CSI Ps SP t
       rule: 'Select warning bell volume for errors and Control-G. Original table: 1 off; 2,3,4 low; 5,5,7,8,0 or omitted high
-        (default). Duplicate 5 and missing 6 are present in the published table, not an extraction error. No inferred rule
-        for 6.'
+        (default). Duplicate 5 and missing 6 are present in the published table, not an extraction error. No inferred rule for
+        6.'
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:6421-6446
-      pending_reconciliation: decswbv-zero-volume-polarity
+      accepted_reconciliations:
+      - decswbv-zero-volume-polarity
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-a6bef4a803
+        wire: CSI Ps SP t
+        source_line: 1711
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: decswbv-zero-volume-polarity
+          reason: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6. Pinned xterm zero/default
+            falls through to off and 5..8 high.
     - id: margin-bell-volume
       section: 5-138 DECSMBV (PDF page 292, visually checked)
       level: defined
       wire: CSI Ps SP u
-      rule: 'Select margin bell volume near right margin. Original table: 0/1/omitted off (default); 2..4 low; 5..8 high.
-        Separate from warning bell.'
+      rule: 'Select margin bell volume near right margin. Original table: 0/1/omitted off (default); 2..4 low; 5..8 high. Separate
+        from warning bell.'
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:6448-6475
-      pending_reconciliation: decsmbv-zero-volume-polarity
+      accepted_reconciliations:
+      - decsmbv-zero-volume-polarity
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f8ef357623
+        wire: CSI Ps SP u
+        source_line: 1730
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: decsmbv-zero-volume-polarity
+          reason: VT520/525 July 1994 p.5-138 gives 0/omitted off. Pinned xterm zero/default falls into high branch.
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -7095,15 +7289,17 @@ specifications:
       level: defined
       wire: CSI Pe ; Pb ; Pr ; Pc [ ; Pp ] & w
       rule: Report event and simultaneous button state with decimal page coordinates. Pe=0 unavailable,1 explicit request,2/3
-        left down/up,4/5 middle,6/7 right,8/9 fourth,10 outside filter. Pb mask 1 right,2 middle,4 left,8 fourth; 0 none.
-        Undefined row/column are omitted; page may be omitted for page 1. Original input events are queued with keystrokes
-        in arrival order, one report per event; simultaneous events sorted by increasing Pe; original input silo minimum 9
-        positions and locks input when full. Inactive sessions do not receive active-session pointer state.
+        left down/up,4/5 middle,6/7 right,8/9 fourth,10 outside filter. Pb mask 1 right,2 middle,4 left,8 fourth; 0 none. Undefined
+        row/column are omitted; page may be omitted for page 1. Original input events are queued with keystrokes in arrival
+        order, one report per event; simultaneous events sorted by increasing Pe; original input silo minimum 9 positions and
+        locks input when full. Inactive sessions do not receive active-session pointer state.
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: button.c:785-808,811-1016
       source_note: Physical pixel vs cell units are chosen by DECELR. Pinned xterm reports without page and has explicit unavailable
         event-only response; this is not a proof of original focus, origin, ordering or queue behavior.
+      accepted_reconciliations:
+      - locator-query-undefined-position-and-filter-lifetime
     - id: enable-filter-rectangle
       section: Filter Rectangles (DECEFR)
       level: defined
@@ -7128,14 +7324,27 @@ specifications:
       section: Requesting A Locator Position Report (DECRQLP)
       level: defined
       wire: CSI Ps ' |
-      rule: Ps 0/omitted or 1 requests one immediate DECLRP; other selectors ignored. Enabled active session returns event
-        1, with omitted coordinates if outside defined range. Disabled or inactive session returns event 0. Do not expose
-        another session pointer state.
+      rule: Ps 0/omitted or 1 requests one immediate DECLRP; other selectors ignored. Enabled active session returns event 1,
+        with omitted coordinates if outside defined range. Disabled or inactive session returns event 0. Do not expose another
+        session pointer state.
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5581-5588; button.c:953-1016
       related_report: dec_locator.locator-report
-      pending_reconciliation: locator-query-undefined-position-and-filter-lifetime
+      accepted_reconciliations:
+      - locator-query-undefined-position-and-filter-lifetime
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d792d66921
+        wire: CSI Ps ' |
+        source_line: 1898
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: locator-query-undefined-position-and-filter-lifetime
+          reason: Original DEC memo distinguishes active but undefined position (event 1 with omitted coordinates) from disabled/inactive
+            (event 0); query is a position request, not a documented filter-cancel command. Pinned xterm returns event 0 for
+            out-of-range pointer and explicitly disables locator and clears filter/events on request while filter active, emulating
+            observed DECterm behavior.
   ecma35:
     title: 'ECMA-35: Character Code Structure and Extension Techniques'
     author: Ecma International
@@ -7345,7 +7554,19 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:6218-6249
-      pending_reconciliation: docs-return-vs-xterm-default-charset
+      accepted_reconciliations:
+      - docs-return-vs-xterm-default-charset
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-93bf6694ea
+        wire: ESC % @
+        source_line: 308
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: docs-return-vs-xterm-default-charset
+          reason: ECMA-35 restores prior coding-system announcement, designation and invocation state. Xterm describes selecting
+            default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally; restoration of prior state is
+            not established.
   cde_dtterm:
     title: dtterm(5) terminal escape sequences
     author: Common Desktop Environment / Digital UNIX vendor documentation
@@ -7437,7 +7658,10 @@ specifications:
       wire: OSC 3 ; Pt BEL
       rule: Set working directory for later session restart, not immediate shell chdir; the terminal attempts to restart there.
         This is CDE profile semantics, not xterm X property behavior or permission to access arbitrary host paths.
-      pending_reconciliation: osc3-cde-directory-vs-xterm-xproperty
+      accepted_reconciliations:
+      - osc3-cde-directory-vs-xterm-xproperty
+      disposition: source-only
+      disposition_reason: No terminal-controlled native property or restart-directory mutation in intended profile.
   tek_4015:
     title: 4015 and 4015-1 Computer Display Terminal Users Instruction Manual
     author: Tektronix
@@ -7452,10 +7676,10 @@ specifications:
       section: Table 2-1 p.2-7; GIN Mode Summary pp.3-29/30
       level: defined
       wire: ESC ENQ
-      rule: 'In alpha/graph mode, transmit status byte followed by four address bytes for alpha cursor lower-left or graph
-        beam; return to prior mode after transmission. Crosshair displayed in GIN: transmit four address bytes without status
-        and return to alpha. CR optional; EOT optional only after CR. Bypass suppresses echoed data. Original hardware status
-        bit meanings and timing are profile-specific, not generic VT cursor report.'
+      rule: 'In alpha/graph mode, transmit status byte followed by four address bytes for alpha cursor lower-left or graph beam;
+        return to prior mode after transmission. Crosshair displayed in GIN: transmit four address bytes without status and
+        return to alpha. CR optional; EOT optional only after CR. Bypass suppresses echoed data. Original hardware status bit
+        meanings and timing are profile-specific, not generic VT cursor report.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-bf0cdf83e7
@@ -7476,6 +7700,10 @@ specifications:
         '1': 0 auxiliary unit active
       source_note: Pinned xterm uses fixed octal 064 with margin 2 flag in non-GIN branch; GIN branch omits status. Four 5-bit
         address chunks plus optional CR/EOT; exact original status bit behavior not established.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: page
       section: Table 2-1 p.2-7
       level: defined
@@ -7491,6 +7719,10 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: Tekproc.c:553-558,1011-1040
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: apl-select
       section: Table 2-1 p.2-8
       level: defined
@@ -7507,6 +7739,10 @@ specifications:
         location: Tekproc.c:580-584
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       source_note: Pinned xterm explicitly ignores APL selection; original hardware behavior preserved.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: ascii-select
       section: Table 2-1 p.2-8
       level: defined
@@ -7523,6 +7759,10 @@ specifications:
         location: Tekproc.c:574-578
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       source_note: Pinned xterm explicitly ignores ASCII selection; original hardware behavior preserved.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: hardcopy
       section: Table 2-1 p.2-7
       level: defined
@@ -7535,13 +7775,17 @@ specifications:
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       source_note: Pinned xterm uses ALLOWLOGGING-gated copy of recorded Tek codes to timestamped file and turns off GIN if
         active. This is materially different from hardware hardcopy.
-      pending_reconciliation: tek-hardcopy-vs-code-file
+      accepted_reconciliations:
+      - tek-hardcopy-vs-code-file
+      disposition: source-only
+      disposition_reason: Captain accepted legacy Tektronix profile as source-only, not a partial emulation or arbitrary file
+        write.
     - id: bypass
       section: Table 2-1 p.2-6; GIN Summary pp.3-29/30
       level: defined
       wire: ESC CAN
-      rule: Enter bypass condition to inhibit printing echoed input/GIN response bytes. Cleared by documented BEL, BS, CR,
-        ESC ETB, ESC FF, HT, LF, US, VT or vector execution; bypass is not ANSI cancellation.
+      rule: Enter bypass condition to inhibit printing echoed input/GIN response bytes. Cleared by documented BEL, BS, CR, ESC
+        ETB, ESC FF, HT, LF, US, VT or vector execution; bypass is not ANSI cancellation.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-3824a5834a
@@ -7551,6 +7795,10 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: Tekproc.c:565-568
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: gin-enter
       section: Table 2-1 p.2-8; GIN Summary pp.3-29/30
       level: defined
@@ -7568,6 +7816,10 @@ specifications:
         location: Tekproc.c:460-472,431-444
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       related_query: tek_4015.status-address-query
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: special-point-plot
       section: Option 34, Appendix F p.F-7
       level: defined
@@ -7585,6 +7837,10 @@ specifications:
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       source_note: Pinned xterm selects special-point parser but explicitly ignores intensity byte; full original point-size
         behavior not established.
+      accepted_reconciliations:
+      - dectek-exit-profile
+      disposition: source-only
+      disposition_reason: Legacy Tektronix-only profile retained as source evidence; no partial Tektronix emulation target selected.
     - id: character-size
       section: Table 2-2 p.2-9
       level: defined
@@ -7606,13 +7862,16 @@ specifications:
       mode_context: Tektronix graphics parser only; identical bytes in ANSI or VT52 mode have separate meaning.
       source_note: Pinned xterm uses 133 columns for smallest size, unlike the checked 4015 manual table 132. 4014 and later
         hardware revision capacities not independently verified.
-      pending_reconciliation: tek-small-character-capacity
+      accepted_reconciliations:
+      - tek-small-character-capacity
+      disposition: source-only
+      disposition_reason: Legacy Tektronix profile retained without targeting partial emulation.
     - id: beam-vector-select
       section: Tables 2-3 and F-3/F-4, pp.2-9/10,F-6
       level: defined
       wire: ESC Fbyte (0x60..0x77 selected values)
-      rule: 'Basic hardware selects normal focus (0x60..0x67), defocus (0x68..0x6f) or write-through (0x70..0x77). Option
-        34 adds distinct vector types: low selector 0 solid,1 dotted,2 dot-dash,3 short dash,4 long dash; low selector 7 selects
+      rule: 'Basic hardware selects normal focus (0x60..0x67), defocus (0x68..0x6f) or write-through (0x70..0x77). Option 34
+        adds distinct vector types: low selector 0 solid,1 dotted,2 dot-dash,3 short dash,4 long dash; low selector 7 selects
         beam condition only in the published F-3 table. The wire is mode-specific; 0x60 is backtick, not backslash. No behavior
         inferred for unpublished low values 5/6 with Option 34.'
       also_documented:
@@ -7731,9 +7990,12 @@ specifications:
         - t
         - w
       source_note: Pinned xterm masks character to LINEMASK, changes line type only and does not implement physical focus/defocus
-        or temporary write-through storage. The original source table and xterm discovery spellings retained; this is not
-        equivalence of hardware and emulator effects.
-      pending_reconciliation: tek-beam-state-vs-line-pattern
+        or temporary write-through storage. The original source table and xterm discovery spellings retained; this is not equivalence
+        of hardware and emulator effects.
+      accepted_reconciliations:
+      - tek-beam-state-vs-line-pattern
+      disposition: source-only
+      disposition_reason: Legacy Tektronix physical and emulated graphics profiles retained, not targeted.
   hp_2624b:
     title: 2624B Display Terminal Reference Manual
     author: Hewlett-Packard
@@ -7748,8 +8010,8 @@ specifications:
       level: defined
       wire: ESC l
       rule: 'With cursor home, protect display memory against overflow: reject attempts to exceed available memory with error/beep.
-        With cursor below top, lock rows above cursor while later lines scroll past; remains enabled until disabled, hard
-        reset or power off.'
+        With cursor below top, lock rows above cursor while later lines scroll past; remains enabled until disabled, hard reset
+        or power off.'
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-b77edc5658
@@ -7760,7 +8022,10 @@ specifications:
         location: charproc.c:4753-4766
       source_note: Pinned xterm models lock/unlock as changing top scrolling margin to current row or zero, preserving bottom
         margin and flushing pending scroll; no original HP overflow protection established.
-      pending_reconciliation: hp-memory-lock-overflow-protect
+      accepted_reconciliations:
+      - hp-memory-lock-overflow-protect
+      disposition: source-only
+      disposition_reason: Do not substitute margin change for original display-memory protection or select partial HP emulation.
     - id: memory-unlock
       section: Section III Memory Lock Mode, pp.3-3/4
       level: defined
@@ -7777,7 +8042,10 @@ specifications:
         location: charproc.c:4753-4766
       source_note: Pinned xterm models lock/unlock as changing top scrolling margin to current row or zero, preserving bottom
         margin and flushing pending scroll; no original HP overflow protection established.
-      pending_reconciliation: hp-memory-lock-overflow-protect
+      accepted_reconciliations:
+      - hp-memory-lock-overflow-protect
+      disposition: source-only
+      disposition_reason: Do not substitute margin change for original display-memory protection or select partial HP emulation.
   sco_console:
     title: screen(HW), SCO OpenDesktop console manual
     author: Santa Cruz Operation
@@ -7843,7 +8111,10 @@ specifications:
       pinned_xterm_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7613-7618
-      pending_reconciliation: rxvt-mode10-menu-vs-toolbar
+      accepted_reconciliations:
+      - rxvt-mode10-menu-vs-toolbar
+      disposition: source-only
+      disposition_reason: No escape-driven arbitrary host chrome or AT&T blanking in intended profile.
     - id: scrollbar
       section: rxvtRef.txt:365-367; command.c:2682-2684,2772-2778
       level: defined
@@ -7866,23 +8137,46 @@ specifications:
       section: rxvtRef.txt:369-371; command.c:172-200,2686
       level: defined
       wire: CSI ? 35 h / CSI ? 35 l
-      rule: Enable/disable rxvt Shift-key action family. With Shift and no Ctrl/Meta, mode permits Shift+Insert selection
-        paste and Shift+keypad Add/Subtract font changes. Shift+F1..F10 mapping to F11..F20 is a separate branch.
+      rule: Enable/disable rxvt Shift-key action family. With Shift and no Ctrl/Meta, mode permits Shift+Insert selection paste
+        and Shift+keypad Add/Subtract font changes. Shift+F1..F10 mapping to F11..F20 is a separate branch.
       pinned_xterm_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7652-7655
-      pending_reconciliation: rxvt-mode35-shift-actions-vs-font-only
+      accepted_reconciliations:
+      - rxvt-mode35-shift-actions-vs-font-only
+      disposition: source-only
+      disposition_reason: No application-controlled host font/Shift-key actions in intended profile.
     - id: scroll-output-inhibit
       section: rxvtRef.txt:409-411; command.c:2694,2798-2803
       level: defined
       wire: CSI ? 1010 h / CSI ? 1010 l
       rule: SET inhibits scroll-to-bottom on tty output, RESET enables it. rxvt source uses inverse state to Opt_scrollTtyOutput.
-        urxvt 9.31 doc/rxvt.7.pod:2010-2017 and command.C:3888-3890 corroborate original polarity. This controls viewport
-        following, not canonical scrollback contents.
+        urxvt 9.31 doc/rxvt.7.pod:2010-2017 and command.C:3888-3890 corroborate original polarity. This controls viewport following,
+        not canonical scrollback contents.
       pinned_xterm_observation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7846-7849
-      pending_reconciliation: rxvt-mode1010-inverse-polarity
+      accepted_reconciliations:
+      - rxvt-mode1010-inverse-polarity
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1010-h-line-978
+        wire: CSI ? 1010 h
+        source_line: 978
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: rxvt-mode1010-inverse-polarity
+          reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
+            sets scrollttyoutput to mode state, opposite polarity.
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1010-l-line-1124
+        wire: CSI ? 1010 l
+        source_line: 1124
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: rxvt-mode1010-inverse-polarity
+          reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
+            sets scrollttyoutput to mode state, opposite polarity.
     - id: scroll-keypress
       section: rxvtRef.txt:413-415; command.c:2695,2804-2809
       level: defined
@@ -7947,9 +8241,9 @@ specifications:
       section: Registration 196, 1996-04-22, single registry page
       level: defined
       wire: ESC % G
-      rule: Designate and invoke UCS transformation format UTF-8 with standard return. Registry escape suffix 02/05 04/07,
-        full 7-bit wire 0x1b 0x25 0x47. Implementation level unspecified. By ECMA-35 DOCS standard-return semantics, ESC %
-        @ returns to previous coding state; not an inherent switch to Latin-1.
+      rule: Designate and invoke UCS transformation format UTF-8 with standard return. Registry escape suffix 02/05 04/07, full
+        7-bit wire 0x1b 0x25 0x47. Implementation level unspecified. By ECMA-35 DOCS standard-return semantics, ESC % @ returns
+        to previous coding state; not an inherent switch to Latin-1.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: esc-e2136b9e51
@@ -7961,6 +8255,8 @@ specifications:
         location: charproc.c:6218-6249
       source_note: Xterm changes wide/UTF-8 mode subject to resource policy. Selection identity reconciled, standard-return
         state semantics remain pending. Registration 190/191/192 are different without-standard-return wires; not aliases.
+      accepted_reconciliations:
+      - docs-return-vs-xterm-default-charset
   att_610:
     title: 610 Business Communications Terminal User Guide
     author: AT&T
@@ -7996,8 +8292,8 @@ specifications:
       section: Appendix D, pp.D-2/D-3
       level: defined
       wire: CSI ? Pm h / CSI ? Pm l
-      rule: Original setup private selectors have AT&T-specific meanings. Preserve relevant collisions rather than assume
-        xterm semantics are universal.
+      rule: Original setup private selectors have AT&T-specific meanings. Preserve relevant collisions rather than assume xterm
+        semantics are universal.
       selectors:
         '10':
           set: Blank screen
@@ -8019,6 +8315,8 @@ specifications:
           reset: Keyclick off
       source_note: Mode 10 is a third original profile beside rxvt menu/xterm toolbar. Modes 13/14 are AT&T setup state, not
         xterm read-only blink preferences. Index as distinct hardware profile; no compatibility target selected.
+      accepted_reconciliations:
+      - rxvt-mode10-menu-vs-toolbar
   emacs_libvterm:
     title: Emacs libvterm integration, shell-side protocol
     author: akermu/emacs-libvterm contributors
@@ -8056,568 +8354,8 @@ discovery_catalogues:
     snapshot_sha256: 8c62d6c9f72af9f53c4744526132fee39630f465fd8d431766929faf1454e47f
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
-    sequences:
-    - id: esc-93bf6694ea
-      wire: ESC % @
-      section: Controls beginning with ESC
-      source_line: 308
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: docs-return-vs-xterm-default-charset
-        reason: ECMA-35 restores prior coding-system announcement, designation and invocation state. Xterm describes selecting
-          default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally; restoration of prior state is
-          not established.
-    - id: csi-a6bef4a803
-      wire: CSI Ps SP t
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1711
-      symbol: DECSWBV
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: decswbv-zero-volume-polarity
-        reason: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6. Pinned xterm zero/default
-          falls through to off and 5..8 high.
-    - id: csi-f8ef357623
-      wire: CSI Ps SP u
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1730
-      symbol: DECSMBV
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: decsmbv-zero-volume-polarity
-        reason: VT520/525 July 1994 p.5-138 gives 0/omitted off. Pinned xterm zero/default falls into high branch.
-    - id: csi-eb0e648cf6
-      wire: 'CSI Ps # y'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1814
-      symbol: XTCHECKSUM
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: xtchecksum-bit3-and-unicode
-        reason: Published xterm table says bit 3 omits uninitialized cells and bit 4 retains combining characters. Pinned csDRAWN
-          includes uninitialized cells; combining addition occurs when csBYTE is clear and can be lost by trimmed total.
-    - id: csi-d792d66921
-      wire: CSI Ps ' |
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1898
-      symbol: DECRQLP
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: locator-query-undefined-position-and-filter-lifetime
-        reason: Original DEC memo distinguishes active but undefined position (event 1 with omitted coordinates) from disabled/inactive
-          (event 0); query is a position request, not a documented filter-cancel command. Pinned xterm returns event 0 for out-of-range
-          pointer and explicitly disables locator and clears filter/events on request while filter active, emulating observed
-          DECterm behavior.
-    - id: osc-selector-3
-      wire: OSC 3 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2028
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: osc3-cde-directory-vs-xterm-xproperty
-        reason: CDE dtterm sets directory for a restarted session. Pinned xterm changes or deletes a top-level X property under
-          ewSetXprop permission.
-        previous_review:
-          classification: source-origin-or-semantic-review-required
-          reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
-            directory for next session. Obtain originating dtterm source before scope resolution.
-          source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
-    - id: private-mode-10-h-line-924
-      wire: CSI ? 10 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 924
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: rxvt-mode10-menu-vs-toolbar
-        reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
-    - id: private-mode-35-h-line-935
-      wire: CSI ? 35 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 935
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: rxvt-mode35-shift-actions-vs-font-only
-        reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
-    - id: private-mode-44-h-line-943
-      wire: CSI ? 44 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 943
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: margin bell
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
-        status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-46-h-line-949
-      wire: CSI ? 46 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 949
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: session logging (XTLOGGING), subject to compile-time options
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
-        status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-1010-h-line-978
-      wire: CSI ? 1010 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 978
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: rxvt-mode1010-inverse-polarity
-        reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
-          sets scrollttyoutput to mode state, opposite polarity.
-    - id: private-mode-10-l-line-1073
-      wire: CSI ? 10 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1073
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: rxvt-mode10-menu-vs-toolbar
-        reason: Original rxvt mode selects menuBar visibility. Xterm selects toolbar visibility when compiled.
-    - id: private-mode-35-l-line-1084
-      wire: CSI ? 35 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1084
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: rxvt-mode35-shift-actions-vs-font-only
-        reason: rxvt controls Shift+Insert paste and font actions. Xterm handler toggles shift_fonts resource.
-    - id: private-mode-44-l-line-1091
-      wire: CSI ? 44 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1091
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: margin bell
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
-        status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-46-l-line-1097
-      wire: CSI ? 46 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1097
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: session logging (XTLOGGING), subject to compile-time options
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
-        status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-1010-l-line-1124
-      wire: CSI ? 1010 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1124
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: rxvt-mode1010-inverse-polarity
-        reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
-          sets scrollttyoutput to mode state, opposite polarity.
-    pending_reconciliation:
-    - id: dec-vt3xx-graphics-print-vs-xterm-mode-44
-      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
-      selector: 44
-      wire: CSI ? 44 h / CSI ? 44 l
-      original_dec:
-        clause: dec_vt3xx_text.graphics-print-dec-private-modes
-        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
-        name: DECGPCM
-        meaning: graphics print color
-        detailed_source: dec_vt3xx_graphics.graphics-print-modes
-      xterm:
-        source: Pinned xterm ctlseqs DECSET/DECRST tables
-        meaning: margin bell
-        entries:
-        - entry_id: private-mode-44-h-line-943
-          wire: CSI ? 44 h
-          source_line: 943
-          interpretation: 'xterm: margin bell'
-        - entry_id: private-mode-44-l-line-1091
-          wire: CSI ? 44 l
-          source_line: 1091
-          interpretation: 'xterm: margin bell'
-      original_dec_xterm_mentions:
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-44-h-line-944
-        source_line: 944
-        wire: CSI ? 44 h
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-44-l-line-1092
-        source_line: 1092
-        wire: CSI ? 44 l
-      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
-        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
-        automatically.
-      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
-        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
-      decision: null
-      bounded_reference_sweep:
-        consulted:
-        - Foot private-mode switch in csi.c
-        - Ghostty terminal/modes.zig private-mode registry
-        - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
-        result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source locations. Do
-          not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
-        significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent adoption
-          is not yet established.
-    - id: dec-vt3xx-graphics-print-vs-xterm-mode-46
-      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
-      selector: 46
-      wire: CSI ? 46 h / CSI ? 46 l
-      original_dec:
-        clause: dec_vt3xx_text.graphics-print-dec-private-modes
-        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
-        name: DECGPBM
-        meaning: graphics print background
-        detailed_source: dec_vt3xx_graphics.graphics-print-modes
-      xterm:
-        source: Pinned xterm ctlseqs DECSET/DECRST tables
-        meaning: session logging (XTLOGGING), subject to compile-time options
-        entries:
-        - entry_id: private-mode-46-h-line-949
-          wire: CSI ? 46 h
-          source_line: 949
-          interpretation: 'xterm: session logging (XTLOGGING), subject to compile-time options'
-        - entry_id: private-mode-46-l-line-1097
-          wire: CSI ? 46 l
-          source_line: 1097
-          interpretation: 'xterm: session logging (XTLOGGING), subject to compile-time options'
-      original_dec_xterm_mentions:
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-46-h-line-951
-        source_line: 951
-        wire: CSI ? 46 h
-      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300
-        mode table independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference
-        consensus resolves this automatically.
-      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical
-        dimensions and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining
-        original DEC semantics.
-      decision: null
-      bounded_reference_sweep:
-        consulted:
-        - Foot private-mode switch in csi.c
-        - Ghostty terminal/modes.zig private-mode registry
-        - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
-        result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source
-          locations. Do not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
-        significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent
-          adoption is not yet established.
-      followup_evidence:
-      - implementation: contour
-        revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
-        source: src/vtbackend/primitives.h:881,941; Terminal.cpp:2470-2475
-        observation: Mode 46 globally enables/disables debug logging categories, not established equivalent to xterm session
-          byte logging or DEC printer background. No complete semantic consensus.
-    - id: vt52-exit-restored-conformance-level
-      status: material-vt52-exit-conformance-level-difference-by-hardware-profile
-      wire: ESC <
-      original_author_sources:
-      - clause: dec_vt100.vt52-return-to-ansi
-        revision: DEC VT100 User Guide
-        meaning: VT52 exit to ANSI-compatible VT100 control mode.
-      - clause: dec_vt100.vt52-return-to-ansi
-        revision: DEC VT330/VT340 Text Programming May 1988 and DEC VT420 Programmer Reference Feb 1992, Appendix A
-        meaning: VT52 exit restores previously active operating mode, potentially VT300/VT400 rather than VT100 level 1.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:5039-5059
-        meaning: On VT52 exit, xterm explicitly calls set_vtXX_level(screen,1) and restores selected saved flags and charsets,
-          not proven to restore prior VT400 level.
-      material_difference: For terminal emulation profiles newer than VT100, returning to VT100-level ANSI rather than the prior
-        higher DEC level may change the available protocol after ESC <.
-      scope_limit: Keep VT100 and later VT300/VT420 historical behavior distinct; do not assert this affects Howl runtime or
-        that VT52 emulation is yet selected for implementation.
-      question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC author
-        manuals, or enter VT100-level ANSI mode as in pinned xterm?
-      decision: null
-      followup_evidence:
-      - implementation: windows_terminal
-        revision: 9853bc96076e811cef5eab4469095fc9be58201e
-        source: src/terminal/parser/OutputStateMachineEngine.cpp:378-400; adapter/adaptDispatch.cpp:2062-2075
-        observation: VT52 exit toggles ANSI parser and input mode; resets designated character sets via SoftReset. No higher
-          DEC conformance-level restoration behavior established. Not a vote for xterm level 1 or original previous-level restoration.
-    - id: docs-return-vs-xterm-default-charset
-      status: material-original-source-versus-xterm-awaiting-scope
-      wire: ESC % @
-      original_author_sources:
-      - clause: ecma35.return-from-other-coding-system
-        revision: 6th edition, December 1994; identical to ISO/IEC 2022:1994
-        meaning: ECMA-35 restores prior coding-system announcement, designation and invocation state.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:6218-6249
-        meaning: Xterm describes selecting default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally;
-          restoration of prior state is not established.
-      question: Choose intended coding-switch profile only after verifying original registered UTF-8 coding sequence and relevant
-        modern references.
-      decision: null
-      followup_evidence:
-      - source: iso_ir196.utf8-with-standard-return
-        observation: Original registration 196 visually confirms ESC % G designates UTF-8 with standard return, without specified
-          implementation level. ECMA-35 standard return therefore restores prior code state; not inherently Latin-1. Native
-          UTF-8-only scope vs actual coding switching still requires choice.
-    - id: decswbv-zero-volume-polarity
-      status: material-original-source-versus-xterm-awaiting-scope
-      wire: CSI Ps SP t
-      original_author_sources:
-      - clause: dec_vt520.warning-bell-volume
-        revision: July 1994; EK-VT520-RM. A01
-        meaning: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:6421-6446
-        meaning: Pinned xterm zero/default falls through to off and 5..8 high.
-      question: If warning-bell control is targeted, reconcile original VT510/other revisions and actual modern zero/default
-        behavior before choosing volume mapping.
-      decision: null
-    - id: decsmbv-zero-volume-polarity
-      status: material-original-source-versus-xterm-awaiting-scope
-      wire: CSI Ps SP u
-      original_author_sources:
-      - clause: dec_vt520.margin-bell-volume
-        revision: July 1994; EK-VT520-RM. A01
-        meaning: VT520/525 July 1994 p.5-138 gives 0/omitted off.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:6448-6475
-        meaning: Pinned xterm zero/default falls into high branch.
-      question: If margin-bell control is targeted, reconcile original VT510/other revisions and modern zero/default semantics.
-      decision: null
-    - id: locator-query-undefined-position-and-filter-lifetime
-      status: material-original-source-versus-xterm-awaiting-scope
-      wire: CSI Ps ' |
-      original_author_sources:
-      - clause: dec_locator.request-locator-position
-        revision: 23 June 1989; sixth revision, author-circulated memorandum reproduced in HTML; formal publication not established
-        meaning: Original DEC memo distinguishes active but undefined position (event 1 with omitted coordinates) from disabled/inactive
-          (event 0); query is a position request, not a documented filter-cancel command.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: button.c:953-1016
-        meaning: Pinned xterm returns event 0 for out-of-range pointer and explicitly disables locator and clears filter/events
-          on request while filter active, emulating observed DECterm behavior.
-      question: If DEC locator is targeted, verify DECterm/modern references and select exact query reply and filter lifetime
-        semantics.
-      decision: null
-    - id: xtchecksum-bit3-and-unicode
-      status: material-source-difference-awaiting-scope
-      wire: 'CSI Ps # y'
-      original_author_sources:
-      - clause: xterm_controls.checksum-extension
-        revision: dated official control-sequence reference, observed 2026-11-23
-        meaning: Published xterm table says bit 3 omits uninitialized cells and bit 4 retains combining characters.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: ptyx.h:488-496; screen.c:3177-3264
-        meaning: Pinned csDRAWN includes uninitialized cells; combining addition occurs when csBYTE is clear and can be lost
-          by trimmed total.
-      question: Verify relevant modern reference implementations and actual checksum behavior before choosing mask semantics.
-      decision: null
-      followup_evidence:
-      - implementation: ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        source: src/terminal/xt_checksum.zig:20-57,123-153
-        observation: Explicitly follows xterm code rather than contradictory docs. Bit 3 makes unwritten cells eligible as spaces,
-          still subject to trim; bit 4 selects full-codepoint mapping, excludes combining additions. Combining codepoints added
-          only when bit 4 clear and no-trim sum selected. Implementation intentionally modeled on xterm; not independent algorithm
-          origin.
-      - implementation: xterm_snapshots
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: ptyx.h:488-496; screen.c:3177-3195,3236-3264
-        observation: Bit 3 permits undrawn cells as spaces, also admitted by bit 2. Trimmed result can omit spaces. Bit 4 selects
-          charData/full codepoint rather than DEC mapping; combining data only contributes to untrimmed total when bit 4 clear.
-          Special values may be skipped.
-    - id: osc3-cde-directory-vs-xterm-xproperty
-      status: material-source-difference-awaiting-scope
-      wire: OSC 3 ; Pt BEL
-      original_author_sources:
-      - clause: cde_dtterm.restart-working-directory
-        revision: Digital UNIX 3.2c manual, historical HTML reproduction
-        meaning: CDE dtterm sets directory for a restarted session.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: misc.c:4175-4179,6375-6397
-        meaning: Pinned xterm changes or deletes a top-level X property under ewSetXprop permission.
-      question: If targeted, select interoperable intended OSC 3 meaning from relevant references; do not implement either host
-        operation by default.
-      decision: null
-    - id: sixel-original-macro-aspect-vs-xterm
-      status: material-original-profile-versus-extension-difference
-      wire: DCS P1 ; P2 ; P3 q sixels ST
-      original_author_sources:
-      - clause: dec_vt3xx_graphics.sixel-envelope-profile
-        revision: Second edition, May 1988 (EK-VT3XX-GP-002)
-        meaning: Macro P1 aspect ratios are original printed vertical:horizontal values; e.g. 2=5:1,7=1:1.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: graphics_sixel.c:409-456
-        meaning: Macro 2 uses 450:100 and macro 7 uses 130:100 before update_sixel_aspect.
-      question: If macro aspect-ratio behavior is targeted, qualify original source and modern references, including final aspect
-        calculation and raster overrides; no silent ratio reinterpretation.
-      decision: null
-      followup_evidence:
-      - implementation: xterm_snapshots
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: graphics_sixel.c:409-456,214-272,298-306
-        observation: The macro table is an intermediate representation only. update_sixel_aspect unconditionally overrides final
-          pixw and pixh to 1 at lines 268-272 (#if 1 FIXME). The checked renderer therefore does not implement the documented
-          non-square aspect ratios.
-      - implementation: foot
-        revision: cb2771788998f6a6288e2de8273c55a8214551e0
-        source: sixel.c:66-106,1659-1672,1701-1720
-        observation: For macro values 0..9 uses original DEC vertical ratio 2/2/5/3/3/2/2/1/1/1 with horizontal 1; repeats physical
-          pixels according to pan/pad. Later explicit raster attributes have separate limitations and extent scaling.
-      - implementation: windows_terminal
-        revision: 9853bc96076e811cef5eab4469095fc9be58201e
-        source: src/terminal/adapter/SixelParser.cpp:310-352,777-816
-        observation: At conformance >=3 uses the same original DEC macro table and repeats pixels by the selected aspect. Lower
-          conformance uses fixed 2:1. Explicit raster rounding, background dimensions and invalid macro values differ; not selected
-          by this evidence.
-    - id: tek-hardcopy-vs-code-file
-      status: material-source-difference-awaiting-scope
-      wire: ESC ETB
-      original_author_sources:
-      - clause: tek_4015.hardcopy
-        revision: First printing August 1974; 070-1649-00
-        meaning: Original Tek hardcopy request to physical unit, ignored during crosshair GIN.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: Tekproc.c:544-551,1964-2005
-        meaning: Xterm cancels active GIN and writes recorded codes to a file, gated by build.
-      question: If Tek hardcopy is targeted, define explicit host effect and scope; do not silently replace device request with
-        filesystem write.
-      decision: null
-    - id: tek-small-character-capacity
-      status: material-source-difference-awaiting-scope
-      wire: ESC ;
-      original_author_sources:
-      - clause: tek_4015.character-size
-        revision: First printing August 1974; 070-1649-00
-        meaning: 4015/4015-1 August 1974 Table 2-2 specifies 132 characters,64 lines.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: Tekproc.c:140-150
-        meaning: Pinned xterm TekChar smallest profile is 133 characters,64 lines.
-      question: Verify other original 4014/4015 manual revisions if targeting exact Tek text geometry.
-      decision: null
-    - id: tek-beam-state-vs-line-pattern
-      status: material-source-difference-awaiting-scope
-      wire: ESC beam/vector selector
-      original_author_sources:
-      - clause: tek_4015.beam-vector-select
-        revision: First printing August 1974; 070-1649-00
-        meaning: Original hardware beam focus/write-through state and optional EGM vector pattern are separate consequences.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: Tekproc.c:592-603
-        meaning: Pinned xterm masks beam state and uses only line type.
-      question: If Tek graphics targeted, choose explicit emulation scope for storage, focus and temporary drawing, rather than
-        equating line pattern to original beam state.
-      decision: null
-    - id: rxvt-mode10-menu-vs-toolbar
-      status: material-source-difference-awaiting-scope
-      wire: CSI ? 10 h/l
-      original_author_sources:
-      - clause: rxvt.menu-bar
-        revision: 2.7.10, 26 March 2003; release archive SHA-256
-        meaning: Original rxvt mode selects menuBar visibility.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:7613-7618
-        meaning: Xterm selects toolbar visibility when compiled.
-      question: Choose intended host UI effect or scope exclusion if this historical mode is targeted.
-      decision: null
-      followup_evidence:
-      - source: att_610.setup-private-profile-context
-        observation: Original AT&T 610 Appendix D pp.D-2/D-3 assigns SET 10 blank screen and RESET unblank screen, a third profile.
-          Source-specific mode 13 labels and mode 14 cartridge status also differ from xterm read-only blink queries. No new
-          target choice implied.
-    - id: rxvt-mode35-shift-actions-vs-font-only
-      status: material-source-difference-awaiting-scope
-      wire: CSI ? 35 h/l
-      original_author_sources:
-      - clause: rxvt.shift-key-actions
-        revision: 2.7.10, 26 March 2003; release archive SHA-256
-        meaning: rxvt controls Shift+Insert paste and font actions.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:7652-7655
-        meaning: Xterm handler toggles shift_fonts resource.
-      question: Select original action set, xterm subset or explicit exclusion if targeted.
-      decision: null
-    - id: rxvt-mode1010-inverse-polarity
-      status: material-source-difference-awaiting-scope
-      wire: CSI ? 1010 h/l
-      original_author_sources:
-      - clause: rxvt.scroll-output-inhibit
-        revision: 2.7.10, 26 March 2003; release archive SHA-256
-        meaning: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:7846-7849
-        meaning: Pinned xterm directly sets scrollttyoutput to mode state, opposite polarity.
-      question: Apply relevant independently maintained references before selecting intended viewport follow polarity; rxvt
-        and urxvt are related, not two independent votes.
-      decision: null
-    - id: hp-memory-lock-overflow-protect
-      status: material-source-difference-awaiting-scope
-      wire: ESC l / ESC m
-      original_author_sources:
-      - clause: hp_2624b.memory-lock
-        revision: September 1981; 02624-90008
-        meaning: HP original defines overflow protection when homed and display lock when below top.
-      - clause: hp_2624b.memory-unlock
-        revision: September 1981; 02624-90008
-        meaning: HP original defines overflow protection when homed and display lock when below top.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:4753-4766
-        meaning: Xterm changes scrolling region top, not a separately established display-memory overflow protection state.
-      question: If targeting HP memory lock, decide source scope and ensure actual memory/viewport behavior is explicit.
-      decision: null
-    - id: dectek-exit-profile
-      status: material-original-profile-versus-extension-difference
-      wire: CSI ? 38 h / CSI ? 38 l; ESC ETX in Tek mode
-      original_author_sources:
-      - clause: dec_vt240.tektronix-mode
-        meaning: SET enters alpha mode; RESET exits to VT200 7-bit.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:7657-7666; Tekproc.c:446-452,1315-1325
-        meaning: SET enters Tek mode subject to inhibition; ESC ETX returns to VT parser.
-      question: If Tek mode is targeted, select explicit mode-exit profile or both nonconflicting exits; no automatic claim
-        of complete emulation.
-      decision: null
-    - id: osc22-pointer-reset-invalid-profile
-      status: material-original-profile-versus-extension-difference
-      wire: OSC 22 ; Pt (BEL | ST)
-      original_author_sources:
-      - clause: xterm_controls.pointer-shape-x11
-        meaning: System X11 names; unknown/empty documented default.
-      - clause: kitty_pointer.set
-        meaning: Portable CSS names, explicit empty reset, optional X11 aliases; stack/query extensions.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: misc.c:991-1029,4097-4157,4288-4290
-        meaning: Unknown name falls back to XC_xterm; empty rejected.
-      independent_implementation:
-        name: Kitty
-        revision: a79f376b85fd95e3dfd0589877123996bacd4184
-        source: kitty/window.py:3120-3151; kitty/screen.c:2441-2548
-        meaning: Unknown names ignored; empty resets selected pointer; stack state separate.
-      question: Select portable name semantics, legacy aliases and exact unknown/empty handling. Preserve original source, not
-        blanket Kitty parity.
-      decision: null
-      followup_evidence:
-      - implementation: ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        source: src/terminal/osc/parsers/mouse_shape.zig:8-25; stream.zig:3019-3032; stream_terminal.zig:758-759
-        observation: Bare OSC 22 empty payload resets pointer to text; unknown names ignored; no proof of Kitty stack/query
-          protocol here. Supports portable invalid-no-mutation behavior; default shape value and stack lifetime still differ.
+    sequences: []
+    pending_reconciliation: []
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
@@ -9644,3 +9382,686 @@ reconciliation:
   follow_up: If failure reproduces, compare actual LazyGit input/output in Howl and Ghostty runtime before changing input
     code. Separately qualify no-operand CSI s with DECLRMM enabled; existing decoder dispatches no-operand s directly to
     save_cursor.
+- id: sixel-original-macro-aspect-vs-xterm
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: DCS P1 ; P2 ; P3 q sixels ST
+    macro_aspect_vertical_to_horizontal:
+      omitted/0/1/5/6: '2:1'
+      '2': '5:1'
+      3/4: '3:1'
+      7/8/9: '1:1'
+    effect: Apply actual pixel replication according to selected original DEC macro aspect.
+  scope_limit: Defined macro values only. Explicit raster override, invalid macro values, rounding, background extent, clipping,
+    limits and cursor placement remain separate qualification.
+  reason: Original DEC VT330/VT340 printed table; Foot and Windows Terminal agree for defined macros. Xterm intermediate
+    table differs and final renderer forces 1:1. Captain explicitly accepted original sizing, not xterm workaround.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: sixel-original-macro-aspect-vs-xterm
+    status: material-original-profile-versus-extension-difference
+    wire: DCS P1 ; P2 ; P3 q sixels ST
+    original_author_sources:
+    - clause: dec_vt3xx_graphics.sixel-envelope-profile
+      revision: Second edition, May 1988 (EK-VT3XX-GP-002)
+      meaning: Macro P1 aspect ratios are original printed vertical:horizontal values; e.g. 2=5:1,7=1:1.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: graphics_sixel.c:409-456
+      meaning: Macro 2 uses 450:100 and macro 7 uses 130:100 before update_sixel_aspect.
+    question: If macro aspect-ratio behavior is targeted, qualify original source and modern references, including final
+      aspect calculation and raster overrides; no silent ratio reinterpretation.
+    decision: null
+    followup_evidence:
+    - implementation: xterm_snapshots
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: graphics_sixel.c:409-456,214-272,298-306
+      observation: The macro table is an intermediate representation only. update_sixel_aspect unconditionally overrides
+        final pixw and pixh to 1 at lines 268-272 (#if 1 FIXME). The checked renderer therefore does not implement the documented
+        non-square aspect ratios.
+    - implementation: foot
+      revision: cb2771788998f6a6288e2de8273c55a8214551e0
+      source: sixel.c:66-106,1659-1672,1701-1720
+      observation: For macro values 0..9 uses original DEC vertical ratio 2/2/5/3/3/2/2/1/1/1 with horizontal 1; repeats
+        physical pixels according to pan/pad. Later explicit raster attributes have separate limitations and extent scaling.
+    - implementation: windows_terminal
+      revision: 9853bc96076e811cef5eab4469095fc9be58201e
+      source: src/terminal/adapter/SixelParser.cpp:310-352,777-816
+      observation: At conformance >=3 uses the same original DEC macro table and repeats pixels by the selected aspect.
+        Lower conformance uses fixed 2:1. Explicit raster rounding, background dimensions and invalid macro values differ;
+        not selected by this evidence.
+- id: xtchecksum-bit3-and-unicode
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: 'CSI Ps # y'
+    bit3: Admit uninitialized cells as spaces, subject to trimming; bit2 also admits them.
+    bit4: Use full codepoint mapping rather than DEC character mapping; suppress combining additions.
+    combining: Combining additions contribute only with bit4 clear and untrimmed total selected.
+  scope_limit: Only disputed flag semantics and their stated trim interaction; not whole checksum arithmetic, unsupported
+    bit5, admission or DEC historical authenticity.
+  reason: Xterm actual ptyx.h and screen.c contradict published prose. Ghostty explicitly models the actual implementation.
+    Captain accepted this interoperable behavior, not a claim of independent algorithm consensus.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: xtchecksum-bit3-and-unicode
+    status: material-source-difference-awaiting-scope
+    wire: 'CSI Ps # y'
+    original_author_sources:
+    - clause: xterm_controls.checksum-extension
+      revision: dated official control-sequence reference, observed 2026-11-23
+      meaning: Published xterm table says bit 3 omits uninitialized cells and bit 4 retains combining characters.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: ptyx.h:488-496; screen.c:3177-3264
+      meaning: Pinned csDRAWN includes uninitialized cells; combining addition occurs when csBYTE is clear and can be lost
+        by trimmed total.
+    question: Verify relevant modern reference implementations and actual checksum behavior before choosing mask semantics.
+    decision: null
+    followup_evidence:
+    - implementation: ghostty
+      revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+      source: src/terminal/xt_checksum.zig:20-57,123-153
+      observation: Explicitly follows xterm code rather than contradictory docs. Bit 3 makes unwritten cells eligible as
+        spaces, still subject to trim; bit 4 selects full-codepoint mapping, excludes combining additions. Combining codepoints
+        added only when bit 4 clear and no-trim sum selected. Implementation intentionally modeled on xterm; not independent
+        algorithm origin.
+    - implementation: xterm_snapshots
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: ptyx.h:488-496; screen.c:3177-3195,3236-3264
+      observation: Bit 3 permits undrawn cells as spaces, also admitted by bit 2. Trimmed result can omit spaces. Bit 4
+        selects charData/full codepoint rather than DEC mapping; combining data only contributes to untrimmed total when
+        bit 4 clear. Special values may be skipped.
+- id: osc22-pointer-reset-invalid-profile
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: OSC 22 ; Pt ST
+    profile: Portable Kitty pointer shape set, push/pop and query grammar. Legacy aliases optional and not selected here.
+    unknown: Ignore unknown names without state mutation.
+    empty_set: Reset current selection to host default by replacing top with unset sentinel; initialize top if stack empty.
+      Do not clear whole stack.
+    stack: Separate main/alternate stacks, at least 16 entries, oldest evicted on overflow; pop one.
+  scope_limit: Select extension semantics, not exact optional X11 alias list, host cursor policy or unverified malformed
+    payload behavior. Original xterm BEL/ST profile remains indexed.
+  reason: Original Kitty extension specifies portable names and per-bank stacks. Its pinned handler ignores unknown names;
+    Ghostty corroborates empty reset and unknown ignore, not stack semantics. Xterm empty rejection and unknown fallback
+    retained.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: osc22-pointer-reset-invalid-profile
+    status: material-original-profile-versus-extension-difference
+    wire: OSC 22 ; Pt (BEL | ST)
+    original_author_sources:
+    - clause: xterm_controls.pointer-shape-x11
+      meaning: System X11 names; unknown/empty documented default.
+    - clause: kitty_pointer.set
+      meaning: Portable CSS names, explicit empty reset, optional X11 aliases; stack/query extensions.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: misc.c:991-1029,4097-4157,4288-4290
+      meaning: Unknown name falls back to XC_xterm; empty rejected.
+    independent_implementation:
+      name: Kitty
+      revision: a79f376b85fd95e3dfd0589877123996bacd4184
+      source: kitty/window.py:3120-3151; kitty/screen.c:2441-2548
+      meaning: Unknown names ignored; empty resets selected pointer; stack state separate.
+    question: Select portable name semantics, legacy aliases and exact unknown/empty handling. Preserve original source,
+      not blanket Kitty parity.
+    decision: null
+    followup_evidence:
+    - implementation: ghostty
+      revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+      source: src/terminal/osc/parsers/mouse_shape.zig:8-25; stream.zig:3019-3032; stream_terminal.zig:758-759
+      observation: Bare OSC 22 empty payload resets pointer to text; unknown names ignored; no proof of Kitty stack/query
+        protocol here. Supports portable invalid-no-mutation behavior; default shape value and stack lifetime still differ.
+- id: docs-return-vs-xterm-default-charset
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC % @
+    effect: Standard return to previous announced, designated and invoked coding state, not unconditional Latin-1.
+    related_selection: ISO-IR 196 ESC % G UTF-8 with standard return.
+  scope_limit: Only standard-return semantics for an admitted coding-system switch. Multi-codec capability and scope remain
+    separately triaged; no requirement to add legacy encoding to an always-UTF-8 profile.
+  reason: ISO-IR196 and ECMA35 define the relation. Xterm describes default ISO8859-1 and switches UTF-8 mode under resource
+    policy, without proof of original state restoration. ECMA48 tie-breaker is inapplicable.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: docs-return-vs-xterm-default-charset
+    status: material-original-source-versus-xterm-awaiting-scope
+    wire: ESC % @
+    original_author_sources:
+    - clause: ecma35.return-from-other-coding-system
+      revision: 6th edition, December 1994; identical to ISO/IEC 2022:1994
+      meaning: ECMA-35 restores prior coding-system announcement, designation and invocation state.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:6218-6249
+      meaning: Xterm describes selecting default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally;
+        restoration of prior state is not established.
+    question: Choose intended coding-switch profile only after verifying original registered UTF-8 coding sequence and relevant
+      modern references.
+    decision: null
+    followup_evidence:
+    - source: iso_ir196.utf8-with-standard-return
+      observation: Original registration 196 visually confirms ESC % G designates UTF-8 with standard return, without specified
+        implementation level. ECMA-35 standard return therefore restores prior code state; not inherently Latin-1. Native
+        UTF-8-only scope vs actual coding switching still requires choice.
+- id: vt52-exit-restored-conformance-level
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC <
+    mode: VT52
+    effect: Return to the previously active ANSI operating/conformance level.
+  scope_limit: Only restored level; exact charset, flags, cursor and parser state restoration separately qualified. No invented
+    higher-level support.
+  reason: Later original DEC VT300/VT420 manuals specify previous operating mode. Xterm sets level1; Windows Terminal restores
+    ANSI parser/input with charset reset but does not establish higher level restoration. Captain selected original profile.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: vt52-exit-restored-conformance-level
+    status: material-vt52-exit-conformance-level-difference-by-hardware-profile
+    wire: ESC <
+    original_author_sources:
+    - clause: dec_vt100.vt52-return-to-ansi
+      revision: DEC VT100 User Guide
+      meaning: VT52 exit to ANSI-compatible VT100 control mode.
+    - clause: dec_vt100.vt52-return-to-ansi
+      revision: DEC VT330/VT340 Text Programming May 1988 and DEC VT420 Programmer Reference Feb 1992, Appendix A
+      meaning: VT52 exit restores previously active operating mode, potentially VT300/VT400 rather than VT100 level 1.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:5039-5059
+      meaning: On VT52 exit, xterm explicitly calls set_vtXX_level(screen,1) and restores selected saved flags and charsets,
+        not proven to restore prior VT400 level.
+    material_difference: For terminal emulation profiles newer than VT100, returning to VT100-level ANSI rather than the
+      prior higher DEC level may change the available protocol after ESC <.
+    scope_limit: Keep VT100 and later VT300/VT420 historical behavior distinct; do not assert this affects Howl runtime
+      or that VT52 emulation is yet selected for implementation.
+    question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC
+      author manuals, or enter VT100-level ANSI mode as in pinned xterm?
+    decision: null
+    followup_evidence:
+    - implementation: windows_terminal
+      revision: 9853bc96076e811cef5eab4469095fc9be58201e
+      source: src/terminal/parser/OutputStateMachineEngine.cpp:378-400; adapter/adaptDispatch.cpp:2062-2075
+      observation: VT52 exit toggles ANSI parser and input mode; resets designated character sets via SoftReset. No higher
+        DEC conformance-level restoration behavior established. Not a vote for xterm level 1 or original previous-level
+        restoration.
+- id: locator-query-undefined-position-and-filter-lifetime
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI Ps ' |
+    active_undefined: Report event 1, with undefined coordinates omitted.
+    disabled_or_inactive: Report event 0.
+    filter: Query alone does not cancel active filter; documented one-shot lifetime remains separate.
+  scope_limit: Only disputed query/report distinctions and filter lifetime; full locator grammar, coordinates, queue ordering
+    and host permission remain separate qualification.
+  reason: Original DEC Video Architecture memorandum distinguishes undefined position and unavailable. Xterm returns event0
+    and cancels filter/events; Contour reports fixed fields. Captain selected original semantics.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: locator-query-undefined-position-and-filter-lifetime
+    status: material-original-source-versus-xterm-awaiting-scope
+    wire: CSI Ps ' |
+    original_author_sources:
+    - clause: dec_locator.request-locator-position
+      revision: 23 June 1989; sixth revision, author-circulated memorandum reproduced in HTML; formal publication not established
+      meaning: Original DEC memo distinguishes active but undefined position (event 1 with omitted coordinates) from disabled/inactive
+        (event 0); query is a position request, not a documented filter-cancel command.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: button.c:953-1016
+      meaning: Pinned xterm returns event 0 for out-of-range pointer and explicitly disables locator and clears filter/events
+        on request while filter active, emulating observed DECterm behavior.
+    question: If DEC locator is targeted, verify DECterm/modern references and select exact query reply and filter lifetime
+      semantics.
+    decision: null
+- id: decswbv-zero-volume-polarity
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI Ps SP t
+    zero_or_omitted: High warning bell volume.
+    selector_6: Unspecified by checked original table; no inferred choice.
+  scope_limit: Parameter zero and omitted only; other selectors retain original source text. Host sound policy and volume
+    mapping separately triaged.
+  reason: VT510 and VT520/525 manuals agree 0/omitted high; duplicated 5 and missing 6 preserved. Xterm off. Captain selected
+    original definition.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: decswbv-zero-volume-polarity
+    status: material-original-source-versus-xterm-awaiting-scope
+    wire: CSI Ps SP t
+    original_author_sources:
+    - clause: dec_vt520.warning-bell-volume
+      revision: July 1994; EK-VT520-RM. A01
+      meaning: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:6421-6446
+      meaning: Pinned xterm zero/default falls through to off and 5..8 high.
+    question: If warning-bell control is targeted, reconcile original VT510/other revisions and actual modern zero/default
+      behavior before choosing volume mapping.
+    decision: null
+- id: decsmbv-zero-volume-polarity
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI Ps SP u
+    zero_or_omitted: Margin bell off.
+  scope_limit: Parameter zero and omitted only. No automatic host sound mandate or complete selector qualification.
+  reason: VT510 and VT520/525 original manuals agree off; xterm high. Captain selected original definition.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: decsmbv-zero-volume-polarity
+    status: material-original-source-versus-xterm-awaiting-scope
+    wire: CSI Ps SP u
+    original_author_sources:
+    - clause: dec_vt520.margin-bell-volume
+      revision: July 1994; EK-VT520-RM. A01
+      meaning: VT520/525 July 1994 p.5-138 gives 0/omitted off.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:6448-6475
+      meaning: Pinned xterm zero/default falls into high branch.
+    question: If margin-bell control is targeted, reconcile original VT510/other revisions and modern zero/default semantics.
+    decision: null
+- id: dec-vt3xx-graphics-print-vs-xterm-mode-44
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 44 h / CSI ? 44 l
+    set: Enable margin bell.
+    reset: Disable margin bell.
+    profile: Modern ANSI terminal, not DEC graphics print color mode.
+  scope_limit: Mode meaning only; exact margin threshold, disarming and host effects require separate qualification. No
+    changes to other printer selectors.
+  reason: Captain selected modern margin-bell purpose, complementary to original bell-volume control. No asserted independent
+    consensus for mode44.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: dec-vt3xx-graphics-print-vs-xterm-mode-44
+    status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+    selector: 44
+    wire: CSI ? 44 h / CSI ? 44 l
+    original_dec:
+      clause: dec_vt3xx_text.graphics-print-dec-private-modes
+      source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+      name: DECGPCM
+      meaning: graphics print color
+      detailed_source: dec_vt3xx_graphics.graphics-print-modes
+    xterm:
+      source: Pinned xterm ctlseqs DECSET/DECRST tables
+      meaning: margin bell
+      entries:
+      - entry_id: private-mode-44-h-line-943
+        wire: CSI ? 44 h
+        source_line: 943
+        interpretation: 'xterm: margin bell'
+      - entry_id: private-mode-44-l-line-1091
+        wire: CSI ? 44 l
+        source_line: 1091
+        interpretation: 'xterm: margin bell'
+    original_dec_xterm_mentions:
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-44-h-line-944
+      source_line: 944
+      wire: CSI ? 44 h
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-44-l-line-1092
+      source_line: 1092
+      wire: CSI ? 44 l
+    reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC
+      VT300 mode table independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference
+      consensus resolves this automatically.
+    next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical
+      dimensions and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining
+      original DEC semantics.
+    decision: null
+    bounded_reference_sweep:
+      consulted:
+      - Foot private-mode switch in csi.c
+      - Ghostty terminal/modes.zig private-mode registry
+      - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
+      result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source
+        locations. Do not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
+      significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current
+        independent adoption is not yet established.
+- id: rxvt-mode1010-inverse-polarity
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 1010 h / CSI ? 1010 l
+    set: Inhibit scrolling viewport to bottom on TTY output.
+    reset: Enable following output at bottom.
+    boundary: Viewport follow policy; does not alter canonical scrollback ownership.
+  scope_limit: Exact original polarity only. No claim of independent majority or default/host UI lifecycle qualification.
+  reason: Original rxvt and urxvt share lineage and agree. Xterm opposite polarity retained. Captain chose original behavior.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: rxvt-mode1010-inverse-polarity
+    status: material-source-difference-awaiting-scope
+    wire: CSI ? 1010 h/l
+    original_author_sources:
+    - clause: rxvt.scroll-output-inhibit
+      revision: 2.7.10, 26 March 2003; release archive SHA-256
+      meaning: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:7846-7849
+      meaning: Pinned xterm directly sets scrollttyoutput to mode state, opposite polarity.
+    question: Apply relevant independently maintained references before selecting intended viewport follow polarity; rxvt
+      and urxvt are related, not two independent votes.
+    decision: null
+- id: dec-vt3xx-graphics-print-vs-xterm-mode-46
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 46 h / CSI ? 46 l
+    retention: DEC printer background, xterm session logging and Contour debug-category logging are source-only alternatives;
+      no selected implementation.
+  scope_limit: Selector46 only; does not classify other selectors in the broad DEC printer family or OSC46. No implied successful
+    no-op conformance.
+  reason: Historical printer and host logging effects are not intended in this profile; terminal output must not silently
+    initiate host capture.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: dec-vt3xx-graphics-print-vs-xterm-mode-46
+    status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+    selector: 46
+    wire: CSI ? 46 h / CSI ? 46 l
+    original_dec:
+      clause: dec_vt3xx_text.graphics-print-dec-private-modes
+      source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+      name: DECGPBM
+      meaning: graphics print background
+      detailed_source: dec_vt3xx_graphics.graphics-print-modes
+    xterm:
+      source: Pinned xterm ctlseqs DECSET/DECRST tables
+      meaning: session logging (XTLOGGING), subject to compile-time options
+      entries:
+      - entry_id: private-mode-46-h-line-949
+        wire: CSI ? 46 h
+        source_line: 949
+        interpretation: 'xterm: session logging (XTLOGGING), subject to compile-time options'
+      - entry_id: private-mode-46-l-line-1097
+        wire: CSI ? 46 l
+        source_line: 1097
+        interpretation: 'xterm: session logging (XTLOGGING), subject to compile-time options'
+    original_dec_xterm_mentions:
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-46-h-line-951
+      source_line: 951
+      wire: CSI ? 46 h
+    reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC
+      VT300 mode table independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference
+      consensus resolves this automatically.
+    next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical
+      dimensions and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining
+      original DEC semantics.
+    decision: null
+    bounded_reference_sweep:
+      consulted:
+      - Foot private-mode switch in csi.c
+      - Ghostty terminal/modes.zig private-mode registry
+      - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
+      result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source
+        locations. Do not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
+      significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current
+        independent adoption is not yet established.
+    followup_evidence:
+    - implementation: contour
+      revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+      source: src/vtbackend/primitives.h:881,941; Terminal.cpp:2470-2475
+      observation: Mode 46 globally enables/disables debug logging categories, not established equivalent to xterm session
+        byte logging or DEC printer background. No complete semantic consensus.
+  disposition: source-only
+- id: osc3-cde-directory-vs-xterm-xproperty
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: OSC 3 ; Pt (BEL | ST)
+    retention: CDE restart-directory and xterm X11 property mutation are source-only; neither selected.
+  scope_limit: Exact OSC3 meanings only; directory metadata and other OSC protocols remain distinct. No claim of no-op conformance.
+  reason: No terminal-controlled native property or restart-directory mutation in intended profile.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: osc3-cde-directory-vs-xterm-xproperty
+    status: material-source-difference-awaiting-scope
+    wire: OSC 3 ; Pt BEL
+    original_author_sources:
+    - clause: cde_dtterm.restart-working-directory
+      revision: Digital UNIX 3.2c manual, historical HTML reproduction
+      meaning: CDE dtterm sets directory for a restarted session.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: misc.c:4175-4179,6375-6397
+      meaning: Pinned xterm changes or deletes a top-level X property under ewSetXprop permission.
+    question: If targeted, select interoperable intended OSC 3 meaning from relevant references; do not implement either
+      host operation by default.
+    decision: null
+  disposition: source-only
+- id: tek-hardcopy-vs-code-file
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC ETB in Tektronix mode
+    retention: Physical hardcopy and xterm recorded-code file write retained as source-only.
+  scope_limit: Tek mode only; no implicit host file-write permission or implementation mandate.
+  reason: Captain accepted legacy Tektronix profile as source-only, not a partial emulation or arbitrary file write.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: tek-hardcopy-vs-code-file
+    status: material-source-difference-awaiting-scope
+    wire: ESC ETB
+    original_author_sources:
+    - clause: tek_4015.hardcopy
+      revision: First printing August 1974; 070-1649-00
+      meaning: Original Tek hardcopy request to physical unit, ignored during crosshair GIN.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: Tekproc.c:544-551,1964-2005
+      meaning: Xterm cancels active GIN and writes recorded codes to a file, gated by build.
+    question: If Tek hardcopy is targeted, define explicit host effect and scope; do not silently replace device request
+      with filesystem write.
+    decision: null
+  disposition: source-only
+- id: tek-small-character-capacity
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC ; in Tektronix mode
+    retention: Original 4015 132x64 and xterm 133x64 source-only.
+  scope_limit: Preserve exact profile sizes; no averaged size or unsupported 4014 inference.
+  reason: Legacy Tektronix profile retained without targeting partial emulation.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: tek-small-character-capacity
+    status: material-source-difference-awaiting-scope
+    wire: ESC ;
+    original_author_sources:
+    - clause: tek_4015.character-size
+      revision: First printing August 1974; 070-1649-00
+      meaning: 4015/4015-1 August 1974 Table 2-2 specifies 132 characters,64 lines.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: Tekproc.c:140-150
+      meaning: Pinned xterm TekChar smallest profile is 133 characters,64 lines.
+    question: Verify other original 4014/4015 manual revisions if targeting exact Tek text geometry.
+    decision: null
+  disposition: source-only
+- id: tek-beam-state-vs-line-pattern
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC beam/vector selector in Tektronix mode
+    retention: Original beam focus/temporary write-through and xterm line-pattern-only behavior source-only.
+  scope_limit: Tek mode only; no effect on ANSI sequences with same final bytes.
+  reason: Legacy Tektronix physical and emulated graphics profiles retained, not targeted.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: tek-beam-state-vs-line-pattern
+    status: material-source-difference-awaiting-scope
+    wire: ESC beam/vector selector
+    original_author_sources:
+    - clause: tek_4015.beam-vector-select
+      revision: First printing August 1974; 070-1649-00
+      meaning: Original hardware beam focus/write-through state and optional EGM vector pattern are separate consequences.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: Tekproc.c:592-603
+      meaning: Pinned xterm masks beam state and uses only line type.
+    question: If Tek graphics targeted, choose explicit emulation scope for storage, focus and temporary drawing, rather
+      than equating line pattern to original beam state.
+    decision: null
+  disposition: source-only
+- id: dectek-exit-profile
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 38 h / CSI ? 38 l; ESC ETX in Tek mode
+    retention: DEC VT240 Tek entry/exit and xterm ESC ETX exit source-only. No partial Tektronix emulation target.
+  scope_limit: Complete legacy Tektronix profile scope; exact ANSI/VT52 commands outside Tek mode unaffected. Future targeting
+    requires explicit whole-profile decision.
+  reason: Captain accepted retention of historical profiles without partial Tektronix emulation.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: dectek-exit-profile
+    status: material-original-profile-versus-extension-difference
+    wire: CSI ? 38 h / CSI ? 38 l; ESC ETX in Tek mode
+    original_author_sources:
+    - clause: dec_vt240.tektronix-mode
+      meaning: SET enters alpha mode; RESET exits to VT200 7-bit.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:7657-7666; Tekproc.c:446-452,1315-1325
+      meaning: SET enters Tek mode subject to inhibition; ESC ETX returns to VT parser.
+    question: If Tek mode is targeted, select explicit mode-exit profile or both nonconflicting exits; no automatic claim
+      of complete emulation.
+    decision: null
+  disposition: source-only
+- id: rxvt-mode10-menu-vs-toolbar
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 10 h / CSI ? 10 l
+    retention: rxvt menu bar, xterm toolbar, AT&T screen blank/unblank retained source-only; no selected mode10 target.
+  scope_limit: Only mode10 UI profile. AT&T context clause contains additional unrelated selectors and is not classified
+    wholesale.
+  reason: No escape-driven arbitrary host chrome or AT&T blanking in intended profile.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: rxvt-mode10-menu-vs-toolbar
+    status: material-source-difference-awaiting-scope
+    wire: CSI ? 10 h/l
+    original_author_sources:
+    - clause: rxvt.menu-bar
+      revision: 2.7.10, 26 March 2003; release archive SHA-256
+      meaning: Original rxvt mode selects menuBar visibility.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:7613-7618
+      meaning: Xterm selects toolbar visibility when compiled.
+    question: Choose intended host UI effect or scope exclusion if this historical mode is targeted.
+    decision: null
+    followup_evidence:
+    - source: att_610.setup-private-profile-context
+      observation: Original AT&T 610 Appendix D pp.D-2/D-3 assigns SET 10 blank screen and RESET unblank screen, a third
+        profile. Source-specific mode 13 labels and mode 14 cartridge status also differ from xterm read-only blink queries.
+        No new target choice implied.
+  disposition: source-only
+- id: rxvt-mode35-shift-actions-vs-font-only
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 35 h / CSI ? 35 l
+    retention: Original rxvt Shift+Insert/paste/font actions and xterm font shifting source-only; no selected target.
+  scope_limit: Mode35 only; normal user-owned shortcut and font policy unaffected.
+  reason: No application-controlled host font/Shift-key actions in intended profile.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: rxvt-mode35-shift-actions-vs-font-only
+    status: material-source-difference-awaiting-scope
+    wire: CSI ? 35 h/l
+    original_author_sources:
+    - clause: rxvt.shift-key-actions
+      revision: 2.7.10, 26 March 2003; release archive SHA-256
+      meaning: rxvt controls Shift+Insert paste and font actions.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:7652-7655
+      meaning: Xterm handler toggles shift_fonts resource.
+    question: Select original action set, xterm subset or explicit exclusion if targeted.
+    decision: null
+  disposition: source-only
+- id: hp-memory-lock-overflow-protect
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC l / ESC m in ANSI HP profile
+    retention: Original HP memory lock/overflow protection and xterm scrolling-margin approximation source-only; neither
+      selected.
+  scope_limit: HP memory lock only; other commands including DEC margin control remain distinct.
+  reason: Do not substitute margin change for original display-memory protection or select partial HP emulation.
+  implementation_policy: source-only; not an implementation target in the selected profile
+  superseded_pending_record:
+    id: hp-memory-lock-overflow-protect
+    status: material-source-difference-awaiting-scope
+    wire: ESC l / ESC m
+    original_author_sources:
+    - clause: hp_2624b.memory-lock
+      revision: September 1981; 02624-90008
+      meaning: HP original defines overflow protection when homed and display lock when below top.
+    - clause: hp_2624b.memory-unlock
+      revision: September 1981; 02624-90008
+      meaning: HP original defines overflow protection when homed and display lock when below top.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:4753-4766
+      meaning: Xterm changes scrolling region top, not a separately established display-memory overflow protection state.
+    question: If targeting HP memory lock, decide source scope and ensure actual memory/viewport behavior is explicit.
+    decision: null
+  disposition: source-only
