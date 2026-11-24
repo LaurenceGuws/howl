@@ -497,6 +497,13 @@ specifications:
         eight_bit: '0x9F'
         seven_bit: ESC _
         equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
+      original_string_semantics: Opening delimiter for application program use; command bytes 0x08..0x0d or 0x20..0x7e, closed
+        by ST. Interpretation depends on application/privacy discipline.
+      xterm_string_profile:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5281-5358,2323-2325; ctlseqs line 428
+        behavior: Accepted string payload ignored, not a universal assertion that the protocol has no defined extension. Parser
+          admission depends on ParseSOS; other implementations may define payloads.
     - id: bph
       section: 8.3.4
       level: defined
@@ -985,11 +992,22 @@ specifications:
         entry_id: esc-96f3bd2d29
         source_line: 205
         wire: ESC ^
+      - catalogue: xterm_ctlseqs
+        entry_id: pm-3a72abf844
+        source_line: 2267
+        wire: PM Pt ST
       original_c1_representation:
         source: ECMA-48 5th edition (June 1991), clause 8.3.94
         eight_bit: '0x9E'
         seven_bit: ESC ^
         equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
+      original_string_semantics: Opening delimiter for privacy-message use; command bytes 0x08..0x0d or 0x20..0x7e, closed by
+        ST. Interpretation depends on application/privacy discipline.
+      xterm_string_profile:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5281-5358,2323-2325; ctlseqs line 2267
+        behavior: Accepted string payload ignored, not a universal assertion that the protocol has no defined extension. Parser
+          admission depends on ParseSOS; other implementations may define payloads.
     - id: pp
       section: 8.3.95
       level: defined
@@ -3425,6 +3443,249 @@ specifications:
         location: charproc.c:6302-6310
       source_note: Pinned handler accepts 0..1 only, absent nparam uses 0, otherwise one_if_default(0). Exact omitted parameter
         representation is not inferred.
+    - id: resource-value-query
+      section: XTGETXRES, ctlseqs 506-528
+      level: defined
+      wire: DCS + Q hex-name[;hex-name...] ST
+      rule: Query semicolon-separated xterm VT100 widget resource names encoded as two hex digits per byte. Published reply
+        DCS 1 + R hex-name=hex-value[;...] ST or DCS 0 + R Pt ST for invalid resource. Resource values are not necessarily current
+        protocol state; query runtime state using its own protocol. Only supported boolean, numeric and string resources. No
+        arbitrary filesystem, process or environment access is implied.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-e4533479c3
+        source_line: 506
+        wire: DCS + Q Pt ST
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:5244-5301; charproc.c:10374-10418; ptyx.h:3977
+      source_note: Pinned implementation serializes int/float/boolean/string, stops after invalid resource, status determined
+        by first decoded name, echoes name and may retain trailing separator; malformed first token can yield no reply. AllowXResOps
+        is unconditional in this snapshot. This is a source observation, not a Howl host-data disclosure policy.
+    - id: terminal-database-select
+      section: XTSETTCAP, ctlseqs 530-537
+      level: defined
+      wire: DCS + p hex-name ST
+      rule: Decode a terminal description name and select database-backed key mappings on successful lookup; affects tcap keyboard
+        profile and capability lookup, not arbitrary writes to the terminal database. Published author describes overriding
+        termName.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-cfa8116725
+        source_line: 530
+        wire: DCS + p Pt ST
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:5159-5163; xtermcap.c:598-656
+      source_note: Pinned code requires full hex decode, nonempty legal graphic name shorter than 32 bytes excluding delimiter
+        punctuation, successful TcapInit, and permission. It clears cached tcap key data; no assignment to resource.term_name
+        is visible in this handler. Preserve discrepancy, do not assume TERM environment changes. Failure rings minor error
+        bell.
+    - id: terminal-capability-query
+      section: XTGETTCAP, ctlseqs 539-576
+      level: defined
+      wire: DCS + q hex-name[;hex-name...] ST
+      rule: Query special keyboard-key termcap/terminfo names; not a general terminfo database read. Also Co/colors, TN/name,
+        RGB (terminfo only). Replies DCS 1 + r hex-name=hex-value[;...] ST for successful list, DCS 0 + r ST for invalid request.
+        One response for multiple names; invalid name ends processing. Hex encodes each byte with two digits.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-1bf1251fb4
+        source_line: 539
+        wire: DCS + q Pt ST
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:5164-5241; xtermcap.c:385-455; charproc.c:9455-9506
+      source_note: Pinned status is determined by first parsed capability; unknown names stop list, known but unavailable may
+        be echoed without value. Query capture encodes output bytes uppercase hex. Colors returns configured ANSI count; RGB
+        returns equal component width or r/g/b widths, or -1 when unsupported. TN uses resource.term_name. Query permission
+        and exact invalid-list framing must be qualified separately.
+    - id: graphics-attribute-control
+      section: XTSMGRAPHICS, ctlseqs 665-718
+      level: defined
+      wire: CSI ? Pi ; Pa ; Pv S
+      rule: 'Pi=1 color-register count,2 sixel geometry,3 ReGIS geometry, in pixels for geometry. Pa=1 read,2 reset,3 set,4
+        read maximum. Pv is integer for color count or width;height for geometry when setting. Reply CSI ? Pi ; Ps [ ; Pv ...
+        ] S: 0 success,1 item error,2 action error,3 failure. Author explicitly distinguishes graphics geometry from window
+        size and says geometry mutation unsupported. Runtime unavailable graphics report failure; configured implementations
+        without maximum geometry should report zeros rather than fail.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-7cdf7b8401
+        source_line: 665
+        wire: CSI ? Pi ; Pa ; Pv S
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:5153-5277; graphics.c:628-665; graphics.h:50
+      source_note: Pinned request requires exactly 3 parameters; four-operand geometry set cannot enter handler. Success color
+        reply 3 params, geometry reply 4; failure reply only item/status. Register set 2..1024 inclusive; reset sets resource
+        override 0, then derives default. Runtime availability is checked after register set/reset. Sixel read min(text-pixel
+        dimensions, maximum); max query returns configured limit. ReGIS read returns default dimensions; reset/set/max fail.
+        These are scoped source observations, not selected Howl limits or mutation/failure semantics.
+    - id: save-private-modes
+      section: XTSAVE/XTRESTORE, ctlseqs 1564-1572,1607-1614
+      level: defined
+      wire: CSI ? Pm s
+      rule: Save only listed DEC-private settings in a one-level cache; each selected setting independently replaces its previous
+        cached value. Not a stack or DECSC.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-ba1c668e35
+        source_line: 1607
+        wire: CSI ? Pm s
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6202-6205,8040-8393; ptyx.h:2267-2269
+      source_note: Pinned code processes each selector in order, ignores status-line requests and unsupported/read-only selectors,
+        and shares cache slots for some mutually exclusive mode families (mouse tracking/encoding, keyboard type). Restore invokes
+        mode-specific side effects; unsaved-state behavior and each selector require separate qualification.
+    - id: restore-private-modes
+      section: XTSAVE/XTRESTORE, ctlseqs 1564-1572,1607-1614
+      level: defined
+      wire: CSI ? Pm r
+      rule: Restore previously saved settings selected by the listed DECSET parameters from the one-level cache. No implied
+        restore-all, no cursor save/restore equivalence.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-0c95b02fe1
+        source_line: 1564
+        wire: CSI ? Pm r
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6207-6210,8399-8790; ptyx.h:2267-2269
+      source_note: Pinned code processes each selector in order, ignores status-line requests and unsupported/read-only selectors,
+        and shares cache slots for some mutually exclusive mode families (mouse tracking/encoding, keyboard type). Restore invokes
+        mode-specific side effects; unsaved-state behavior and each selector require separate qualification.
+    - id: more-tab-wrap-workaround
+      section: DECSET/DECRST 41, ctlseqs 938/1086; xterm.man -cu/curses
+      level: defined
+      wire: CSI ? 41 h / CSI ? 41 l
+      rule: Enable/disable historical more(1) workaround for a full-width line followed by a tab. When HT occurs while wrap
+        is pending and autowrap enabled, pinned code indexes one line, moves to column zero, clears pending wrap then finds
+        next tab stop. Default false; not normal ECMA HT semantics.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-41-h-line-938
+        source_line: 938
+        wire: CSI ? 41 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-41-l-line-1086
+        source_line: 1086
+        wire: CSI ? 41 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7671-7674; tabs.c:109-124; xterm.man:547-562,3167-3172
+    - id: cursor-blink-preference-report
+      section: Read-only cursor blink resources, ctlseqs 926-929,1075-1078,1512-1518
+      level: defined
+      wire: CSI ? 13 $ p
+      rule: 'Report cursorBlink user preference via DECRQM/DECRPM. Published table lists SET/RESET but explicitly read-only;
+        no escape sequence changes this preference. Pinned report status: 1/2 configurable on/off,3/4 permanently on/off per
+        pinned enum. Distinct from actual DECSCUSR cursor style or mode 12 cursor blink request.'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7627-7632; misc.c:5515-5537
+      reply: CSI ? 13 ; Ps $ y
+    - id: cursor-blink-xor-report
+      section: Read-only cursor blink resources, ctlseqs 926-929,1075-1078,1512-1518
+      level: defined
+      wire: CSI ? 14 $ p
+      rule: 'Report cursorBlinkXOR user preference via DECRQM/DECRPM. Published table lists SET/RESET but explicitly read-only;
+        no escape sequence changes this preference. Pinned report status: 3 enabled,4 disabled (read-only permanent report).
+        Distinct from actual DECSCUSR cursor style or mode 12 cursor blink request.'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7627-7632; misc.c:5515-5537
+      reply: CSI ? 14 ; Ps $ y
+    - id: meta-high-bit-mode
+      section: DECSET/DECRST 1034, ctlseqs 989-991,1131-1132; xterm.man eightBitMeta
+      level: defined
+      wire: CSI ? 1034 h / CSI ? 1034 l
+      rule: Published mode enables/disables high-bit interpretation of Meta input and describes enabling/disabling eightBitInput.
+        xterm.man separately defines eightBitInput and eightBitMeta. Actual pinned handler changes eight_bit_meta unless configured
+        never; input path additionally requires input_eight_bits and a single byte below 128, with Meta/Alt ESC prefix overrides.
+        UTF-8 output encodes resulting value as UTF-8. Preserve difference rather than conflate resource bits.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1034-h-line-989
+        source_line: 989
+        wire: CSI ? 1034 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1034-l-line-1131
+        source_line: 1131
+        wire: CSI ? 1034 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7854-7858; input.c:1476-1542; xterm.man:3597-3607,3662-3690
+    - id: delete-key-encoding
+      section: DECSET/DECRST 1037, ctlseqs 996-997,1137-1138
+      level: defined
+      wire: CSI ? 1037 h / CSI ? 1037 l
+      rule: Published SET sends DEL (0x7f) from editing-keypad Delete; RESET sends VT220 Remove (CSI 3 ~). Distinct from backarrow
+        mode.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1037-h-line-996
+        source_line: 996
+        wire: CSI ? 1037 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1037-l-line-1137
+        source_line: 1137
+        wire: CSI ? 1037 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7869-7872; input.c:878-906; xterm.man:3310-3332
+      source_note: Pinned default/VT220 and legacy profiles honor explicitly set true/false for DEL/Remove; other keyboard types
+        return DEL independent of this bit. xterm.man wording for default/VT220 contradicts explicit code and ctlseqs; do not
+        generalize to all keyboard profiles.
+    - id: checksum-extension
+      section: XTCHECKSUM, ctlseqs 1814-1822
+      level: defined
+      wire: 'CSI Ps # y'
+      rule: Select DECRQCRA checksum variant as bit mask, not a checksum request. Published bit numbers 0 no negate,1 omit video
+        attributes,2 do not omit blanks,3 omit uninitialized cells,4 do not mask to eight bits or ignore combining characters.
+        Default mask zero.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6038-6044; ptyx.h:488-496; screen.c:3137-3265
+      related_command: dec_vt420.request-rectangle-checksum
+      source_note: 'Pinned bit3 csDRAWN does the opposite of published prose: include uninitialized cells as spaces (also included
+        with bit2); bit4 csBYTE chooses charData instead of DEC char mapping, while combining chars added when bit4 clear, and
+        trimming changes totals. Exact arithmetic and flags are not accepted until reconciled.'
+      pending_reconciliation: xtchecksum-bit3-and-unicode
+    - id: window-operation-extensions
+      section: XTWINOPS, ctlseqs 1616-1696; history table 3720-3749
+      level: defined
+      wire: CSI Ps [ ; Pm ; Pm ] t
+      rule: Xterm-published additions to Sun/CDE window profile. 9;0/1/2/3 restore/maximize/vertical/horizontal;10;0/1/2 undo/fullscreen/toggle;13;2
+        text origin;14 text pixels and 14;2 outer window pixels;15 screen pixels,16 cell pixels,19 screen characters;22/23;0/1/2
+        save/restore both/icon/window title, optional 1..10 direct slot without push/pop. Pixel vs character resize parameters
+        4/8 omitted reuse current size, zero use display size. Negative reported position encoded unsigned 16-bit. >=24 adapts
+        DEC DECSLPP to window resize; not claimed xterm origin for DECSLPP.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:8969-9309; misc.c:7970-8040; ptyx.h:2357
+      related_command: cde_dtterm.window-manipulation
+      replies:
+        13;2: CSI 3 ; x ; y t
+        14 / 14;2: CSI 4 ; height ; width t
+        '15': CSI 5 ; height ; width t
+        '16': CSI 6 ; cell-height ; cell-width t
+        '19': CSI 9 ; height ; width t
+      source_note: Pinned implementation uses host window-operation permissions, physical pixel or row/column dimensions depending
+        on operation, reports font dimensions for 16. Title stack has ten slots and modulo storage; indexed access does not
+        advance/decrement used, missing title may search earlier slots. No implication of native Wayland permissions or exact
+        desktop window position availability.
+      pending_reconciliation: xtwinops-14-window-vs-text-area
+    - id: x-property
+      section: OSC selector 3, ctlseqs 2028-2030
+      level: defined
+      wire: OSC 3 ; Pt (BEL | ST)
+      rule: Set top-level X property with name=value or delete property with name only. Host/X11-specific, not CDE working-directory
+        operation.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:4175-4179,6375-6397
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -3970,6 +4231,14 @@ specifications:
       level: defined
       wire: DCS P1 ; P2 ; P3 q sixels ST
       rule: Introduces a sixel data stream with defined macro, background, grid and terminator parameters.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-27fe9c2ba4
+        source_line: 3221
+        wire: DCS Pa ; Pb ; Ph q
+      corroborating_original_source:
+        clause: dec_vt3xx_graphics.sixel-envelope-profile
+        source: DEC VT330/VT340 Graphics Programming May 1988, pp.232-235
     - id: six-dots
       section: 2.14 / Sixel Data Format, page 96
       level: defined
@@ -6207,6 +6476,40 @@ specifications:
           state.
       competes_with: dec_vt382_thai.sixel-display-mode
       pending_reconciliation: decsdm-polarity-vt300-vt382
+    - id: sixel-envelope-profile
+      section: Chapter 14 / Sixel Data Format, printed pp.232-235
+      level: defined
+      wire: DCS P1 ; P2 ; P3 q sixels ST
+      rule: Original VT300 sixel envelope, same command identity as pocket guide. P1 macro aspect vertical:horizontal omitted/0/1=2:1,2=5:1,3/4=3:1,5/6=2:1,7/8/9=1:1;
+        raster attributes override. P2=0/2 paint unset bits current background;1 preserves existing pixel colors. P3 horizontal
+        grid ignored on VT300 (fixed 0.0195 cm). Six-dot character 0x3f..0x7e, least significant bit top. Raster Pan/Pad integer
+        aspect, rounded nearest integer on VT300; Ph/Pv pixels specify extent/background, never clip sixel data.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: graphics_sixel.c:407-456
+      related_command: dec_sixel.envelope
+      source_note: Pinned xterm uses different macro table [200,200,450,300,250,183,150,130,112,100] vs horizontal 100; P2 non-1
+        background register 0. Do not replace source macro values or reinterpret raster extents as clipping limits.
+      pending_reconciliation: sixel-original-macro-aspect-vs-xterm
+    - id: regis-envelope
+      section: Chapter 1 / Entering and Exiting ReGIS, printed pp.13-14
+      level: defined
+      wire: DCS Pm p ReGIS-data ST
+      rule: 'Enter ReGIS from VT100/VT300 mode. Pm omitted/0 resumes at last exit without command display;1 starts at command
+        level without display;2 resumes with command display;3 starts new command with display. ST exits. Command display is
+        bottom line: LF erases line and graphic previously drawn there; each character interpreted, normal intensity/nonblinking,
+        at most 80 characters before line cleared on next character, excludes control/8-bit characters. This is envelope and
+        mode behavior, not full ReGIS grammar.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-73e92f91aa
+        source_line: 3254
+        wire: DCS Pm p Pr..Pr ST
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:5349-5359; graphics_regis.c:7651-7695
+      source_note: Pinned xterm enters parser with persistent state; Pmode 1/3 or first image initializes it. Full command-display
+        and persistence semantics not proved.
   dec_vt382_thai:
     title: VT382 Thai Display Terminal Installing and Using Manual
     author: Digital Equipment Corporation; Digital Equipment Korea Inc.; Digital Equipment (Thailand) Ltd.
@@ -6668,6 +6971,97 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:6218-6249
       pending_reconciliation: docs-return-vs-xterm-default-charset
+  cde_dtterm:
+    title: dtterm(5) terminal escape sequences
+    author: Common Desktop Environment / Digital UNIX vendor documentation
+    authority: protocol-publisher-profile
+    revision: Digital UNIX 3.2c manual, historical HTML reproduction
+    url: https://www.typewritten.org/Manual/DEC/Digital_UNIX/3.2c/man5/dtterm.html
+    snapshot_sha256: 087f57702b3e58d28d541185ae4dfd83f174d0e0efb41ce5ace9142964958bfb
+    scope: Selected CDE dtterm title and window-operation meanings; inherited Sun shelltool window controls predate CDE. This
+      is a pinned published profile, not a claim CDE originated every operation.
+    clauses:
+    - id: window-manipulation
+      section: Received Escape Sequences / Window manipulation
+      level: defined
+      wire: CSI Ps [ ; Pm ; Pm ] t
+      rule: 'CDE dtterm published window profile: 1 restore,2 minimize,3;x;y move in pixels,4;height;width resize window in
+        pixels,5 raise,6 lower,7 refresh,8;height;width resize text in characters; 11 state,13 position,14 window pixels,18
+        text characters,20 icon label,21 title reports. Earlier Sun shelltool origins for 1..8,11,13,14,18 are reported by xterm
+        historical notes, not independently pinned here.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-91d57d4c0a
+        source_line: 1616
+        wire: CSI Ps ; Ps ; Ps t
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:8969-9309; ctlseqs 1616-1696,3687-3768
+      replies:
+        '11': CSI 1 t non-iconified or CSI 2 t iconified
+        '13': CSI 3 ; x ; y t
+        '14': CSI 4 ; height ; width t
+        '18': CSI 8 ; height ; width t
+        '20': OSC L label ST
+        '21': OSC l title ST
+      source_note: dtterm 14 reports window pixels; xterm default 14 reports text-area pixels and 14;2 window pixels. Treat
+        as explicit profile distinction, not identical query dimensions. Native window authorization and units are host-owned.
+      pending_reconciliation: xtwinops-14-window-vs-text-area
+    - id: title-selector-0
+      section: Received Escape Sequences / Set text parameters
+      level: defined
+      wire: OSC 0 ; Pt BEL
+      rule: Set both icon name and window title to Pt under dtterm published profile. Xterm accepts BEL or ST; do not infer
+        identical empty-title or encoding defaults.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-0
+        source_line: 2025
+        wire: OSC 0 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:4140-4173
+      source_note: Pinned xterm substitutes xterm for missing/empty title payload. User-facing title/host policy remains distinct
+        from terminal text.
+    - id: title-selector-1
+      section: Received Escape Sequences / Set text parameters
+      level: defined
+      wire: OSC 1 ; Pt BEL
+      rule: Set icon name to Pt under dtterm published profile. Xterm accepts BEL or ST; do not infer identical empty-title
+        or encoding defaults.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-1
+        source_line: 2026
+        wire: OSC 1 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:4140-4173
+      source_note: Pinned xterm substitutes xterm for missing/empty title payload. User-facing title/host policy remains distinct
+        from terminal text.
+    - id: title-selector-2
+      section: Received Escape Sequences / Set text parameters
+      level: defined
+      wire: OSC 2 ; Pt BEL
+      rule: Set window title to Pt under dtterm published profile. Xterm accepts BEL or ST; do not infer identical empty-title
+        or encoding defaults.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-2
+        source_line: 2027
+        wire: OSC 2 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:4140-4173
+      source_note: Pinned xterm substitutes xterm for missing/empty title payload. User-facing title/host policy remains distinct
+        from terminal text.
+    - id: restart-working-directory
+      section: Received Escape Sequences / Set text parameters selector 3
+      level: defined
+      wire: OSC 3 ; Pt BEL
+      rule: Set working directory for later session restart, not immediate shell chdir; the terminal attempts to restart there.
+        This is CDE profile semantics, not xterm X property behavior or permission to access arbitrary host paths.
+      pending_reconciliation: osc3-cde-directory-vs-xterm-xproperty
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -6719,10 +7113,6 @@ discovery_catalogues:
       wire: ESC m
       section: Controls beginning with ESC
       source_line: 413
-    - id: apc-06485b89d8
-      wire: APC Pt ST None.
-      section: Application Program-Command functions
-      source_line: 428
     - id: dcs-1903109226
       wire: DCS Ps ! u Pt ST
       section: Device-Control functions
@@ -6733,26 +7123,6 @@ discovery_catalogues:
         decision: decaupss-latin1-assignment-selector
         reason: VT420 original assignment and report sections disagree on ISO Latin-1 selector; xterm distinguishes 0!uA and
           1!uA. Retain secondary entry for explicit scope reconciliation.
-    - id: dcs-e4533479c3
-      wire: DCS + Q Pt ST
-      section: Device-Control functions
-      source_line: 506
-      symbol: XTGETXRES
-    - id: dcs-cfa8116725
-      wire: DCS + p Pt ST
-      section: Device-Control functions
-      source_line: 530
-      symbol: XTSETTCAP
-    - id: dcs-1bf1251fb4
-      wire: DCS + q Pt ST
-      section: Device-Control functions
-      source_line: 539
-      symbol: XTGETTCAP
-    - id: csi-7cdf7b8401
-      wire: CSI ? Pi ; Pa ; Pv S
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 665
-      symbol: XTSMGRAPHICS
     - id: csi-724bc8b026
       wire: CSI Pl ; Pc " p
       section: Functions using CSI , ordered by the final character(s)
@@ -6763,25 +7133,10 @@ discovery_catalogues:
         decision: decscl-hard-vs-soft-reset
         reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
           separate.
-    - id: csi-0c95b02fe1
-      wire: CSI ? Pm r
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1564
-      symbol: XTRESTORE
     - id: csi-2198aed027
       wire: CSI s
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1583
-    - id: csi-ba1c668e35
-      wire: CSI ? Pm s
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1607
-      symbol: XTSAVE
-    - id: csi-91d57d4c0a
-      wire: CSI Ps ; Ps ; Ps t
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1616
-      symbol: XTWINOPS
     - id: csi-a6bef4a803
       wire: CSI Ps SP t
       section: Functions using CSI , ordered by the final character(s)
@@ -6810,6 +7165,11 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1814
       symbol: XTCHECKSUM
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: xtchecksum-bit3-and-unicode
+        reason: Published xterm table says bit 3 omits uninitialized cells and bit 4 retains combining characters. Pinned csDRAWN
+          includes uninitialized cells; combining addition occurs when csBYTE is clear and can be lost by trimmed total.
     - id: csi-d792d66921
       wire: CSI Ps ' |
       section: Functions using CSI , ordered by the final character(s)
@@ -6822,18 +7182,6 @@ discovery_catalogues:
           (event 0); query is a position request, not a documented filter-cancel command. Pinned xterm returns event 0 for out-of-range
           pointer and explicitly disables locator and clears filter/events on request while filter active, emulating observed
           DECterm behavior.
-    - id: pm-3a72abf844
-      wire: PM Pt ST
-      section: Privacy Message
-      source_line: 2267
-    - id: dcs-27fe9c2ba4
-      wire: DCS Pa ; Pb ; Ph q
-      section: Sixel Graphics
-      source_line: 3221
-    - id: dcs-73e92f91aa
-      wire: DCS Pm p Pr..Pr ST
-      section: ReGIS Graphics
-      source_line: 3254
     - id: esc-14df8c1237
       wire: ESC ETX
       section: Tektronix 4014 Mode
@@ -6966,42 +7314,20 @@ discovery_catalogues:
       wire: ESC t
       section: Tektronix 4014 Mode
       source_line: 3371
-    - id: osc-selector-0
-      wire: OSC 0 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2025
-      review:
-        classification: source-origin-or-semantic-review-required
-        reason: The xterm publication attributes the title family 0..2 to dtterm; originating title-family source still needs
-          verification.
-        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
-    - id: osc-selector-1
-      wire: OSC 1 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2026
-      review:
-        classification: source-origin-or-semantic-review-required
-        reason: The xterm publication attributes the title family 0..2 to dtterm; originating title-family source still needs
-          verification.
-        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
-    - id: osc-selector-2
-      wire: OSC 2 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2027
-      review:
-        classification: source-origin-or-semantic-review-required
-        reason: The xterm publication attributes the title family 0..2 to dtterm; originating title-family source still needs
-          verification.
-        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: osc-selector-3
       wire: OSC 3 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2028
       review:
-        classification: source-origin-or-semantic-review-required
-        reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
-          directory for next session. Obtain originating dtterm source before scope resolution.
-        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
+        classification: source-confirmed-material-semantic-difference
+        decision: osc3-cde-directory-vs-xterm-xproperty
+        reason: CDE dtterm sets directory for a restarted session. Pinned xterm changes or deletes a top-level X property under
+          ewSetXprop permission.
+        previous_review:
+          classification: source-origin-or-semantic-review-required
+          reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
+            directory for next session. Obtain originating dtterm source before scope resolution.
+          source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: osc-selector-22
       wire: OSC 22 ; Pt (BEL | ST)
       section: Operating System Commands
@@ -7031,14 +7357,6 @@ discovery_catalogues:
       wire: CSI ? 12 h
       section: DEC Private Mode Set (DECSET)
       source_line: 925
-    - id: private-mode-13-h-line-926
-      wire: CSI ? 13 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 926
-    - id: private-mode-14-h-line-928
-      wire: CSI ? 14 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 928
     - id: private-mode-30-h-line-934
       wire: CSI ? 30 h
       section: DEC Private Mode Set (DECSET)
@@ -7051,10 +7369,6 @@ discovery_catalogues:
       wire: CSI ? 38 h
       section: DEC Private Mode Set (DECSET)
       source_line: 936
-    - id: private-mode-41-h-line-938
-      wire: CSI ? 41 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 938
     - id: private-mode-44-h-line-943
       wire: CSI ? 44 h
       section: DEC Private Mode Set (DECSET)
@@ -7124,14 +7438,6 @@ discovery_catalogues:
       wire: CSI ? 1015 h
       section: DEC Private Mode Set (DECSET)
       source_line: 983
-    - id: private-mode-1034-h-line-989
-      wire: CSI ? 1034 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 989
-    - id: private-mode-1037-h-line-996
-      wire: CSI ? 1037 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 996
     - id: private-mode-10-l-line-1073
       wire: CSI ? 10 l
       section: DEC Private Mode Reset (DECRST)
@@ -7140,14 +7446,6 @@ discovery_catalogues:
       wire: CSI ? 12 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1074
-    - id: private-mode-13-l-line-1075
-      wire: CSI ? 13 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1075
-    - id: private-mode-14-l-line-1077
-      wire: CSI ? 14 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1077
     - id: private-mode-30-l-line-1083
       wire: CSI ? 30 l
       section: DEC Private Mode Reset (DECRST)
@@ -7156,10 +7454,6 @@ discovery_catalogues:
       wire: CSI ? 35 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1084
-    - id: private-mode-41-l-line-1086
-      wire: CSI ? 41 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1086
     - id: private-mode-44-l-line-1091
       wire: CSI ? 44 l
       section: DEC Private Mode Reset (DECRST)
@@ -7229,14 +7523,6 @@ discovery_catalogues:
       wire: CSI ? 1015 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1129
-    - id: private-mode-1034-l-line-1131
-      wire: CSI ? 1034 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1131
-    - id: private-mode-1037-l-line-1137
-      wire: CSI ? 1037 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1137
     pending_reconciliation:
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-44
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
@@ -7613,6 +7899,65 @@ discovery_catalogues:
       question: If DEC locator is targeted, verify DECterm/modern references and select exact query reply and filter lifetime
         semantics.
       decision: null
+    - id: xtchecksum-bit3-and-unicode
+      status: material-source-difference-awaiting-scope
+      wire: 'CSI Ps # y'
+      original_author_sources:
+      - clause: xterm_controls.checksum-extension
+        revision: dated official control-sequence reference, observed 2026-11-23
+        meaning: Published xterm table says bit 3 omits uninitialized cells and bit 4 retains combining characters.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: ptyx.h:488-496; screen.c:3177-3264
+        meaning: Pinned csDRAWN includes uninitialized cells; combining addition occurs when csBYTE is clear and can be lost
+          by trimmed total.
+      question: Verify relevant modern reference implementations and actual checksum behavior before choosing mask semantics.
+      decision: null
+    - id: osc3-cde-directory-vs-xterm-xproperty
+      status: material-source-difference-awaiting-scope
+      wire: OSC 3 ; Pt BEL
+      original_author_sources:
+      - clause: cde_dtterm.restart-working-directory
+        revision: Digital UNIX 3.2c manual, historical HTML reproduction
+        meaning: CDE dtterm sets directory for a restarted session.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: misc.c:4175-4179,6375-6397
+        meaning: Pinned xterm changes or deletes a top-level X property under ewSetXprop permission.
+      question: If targeted, select interoperable intended OSC 3 meaning from relevant references; do not implement either host
+        operation by default.
+      decision: null
+    - id: xtwinops-14-window-vs-text-area
+      status: material-original-profile-versus-extension-difference
+      wire: CSI 14 t
+      original_author_sources:
+      - clause: cde_dtterm.window-manipulation
+        revision: Digital UNIX 3.2c manual, historical HTML reproduction
+        meaning: Reports window in pixels.
+      - clause: xterm_controls.window-operation-extensions
+        revision: dated official control-sequence reference, observed 2026-11-23
+        meaning: 14 reports text-area pixels; 14;2 reports window pixels.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:9132-9157
+        meaning: Default uses Width/Height; parameter 2 uses WMFrameWindow attributes.
+      question: If targeted, select intended pixel geometry and distinguish text area, cell, outer window and screen sizes.
+        Do not treat shared CSI t family as identical geometry semantics.
+      decision: null
+    - id: sixel-original-macro-aspect-vs-xterm
+      status: material-original-profile-versus-extension-difference
+      wire: DCS P1 ; P2 ; P3 q sixels ST
+      original_author_sources:
+      - clause: dec_vt3xx_graphics.sixel-envelope-profile
+        revision: Second edition, May 1988 (EK-VT3XX-GP-002)
+        meaning: Macro P1 aspect ratios are original printed vertical:horizontal values; e.g. 2=5:1,7=1:1.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: graphics_sixel.c:409-456
+        meaning: Macro 2 uses 450:100 and macro 7 uses 130:100 before update_sixel_aspect.
+      question: If macro aspect-ratio behavior is targeted, qualify original source and modern references, including final aspect
+        calculation and raster overrides; no silent ratio reinterpretation.
+      decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
@@ -7773,6 +8118,36 @@ discovery_catalogues:
       actual_wire: CSI ? 5 W
       canonical_clause: dec_vt520.tab-every-eight-columns
       cause: Extractor appended explanatory prose to wire; original DEC p.5-149 and xterm line 744 establish complete command.
+    - original_id: private-mode-13-h-line-926
+      source_line: 926
+      incorrect_wire: CSI ? 13 h
+      actual_wire: CSI ? 13 $ p
+      canonical_clause: xterm_controls.cursor-blink-preference-report
+      cause: Published read-only preference selector; pinned set/reset explicitly ignored. Record query semantics, not mutation.
+    - original_id: private-mode-13-l-line-1075
+      source_line: 1075
+      incorrect_wire: CSI ? 13 l
+      actual_wire: CSI ? 13 $ p
+      canonical_clause: xterm_controls.cursor-blink-preference-report
+      cause: Published read-only preference selector; pinned set/reset explicitly ignored. Record query semantics, not mutation.
+    - original_id: private-mode-14-h-line-928
+      source_line: 928
+      incorrect_wire: CSI ? 14 h
+      actual_wire: CSI ? 14 $ p
+      canonical_clause: xterm_controls.cursor-blink-xor-report
+      cause: Published read-only preference selector; pinned set/reset explicitly ignored. Record query semantics, not mutation.
+    - original_id: private-mode-14-l-line-1077
+      source_line: 1077
+      incorrect_wire: CSI ? 14 l
+      actual_wire: CSI ? 14 $ p
+      canonical_clause: xterm_controls.cursor-blink-xor-report
+      cause: Published read-only preference selector; pinned set/reset explicitly ignored. Record query semantics, not mutation.
+    - original_id: apc-06485b89d8
+      source_line: 428
+      incorrect_wire: APC Pt ST None.
+      actual_wire: APC Pt ST
+      canonical_clause: ecma48.apc
+      cause: Extractor appended None. prose to standard APC string envelope; xterm ignores generic payload.
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
