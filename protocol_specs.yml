@@ -2438,6 +2438,7 @@ specifications:
           Current Howl host-geometry consequences are not inferred.
         conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
           side effects, sizing or response semantics.
+      reset_mode_on_change: dec_vt420.vertical-split-screen-mode
     - id: left-right-margins
       section: Page Memory / Set Left and Right Margins, p133
       level: defined
@@ -2455,6 +2456,7 @@ specifications:
           least 2 columns and at most the page width.
         effect: Sets horizontal scrolling margins and homes cursor to row 1, column 1 of the page.
         xterm_context: Source line 1586 admits DECSLRM only when DECLRMM mode is enabled; the implementation is not assumed source-complete.
+      requires_mode: dec_vt420.vertical-split-screen-mode
     - id: top-bottom-margins
       section: Page Memory / Set Top and Bottom Margins, p134
       level: defined
@@ -3096,6 +3098,156 @@ specifications:
           mainly for DECRQM/DECRPM. Do not erase either valid command identity.
         conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
           side effects, sizing or response semantics.
+    - id: vertical-split-screen-mode
+      section: Chapter 6 / Vertical Split Screen Mode (DECVSSM), printed pages 135-136
+      level: defined
+      wire: CSI ? 69 h / CSI ? 69 l
+      rule: Mode 69 gates DECSLRM. On set it selects left/right margin capability, resets existing page-memory line attributes to single-width/single-height
+        and blocks DECDWL/DECDHL; on reset it disables margin setting, restores left/right page-border margins and permits double-sized lines
+        again.
+      original_mode_semantics:
+        name: DECVSSM
+        selector: 69
+        source: Original DEC VT420 Programmer Reference Manual, February 1992, Chapter 6 pages 135-136
+        original_default: 'reset: DECSLRM cannot set left/right margins'
+        set_wire: CSI ? 69 h
+        set_effect: Enable DECSLRM; reset all line attributes in the current session page memory to single width and single height; ignore
+          DECDWL and DECDHL while enabled.
+        reset_wire: CSI ? 69 l
+        reset_effect: Disable DECSLRM; restore horizontal margins to each page border; permit DECDWL/DECDHL again, without a new forced line-size
+          reset.
+        original_scope: All current-session page-memory lines, not merely visible rows; exact bounds and page arrangements belong to the
+          original DEC page-memory model.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-69-h-line-959
+        source_line: 959
+        wire: CSI ? 69 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-69-l-line-1105
+        source_line: 1105
+        wire: CSI ? 69 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        original_name_in_source: srm_DECLRMM (ptyx.h:1210 labels it VT420 Vertical Split Screen Mode DECVSSM)
+        code_locations:
+        - charproc.c:7444-7482
+        - charproc.c:7778-7783
+        - charproc.c:8616-8623
+        - doublechr.c:48-82
+        - doublechr.c:144-173
+        verified_behavior: For VT420-level emulation, mode set enables LEFT_RIGHT and calls xterm_ResetDouble; reset clears the mode and
+          resets horizontal margins. The repaint_line double-size gate denies DECDWL and DECDHL while mode enabled.
+        important_coverage_limit: xterm_ResetDouble loops row < screen->max_row, whereas ptyx.h defines MaxRows=max_row+1, so it appears
+          to skip the last visible line. It also resets the visible screen rather than proving DEC all-page-memory coverage. This possible
+          source implementation defect must not be normalized into the canonical DEC requirement or treated as FULL.
+        modern_subset_observations: Ghostty, WezTerm and GNOME VTE mode-69 handlers explicitly gate margins/reset borders; this bounded check
+          does not establish DEC line-size reset/suppression in those implementations.
+      related_controls:
+      - dec_vt420.left-right-margins
+      - dec_vt420.column-mode
+      implementation_assessment_scope: Original DEC command identity now reconciled with xterm; full Howl behavior is unassessed, no status
+        or priority inferred.
+    - id: autorepeat-mode
+      section: Chapter 11 / Autorepeat Mode (DECARM), printed pages 190-191
+      level: defined
+      wire: CSI ? 8 h / CSI ? 8 l
+      rule: Controls whether eligible keys held longer than 0.5 seconds generate repeated characters until release. The setting applies to
+        input key repeat, not terminal text output or TUI scrollback.
+      original_mode_semantics:
+        name: DECARM
+        selector: 8
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 11 pages 190-191
+        original_default: 'set: repeat enabled'
+        set_wire: CSI ? 8 h
+        set_effect: Eligible held keys repeat after more than 0.5 seconds.
+        reset_wire: CSI ? 8 l
+        reset_effect: Disable autorepeat for eligible keys.
+        excluded_key_examples: Original ANSI/short ANSI keyboards exclude F1-F5, Return, Shift, Control, Set-Up and other modifier/control
+          keys; PC keyboards exclude Alt, AltGr, Caps Lock, Ctrl, Enter, Num Lock, Shift and other modifiers. Complete tables must be reread
+          for FULL.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-8-h-line-921
+        source_line: 921
+        wire: CSI ? 8 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-8-l-line-1071
+        source_line: 1071
+        wire: CSI ? 8 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7602-7607; misc.c:5500-5502
+        implementation_divergence: Xterm explicitly ignores DECARM set/reset to avoid changing X11 autorepeat for the entire display; DECRQM
+          reports mode permanently reset. This is an implementation limitation, not a different normative command definition.
+      implementation_assessment_scope: Original source meaning recorded; platform-specific host keyboard autorepeat is outside unassessed
+        VT parser conformance. No automatic implementation target.
+    - id: print-form-feed-mode
+      section: Chapter 11 / Print Form Feed Mode (DECPFF), printed page 211
+      level: defined
+      wire: CSI ? 18 h / CSI ? 18 l
+      rule: Controls whether an FF (0x0C) is appended at the end of printer-output functions. The print-cursor-line function is explicitly
+        unaffected.
+      original_mode_semantics:
+        name: DECPFF
+        selector: 18
+        source: Original DEC VT420 Programmer Reference Manual, page 211
+        original_default: 'reset: no printer form feed'
+        set_wire: CSI ? 18 h
+        set_effect: Send FF to printer after a printing function, excluding print-cursor-line.
+        reset_wire: CSI ? 18 l
+        reset_effect: Do not append an FF after a printing function.
+        scope: Printer I/O behavior, not an in-band VT grid form feed or page-memory addressing mechanism; no printer-connected behavior
+          is unselected by this indexing.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-18-h-line-930
+        source_line: 930
+        wire: CSI ? 18 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-18-l-line-1079
+        source_line: 1079
+        wire: CSI ? 18 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7639-7641; misc.c:5539-5541
+        behavior: Stores a printer_formfeed flag and reports its mode status.
+      related_media_copy:
+      - dec_vt420.media-copy-dec-private-extended
+      - dec_vt240.media-copy-dec-private
+      implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not yet triaged.
+    - id: printer-extent-mode
+      section: Chapter 11 / Printer Extent Mode (DECPEX), printed page 210
+      level: defined
+      wire: CSI ? 19 h / CSI ? 19 l
+      rule: 'Selects the extent of the print-page output: full display page or current scrolling region only.'
+      original_mode_semantics:
+        name: DECPEX
+        selector: 19
+        source: Original DEC VT420 Programmer Reference Manual, page 210
+        original_default: 'reset: print current scrolling region'
+        set_wire: CSI ? 19 h
+        set_effect: Print the complete page, not merely the scrolling region.
+        reset_wire: CSI ? 19 l
+        reset_effect: Limit print-page output to the scrolling region inside the margins.
+        scope: A printer output selection, not display paging, VT scrollback, or TUI history.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-19-h-line-931
+        source_line: 931
+        wire: CSI ? 19 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-19-l-line-1080
+        source_line: 1080
+        wire: CSI ? 19 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7642-7644; misc.c:5542-5544
+        behavior: Stores a printer_extent flag and reports its mode status.
+      related_media_copy:
+      - dec_vt420.media-copy-dec-private-extended
+      - dec_vt240.media-copy-dec-private
+      implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not yet triaged.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -4355,10 +4507,6 @@ discovery_catalogues:
       wire: CSI ? 5 h
       section: DEC Private Mode Set (DECSET)
       source_line: 918
-    - id: private-mode-8-h-line-921
-      wire: CSI ? 8 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 921
     - id: private-mode-9-h-line-922
       wire: CSI ? 9 h
       section: DEC Private Mode Set (DECSET)
@@ -4379,14 +4527,6 @@ discovery_catalogues:
       wire: CSI ? 14 h
       section: DEC Private Mode Set (DECSET)
       source_line: 928
-    - id: private-mode-18-h-line-930
-      wire: CSI ? 18 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 930
-    - id: private-mode-19-h-line-931
-      wire: CSI ? 19 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 931
     - id: private-mode-30-h-line-934
       wire: CSI ? 30 h
       section: DEC Private Mode Set (DECSET)
@@ -4455,19 +4595,6 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-69-h-line-959
-      wire: CSI ? 69 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 959
-      review:
-        classification: similar-mode-purpose-but-original-side-effects-not-yet-reconciled
-        original_source: DEC VT420 Programmer Reference Manual (Feb 1992), printed pages 135-136; DECVSSM, selector 69
-        xterm_source: Pinned xterm ctlseqs line 959; DECLRMM, selector 69
-        shared_purpose: Enable or disable changes to left/right margins via DECSLRM.
-        original_dec_additional_effect: DECVSSM set forces all current session page-memory line attributes to single-width/single-height
-          and suppresses future DECDWL/DECDHL; reset restores page-border margins and permits these line attributes.
-        source_limit: Xterm entry alone confirms margin gating, not these additional line-attribute consequences. Keep this secondary discovery
-          until behavior is independently source-reconciled; do not automatically merge on numeric selector alone.
     - id: private-mode-80-h-line-961
       wire: CSI ? 80 h
       section: DEC Private Mode Set (DECSET)
@@ -4664,10 +4791,6 @@ discovery_catalogues:
       wire: CSI ? 5 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1068
-    - id: private-mode-8-l-line-1071
-      wire: CSI ? 8 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1071
     - id: private-mode-9-l-line-1072
       wire: CSI ? 9 l
       section: DEC Private Mode Reset (DECRST)
@@ -4688,14 +4811,6 @@ discovery_catalogues:
       wire: CSI ? 14 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1077
-    - id: private-mode-18-l-line-1079
-      wire: CSI ? 18 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1079
-    - id: private-mode-19-l-line-1080
-      wire: CSI ? 19 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1080
     - id: private-mode-30-l-line-1083
       wire: CSI ? 30 l
       section: DEC Private Mode Reset (DECRST)
@@ -4760,19 +4875,6 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-69-l-line-1105
-      wire: CSI ? 69 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1105
-      review:
-        classification: similar-mode-purpose-but-original-side-effects-not-yet-reconciled
-        original_source: DEC VT420 Programmer Reference Manual (Feb 1992), printed pages 135-136; DECVSSM, selector 69
-        xterm_source: Pinned xterm ctlseqs line 1105; DECLRMM, selector 69
-        shared_purpose: Enable or disable changes to left/right margins via DECSLRM.
-        original_dec_additional_effect: DECVSSM set forces all current session page-memory line attributes to single-width/single-height
-          and suppresses future DECDWL/DECDHL; reset restores page-border margins and permits these line attributes.
-        source_limit: Xterm entry alone confirms margin gating, not these additional line-attribute consequences. Keep this secondary discovery
-          until behavior is independently source-reconciled; do not automatically merge on numeric selector alone.
     - id: private-mode-80-l-line-1107
       wire: CSI ? 80 l
       section: DEC Private Mode Reset (DECRST)
