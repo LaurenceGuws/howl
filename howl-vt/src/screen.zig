@@ -2071,33 +2071,28 @@ pub const Screen = struct {
         return true;
     }
 
-    /// Change attributes in the clipped rectangle using rectangular or stream extent.
+    /// Change only rendition at the selected character positions.
+    /// Cluster geometry and scalar ownership remain intact even at an edge.
     /// Returns exact cell-attribute or pending-wrap mutation.
     pub fn changeRectAttrs(self: *Screen, area: RectArea, attrs: []const u16, reverse: bool) bool {
         var changed = self.cancelPendingWrap();
         const cells = self.cells orelse return changed;
         if (attrs.len == 0) return changed;
         const bounds = self.rectBounds(area) orelse return changed;
-        changed = self.clearClustersIntersecting(
-            bounds.top,
-            bounds.bottom + 1,
-            bounds.left,
-            bounds.right + 1,
-        ) or changed;
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const row_start = self.rowStart(row);
             const start_col = if (self.attr_change_extent_rect or row == bounds.top) bounds.left else 0;
             const end_col = if (self.attr_change_extent_rect or row == bounds.bottom) bounds.right else self.cols -| 1;
+            var row_changed = false;
             var col = start_col;
             while (col <= end_col) : (col += 1) {
                 const idx = row_start + @as(u32, col);
-                if (applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse)) {
-                    changed = true;
-                }
+                row_changed = applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse) or row_changed;
             }
+            changed = self.noteRowChange(row, row_changed) or changed;
         }
-        return self.noteAllRowsChange(changed);
+        return changed;
     }
 
     /// Erase one clipped rectangle under ISO or DEC protection rules.

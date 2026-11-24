@@ -765,6 +765,61 @@ test "terminal: rendition protection and rectangle owners report exact mutation"
     try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(2, 3));
 }
 
+test "terminal: rectangle rendition preserves complete wide and sized character ownership" {
+    const cases = [_]struct { edit: []const u8, rectangular: bool, row: u16, col: u16 }{
+        .{ .edit = "\x1b[1;2;1;2;1$r", .rectangular = true, .row = 0, .col = 1 },
+        .{ .edit = "\x9b1;1;1;1;1$t", .rectangular = true, .row = 0, .col = 0 },
+        .{ .edit = "\x1b[3;4;3;4;1$t", .rectangular = true, .row = 2, .col = 3 },
+        .{ .edit = "\x1b[1;5;4;6;1$r", .rectangular = false, .row = 1, .col = 2 },
+    };
+    for (cases) |case| {
+        for (0..case.edit.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 5, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[31m\xe4\xb8\xad\xcc\x81\xcc\xa7\xcc\x88\xcc\x84");
+            try feed(&terminal, "\x1b[2;3H\x1b]66;s=2;X\xcc\x81\xcc\xa7\xcc\x88\xcc\x84\x07");
+            try feed(&terminal, "\x1b[5;2H");
+            if (case.rectangular) try feed(&terminal, "\x1b[2*x");
+            const view = terminal.semanticView(0);
+            var before: [5][8]Terminal.Cell = undefined;
+            for (0..5) |row| for (0..8) |col| {
+                before[row][col] = view.cellInfoAt(@intCast(row), @intCast(col));
+            };
+            try std.testing.expectEqual(@as(u32, 0x4e2d), before[0][0].codepoint);
+            try std.testing.expectEqual(@as(u8, 2), before[0][0].width);
+            try std.testing.expectEqual(@as(u32, 'X'), before[1][2].codepoint);
+            try std.testing.expectEqual(@as(u8, 2), before[1][2].height);
+            try std.testing.expectEqual(@as(u8, 4), before[1][2].combining_len);
+            const untouched_row = view.rowGeneration(4);
+
+            try std.testing.expect(!(try terminal.feed(case.edit[0..split])).stateChanged() or split == case.edit.len);
+            try feed(&terminal, case.edit[split..]);
+            const after = terminal.semanticView(0);
+            try std.testing.expectEqual(@as(u16, 4), after.cursor_row);
+            try std.testing.expectEqual(@as(u16, 1), after.cursor_col);
+            try std.testing.expect(after.cellInfoAt(case.row, case.col).attrs.bold);
+            for (0..5) |row| for (0..8) |col| {
+                const actual = after.cellInfoAt(@intCast(row), @intCast(col));
+                var expected = before[row][col];
+                const selected = if (case.rectangular)
+                    row == case.row and col == case.col
+                else
+                    (row == 0 and col >= 4) or row == 1 or row == 2 or (row == 3 and col <= 5);
+                if (selected) expected.attrs.bold = true;
+                try std.testing.expectEqualDeep(expected, actual);
+            };
+            var scalars: [24]u21 = undefined;
+            try std.testing.expectEqualSlices(u21, &.{ 0x4e2d, 0x301, 0x327, 0x308, 0x304 }, after.cellScalarsAt(0, 1, &scalars));
+            try std.testing.expectEqualSlices(u21, &.{ 'X', 0x301, 0x327, 0x308, 0x304 }, after.cellScalarsAt(2, 3, &scalars));
+            try std.testing.expectEqual(untouched_row, after.rowGeneration(4));
+            try feed(&terminal, "Z");
+            const written = terminal.semanticView(0).cellInfoAt(4, 1);
+            try std.testing.expect(!written.attrs.bold);
+            try std.testing.expectEqual(Terminal.Color.indexed(1), written.attrs.fg);
+        }
+    }
+}
+
 test "terminal: ANSI insert and newline modes retain exact global lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
