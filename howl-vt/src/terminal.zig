@@ -773,8 +773,9 @@ fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
 }
 
 fn rectAttrsChange(params: []const i32, separators: parser_mod.CsiSeparatorList, reverse: bool) ?SemanticEvent {
-    // DECCARA defaults to shared SGR reset. DECRARA has no omitted selector.
-    if (reverse and params.len < 5) return null;
+    // Bare DECCARA defaults to SGR reset; supplied coordinates without
+    // an SGR selector do not change rendition. DECRARA has no omitted selector.
+    if (params.len < 5 and (reverse or params.len != 0)) return null;
     const area = rectArea(params, 0, .zero_or_omitted) orelse return null;
     const start = @min(params.len, 4);
     for (0..start) |i| if (separators.isSet(i)) return null;

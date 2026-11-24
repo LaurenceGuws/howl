@@ -822,8 +822,14 @@ test "terminal: rectangle rendition preserves complete wide and sized character 
 
 test "terminal: rectangle attribute defaults distinguish change from reverse" {
     const initial = "\x1b[1;2;3;4;5;7;8;9;31;44mAB\x1b[2;1HCD\x1b[3;1H";
-    const cases = [_]struct { wire: []const u8, reset_all: bool }{
-        .{ .wire = "\x1b[1;1;1;1$r", .reset_all = false },
+    const cases = [_]struct { wire: []const u8, reset_selected: bool = true, reset_all: bool = false }{
+        // Originating Kitty _parse_sgr: coordinates alone supply no SGR.
+        .{ .wire = "\x1b[1;1;1;1$r", .reset_selected = false },
+        .{ .wire = "\x9b1;1;1;1$r", .reset_selected = false },
+        .{ .wire = "\x1b[1$r", .reset_selected = false },
+        .{ .wire = "\x9b1;1$r", .reset_selected = false },
+        .{ .wire = "\x1b[1;1;1$r", .reset_selected = false },
+        .{ .wire = "\x9b$r", .reset_all = true },
         .{ .wire = "\x9b1;1;1;1;0$r", .reset_all = false },
         .{ .wire = "\x1b[$r", .reset_all = true },
         .{ .wire = "\x1b[;;;;0$r", .reset_all = true },
@@ -838,9 +844,16 @@ test "terminal: rectangle attribute defaults distinguish change from reverse" {
             const other = before.cellInfoAt(0, 1);
             const row_before = before.cellInfoAt(1, 1);
             try std.testing.expect(expected.attrs.bold and expected.attrs.underline and expected.attrs.blink and expected.attrs.reverse);
-            expected.attrs = Terminal.default_cell_attrs;
-            try feed(&terminal, case.wire[0..split]);
-            try feed(&terminal, case.wire[split..]);
+            if (case.reset_selected) expected.attrs = Terminal.default_cell_attrs;
+            const sequence = terminal.semanticSequence();
+            const row_generation = before.rowGeneration(0);
+            const first = try terminal.feed(case.wire[0..split]);
+            const second = try terminal.feed(case.wire[split..]);
+            if (!case.reset_selected) {
+                try std.testing.expect(!first.stateChanged() and !second.stateChanged());
+                try std.testing.expectEqual(sequence, terminal.semanticSequence());
+                try std.testing.expectEqual(row_generation, terminal.semanticView(0).rowGeneration(0));
+            }
             const after = terminal.semanticView(0);
             try std.testing.expectEqualDeep(expected, after.cellInfoAt(0, 0));
             var b = other;
