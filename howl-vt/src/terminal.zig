@@ -2890,27 +2890,62 @@ fn appendSgrAttrs(
 fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, page: u16, area: RectArea) u16 {
     if (page != 1) return 0;
     const bounds = screen.rectBounds(area) orelse return 0;
+    const no_trim = (xtchecksum_flags & (1 << 2)) != 0;
+    const include_undrawn = no_trim or (xtchecksum_flags & (1 << 3)) != 0;
+    const full_codepoint = (xtchecksum_flags & (1 << 4)) != 0;
+    const include_attrs = (xtchecksum_flags & (1 << 1)) == 0;
     var sum: u16 = 0;
+    var first = true;
+    var scalars: [@import("scalar_storage.zig").maximum_scalars]u32 = undefined;
     var row = bounds.top;
     while (row <= bounds.bottom) : (row += 1) {
         var col = bounds.left;
         while (col <= bounds.right) : (col += 1) {
             const cell = screen.cellInfoAt(row, col);
-            const is_blank = cell.codepoint == 0;
-            if (is_blank and (xtchecksum_flags & (1 << 2)) == 0) continue;
-            var cp: u32 = cell.codepoint;
-            if ((xtchecksum_flags & (1 << 4)) == 0) cp &= 0xff;
-            sum +%= @intCast(cp & 0xffff);
-            if ((xtchecksum_flags & (1 << 1)) == 0) {
-                sum +%= if (cell.attrs.bold) 1 else 0;
-                sum +%= if (cell.attrs.underline) 2 else 0;
-                sum +%= if (cell.attrs.blink) 4 else 0;
-                sum +%= if (cell.attrs.reverse) 8 else 0;
+            const continuation = cell.x != 0 or cell.y != 0;
+            // Native sized-text continuation slots are not additional characters.
+            // A normal wide tail is xterm's hidden-character slot in legacy mode.
+            if (continuation and (full_codepoint or !cell.semantic_width)) continue;
+            const undrawn = cell.codepoint == 0 and !continuation;
+            if (undrawn and !include_undrawn) continue;
+            // The translated cell does not retain the original DEC byte and
+            // charset identity. Retain the existing low-byte projection until
+            // that separate legacy-character mapping is qualified.
+            var value: u16 = if (undrawn)
+                ' '
+            else if (continuation)
+                0x1b
+            else if (full_codepoint)
+                @truncate(cell.codepoint)
+            else
+                @intCast(cell.codepoint & 0xff);
+            if (include_attrs) {
+                // Xterm's original checksum extension sums VT100 video bits.
+                value +%= if (cell.attrs.protected != .none) 0x04 else 0;
+                value +%= if (cell.attrs.invisible) 0x08 else 0;
+                value +%= if (cell.attrs.underline) 0x10 else 0;
+                value +%= if (cell.attrs.reverse) 0x20 else 0;
+                value +%= if (cell.attrs.blink) 0x40 else 0;
+                value +%= if (cell.attrs.bold) 0x80 else 0;
             }
+            // The pinned xterm trim path includes the first admitted cell,
+            // drawn spaces and non-default video attributes. Undrawn plain
+            // spaces otherwise contribute only in the untrimmed total.
+            const attrs = cell.attrs;
+            const visible_attrs = attrs.bold or attrs.dim or attrs.italic or attrs.underline or
+                attrs.blink or attrs.reverse or attrs.invisible or attrs.strikethrough or
+                attrs.protected != .none or attrs.fg.kind != .default or attrs.bg.kind != .default;
+            if (no_trim or first or value != ' ' or !undrawn or visible_attrs) sum +%= value;
+            if (no_trim and !full_codepoint and !undrawn and !continuation and cell.combining_len != 0) {
+                const cluster = screen.cellScalarsAt(row, col, &scalars);
+                std.debug.assert(cluster.len > 1);
+                for (cluster[1..]) |cp| sum +%= @truncate(cp);
+            }
+            first = false;
         }
+        first = false;
     }
-    if ((xtchecksum_flags & (1 << 0)) == 0) sum = ~sum;
-    return sum;
+    return if ((xtchecksum_flags & (1 << 0)) != 0) sum else 0 -% sum;
 }
 
 const CommonAttrs = struct {

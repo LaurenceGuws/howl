@@ -2134,12 +2134,73 @@ test "checksum extension affects rectangular checksum reply" {
     var terminal = try Terminal.init(allocator, 2, 2);
     defer terminal.deinit();
 
-    write(&terminal, "ABCD\x1b[0#y\x1b[7;1;1;1;1;2;2*y");
-    try std.testing.expectEqualStrings("\x1bP7!~FF7C\x1b\\", pendingOutput(&terminal));
+    write(&terminal, "ABCD\x1b[0#y\x1b[7;1;1;1;1;2*y");
+    try std.testing.expectEqualStrings("\x1bP7!~FF7D\x1b\\", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    write(&terminal, "\x1b[1#y\x1b[8;1;1;1;1;2;2*y");
+    write(&terminal, "\x1b[1#y\x1b[8;1;1;1;1;2*y");
     try std.testing.expectEqualStrings("\x1bP8!~0083\x1b\\", pendingOutput(&terminal));
+}
+
+test "checksum flags distinguish undrawn space admission and combining totals" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1;2HA\xcc\x81\x1b[1;4H ");
+    // The rectangle is [unwritten, A+U+0301, unwritten, written SPACE].
+    // Positive, no-attributes sums are independent arithmetic oracles.
+    const cases = [_]struct { wire: []const u8, reply: []const u8 }{
+        .{ .wire = "\x1b[3#y", .reply = "\x1bP9!~0061\x1b\\" },
+        .{ .wire = "\x1b[11#y", .reply = "\x1bP9!~0081\x1b\\" },
+        .{ .wire = "\x1b[7#y", .reply = "\x1bP9!~03A2\x1b\\" },
+        .{ .wire = "\x1b[15#y", .reply = "\x1bP9!~03A2\x1b\\" },
+        .{ .wire = "\x1b[23#y", .reply = "\x1bP9!~00A1\x1b\\" },
+        .{ .wire = "\x1b[19#y", .reply = "\x1bP9!~0061\x1b\\" },
+    };
+    for (cases) |case| {
+        try feed(&terminal, case.wire);
+        try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+        try feed(&terminal, "\x1b[9;1;1;1;1;4*y");
+        try std.testing.expectEqualStrings(case.reply, pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+    }
+    // Full-codepoint mode retains the Unicode value, not its low byte.
+    try feed(&terminal, "\x1b[2;1H\xce\xa9\xcc\x81\x1b[23#y\x1b[10;1;2;1;2;1*y");
+    try std.testing.expectEqualStrings("\x1bP10!~03A9\x1b\\", pendingOutput(&terminal));
+}
+
+test "checksum combining overflow storage and wide tails are counted only once" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "A\xcc\x81\xcc\x81\xcc\x81\xcc\x81");
+    try feed(&terminal, "\x1b[7#y\x1b[1;1;1;1;1;1*y");
+    // Four combining scalars include the first scalar beyond inline storage.
+    try std.testing.expectEqualStrings("\x1bP1!~0C45\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[23#y\x1b[2;1;1;1;1;1*y");
+    try std.testing.expectEqualStrings("\x1bP2!~0041\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    try feed(&terminal, "\x1b[2;1H\xf0\x9f\x98\x80\x1b[23#y\x1b[3;1;2;1;2;2*y");
+    try std.testing.expectEqualStrings("\x1bP3!~F600\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[7#y\x1b[4;1;2;2;2;2*y");
+    try std.testing.expectEqualStrings("\x1bP4!~001B\x1b\\", pendingOutput(&terminal));
+}
+
+test "checksum arithmetic uses source video weights and modular negation" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    // All six contributing VT100 attribute weights on A, plus ordinary B.
+    try feed(&terminal, "\x1b[1;4;5;7;8m\x1b[1\"qA\x1b[0m\x1b[0\"qB");
+    try feed(&terminal, "\x1b[1#y\x1b[1;1;1;1;1;2*y");
+    // 65+66+4+8+16+32+64+128 = 383 = 0x017f.
+    try std.testing.expectEqualStrings("\x1bP1!~017F\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[0#y\x1b[2;1;1;1;1;2*y");
+    try std.testing.expectEqualStrings("\x1bP2!~FE81\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[3#y\x1b[3;1;1;1;1;2*y");
+    try std.testing.expectEqualStrings("\x1bP3!~0083\x1b\\", pendingOutput(&terminal));
 }
 
 test "locator requests reply unavailable, then current position, then disable one-shot" {
