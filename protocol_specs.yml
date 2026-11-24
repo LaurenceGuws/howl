@@ -7744,7 +7744,12 @@ specifications:
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
         note: Narrow regression evidence at a89ed30; not whole-clause qualification.
-      pending_reconciliation: deccara-omitted-selector-default
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle attribute defaults distinguish change from reverse'
+        relation: protocol-family
+        note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+      accepted_reconciliations:
+      - deccara-omitted-selector-default
     - id: attr-reverse-rect
       section: Rectangular Area Operations / Reverse Attributes in Rectangular Area, p169
       level: defined
@@ -7788,7 +7793,12 @@ specifications:
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
         note: Narrow regression evidence at a89ed30; not whole-clause qualification.
-      pending_reconciliation: decrara-omitted-selector-default
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle reverse zero toggles original four in selector order'
+        relation: protocol-family
+        note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+      accepted_reconciliations:
+      - decrara-omitted-selector-default
     - id: cursor-visible
       section: Cursor Movement / Text Cursor Enable Mode, p176
       level: defined
@@ -12239,7 +12249,12 @@ specifications:
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
         note: Narrow regression evidence at a89ed30; not whole-clause qualification.
-      pending_reconciliation: deccara-omitted-selector-default
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle attribute defaults distinguish change from reverse'
+        relation: protocol-family
+        note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+      accepted_reconciliations:
+      - deccara-omitted-selector-default
     - id: attr-reverse-rect
       section: EL-00070-05 pp.5-175–5-176
       level: defined
@@ -12255,7 +12270,33 @@ specifications:
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
         note: Narrow regression evidence at a89ed30; not whole-clause qualification.
-      pending_reconciliation: decrara-omitted-selector-default
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle reverse zero toggles original four in selector order'
+        relation: protocol-family
+        note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+      accepted_reconciliations:
+      - decrara-omitted-selector-default
+  kitty_deccara:
+    title: Kitty extension to rectangular rendition (DECCARA)
+    author: Kovid Goyal / kitty
+    authority: protocol-author
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/deccara.rst
+    snapshot_sha256: 700d97077b7ff209f35a17651d4534ff2281669b4d70248a21083acf7218d605
+    scope: Author-defined extension of DECCARA to all SGR attributes, including color. Distinct from original DEC selector
+      domain; not a claim of full Howl support.
+    clauses:
+    - id: all-sgr-attributes
+      section: Setting text styles/colors in arbitrary regions of the screen
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r
+      rule: Extends DECCARA from the limited DEC rendition attributes to all SGR attributes, including foreground/background
+        colors. Documented example uses DECSACE rectangle mode and then restores stream extent.
+      related_command: dec_vt420.attr-change-rect
+      source_note: The accepted default/zero-selector choice retains original DEC four attributes rather than full SGR reset.
+        The remaining nonzero extension scope is untriaged; no implementation verdict inferred.
+      accepted_reconciliations:
+      - deccara-omitted-selector-default
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -12267,65 +12308,7 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences: []
-    pending_reconciliation:
-    - id: deccara-omitted-selector-default
-      status: material-original-default-versus-modern-admission-difference
-      wire: CSI Pt ; Pl ; Pb ; Pr $ r
-      original_author_sources:
-      - clause: dec_vt420.attr-change-rect
-        meaning: Omitted selector defaults to 0; unsupported selectors ignored.
-      - clause: dec_std070.attr-change-rect
-        meaning: If no valid subsequent selector is received, default0 clears the four original video attributes; defined extensions
-          excepted.
-      independent_implementations:
-      - implementation: xterm_snapshots
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:187,5694-5701; screen.c:2934-3048
-        meaning: Passes remaining parameter list from index4. No attribute-selector iterations when absent; exact rectangle
-          can still mark undrawn cells.
-      - implementation: iterm2
-        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
-        source: sources/VT100/VT100Terminal.m:1045-1060
-        meaning: Rejects fewer than five operands; does not apply omitted selector reset.
-      - implementation: contour
-        revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
-        source: src/vtbackend/Functions.h:604; Screen.cpp:4250-4279
-        meaning: Dispatch definition minimum five operands, SGR application from index4.
-      question: 'Select omitted DECCARA selector behavior: original default0 reset or existing no-admission. Invalid-only list
-        fallback and empty final substring versus absent selector separately qualify; do not infer all SGR selectors or unoccupied-cell
-        policy.'
-      decision: null
-    - id: decrara-omitted-selector-default
-      status: material-original-dec-source-default-disagreement
-      wire: CSI Pt ; Pl ; Pb ; Pr $ t
-      original_author_sources:
-      - clause: dec_vt420.attr-reverse-rect
-        meaning: Selector0 reverses all original video attributes and is printed as default.
-      - clause: dec_std070.attr-reverse-rect
-        meaning: Selector0 reverses all four original video attributes; no default, ignore if no valid selector received.
-      independent_implementations:
-      - implementation: xterm_snapshots
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:187,5703-5710; screen.c:2934-3004
-        meaning: No attribute iterations when list absent. Explicit0 XOR SGR_MASK; exact rectangle can still mark undrawn cells.
-      - implementation: windows_terminal
-        revision: 9853bc96076e811cef5eab4469095fc9be58201e
-        source: src/terminal/adapter/adaptDispatch.cpp:1099-1137
-        meaning: Explicitly excludes empty list from zero/all-rendition toggle; explicit0 toggles broader rendition mask than
-          original DEC.
-      - implementation: iterm2
-        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
-        source: sources/VT100/VT100Terminal.m:1062-1076
-        meaning: Rejects fewer than five operands.
-      - implementation: contour
-        revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
-        source: src/vtbackend/Functions.h:615; Screen.cpp:4281-4309
-        meaning: Minimum five operands. Explicit0 currently no-op, unlike DEC.
-      question: 'Select absent DECRARA selector behavior: VT420 printed default0 or STD070 no default. Explicit0 toggle four
-        original attributes is a separate source-defined obligation if targeted; not the same case as omission.'
-      recommendation: Retain no default for DECRARA, consistent with original STD070 and independent modern empty-list admission;
-        qualify explicit0 separately.
-      decision: null
+    pending_reconciliation: []
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
@@ -14254,3 +14237,193 @@ reconciliation:
           CellExtra retain display character/style/optional extras, not original DEC byte/charset provenance.
       boundary: Source inspection of exact pinned revisions and lockfile-verified dependency; no foreign runtime probe or
         performance benchmark. Unsupported operations supply no affirmative vote for any checksum arithmetic.
+- id: deccara-omitted-selector-default
+  status: resolved-by-explicit-captain-choice
+  decision_rule: explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  accepted_interpretation:
+    omitted_selector: 'Default selector0: reset the four original video attributes.'
+    explicit_zero: Clear the four original video attributes, bold/underline/blink/reverse.
+    other_attributes: Preserve unrelated attributes for zero. Original selector effects accumulate in order.
+  scope_limit: Omitted selector and explicit zero base attributes only. Existing nonzero selector extensions, invalid-only
+    lists, trailing empty subparameter interpretation, unoccupied cells, geometry/clamping, level gating, exact underline/blink
+    extension styles and rendering are not selected or qualified by this decision. Not adoption of the Kitty all-SGR extension.
+  reason: Captain selected original DEC omitted default0 despite divergent modern coordinate-only admission. Original four-bit
+    reset is shared by DEC, Foot, xterm and Termux; Kitty author documents a materially broader extension. No adoption of
+    all SGR.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:187,5694-5710; screen.c:2934-3048; ptyx.h:3772
+    meaning: No attribute iterations with absent selectors; exact rectangles may mark undrawn cells. Explicit0 clears/toggles
+      BOLD|BLINK|UNDERLINE|INVERSE. Conceal8/28 extension.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:1934-2017
+    meaning: Four original attributes, explicit0 reset/toggle; no selector iterations with absent list. Marks rows dirty;
+      no claim of exact nonmutation.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: docs/deccara.rst; kitty/vt-parser.c:1022-1069,1377-1404,1430-1444; kitty_tests/parser.py:1198-1241
+    meaning: Author extends DECCARA to all SGR attributes including colors. Bare CSI $ r supplies five zeros, a coordinate-only
+      list supplies no selector. DECRARA rejected as unsupported window-operation intermediate.
+  - implementation: windows_terminal
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    source: src/terminal/parser/OutputStateMachineEngine.cpp:630-635; adapter/adaptDispatch.cpp:1049-1137; adapter/adaptDispatchGraphics.cpp:404-411
+    meaning: Coordinate-only list yields no attribute iterations; DECCARA uses extended SGR/colour masks; DECRARA explicitly
+      excludes empty list, XORs extended rendition mask for explicit0.
+  - implementation: contour
+    revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    source: src/vtbackend/Functions.h:604,615; Screen.cpp:4250-4309
+    meaning: Minimum five operands, DECCARA uses general SGR. DECRARA explicit0 no-op and broader individual toggles.
+  - implementation: termux-app
+    revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+    source: terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java:740-800
+    meaning: Original four bits, explicit0 reset/toggle. Fewer than five operands no-op. Inspected git object and matching
+      tracked file, checkout has unrelated untracked IDE files.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:1045-1076
+    meaning: Both commands return if fewer than five parameters. Selector dispatch delegated; complete downstream bit-mask
+      semantics not claimed.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/stream.zig:2559-2599,2743-2747
+    meaning: No dollar-intermediate r/t route in pinned dispatch; unsupported.
+  - implementation: alacritty
+    revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+    source: Cargo.lock:2124-2136; vte 0.15.0 src/ansi.rs:1729-1769
+    meaning: Only ordinary r/t routes; dollar forms fall through unhandled.
+    dependency:
+      version: vte 0.15.0
+      sha256: a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd
+      url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+  reference_boundary: Pinned source inspection, not foreign runtime or performance benchmarking. Unsupported operations
+    are not semantic votes.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: deccara-omitted-selector-default
+    status: material-original-default-versus-modern-admission-difference
+    wire: CSI Pt ; Pl ; Pb ; Pr $ r
+    original_author_sources:
+    - clause: dec_vt420.attr-change-rect
+      meaning: Omitted selector defaults to 0; unsupported selectors ignored.
+    - clause: dec_std070.attr-change-rect
+      meaning: If no valid subsequent selector is received, default0 clears the four original video attributes; defined
+        extensions excepted.
+    independent_implementations:
+    - implementation: xterm_snapshots
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:187,5694-5701; screen.c:2934-3048
+      meaning: Passes remaining parameter list from index4. No attribute-selector iterations when absent; exact rectangle
+        can still mark undrawn cells.
+    - implementation: iterm2
+      revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      source: sources/VT100/VT100Terminal.m:1045-1060
+      meaning: Rejects fewer than five operands; does not apply omitted selector reset.
+    - implementation: contour
+      revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+      source: src/vtbackend/Functions.h:604; Screen.cpp:4250-4279
+      meaning: Dispatch definition minimum five operands, SGR application from index4.
+    question: 'Select omitted DECCARA selector behavior: original default0 reset or existing no-admission. Invalid-only
+      list fallback and empty final substring versus absent selector separately qualify; do not infer all SGR selectors
+      or unoccupied-cell policy.'
+    decision: null
+- id: decrara-omitted-selector-default
+  status: resolved-by-explicit-captain-choice
+  decision_rule: explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  accepted_interpretation:
+    omitted_selector: No attribute operation.
+    explicit_zero: Toggle the four original video attributes, bold/underline/blink/reverse.
+    other_attributes: Preserve unrelated attributes for zero. Original selector effects accumulate in order.
+  scope_limit: Omitted selector and explicit zero base attributes only. Existing nonzero selector extensions, invalid-only
+    lists, trailing empty subparameter interpretation, unoccupied cells, geometry/clamping, level gating, exact underline/blink
+    extension styles and rendering are not selected or qualified by this decision. Not adoption of the Kitty all-SGR extension.
+  reason: Captain selected the original STD070 no-default interpretation over the printed VT420 default. Foot, xterm and
+    Termux implement original four-bit explicit0, and modern empty-list admission corroborates no default.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:187,5694-5710; screen.c:2934-3048; ptyx.h:3772
+    meaning: No attribute iterations with absent selectors; exact rectangles may mark undrawn cells. Explicit0 clears/toggles
+      BOLD|BLINK|UNDERLINE|INVERSE. Conceal8/28 extension.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:1934-2017
+    meaning: Four original attributes, explicit0 reset/toggle; no selector iterations with absent list. Marks rows dirty;
+      no claim of exact nonmutation.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: docs/deccara.rst; kitty/vt-parser.c:1022-1069,1377-1404,1430-1444; kitty_tests/parser.py:1198-1241
+    meaning: Author extends DECCARA to all SGR attributes including colors. Bare CSI $ r supplies five zeros, a coordinate-only
+      list supplies no selector. DECRARA rejected as unsupported window-operation intermediate.
+  - implementation: windows_terminal
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    source: src/terminal/parser/OutputStateMachineEngine.cpp:630-635; adapter/adaptDispatch.cpp:1049-1137; adapter/adaptDispatchGraphics.cpp:404-411
+    meaning: Coordinate-only list yields no attribute iterations; DECCARA uses extended SGR/colour masks; DECRARA explicitly
+      excludes empty list, XORs extended rendition mask for explicit0.
+  - implementation: contour
+    revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    source: src/vtbackend/Functions.h:604,615; Screen.cpp:4250-4309
+    meaning: Minimum five operands, DECCARA uses general SGR. DECRARA explicit0 no-op and broader individual toggles.
+  - implementation: termux-app
+    revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+    source: terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java:740-800
+    meaning: Original four bits, explicit0 reset/toggle. Fewer than five operands no-op. Inspected git object and matching
+      tracked file, checkout has unrelated untracked IDE files.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:1045-1076
+    meaning: Both commands return if fewer than five parameters. Selector dispatch delegated; complete downstream bit-mask
+      semantics not claimed.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/stream.zig:2559-2599,2743-2747
+    meaning: No dollar-intermediate r/t route in pinned dispatch; unsupported.
+  - implementation: alacritty
+    revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+    source: Cargo.lock:2124-2136; vte 0.15.0 src/ansi.rs:1729-1769
+    meaning: Only ordinary r/t routes; dollar forms fall through unhandled.
+    dependency:
+      version: vte 0.15.0
+      sha256: a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd
+      url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+  reference_boundary: Pinned source inspection, not foreign runtime or performance benchmarking. Unsupported operations
+    are not semantic votes.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: decrara-omitted-selector-default
+    status: material-original-dec-source-default-disagreement
+    wire: CSI Pt ; Pl ; Pb ; Pr $ t
+    original_author_sources:
+    - clause: dec_vt420.attr-reverse-rect
+      meaning: Selector0 reverses all original video attributes and is printed as default.
+    - clause: dec_std070.attr-reverse-rect
+      meaning: Selector0 reverses all four original video attributes; no default, ignore if no valid selector received.
+    independent_implementations:
+    - implementation: xterm_snapshots
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:187,5703-5710; screen.c:2934-3004
+      meaning: No attribute iterations when list absent. Explicit0 XOR SGR_MASK; exact rectangle can still mark undrawn
+        cells.
+    - implementation: windows_terminal
+      revision: 9853bc96076e811cef5eab4469095fc9be58201e
+      source: src/terminal/adapter/adaptDispatch.cpp:1099-1137
+      meaning: Explicitly excludes empty list from zero/all-rendition toggle; explicit0 toggles broader rendition mask than
+        original DEC.
+    - implementation: iterm2
+      revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      source: sources/VT100/VT100Terminal.m:1062-1076
+      meaning: Rejects fewer than five operands.
+    - implementation: contour
+      revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+      source: src/vtbackend/Functions.h:615; Screen.cpp:4281-4309
+      meaning: Minimum five operands. Explicit0 currently no-op, unlike DEC.
+    question: 'Select absent DECRARA selector behavior: VT420 printed default0 or STD070 no default. Explicit0 toggle four
+      original attributes is a separate source-defined obligation if targeted; not the same case as omission.'
+    recommendation: Retain no default for DECRARA, consistent with original STD070 and independent modern empty-list admission;
+      qualify explicit0 separately.
+    decision: null

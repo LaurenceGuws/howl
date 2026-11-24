@@ -7816,17 +7816,15 @@ fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool)
     const before = target.*;
     for (attrs) |attr| {
         switch (attr) {
-            0 => if (!reverse) {
-                target.bold = false;
-                target.dim = false;
-                target.italic = false;
-                target.underline = false;
+            0 => {
+                // DEC selector zero addresses the original four video
+                // attributes, not every modern SGR rendition.
+                target.bold = reverse and !target.bold;
+                target.underline = reverse and !target.underline;
                 target.underline_style = .straight;
-                target.blink = false;
+                target.blink = reverse and !target.blink;
                 target.blink_fast = false;
-                target.reverse = false;
-                target.invisible = false;
-                target.strikethrough = false;
+                target.reverse = reverse and !target.reverse;
             },
             1 => {
                 if (reverse) target.bold = !target.bold else target.bold = true;

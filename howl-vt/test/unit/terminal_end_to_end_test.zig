@@ -820,6 +820,80 @@ test "terminal: rectangle rendition preserves complete wide and sized character 
     }
 }
 
+test "terminal: rectangle attribute defaults distinguish change from reverse" {
+    const initial = "\x1b[1;2;3;4;5;7;8;9;31;44mAB\x1b[2;1HCD\x1b[3;1H";
+    const cases = [_]struct { wire: []const u8, reset_all: bool }{
+        .{ .wire = "\x1b[1;1;1;1$r", .reset_all = false },
+        .{ .wire = "\x9b1;1;1;1;0$r", .reset_all = false },
+        .{ .wire = "\x1b[$r", .reset_all = true },
+        .{ .wire = "\x1b[;;;;0$r", .reset_all = true },
+    };
+    for (cases) |case| {
+        for (0..case.wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+            defer terminal.deinit();
+            try feed(&terminal, initial);
+            const before = terminal.semanticView(0);
+            var expected = before.cellInfoAt(0, 0);
+            const other = before.cellInfoAt(0, 1);
+            const row_before = before.cellInfoAt(1, 1);
+            try std.testing.expect(expected.attrs.bold and expected.attrs.underline and expected.attrs.blink and expected.attrs.reverse);
+            expected.attrs.bold = false;
+            expected.attrs.underline = false;
+            expected.attrs.blink = false;
+            expected.attrs.reverse = false;
+            try feed(&terminal, case.wire[0..split]);
+            try feed(&terminal, case.wire[split..]);
+            const after = terminal.semanticView(0);
+            try std.testing.expectEqualDeep(expected, after.cellInfoAt(0, 0));
+            var b = other;
+            var d = row_before;
+            if (case.reset_all) {
+                b.attrs = expected.attrs;
+                d.attrs = expected.attrs;
+            }
+            try std.testing.expectEqualDeep(b, after.cellInfoAt(0, 1));
+            try std.testing.expectEqualDeep(d, after.cellInfoAt(1, 1));
+            try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
+            try std.testing.expectEqual(@as(u16, 0), after.cursor_col);
+            try std.testing.expect(!(try terminal.feed(case.wire)).stateChanged());
+            try feed(&terminal, "Z");
+            try std.testing.expectEqualDeep(other.attrs, terminal.semanticView(0).cellInfoAt(2, 0).attrs);
+        }
+    }
+}
+
+test "terminal: rectangle reverse zero toggles original four in selector order" {
+    for ([_][]const u8{ "\x1b[1;1;1;1;0$t", "\x9b1;1;1;1;0$t" }) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[1;2;3;5;8;9;31;44mA\x1b[2;1H");
+            const before = terminal.semanticView(0).cellInfoAt(0, 0);
+            const sequence = terminal.semanticSequence();
+            try std.testing.expect(!(try terminal.feed("\x1b[$t\x1b[1;1;1;1$t")).stateChanged());
+            try std.testing.expectEqual(sequence, terminal.semanticSequence());
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            var expected = before;
+            expected.attrs.bold = false;
+            expected.attrs.underline = true;
+            expected.attrs.blink = false;
+            expected.attrs.reverse = true;
+            try std.testing.expectEqualDeep(expected, terminal.semanticView(0).cellInfoAt(0, 0));
+            try feed(&terminal, wire);
+            try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
+            try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;1;1;1$t")).stateChanged());
+            try feed(&terminal, "\x1b[1;1;1;1;0;4;5$t");
+            expected.attrs.underline = false;
+            expected.attrs.blink = true;
+            try std.testing.expectEqualDeep(expected, terminal.semanticView(0).cellInfoAt(0, 0));
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+        }
+    }
+}
+
 test "terminal: ANSI insert and newline modes retain exact global lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

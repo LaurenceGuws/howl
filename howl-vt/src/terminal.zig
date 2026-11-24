@@ -703,16 +703,7 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
     // Every page selector resolves to the active page and preserves the
     // requested rectangle, including zero/omitted (selected single-page
     // profile rather than original DEC all-pages behavior).
-    const bottom = paramAtOrDefault0(params, 4);
-    const right = paramAtOrDefault0(params, 5);
-    const area: RectArea = .{
-        .top = paramAtOrDefault1(params, 2) - 1,
-        .left = paramAtOrDefault1(params, 3) - 1,
-        .bottom = if (bottom == 0) null else bottom - 1,
-        .right = if (right == 0) null else right - 1,
-    };
-    if (area.bottom) |value| if (area.top > value) return null;
-    if (area.right) |value| if (area.left > value) return null;
+    const area = rectArea(params, 2, .zero_or_omitted) orelse return null;
     return SemanticEvent{ .rect_checksum_request = .{
         .request_id = paramAtOrDefault0(params, 0),
         .area = area,
@@ -742,7 +733,7 @@ fn processHash(final: u8, params: []const i32) ?SemanticEvent {
         'S' => SemanticEvent.xttitlepos,
         'y' => SemanticEvent{ .xtchecksum = paramAtOrDefault0(params, 0) },
         'R' => SemanticEvent.xtreportcolors,
-        '|' => if (rectArea(params, 0)) |area|
+        '|' => if (rectArea(params, 0, .omitted_only)) |area|
             SemanticEvent{ .selected_graphic_rendition_report = area }
         else
             null,
@@ -782,17 +773,24 @@ fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
 }
 
 fn rectAttrsChange(params: []const i32, reverse: bool) ?SemanticEvent {
-    if (params.len < 5) return null;
-    const area = rectArea(params, 0) orelse return null;
+    // Selected original defaults differ: DECCARA resets on omission,
+    // DECRARA has no omitted selector. Explicit zero is valid in both.
+    if (reverse and params.len < 5) return null;
+    const area = rectArea(params, 0, .zero_or_omitted) orelse return null;
+    var attrs = attrParams(params, 4);
+    if (attrs.param_count == 0) {
+        attrs.params[0] = 0;
+        attrs.param_count = 1;
+    }
     return .{ .rect_attrs_change = .{
         .area = area,
-        .attrs = attrParams(params, 4),
+        .attrs = attrs,
         .reverse = reverse,
     } };
 }
 
 fn rectCopy(params: []const i32) ?SemanticEvent {
-    const area = rectArea(params, 0) orelse return null;
+    const area = rectArea(params, 0, .omitted_only) orelse return null;
     return .{ .rect_copy = .{
         .area = area,
         .source_page = paramAtOrDefault1(params, 4),
@@ -805,12 +803,12 @@ fn rectCopy(params: []const i32) ?SemanticEvent {
 fn rectFill(params: []const i32) ?SemanticEvent {
     const ch = paramAtOrDefault0(params, 0);
     if (!isValidRectFillChar(ch)) return null;
-    const area = rectArea(params, 1) orelse return null;
+    const area = rectArea(params, 1, .omitted_only) orelse return null;
     return .{ .rect_fill = .{ .area = area, .ch = ch } };
 }
 
 fn rectErase(params: []const i32, selective: bool) ?SemanticEvent {
-    const area = rectArea(params, 0) orelse return null;
+    const area = rectArea(params, 0, .omitted_only) orelse return null;
     return if (selective)
         SemanticEvent{ .rect_selective_erase = area }
     else
@@ -966,14 +964,22 @@ fn locatorFilterArea(params: []const i32) ?locator_mod.FilterArea {
 }
 
 // Projects a parameter suffix into an ordered zero-based rectangle with open lower defaults.
-fn rectArea(params: []const i32, start_idx: u8) ?RectArea {
+fn rectArea(params: []const i32, start_idx: u8, comptime edge_defaults: enum { omitted_only, zero_or_omitted }) ?RectArea {
     const start = @as(u32, start_idx);
     const param_len = paramCount32(params);
     const area: RectArea = .{
         .top = if (param_len > start) paramOrDefault1(params[@intCast(start)]) - 1 else 0,
         .left = if (param_len > start + 1) paramOrDefault1(params[@intCast(start + 1)]) - 1 else 0,
-        .bottom = if (param_len > start + 2) paramOrDefault1(params[@intCast(start + 2)]) - 1 else null,
-        .right = if (param_len > start + 3) paramOrDefault1(params[@intCast(start + 3)]) - 1 else null,
+        .bottom = if (param_len > start + 2 and
+            (edge_defaults == .omitted_only or params[@intCast(start + 2)] != 0))
+            paramOrDefault1(params[@intCast(start + 2)]) - 1
+        else
+            null,
+        .right = if (param_len > start + 3 and
+            (edge_defaults == .omitted_only or params[@intCast(start + 3)] != 0))
+            paramOrDefault1(params[@intCast(start + 3)]) - 1
+        else
+            null,
     };
     if (area.bottom) |bottom| if (area.top > bottom) return null;
     if (area.right) |right| if (area.left > right) return null;
