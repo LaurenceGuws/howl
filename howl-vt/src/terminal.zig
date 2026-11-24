@@ -700,9 +700,9 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
         return SemanticEvent{ .container_request = .{ .resize_rows = @intCast(params[0]) } };
     }
     if (final != 'y') return null;
-    // Nonzero page selectors clamp to the sole active page. Keep the
-    // existing rectangle interpretation for page zero until its competing
-    // DEC all-pages semantics are resolved.
+    // Every page selector resolves to the active page and preserves the
+    // requested rectangle, including zero/omitted (selected single-page
+    // profile rather than original DEC all-pages behavior).
     const bottom = paramAtOrDefault0(params, 4);
     const right = paramAtOrDefault0(params, 5);
     const area: RectArea = .{
