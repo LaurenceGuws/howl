@@ -8041,6 +8041,13 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.dcs.decrqss
+      source_specific_validity:
+        source: VT420 printed pp.268-269, including all three examples
+        successful: DCS 0 $ r Pt ST
+        unsuccessful: DCS 1 $ r ST
+        note: Printed VT420 manual meaning retained; disagrees with DEC STD 070.
+      accepted_reconciliations:
+      - decrpss-validity-polarity
     - id: request-mode
       section: Mode Reporting / Request Mode
       level: defined
@@ -11890,6 +11897,85 @@ specifications:
         capability.
       source_note: Pinned author documentation only; command handler implementation was not retrieved at attempted source
         path. No target, execution authority or conformance claim.
+  dec_std070:
+    title: DEC STD 070 Video Systems Reference Manual (selected Character Cell Display clauses)
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: A-MN-ELSM070-00-0000 Rev H, 03 December 1991; EL-00070-05 Character Cell Display pages dated 29 June 1990, for
+      review
+    url: https://bitsavers.trailing-edge.com/pdf/dec/standards/EL-SM070-00_DEC_STD_070_Video_Systems_Reference_Manual_Dec91.pdf
+    snapshot_sha256: d30c2ace1cebdd5a28454177d4d9610d9661110bbeb4b97773259313042962f2
+    scope: Selected original internal standard clauses from published archival scan; chapter-specific review/date markings
+      preserved. Text extraction read; no new visual page verification or claim of whole standard coverage.
+    clauses:
+    - id: request-status-string
+      section: EL-00070-05 p.5-196
+      level: defined
+      wire: DCS $ q Pt ST
+      rule: Requests the state of one setting not encoded as SM/RM; Pt consists of its identifying intermediates and final
+        byte. Reports DECRPSS. Only one setting per request.
+      related_command: dec_vt420.request-status-string
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: DECRQSS replies for owned state and invalid requests
+        relation: wire-family
+        legacy_records:
+        - libvterm.dcs.decrqss_sgr
+        - libvterm.dcs.decrqss_decscusr
+        - kitty.dcs.decrqss
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: libvterm DECRQSS status reports retain different invalid margins and bank protection
+        relation: wire-family
+        legacy_records:
+        - libvterm.dcs.decrqss_decstbm
+        - libvterm.dcs.decrqss_decsca
+        - libvterm.dcs.decrqss_unsupported
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: libvterm hidden DECSLRM lifetime differs from Howl active-only margin retention
+        relation: wire-family
+        legacy_records:
+        - libvterm.dcs.decrqss_decslrm
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: DECRQSS reports conformance and page length across framing modes
+        relation: wire-family
+        legacy_records:
+        - iterm2.dcs.decrqss
+    - id: reply-status-string
+      section: EL-00070-05 p.5-197, PDF zero-based page 451
+      level: defined
+      wire: DCS Ps $ r Pt ST
+      rule: Ps 1 means successful request, with complete setting control excluding CSI introducer and no omitted parameters;
+        Ps 0 means unknown or unsuccessful, with empty payload. Returned setting is sufficient to overwrite current selection,
+        including when there is no default. Example blinking and reversed rendition returns 0;5;7m as payload.
+      accepted_reconciliations:
+      - decrpss-validity-polarity
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: DECRQSS reports conformance and page length across framing modes
+        relation: protocol-family
+        legacy_records:
+        - iterm2.dcs.decrqss
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: DECRQSS replies for owned state and invalid requests
+        relation: protocol-family
+        legacy_records:
+        - kitty.dcs.decrqss
+    - id: request-rectangle-checksum
+      section: EL-00070-05 pp.5-179,5-181
+      level: defined
+      wire: CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y
+      rule: Level 4. Pid identifies reply. Pp zero or omitted checks all page memory and ignores subsequent rectangle operands;
+        above highest page selects highest. Rectangle relative to DECOM; unordered bounds ignored. Defaults top=1,left=1,bottom=last
+        page line,right=last page column. Reply DCS Pid ! ~ HHHH ST (four uppercase hex digits). Complete checksum arithmetic
+        not defined here.
+      related_command: dec_vt420.request-rectangle-checksum
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum extension affects rectangular checksum reply
+        relation: protocol-family
+      - file: howl-vt/src/fixed_report.zig
+        test: extent parameters title stack and checksum serialize exact payloads
+        relation: protocol-family
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -13611,3 +13697,52 @@ reconciliation:
     question: If targeting HP memory lock, decide source scope and ensure actual memory/viewport behavior is explicit.
     decision: null
   disposition: source-only
+- id: decrpss-validity-polarity
+  status: resolved-by-reference-consensus
+  decision_rule: reference-consensus
+  approved_on: '2026-11-24'
+  accepted_interpretation:
+    successful: DCS 1 $ r Pt ST
+    unknown_or_unsuccessful: DCS 0 $ r ST
+    payload: Successful reply contains setting without CSI introducer; unsuccessful has no data.
+  scope_limit: Validity polarity and empty unsuccessful payload only. No selection of all descriptors, grammar admission,
+    conformance gates, omitted parameter handling or full report payload qualification.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: misc.c:4889-4931,5140-5150; ctlseqs.ms:4487-4501
+    observation: 1 successful, 0 unsuccessful. Author reports 1996 VT420 hardware test also agrees with DEC STD 070.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: dcs.c:255-277,414-443
+    observation: 1 valid, 0 invalid, cites hardware test; independent implementation.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/dcs.zig:265-312,487-505
+    observation: Encoded status from presence of payload, 1 valid and 0 invalid; unsupported longer requests can be ignored
+      separately.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: kitty/screen.c:4053-4078
+    observation: 1 valid, 0 unknown.
+  - implementation: wezterm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    source: term/src/terminalstate/performer.rs:294-344
+    observation: 1 valid, 0 invalid; explicitly follows documented correction.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:3502-3510
+    observation: 1 fulfilled valid payload, 0 rejected.
+  - implementation: windows_terminal
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    source: src/terminal/adapter/adaptDispatch.cpp:4242-4281,4384-4390
+    observation: 0 for unknown descriptor, 1 for valid; explicitly cites DEC STD 070.
+  original_author_sources:
+  - clause: dec_std070.reply-status-string
+    meaning: 1 successful, 0 unsuccessful; original internal character-cell standard
+  - clause: dec_vt420.reply-status-string
+    meaning: 0 valid, 1 invalid; conflicting original product manual
+  material_differences_retained: DEC internal standard directly agrees with independently maintained implementations and
+    historical VT420 hardware test reports cited by xterm/Foot. Original printed VT420 meaning retained. Historical hardware
+    not retested by coordinator. Source-specific admission differences not resolved.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
