@@ -51,7 +51,7 @@ test_location_mapping:
     commit: 3bad29180ac08b486506ffc36c03845f7708eb33
     path: protocol_coverage.yml
     sha256: 94f4cabf656482255bbeb70b65ca37d2e3ad8f9ac5e93883436cd19277473411
-  declarations_checked_at: 2b392f3374e8fb7efc6f6a6fcdffdef818c793e2
+  declarations_checked_at: c3b3ad3cc7e9bc9bc5dec512ac25886aafa33d42
   meaning: Candidate test locations for navigating the implementation. Wire-family matching preserves command class, leader
     and intermediates, not complete grammar or behavior. Protocol-family locations are shared starting points, not proof
     of the individual clause. Accepted-decision locations refer to existing separately qualified assessments. Test declarations
@@ -216,6 +216,14 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.c0.ht
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: mode 41 tab scroll keeps cells and graphics aligned'
+        relation: protocol-family
+        note: Narrow regression evidence at c3b3ad3; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: mode 41 tab admits history before scrolling and retries once'
+        relation: protocol-family
+        note: Narrow regression evidence at c3b3ad3; not whole-clause qualification.
     - id: c1-csi
       section: 8.3.16
       level: defined
@@ -5424,6 +5432,18 @@ specifications:
         relation: wire-family
         legacy_records:
         - iterm2.mode.more_fix
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: mode 41 tab scroll keeps cells and graphics aligned'
+        relation: protocol-family
+        note: Narrow regression evidence at c3b3ad3; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: mode 41 tab admits history before scrolling and retries once'
+        relation: protocol-family
+        note: Narrow regression evidence at c3b3ad3; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: DEC more-fix owns pending-wrap tab query save and reset lifetime
+        relation: protocol-family
+        note: Narrow regression evidence at 27df3fd; not whole-clause qualification.
     - id: cursor-blink-preference-report
       section: Read-only cursor blink resources, ctlseqs 926-929,1075-1078,1512-1518
       level: defined
@@ -6701,6 +6721,10 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 character insertion removes the whole intersecting cluster
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+        note: Narrow regression evidence at a89ed30; not whole-clause qualification.
     - id: detection
       section: Detecting if the terminal supports this protocol
       level: defined
@@ -7665,6 +7689,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.csi.decsace
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+        note: Narrow regression evidence at a89ed30; not whole-clause qualification.
     - id: attr-change-rect
       section: Rectangular Area Operations / Change Attributes in Rectangular Area, p167
       level: defined
@@ -7679,12 +7707,13 @@ specifications:
         source: Original DEC VT420 Programmer Reference Manual, Chapter 9, printed pages 167-169
         original_notation: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ r
         xterm_notation: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r; Pm means an ordered list of SGR attributes.
-        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the original default
-          selector is 0.
+        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the
+          original default selector is 0.
         region_defaults: Top=1, left=1, bottom=last active-page line, right=last active-page column.
-        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular operation.
-        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition; DECSACE controls
-          stream-versus-rectangle extent.
+        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular
+          operation.
+        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition;
+          DECSACE controls stream-versus-rectangle extent.
         original_selectors:
           '0': reset visual attributes
           '1': bold on
@@ -7711,6 +7740,11 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.csi.deccara
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+        note: Narrow regression evidence at a89ed30; not whole-clause qualification.
+      pending_reconciliation: deccara-omitted-selector-default
     - id: attr-reverse-rect
       section: Rectangular Area Operations / Reverse Attributes in Rectangular Area, p169
       level: defined
@@ -7725,12 +7759,13 @@ specifications:
         source: Original DEC VT420 Programmer Reference Manual, Chapter 9, printed pages 169-171
         original_notation: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ t
         xterm_notation: CSI Pt ; Pl ; Pb ; Pr ; Pm $ t; Pm means an ordered list of SGR attributes.
-        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the original default
-          selector is 0.
+        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the
+          original default selector is 0.
         region_defaults: Top=1, left=1, bottom=last active-page line, right=last active-page column.
-        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular operation.
-        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition; DECSACE controls
-          stream-versus-rectangle extent.
+        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular
+          operation.
+        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition;
+          DECSACE controls stream-versus-rectangle extent.
         original_selectors:
           '0': reverse all original visual attributes
           '1': toggle bold
@@ -7740,8 +7775,8 @@ specifications:
         xterm_extension:
           '8': toggle conceal / invisible
           scope: xterm-specific addition, not in the original DEC VT420 selector table
-        source_note: The printed DECRARA description labels the left-column default as Pr=1 instead of Pl=1; preserve the literal source
-          typo and compare the DECCARA description before any FULL claim.
+        source_note: The printed DECRARA description labels the left-column default as Pr=1 instead of Pl=1; preserve the literal
+          source typo and compare the DECCARA description before any FULL claim.
         selector_default: '0: reverse all visual attributes'
       test_locations:
       - file: howl-vt/src/screen/main_test.zig
@@ -7749,6 +7784,11 @@ specifications:
         relation: wire-family
         legacy_records:
         - iterm2.csi.decrara
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+        note: Narrow regression evidence at a89ed30; not whole-clause qualification.
+      pending_reconciliation: decrara-omitted-selector-default
     - id: cursor-visible
       section: Cursor Movement / Text Cursor Enable Mode, p176
       level: defined
@@ -12183,6 +12223,39 @@ specifications:
         note: Narrow page-selection regression; not full arithmetic or legacy provenance qualification.
       accepted_reconciliations:
       - decrqcra-page-zero-profile
+    - id: attr-change-rect
+      section: EL-00070-05 pp.5-173–5-174
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ r
+      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition. Bounds
+        depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last page position,
+        exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors 0 reset four
+        video attributes, 1/4/5/7 set bold/underline/blink/reverse, 22/24/25/27 clear; other values ignored except defined extensions.
+        If no valid subsequent selector received, default 0 clears video attributes. Double-width row columns refer to character
+        positions.
+      related_command: dec_vt420.attr-change-rect
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+        note: Narrow regression evidence at a89ed30; not whole-clause qualification.
+      pending_reconciliation: deccara-omitted-selector-default
+    - id: attr-reverse-rect
+      section: EL-00070-05 pp.5-175–5-176
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ t
+      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition. Bounds
+        depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last page position,
+        exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors 0 toggles
+        all four video attributes, 1/4/5/7 toggle individual attributes; others ignored except defined extensions (color values
+        ignored). No default; command ignored when no valid selector received. Double-width row columns refer to character positions.
+      related_command: dec_vt420.attr-reverse-rect
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+        note: Narrow regression evidence at a89ed30; not whole-clause qualification.
+      pending_reconciliation: decrara-omitted-selector-default
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -12194,7 +12267,65 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences: []
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: deccara-omitted-selector-default
+      status: material-original-default-versus-modern-admission-difference
+      wire: CSI Pt ; Pl ; Pb ; Pr $ r
+      original_author_sources:
+      - clause: dec_vt420.attr-change-rect
+        meaning: Omitted selector defaults to 0; unsupported selectors ignored.
+      - clause: dec_std070.attr-change-rect
+        meaning: If no valid subsequent selector is received, default0 clears the four original video attributes; defined extensions
+          excepted.
+      independent_implementations:
+      - implementation: xterm_snapshots
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:187,5694-5701; screen.c:2934-3048
+        meaning: Passes remaining parameter list from index4. No attribute-selector iterations when absent; exact rectangle
+          can still mark undrawn cells.
+      - implementation: iterm2
+        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+        source: sources/VT100/VT100Terminal.m:1045-1060
+        meaning: Rejects fewer than five operands; does not apply omitted selector reset.
+      - implementation: contour
+        revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+        source: src/vtbackend/Functions.h:604; Screen.cpp:4250-4279
+        meaning: Dispatch definition minimum five operands, SGR application from index4.
+      question: 'Select omitted DECCARA selector behavior: original default0 reset or existing no-admission. Invalid-only list
+        fallback and empty final substring versus absent selector separately qualify; do not infer all SGR selectors or unoccupied-cell
+        policy.'
+      decision: null
+    - id: decrara-omitted-selector-default
+      status: material-original-dec-source-default-disagreement
+      wire: CSI Pt ; Pl ; Pb ; Pr $ t
+      original_author_sources:
+      - clause: dec_vt420.attr-reverse-rect
+        meaning: Selector0 reverses all original video attributes and is printed as default.
+      - clause: dec_std070.attr-reverse-rect
+        meaning: Selector0 reverses all four original video attributes; no default, ignore if no valid selector received.
+      independent_implementations:
+      - implementation: xterm_snapshots
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:187,5703-5710; screen.c:2934-3004
+        meaning: No attribute iterations when list absent. Explicit0 XOR SGR_MASK; exact rectangle can still mark undrawn cells.
+      - implementation: windows_terminal
+        revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        source: src/terminal/adapter/adaptDispatch.cpp:1099-1137
+        meaning: Explicitly excludes empty list from zero/all-rendition toggle; explicit0 toggles broader rendition mask than
+          original DEC.
+      - implementation: iterm2
+        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+        source: sources/VT100/VT100Terminal.m:1062-1076
+        meaning: Rejects fewer than five operands.
+      - implementation: contour
+        revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+        source: src/vtbackend/Functions.h:615; Screen.cpp:4281-4309
+        meaning: Minimum five operands. Explicit0 currently no-op, unlike DEC.
+      question: 'Select absent DECRARA selector behavior: VT420 printed default0 or STD070 no default. Explicit0 toggle four
+        original attributes is a separate source-defined obligation if targeted; not the same case as omission.'
+      recommendation: Retain no default for DECRARA, consistent with original STD070 and independent modern empty-list admission;
+        qualify explicit0 separately.
+      decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
