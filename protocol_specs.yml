@@ -2227,6 +2227,17 @@ specifications:
       level: defined
       wire: CSI Pt ; Pb r
       rule: Defines the vertical scrolling region with one-based top and bottom margins and documented defaults.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-542315e11b
+        source_line: 1560
+        wire: CSI Ps ; Ps r
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 6, printed page 134; xterm ctlseqs line 1560
+        original_notation: 'CSI Pt ; Pb r: Pt top (default=1), Pb bottom (default=current lines per screen).'
+        requirements: Pt must be less than Pb; region cannot exceed page; cursor homes to page row=1, column=1.
+        xterm_wording: CSI Ps ; Ps r and default full window; this is the same top/bottom region command but does not license ignoring page
+          constraints.
     - id: sca
       section: Select Character Attributes (DECSCA), page 35
       level: defined
@@ -2382,6 +2393,18 @@ specifications:
       level: defined
       wire: CSI Pt ; Pb r
       rule: DECSTBM selects vertical scrolling margins.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-542315e11b
+        source_line: 1560
+        wire: CSI Ps ; Ps r
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 6, printed page 134; xterm ctlseqs line 1560
+        original_notation: 'CSI Pt ; Pb r: Pt top (default=1), Pb bottom (default=current lines per screen).'
+        requirements: Pt must be less than Pb; region cannot exceed page; cursor homes to page row=1, column=1.
+        xterm_wording: CSI Ps ; Ps r and default full window; this is the same top/bottom region command but does not license ignoring page
+          constraints.
+      reaffirms: dec_vt240.stbm
     - id: origin-mode
       section: Page Memory / Origin Mode, p135
       level: defined
@@ -2392,11 +2415,33 @@ specifications:
       level: defined
       wire: CSI Pn ' ~
       rule: DECDC deletes one or more vertical columns and shifts later columns left.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-c96fada8ba
+        source_line: 1989
+        wire: CSI Ps ' ~
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 8, printed page 149
+        original_notation: CSI Pn apostrophe ~ (one numeric count; default Pn=1).
+        xterm_notation: CSI Ps apostrophe ~ (same numeric count; default 1).
+        region: Column edit acts within the scrolling margins from the cursor; no effect outside scrolling margins.
+        effect: Shift columns left, adding blank columns without visual attributes at right margin.
     - id: insert-column
       section: Editing / Insert Column, p150
       level: defined
       wire: CSI Pn ' }
       rule: DECIC inserts blank vertical columns and shifts columns right.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-b38bf83439
+        source_line: 1981
+        wire: CSI Ps ' }
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 8, printed page 150
+        original_notation: CSI Pn apostrophe } (one numeric count; default Pn=1).
+        xterm_notation: CSI Ps apostrophe } (same numeric count; default 1).
+        region: Column edit acts within the scrolling margins from the cursor; no effect outside scrolling margins.
+        effect: Shift columns right, adding blank columns without visual attributes.
     - id: protected-character
       section: Editing / Select Character Protection Attribute, p155
       level: defined
@@ -2527,11 +2572,68 @@ specifications:
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr ; Ps $ r
       rule: DECCARA changes attributes in the selected rectangle.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-8f7c941588
+        source_line: 1574
+        wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 9, printed pages 167-169
+        original_notation: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ r
+        xterm_notation: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r; Pm means an ordered list of SGR attributes.
+        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the original default
+          selector is 0.
+        region_defaults: Top=1, left=1, bottom=last active-page line, right=last active-page column.
+        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular operation.
+        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition; DECSACE controls
+          stream-versus-rectangle extent.
+        original_selectors:
+          '0': reset visual attributes
+          '1': bold on
+          '4': underline on
+          '5': blink on
+          '7': reverse image on
+          '22': bold off
+          '24': underline off
+          '25': blink off
+          '27': reverse image off
+        xterm_extension:
+          '8': invisible / conceal on
+          '28': invisible / conceal off
+          scope: xterm-specific addition, not in the original DEC VT420 selector table
+        selector_default: '0: reset visual attributes'
     - id: attr-reverse-rect
       section: Rectangular Area Operations / Reverse Attributes in Rectangular Area, p169
       level: defined
       wire: CSI Pt ; Pl ; Pb ; Pr ; Ps $ t
       rule: DECRARA reverses selected attributes in a rectangle.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-5bddb81eac
+        source_line: 1717
+        wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ t
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 9, printed pages 169-171
+        original_notation: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ t
+        xterm_notation: CSI Pt ; Pl ; Pb ; Pr ; Pm $ t; Pm means an ordered list of SGR attributes.
+        attribute_cardinality: If explicit attribute selectors are present, apply them cumulatively in order; when omitted the original default
+          selector is 0.
+        region_defaults: Top=1, left=1, bottom=last active-page line, right=last active-page column.
+        region_bounds: Coordinates depend on DECOM and clamp to page dimensions; page margins do not affect the rectangular operation.
+        side_effects: Modifies cell visual attributes, never character values, cursor position or the current SGR rendition; DECSACE controls
+          stream-versus-rectangle extent.
+        original_selectors:
+          '0': reverse all original visual attributes
+          '1': toggle bold
+          '4': toggle underline
+          '5': toggle blink
+          '7': toggle reverse image
+        xterm_extension:
+          '8': toggle conceal / invisible
+          scope: xterm-specific addition, not in the original DEC VT420 selector table
+        source_note: The printed DECRARA description labels the left-column default as Pr=1 instead of Pl=1; preserve the literal source
+          typo and compare the DECCARA description before any FULL claim.
+        selector_default: '0: reverse all visual attributes'
     - id: cursor-visible
       section: Cursor Movement / Text Cursor Enable Mode, p176
       level: defined
@@ -2646,11 +2748,33 @@ specifications:
       level: defined
       wire: CSI ? Pm $ p
       rule: DECRQM queries the state of a DEC private mode.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-4d9e66b18d
+        source_line: 1507
+        wire: CSI ? Ps $ p
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual (Feb 1992), Chapter 12, printed page 258
+        original_notation: CSI ? Pd $ p; Pd is the one DEC-private mode number to query.
+        xterm_notation: CSI ? Ps $ p; Ps likewise selects one DEC-private mode number.
+        reply: CSI ? Pd ; Ps $ y with Ps=0 unrecognized, 1 set, 2 reset, 3 permanently set, 4 permanently reset.
+        source_limit: Exactly one queried mode, including when multiple modes have been set by DECSET/DECRST. No bulk query or change of
+          terminal mode.
     - id: report-mode
       section: Mode Reporting / Report Mode
       level: defined
       wire: CSI ? Pm ; Ps $ y
       rule: DECRPM reports a private mode and its recognized set/reset/permanence state.
+      original_parameters:
+        source: Original DEC VT420 Programmer Reference Manual, Chapter 12, printed page 262
+        original_notation: CSI ? Pd ; Ps $ y; Pd is the private mode, Ps its status.
+        values:
+          '0': not recognized
+          '1': set
+          '2': reset
+          '3': permanently set
+          '4': permanently reset
+        response_cardinality: Exactly one mode state per report, independent of any other queried mode.
     - id: media-copy-dec-private-extended
       section: Chapter 11 / Keyboard, Printing, and Display Commands / Printing Functions, printed pages 212-214
       level: defined
@@ -2731,6 +2855,36 @@ specifications:
       scope_note: The DEC printer and keyboard response sets include states omitted from xterm examples. Omission alone is not conflicting
         semantics.
       decision: dec-private-dsr-decxcpr-reply-shape
+    - id: request-ansi-mode
+      section: Chapter 12 / Request Mode (DECRQM), ANSI branch, printed page 257
+      level: defined
+      wire: CSI Pa $ p
+      rule: Requests the state of exactly one ANSI mode Pa. Distinct from CSI ? Pd $ p for a DEC-private mode; the report is CSI Pa ; Ps
+        $ y.
+      source_parameters:
+        request_count: Exactly one numeric ANSI mode per DECRQM request; no list.
+        table: VT420 Table 12-2, printed page 259
+        reply: dec_vt420.report-ansi-mode
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-a9bfad2075
+        source_line: 1496
+        wire: CSI Ps $ p
+    - id: report-ansi-mode
+      section: Chapter 12 / Report Mode (DECRPM), ANSI branch, printed pages 261-262
+      level: defined
+      wire: CSI Pa ; Ps $ y
+      rule: Reports one ANSI mode Pa and its recognized, set, reset or permanence state Ps in response to DECRQM. The private reply form
+        CSI ? Pd ; Ps $ y remains a separate wire.
+      mode_values:
+        '0': not recognized
+        '1': set
+        '2': reset
+        '3': permanently set
+        '4': permanently reset
+      source_parameters:
+        request: dec_vt420.request-ansi-mode
+        report_count: One mode per report; do not invent multi-report packing.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -3492,16 +3646,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1475
       symbol: DECSCL
-    - id: csi-a9bfad2075
-      wire: CSI Ps $ p
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1496
-      symbol: DECRQM
-    - id: csi-4d9e66b18d
-      wire: CSI ? Ps $ p
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1507
-      symbol: DECRQM
     - id: csi-18367d6543
       wire: 'CSI # p'
       section: Functions using CSI , ordered by the final character(s)
@@ -3531,20 +3675,11 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1556
       symbol: XTPOPSGR
-    - id: csi-542315e11b
-      wire: CSI Ps ; Ps r
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1560
     - id: csi-0c95b02fe1
       wire: CSI ? Pm r
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1564
       symbol: XTRESTORE
-    - id: csi-8f7c941588
-      wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1574
-      symbol: DECCARA
     - id: csi-2198aed027
       wire: CSI s
       section: Functions using CSI , ordered by the final character(s)
@@ -3573,11 +3708,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1711
       symbol: DECSWBV
-    - id: csi-5bddb81eac
-      wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ t
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1717
-      symbol: DECRARA
     - id: csi-1fcd21cd8e
       wire: CSI u
       section: Functions using CSI , ordered by the final character(s)
@@ -3676,21 +3806,11 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1956
       symbol: DECATC
-    - id: csi-b38bf83439
-      wire: CSI Ps ' }
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1981
-      symbol: DECIC
     - id: csi-d29e668ba9
       wire: CSI Ps $ }
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1984
       symbol: DECSASD
-    - id: csi-c96fada8ba
-      wire: CSI Ps ' ~
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1989
-      symbol: DECDC
     - id: csi-0cc14c89d4
       wire: CSI Ps $ ~
       section: Functions using CSI , ordered by the final character(s)
