@@ -1083,6 +1083,8 @@ specifications:
         source: xterm ctlseqs line 193 (DECID; obsolete CSI c / DA identification request)
         original_ecma48: SCI introduces one following graphic/control byte, ECMA-48 §8.3.109; not a terminal-identity request.
         decision: esc-z-decid-vs-ecma48-sci
+      accepted_reconciliations:
+      - esc-z-decid-vs-ecma48-sci
     - id: sco
       section: 8.3.110
       level: defined
@@ -2718,6 +2720,8 @@ specifications:
       pinned_detail: 'The source comment records the 2023 separation: 45 permits reverse movement within a wrapped logical line,
         1045 to any line. CursorBack requires WRAPAROUND as well, may cross to bottom at top margin with extended mode, and
         uses margin-aware bounds. This is observed source behavior, not a complete target contract.'
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-45
     - id: keyboard-termcap
       section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
       level: defined
@@ -3676,7 +3680,8 @@ specifications:
         on operation, reports font dimensions for 16. Title stack has ten slots and modulo storage; indexed access does not
         advance/decrement used, missing title may search earlier slots. No implication of native Wayland permissions or exact
         desktop window position availability.
-      pending_reconciliation: xtwinops-14-window-vs-text-area
+      accepted_reconciliations:
+      - xtwinops-14-window-vs-text-area
     - id: x-property
       section: OSC selector 3, ctlseqs 2028-2030
       level: defined
@@ -3765,6 +3770,75 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:3976-3984
       mode_context: ANSI xterm profile; distinct from VT52 ESC F.
+    - id: reverse-wrap
+      section: DECSET/DECRST 45, ctlseqs 946/1094; cursor.c:106-193
+      level: defined
+      wire: CSI ? 45 h / CSI ? 45 l
+      rule: Current xterm mode 45 enables/disables reverse wrapping across the previous wrapped row within a logical line, gated
+        by autowrap. Mode 1045 separately enables extended reverse wrapping. Graphics printer mode is a competing original DEC
+        hardware interpretation.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7695-7703; cursor.c:106-193
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-45
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-45-h-line-946
+        source_line: 946
+        wire: CSI ? 45 h
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: reverse-wraparound mode (XTREVWRAP)
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-45
+          status: unresolved; no automatic implementation priority or conformance
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-45-l-line-1094
+        source_line: 1094
+        wire: CSI ? 45 l
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: reverse-wraparound mode (XTREVWRAP)
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-45
+          status: unresolved; no automatic implementation priority or conformance
+    - id: alternate-buffer-legacy
+      section: DECSET/DECRST 47, ctlseqs 952/1099
+      level: defined
+      wire: CSI ? 47 h / CSI ? 47 l
+      rule: Legacy alternate-buffer switch to alternate on SET and primary on RESET, without clearing or separate cursor save/restore.
+        Xterm host admission can inhibit switching; competing DEC graphics printing mode retained.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7754-7766
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-47
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-47-h-line-952
+        source_line: 952
+        wire: CSI ? 47 h
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: alternate screen buffer, subject to titeInhibit resource
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
+          status: unresolved; no automatic implementation priority or conformance
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-47-l-line-1099
+        source_line: 1099
+        wire: CSI ? 47 l
+        previous_review:
+          classification: source-confirmed-same-wire-semantic-conflict
+          origin: xterm terminal/window convention
+          meaning: alternate screen buffer, subject to titeInhibit resource
+          competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
+          decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
+          status: unresolved; no automatic implementation priority or conformance
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -4850,6 +4924,8 @@ specifications:
         entry_id: esc-ae31dbf9e2
         source_line: 395
         wire: ESC 7
+      accepted_reconciliations:
+      - sco-cursor-position-vs-dec-state
     - id: restore-cursor
       section: Cursor and Presentation State / DECRC
       level: defined
@@ -4860,6 +4936,8 @@ specifications:
         entry_id: esc-7a60c48e15
         source_line: 397
         wire: ESC 8
+      accepted_reconciliations:
+      - sco-cursor-position-vs-dec-state
     - id: request-status-string
       section: Reports / Request Selection or Setting
       level: defined
@@ -5351,10 +5429,21 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5081-5126,14314-14321
-      pending_reconciliation: decscl-hard-vs-soft-reset
       source_note: Pinned xterm explicitly invokes ReallyReset(xw,False,False), a soft reset retaining saved lines. Its source
         comment cites VT220/DEC STD-070 soft reset versus VT300/420/520 hard reset; only the pinned VT420 manual and actual
         xterm branch were independently verified here. Pl=65 is a later profile, not a VT420 selector.
+      accepted_reconciliations:
+      - decscl-hard-vs-soft-reset
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-724bc8b026
+        source_line: 1475
+        wire: CSI Pl ; Pc " p
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: decscl-hard-vs-soft-reset
+          reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
+            separate.
     - id: soft-terminal-reset
       section: Chapter 13 / DECSTR, printed pp.285-286, Table 13-1
       level: defined
@@ -5549,9 +5638,20 @@ specifications:
       xterm_reference:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: misc.c:4812-4864,5305-5322
-      pending_reconciliation: decaupss-latin1-assignment-selector
       source_note: Pinned xterm table uses selector 1 with A for ISO Latin-1, selector 0 with A for an undocumented ASCII variant,
         and ignores assignment in UTF-8 mode. Other later hardware sets require their own original source.
+      accepted_reconciliations:
+      - decaupss-latin1-assignment-selector
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-1903109226
+        source_line: 451
+        wire: DCS Ps ! u Pt ST
+        previous_review:
+          classification: source-confirmed-material-semantic-difference
+          decision: decaupss-latin1-assignment-selector
+          reason: VT420 original assignment and report sections disagree on ISO Latin-1 selector; xterm distinguishes 0!uA and
+            1!uA. Retain secondary entry for explicit scope reconciliation.
     - id: request-user-preferred-supplemental
       section: Chapter 12 / DECRQUPSS, printed p.273
       level: defined
@@ -5567,6 +5667,8 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5847-5862
       related_command: dec_vt420.assign-user-preferred-supplemental
+      accepted_reconciliations:
+      - decaupss-latin1-assignment-selector
     - id: user-defined-keys
       section: Chapter 11 / DECUDK, printed pp.202-209, Tables 11-1/11-2
       level: defined
@@ -5700,6 +5802,32 @@ specifications:
       reply: DCS ! | HHHHHHHH ST
       source_note: Pinned xterm returns eight zero digits, explicitly not a real manufacturing identifier. No target identity,
         privacy disclosure or generated serial selected.
+    - id: terminal-identification
+      section: Chapter 12 / DECID, printed pp.234-235
+      level: defined
+      wire: ESC Z
+      rule: Original DEC manual identifies legacy primary DA request, advises using DA instead and says VT400 ignores DECID,
+        then states response is the primary DA response for all operating levels. Preserve source ambiguity. ANSI DECID is not
+        ECMA SCI or VT52 identification.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:4062-4097
+      accepted_reconciliations:
+      - esc-z-decid-vs-ecma48-sci
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-f342577b57
+        source_line: 193
+        wire: ESC Z
+        previous_review:
+          classification: same-wire-semantic-conflict
+          meaning: DEC terminal-identification request (DECID), obsolete DA/CSI c spelling in xterm
+          competes_with: ecma48.sci
+          decision: esc-z-decid-vs-ecma48-sci
+          reason: ECMA-48 fifth edition SCI uses ESC Z to introduce a following character, whereas xterm uses ESC Z to request
+            terminal identity. These cannot both be the same terminal action.
+          scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction
+            remains to be verified for applicability.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -6390,8 +6518,8 @@ specifications:
       section: Chapter 12 / Table 12-3, DEC Private Modes for DECRQM, DECRPM, SM and RM, printed pages 220-221
       level: defined
       wire: CSI ? Pd h / CSI ? Pd l
-      rule: DEC VT330/VT340 assigns private mode selectors 43-47 to graphics-printer controls. The same input bytes collide with unrelated
-        xterm-specific meanings for 44-47. A mode-number label is not sufficient to select implementation behavior.
+      rule: DEC VT330/VT340 assigns private mode selectors 43-47 to graphics-printer controls. The same input bytes collide
+        with unrelated xterm-specific meanings for 44-47. A mode-number label is not sufficient to select implementation behavior.
       parameters:
       - selector: 43
         symbol: DECGEPM
@@ -6408,8 +6536,8 @@ specifications:
       - selector: 47
         symbol: DECGRPM
         originating_effect: graphics rotated print
-      source_limit: Volume 1 Table 12-3 identifies the DEC modes; their full print-format effects, approximate dimensions and printer-level
-        sixel output grammar are now indexed from Volume 2 Chapter 16.
+      source_limit: Volume 1 Table 12-3 identifies the DEC modes; their full print-format effects, approximate dimensions and
+        printer-level sixel output grammar are now indexed from Volume 2 Chapter 16.
       also_documented:
       - catalogue: xterm_ctlseqs
         entry_id: private-mode-43-h-line-941
@@ -6453,6 +6581,9 @@ specifications:
       - dec-vt3xx-graphics-print-vs-xterm-mode-46
       - dec-vt3xx-graphics-print-vs-xterm-mode-47
       detailed_source: dec_vt3xx_graphics.graphics-print-modes
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-45
+      - dec-vt3xx-graphics-print-vs-xterm-mode-47
   dec_vt3xx_graphics:
     title: 'DEC VT330/VT340 Programmer Reference Manual, Volume 2: Graphics Programming'
     author: Digital Equipment Corporation
@@ -6498,14 +6629,18 @@ specifications:
         set: 90-degree rotated image, approximately 200 x 300 mm (8 x 12 in).
         reset: Compressed image, approximately 150 x 75 mm (6 x 3 in).
         default: reset / compressed
-      size_note: Printed dimensions are approximate physical paper output sizes, never VT cell counts or exact image pixel quotas. Sixel
-        output encoding depends on selected printer level; see graphics-printer-sixel-output.
+      size_note: Printed dimensions are approximate physical paper output sizes, never VT cell counts or exact image pixel quotas.
+        Sixel output encoding depends on selected printer level; see graphics-printer-sixel-output.
       collisions:
       - dec-vt3xx-graphics-print-vs-xterm-mode-44
       - dec-vt3xx-graphics-print-vs-xterm-mode-45
       - dec-vt3xx-graphics-print-vs-xterm-mode-46
       - dec-vt3xx-graphics-print-vs-xterm-mode-47
-      implementation_status: unassessed source semantics, not a selected Howl implementation requirement or proof of printer I/O
+      implementation_status: unassessed source semantics, not a selected Howl implementation requirement or proof of printer
+        I/O
+      accepted_reconciliations:
+      - dec-vt3xx-graphics-print-vs-xterm-mode-45
+      - dec-vt3xx-graphics-print-vs-xterm-mode-47
     - id: graphics-printer-sixel-output
       section: Chapter 16 / Sending Graphics and Sixel Graphics Levels, printed pages 258-261
       level: defined
@@ -6536,25 +6671,26 @@ specifications:
       section: Chapter 14 / Sixel Scrolling Mode / Sixel Display Mode Control Function, printed pages 237-238
       level: defined
       wire: CSI ? 80 h / CSI ? 80 l
-      rule: On DEC VT330/VT340 graphics terminals, SET enables sixel scrolling and RESET disables sixel scrolling. This polarity is explicit
-        in the original May 1988 edition, and is the opposite of the later DEC VT382 Thai control table and xterm/Foot/WezTerm.
+      rule: On DEC VT330/VT340 graphics terminals, SET enables sixel scrolling and RESET disables sixel scrolling. This polarity
+        is explicit in the original May 1988 edition, and is the opposite of the later DEC VT382 Thai control table and xterm/Foot/WezTerm.
       original_mode_semantics:
         source: DEC VT330/VT340 Graphics Programming, second edition May 1988, Chapter 14 pages 237-238
         name: DECSDM
         selector: 80
         set_wire: CSI ? 80 h
-        set_effect: Enable sixel scrolling. Sixel cursor starts at the upper-left of the ANSI text cursor location; when the sixel active
-          position reaches the graphics-page bottom margin, scrolling occurs; on exiting sixel mode, text cursor moves to current sixel cursor
-          position.
+        set_effect: Enable sixel scrolling. Sixel cursor starts at the upper-left of the ANSI text cursor location; when the
+          sixel active position reaches the graphics-page bottom margin, scrolling occurs; on exiting sixel mode, text cursor
+          moves to current sixel cursor position.
         reset_wire: CSI ? 80 l
-        reset_effect: Disable sixel scrolling. Sixel active position starts at upper-left of active graphics page, attempts to advance below
-          bottom margin are ignored; exiting sixel mode does not move text cursor.
-        default: The read Chapter 14 excerpts do not explicitly establish the initial DECSDM bit state for all VT300 models; do not infer
-          one.
-        page_semantics: Graphics-page bounds and sixel positioning, not text scrollback history, physical printer size or TUI-owned scroll
-          state.
+        reset_effect: Disable sixel scrolling. Sixel active position starts at upper-left of active graphics page, attempts
+          to advance below bottom margin are ignored; exiting sixel mode does not move text cursor.
+        default: The read Chapter 14 excerpts do not explicitly establish the initial DECSDM bit state for all VT300 models;
+          do not infer one.
+        page_semantics: Graphics-page bounds and sixel positioning, not text scrollback history, physical printer size or TUI-owned
+          scroll state.
       competes_with: dec_vt382_thai.sixel-display-mode
-      pending_reconciliation: decsdm-polarity-vt300-vt382
+      accepted_reconciliations:
+      - decsdm-polarity-vt300-vt382
     - id: sixel-envelope-profile
       section: Chapter 14 / Sixel Data Format, printed pp.232-235
       level: defined
@@ -6603,17 +6739,48 @@ specifications:
       section: Appendix C / VT382 Control Function Summary / Display Set-Up sequence, printed page C-30 (PDF page 132)
       level: defined
       wire: CSI ? 80 h / CSI ? 80 l
-      rule: 'DEC VT382 Thai 1989 reverses the 1988 VT330/VT340 DECSDM meaning: SET disables sixel scrolling; RESET enables sixel scrolling.'
+      rule: 'DEC VT382 Thai 1989 reverses the 1988 VT330/VT340 DECSDM meaning: SET disables sixel scrolling; RESET enables sixel
+        scrolling.'
       original_mode_semantics:
-        source: Original DEC VT382 Thai Installing and Using Manual (first edition, August 1989), control-function summary page C-30
+        source: Original DEC VT382 Thai Installing and Using Manual (first edition, August 1989), control-function summary page
+          C-30
         set_wire: CSI ? 80 h
         set_effect: No sixel scrolling.
         reset_wire: CSI ? 80 l
         reset_effect: Sixel scrolling.
-        source_limit: This source summary specifies set/reset scrolling polarity only; it does not independently define image anchoring,
-          cursor-motion rules, sixel allocation dimensions or rendering bounds. Do not import those from xterm and label them DEC-authored.
+        source_limit: This source summary specifies set/reset scrolling polarity only; it does not independently define image
+          anchoring, cursor-motion rules, sixel allocation dimensions or rendering bounds. Do not import those from xterm and
+          label them DEC-authored.
       competes_with: dec_vt3xx_graphics.sixel-display-mode
-      pending_reconciliation: decsdm-polarity-vt300-vt382
+      accepted_reconciliations:
+      - decsdm-polarity-vt300-vt382
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-80-h-line-961
+        source_line: 961
+        wire: CSI ? 80 h
+        previous_review:
+          classification: source-author-variant-and-modern-polarity-conflict
+          pending_reconciliation: decsdm-polarity-vt300-vt382
+          original_1988: dec_vt3xx_graphics.sixel-display-mode
+          original_1989: dec_vt382_thai.sixel-display-mode
+          modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382
+            and contradicting original DEC VT330/VT340.
+          disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly
+            selected. Do not infer correctness from mnemonic or modern implementation counts alone.
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-80-l-line-1107
+        source_line: 1107
+        wire: CSI ? 80 l
+        previous_review:
+          classification: source-author-variant-and-modern-polarity-conflict
+          pending_reconciliation: decsdm-polarity-vt300-vt382
+          original_1988: dec_vt3xx_graphics.sixel-display-mode
+          original_1989: dec_vt382_thai.sixel-display-mode
+          modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382
+            and contradicting original DEC VT330/VT340.
+          disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly
+            selected. Do not infer correctness from mnemonic or modern implementation counts alone.
   dec_vt520:
     title: VT520/VT525 Video Terminal Programmer Information
     author: Digital Equipment Corporation
@@ -7085,7 +7252,8 @@ specifications:
         '21': OSC l title ST
       source_note: dtterm 14 reports window pixels; xterm default 14 reports text-area pixels and 14;2 window pixels. Treat
         as explicit profile distinction, not identical query dimensions. Native window authorization and units are host-owned.
-      pending_reconciliation: xtwinops-14-window-vs-text-area
+      accepted_reconciliations:
+      - xtwinops-14-window-vs-text-area
     - id: title-selector-0
       section: Received Escape Sequences / Set text parameters
       level: defined
@@ -7507,7 +7675,8 @@ specifications:
       source_note: DEC VT520 July 1994 p.6-9 SCO emulation describes DECSC/DECRC-like behavior except page not saved/restored.
         Xterm uses CursorSave/CursorRestore (CSI s dispatches DECSLRM when LRMM enabled); exact saved rendition, character-set
         and position semantics require separate scope selection.
-      pending_reconciliation: sco-cursor-position-vs-dec-state
+      accepted_reconciliations:
+      - sco-cursor-position-vs-dec-state
     - id: restore-cursor-position
       section: screen(HW) CSIs/CSIu, HTML lines 831-832
       level: defined
@@ -7524,7 +7693,8 @@ specifications:
       source_note: DEC VT520 July 1994 p.6-9 SCO emulation describes DECSC/DECRC-like behavior except page not saved/restored.
         Xterm uses CursorSave/CursorRestore (CSI s dispatches DECSLRM when LRMM enabled); exact saved rendition, character-set
         and position semantics require separate scope selection.
-      pending_reconciliation: sco-cursor-position-vs-dec-state
+      accepted_reconciliations:
+      - sco-cursor-position-vs-dec-state
   rxvt:
     title: rxvt reference and implementation
     author: rxvt authors
@@ -7645,20 +7815,6 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences:
-    - id: esc-f342577b57
-      wire: ESC Z
-      section: C1 (8-Bit) Control Characters
-      source_line: 193
-      symbol: DA
-      review:
-        classification: same-wire-semantic-conflict
-        meaning: DEC terminal-identification request (DECID), obsolete DA/CSI c spelling in xterm
-        competes_with: ecma48.sci
-        decision: esc-z-decid-vs-ecma48-sci
-        reason: ECMA-48 fifth edition SCI uses ESC Z to introduce a following character, whereas xterm uses ESC Z to request terminal identity.
-          These cannot both be the same terminal action.
-        scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction remains
-          to be verified for applicability.
     - id: esc-93bf6694ea
       wire: ESC % @
       section: Controls beginning with ESC
@@ -7673,26 +7829,6 @@ discovery_catalogues:
       wire: ESC % G
       section: Controls beginning with ESC
       source_line: 310
-    - id: dcs-1903109226
-      wire: DCS Ps ! u Pt ST
-      section: Device-Control functions
-      source_line: 451
-      symbol: DECAUPSS
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: decaupss-latin1-assignment-selector
-        reason: VT420 original assignment and report sections disagree on ISO Latin-1 selector; xterm distinguishes 0!uA and
-          1!uA. Retain secondary entry for explicit scope reconciliation.
-    - id: csi-724bc8b026
-      wire: CSI Pl ; Pc " p
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1475
-      symbol: DECSCL
-      review:
-        classification: source-confirmed-material-semantic-difference
-        decision: decscl-hard-vs-soft-reset
-        reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
-          separate.
     - id: csi-a6bef4a803
       wire: CSI Ps SP t
       section: Functions using CSI , ordered by the final character(s)
@@ -7804,17 +7940,6 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-45-h-line-946
-      wire: CSI ? 45 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 946
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: reverse-wraparound mode (XTREVWRAP)
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-45
-        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-46-h-line-949
       wire: CSI ? 46 h
       section: DEC Private Mode Set (DECSET)
@@ -7826,30 +7951,6 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-47-h-line-952
-      wire: CSI ? 47 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 952
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: alternate screen buffer, subject to titeInhibit resource
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
-        status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-80-h-line-961
-      wire: CSI ? 80 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 961
-      review:
-        classification: source-author-variant-and-modern-polarity-conflict
-        pending_reconciliation: decsdm-polarity-vt300-vt382
-        original_1988: dec_vt3xx_graphics.sixel-display-mode
-        original_1989: dec_vt382_thai.sixel-display-mode
-        modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382 and contradicting
-          original DEC VT330/VT340.
-        disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly selected.
-          Do not infer correctness from mnemonic or modern implementation counts alone.
     - id: private-mode-1010-h-line-978
       wire: CSI ? 1010 h
       section: DEC Private Mode Set (DECSET)
@@ -7890,17 +7991,6 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-44
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-45-l-line-1094
-      wire: CSI ? 45 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1094
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: reverse-wraparound mode (XTREVWRAP)
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-45
-        status: unresolved; no automatic implementation priority or conformance
     - id: private-mode-46-l-line-1097
       wire: CSI ? 46 l
       section: DEC Private Mode Reset (DECRST)
@@ -7912,30 +8002,6 @@ discovery_catalogues:
         competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
         decision: dec-vt3xx-graphics-print-vs-xterm-mode-46
         status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-47-l-line-1099
-      wire: CSI ? 47 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1099
-      review:
-        classification: source-confirmed-same-wire-semantic-conflict
-        origin: xterm terminal/window convention
-        meaning: alternate screen buffer, subject to titeInhibit resource
-        competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
-        decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
-        status: unresolved; no automatic implementation priority or conformance
-    - id: private-mode-80-l-line-1107
-      wire: CSI ? 80 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1107
-      review:
-        classification: source-author-variant-and-modern-polarity-conflict
-        pending_reconciliation: decsdm-polarity-vt300-vt382
-        original_1988: dec_vt3xx_graphics.sixel-display-mode
-        original_1989: dec_vt382_thai.sixel-display-mode
-        modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382 and contradicting
-          original DEC VT330/VT340.
-        disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly selected.
-          Do not infer correctness from mnemonic or modern implementation counts alone.
     - id: private-mode-1010-l-line-1124
       wire: CSI ? 1010 l
       section: DEC Private Mode Reset (DECRST)
@@ -7992,58 +8058,6 @@ discovery_catalogues:
           not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
         significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent adoption
           is not yet established.
-    - id: dec-vt3xx-graphics-print-vs-xterm-mode-45
-      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
-      selector: 45
-      wire: CSI ? 45 h / CSI ? 45 l
-      original_dec:
-        clause: dec_vt3xx_text.graphics-print-dec-private-modes
-        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
-        name: DECGPCS
-        meaning: graphics print color syntax
-        detailed_source: dec_vt3xx_graphics.graphics-print-modes
-      xterm:
-        source: Pinned xterm ctlseqs DECSET/DECRST tables
-        meaning: reverse-wraparound mode (XTREVWRAP)
-        entries:
-        - entry_id: private-mode-45-h-line-946
-          wire: CSI ? 45 h
-          source_line: 946
-          interpretation: 'xterm: reverse-wraparound mode (XTREVWRAP)'
-        - entry_id: private-mode-45-l-line-1094
-          wire: CSI ? 45 l
-          source_line: 1094
-          interpretation: 'xterm: reverse-wraparound mode (XTREVWRAP)'
-      original_dec_xterm_mentions:
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-45-h-line-947
-        source_line: 947
-        wire: CSI ? 45 h
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-45-l-line-1095
-        source_line: 1095
-        wire: CSI ? 45 l
-      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
-        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
-        automatically.
-      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
-        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
-      decision: null
-      independent_reference_evidence:
-      - implementation: Foot
-        revision: cb2771788998f6a6288e2de8273c55a8214551e0
-        source_location: terminals/foot/csi.c:dec_private_mode case 45
-        observed_source_behavior: Sets reverse_wrap to enabled or disabled.
-      - implementation: Ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        source_location: terminals/ghostty/src/terminal/modes.zig:reverse_wrap value 45; src/terminal/Terminal.zig reverse-wrap behavior
-        observed_source_behavior: Names and implements reverse-wrap mode 45.
-      - implementation: WezTerm
-        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
-        source_location: terminals/wezterm/wezterm-escape-parser/src/csi.rs:ReverseWraparound=45; term/src/terminalstate/mod.rs DecPrivateModeCode::ReverseWraparound
-        observed_source_behavior: Parses, sets, resets and queries reverse-wraparound mode 45.
-      modern_evidence_summary: Independently maintained modern terminals implement the xterm terminal meaning. This supports its interoperability
-        relevance but does not erase the originating DEC printing meaning or prove identical edge cases across implementations.
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-46
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
       selector: 46
@@ -8086,130 +8100,6 @@ discovery_catalogues:
           not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
         significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent adoption
           is not yet established.
-    - id: dec-vt3xx-graphics-print-vs-xterm-mode-47
-      status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
-      selector: 47
-      wire: CSI ? 47 h / CSI ? 47 l
-      original_dec:
-        clause: dec_vt3xx_text.graphics-print-dec-private-modes
-        source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
-        name: DECGRPM
-        meaning: graphics rotated print
-        detailed_source: dec_vt3xx_graphics.graphics-print-modes
-      xterm:
-        source: Pinned xterm ctlseqs DECSET/DECRST tables
-        meaning: alternate screen buffer, subject to titeInhibit resource
-        entries:
-        - entry_id: private-mode-47-h-line-952
-          wire: CSI ? 47 h
-          source_line: 952
-          interpretation: 'xterm: alternate screen buffer, subject to titeInhibit resource'
-        - entry_id: private-mode-47-l-line-1099
-          wire: CSI ? 47 l
-          source_line: 1099
-          interpretation: 'xterm: alternate screen buffer, subject to titeInhibit resource'
-      original_dec_xterm_mentions:
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-47-h-line-954
-        source_line: 954
-        wire: CSI ? 47 h
-      - catalogue: xterm_ctlseqs
-        entry_id: private-mode-47-l-line-1100
-        source_line: 1100
-        wire: CSI ? 47 l
-      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
-        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
-        automatically.
-      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
-        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
-      decision: null
-      independent_reference_evidence:
-      - implementation: Foot
-        revision: cb2771788998f6a6288e2de8273c55a8214551e0
-        source_location: terminals/foot/csi.c:case 47,1047,1049
-        observed_source_behavior: Switches between the primary and alternate grid for mode 47.
-      - implementation: Kitty
-        revision: a79f376b85fd95e3dfd0589877123996bacd4184
-        source_location: terminals/kitty/kitty/modes.h:TOGGLE_ALT_SCREEN_1=(47 << 5); kitty/screen.c:TOGGLE_ALT_SCREEN_1
-        observed_source_behavior: Switches main/alternate line buffer via mode 47.
-      - implementation: Ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        source_location: terminals/ghostty/src/terminal/modes.zig:alt_screen_legacy value 47; src/terminal/stream_terminal.zig and Terminal.zig
-        observed_source_behavior: Legacy mode 47 invokes alternate-screen switching without the 1049 clearing semantics.
-      - implementation: WezTerm
-        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
-        source_location: terminals/wezterm/wezterm-escape-parser/src/csi.rs:EnableAlternateScreen=47; term/src/terminalstate/mod.rs
-        observed_source_behavior: Parses and switches the alternate screen via mode 47.
-      modern_evidence_summary: Independently maintained modern terminals implement the xterm terminal meaning. This supports its interoperability
-        relevance but does not erase the originating DEC printing meaning or prove identical edge cases across implementations.
-    - id: esc-z-decid-vs-ecma48-sci
-      status: material-original-standard-versus-dec-xterm-request-awaiting-reference-review
-      wire: ESC Z
-      original_ecma48:
-        clause: ecma48.sci
-        source: Official ECMA-48 fifth edition (1991), 8.3.109
-        meaning: SINGLE CHARACTER INTRODUCER uses the following byte to represent a control/graphic character; the use is reserved for future
-          standardization.
-      dec_xterm:
-        source: Pinned xterm ctlseqs source line 193
-        meaning: DECID Return Terminal ID; legacy form of CSI c Device Attributes (DA).
-      reason: Same complete wire has materially different control-versus-reply semantics. An existing pinned iTerm2 comparison test records
-        no response for ESC Z, so first establish current independent behavior before treating this as an isolated two-way ECMA/xterm tie-break.
-      next_step: Confirm independent current DECID behavior in pinned terminals and the originating DEC source; select semantic role under
-        the approved two rules or explicit Captain scope decision. Never merge SCI into DA.
-      decision: null
-      independent_reference_evidence:
-      - implementation: Ghostty
-        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
-        source_location: src/terminal/stream.zig, ESC Z dispatch around line 3327
-        observed_source_behavior: Without intermediates, dispatches primary Device Attributes report for DECID.
-      - implementation: iTerm2
-        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
-        source_location: sources/VT100/VT100OtherParser.m:179 and VT100Terminal.m:2043
-        observed_source_behavior: Parses ESC Z as DECID but terminal execution breaks without generating a response.
-      - implementation: WezTerm
-        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
-        source_location: wezterm-escape-parser/src/esc.rs:ReturnTerminalId=ESC Z
-        observed_source_behavior: Parser names the DECID encoding; reply behavior was not established by this source-only check.
-      evidence_limit: Modern Ghostty and iTerm2 show materially different DECID reply behavior; WezTerm parser recognition alone is not a
-        response proof. Keep the SCI-vs-DECID and reply questions distinct. Do not use the isolated two-way ECMA/xterm rule without accounting
-        for the independently maintained references.
-    - id: decsdm-polarity-vt300-vt382
-      status: original-dec-author-revisions-disagree-on-same-wire-set-reset-polarity
-      wire: CSI ? 80 h / CSI ? 80 l
-      original_author_sources:
-      - clause: dec_vt3xx_graphics.sixel-display-mode
-        revision: VT330/VT340 Volume 2, May 1988
-        set: sixel scrolling enabled
-        reset: sixel scrolling disabled
-        page: 237-238
-        source_snapshot_sha256: e4b2a69d1425db5e216d372cd080c3cff6dd216dc8acbb47f58b699fa2338669
-      - clause: dec_vt382_thai.sixel-display-mode
-        revision: VT382 Thai, August 1989
-        set: no sixel scrolling
-        reset: sixel scrolling
-        page: C-30
-        source_snapshot_sha256: 6e8e9fbdb82408f03920db33ebd2d405fee356b849cc012fa0f68a1f62ae60c1
-      independent_implementations:
-      - name: xterm
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:7785-7792, 11726-11734; graphics_sixel.c:103-120
-        behavior: SET disables sixel scrolling; RESET enables it; mode/state availability depends on sixel graphics compile/runtime configuration.
-      - name: Foot
-        revision: cb2771788998f6a6288e2de8273c55a8214551e0
-        source: csi.c:390-392, 648; sixel.c:1213-1227
-        behavior: SET disables sixel scrolling; RESET enables it. Sixel image anchoring and text-cursor motion are mode-dependent.
-      - name: WezTerm
-        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
-        source: term/src/terminalstate/mod.rs:1839-1851 and term/src/terminalstate/sixel.rs:124-155
-        behavior: SET retains cursor and places sixel at top-left; RESET follows scrolling image placement.
-      material_difference: Same exact ?80 h/l wires cause opposite scrolling, sixel origin and text-cursor results depending on original
-        DEC hardware family. Modern consensus follows DEC VT382, but the VT330/VT340 originating specification is substantially different.
-        A later model-specific author document is not automatically an erratum to the earlier model.
-      scope_limit: This decision must retain both hardware-specific normative interpretations; do not silently adopt xterm as an authority
-        over the original VT330/VT340 source, and do not promote full sixel conformance without exact image bounds.
-      question: Which DECSDM mode polarity and terminal profile should Howl expose for its intended single VT implementation contract?
-      decision: null
     - id: vt52-exit-restored-conformance-level
       status: material-vt52-exit-conformance-level-difference-by-hardware-profile
       wire: ESC <
@@ -8231,37 +8121,6 @@ discovery_catalogues:
         is yet selected for implementation.
       question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC author manuals,
         or enter VT100-level ANSI mode as in pinned xterm?
-      decision: null
-    - id: decscl-hard-vs-soft-reset
-      status: material-original-profile-versus-xterm-reset-difference
-      wire: CSI Pl ; Pc " p
-      original_author_sources:
-      - clause: dec_vt420.select-conformance-level
-        revision: February 1992, printed p.87
-        meaning: Changing operating level performs RIS hard reset.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:5081-5126,14314-14321
-        meaning: ReallyReset(False,False) is soft reset and preserves savedLines.
-      question: If this capability is selected, what conformance level and reset consequences should Howl adopt? Verify additional
-        original hardware revisions before any resolution.
-      decision: null
-    - id: decaupss-latin1-assignment-selector
-      status: material-original-source-assignment-report-selector-inconsistency
-      wire: DCS Ps ! u A ST
-      original_author_sources:
-      - clause: dec_vt420.assign-user-preferred-supplemental
-        revision: February 1992, printed p.100
-        meaning: Assignment example prints selector 0 for ISO Latin-1.
-      - clause: dec_vt420.assign-user-preferred-supplemental
-        revision: February 1992, printed p.273
-        meaning: Report prints selector 1 for ISO Latin-1.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: misc.c:4812-4864,5305-5322; charproc.c:5847-5862
-        meaning: 0/A is undocumented ASCII; 1/A ISO Latin-1; report reflects encoded charset size.
-      question: Verify earlier original DEC source and select exact assignment/report semantics if the UPSS capability is targeted.
-        Do not silently fix printed selector.
       decision: null
     - id: docs-return-vs-xterm-default-charset
       status: material-original-source-versus-xterm-awaiting-scope
@@ -8348,23 +8207,6 @@ discovery_catalogues:
         meaning: Pinned xterm changes or deletes a top-level X property under ewSetXprop permission.
       question: If targeted, select interoperable intended OSC 3 meaning from relevant references; do not implement either host
         operation by default.
-      decision: null
-    - id: xtwinops-14-window-vs-text-area
-      status: material-original-profile-versus-extension-difference
-      wire: CSI 14 t
-      original_author_sources:
-      - clause: cde_dtterm.window-manipulation
-        revision: Digital UNIX 3.2c manual, historical HTML reproduction
-        meaning: Reports window in pixels.
-      - clause: xterm_controls.window-operation-extensions
-        revision: dated official control-sequence reference, observed 2026-11-23
-        meaning: 14 reports text-area pixels; 14;2 reports window pixels.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:9132-9157
-        meaning: Default uses Width/Height; parameter 2 uses WMFrameWindow attributes.
-      question: If targeted, select intended pixel geometry and distinguish text area, cell, outer window and screen sizes.
-        Do not treat shared CSI t family as identical geometry semantics.
       decision: null
     - id: sixel-original-macro-aspect-vs-xterm
       status: material-original-profile-versus-extension-difference
@@ -8476,23 +8318,6 @@ discovery_catalogues:
         source: charproc.c:4753-4766
         meaning: Xterm changes scrolling region top, not a separately established display-memory overflow protection state.
       question: If targeting HP memory lock, decide source scope and ensure actual memory/viewport behavior is explicit.
-      decision: null
-    - id: sco-cursor-position-vs-dec-state
-      status: material-source-difference-awaiting-scope
-      wire: CSI s / CSI u
-      original_author_sources:
-      - clause: sco_console.save-cursor-position
-        revision: OpenDesktop 3.0.0; historical vendor manual reproduction
-        meaning: SCO vendor manual describes cursor position; DEC SCO emulation profile documents DECSC/DECRC except page.
-      - clause: sco_console.restore-cursor-position
-        revision: OpenDesktop 3.0.0; historical vendor manual reproduction
-        meaning: SCO vendor manual describes cursor position; DEC SCO emulation profile documents DECSC/DECRC except page.
-      xterm_implementation:
-        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
-        source: charproc.c:4880-4920
-        meaning: Xterm uses DEC save/restore helpers and mode69 disambiguation for CSI s.
-      question: Select exact saved-state fields with independent modern references; do not merge position-only and full DEC
-        state by name.
       decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
@@ -8968,3 +8793,555 @@ reconciliation:
     not_full_because: Complete DECXCPR source/VT-level variant matrix, reply-queue failure boundaries and all cursor save/restore/margin
       interactions are not proven source-exhaustively.
     boundary: Current canonical VT only; app/render/backend conformance and broad discovery inventory have not been assessed.
+- id: decsdm-polarity-vt300-vt382
+  status: resolved-by-reference-consensus
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: reference-consensus
+  accepted_interpretation:
+    wire: CSI ? 80 h / CSI ? 80 l
+    set: Disable sixel scrolling, start at graphics page upper-left, preserve text cursor.
+    reset: Enable sixel scrolling from current text cursor, scrolling at applicable bottom boundary.
+  scope_limit: Polarity, initial anchoring and cursor-preservation distinction only. Exact geometry, cursor advancement,
+    allocation, clipping, level and reset defaults remain separate qualification.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:7785-7792,11726-11734; graphics_sixel.c:103-120
+    observation: SET non-scrolling.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:390-392; sixel.c:1213-1237
+    observation: SET disables scrolling, top-left and unchanged cursor.
+  - implementation: wezterm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    source: term/src/terminalstate/mod.rs:1839-1851; sixel.rs:124-154
+    observation: SET top-left and restores cursor.
+  - implementation: windows_terminal
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    source: src/terminal/adapter/adaptDispatch.cpp:1842-1843,3927; SixelParser.cpp:70-81,267-287,460-478
+    observation: SET clamps, starts top-left, preserves cursor; level gating.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:830-832; sources/VT100Screen/VT100ScreenMutableState+TerminalDelegate.m:2898-2913;
+      sources/InlineImages/VT100InlineImageHelper.m:545
+    observation: SET top-left/restore cursor, suppress scroll.
+  material_differences_retained: DEC VT330/VT340 May 1988 opposite polarity retained; later VT382 August 1989 agrees. Captain
+    reviewed and selected the modern profile despite original hardware divergence.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: decsdm-polarity-vt300-vt382
+    status: original-dec-author-revisions-disagree-on-same-wire-set-reset-polarity
+    wire: CSI ? 80 h / CSI ? 80 l
+    original_author_sources:
+    - clause: dec_vt3xx_graphics.sixel-display-mode
+      revision: VT330/VT340 Volume 2, May 1988
+      set: sixel scrolling enabled
+      reset: sixel scrolling disabled
+      page: 237-238
+      source_snapshot_sha256: e4b2a69d1425db5e216d372cd080c3cff6dd216dc8acbb47f58b699fa2338669
+    - clause: dec_vt382_thai.sixel-display-mode
+      revision: VT382 Thai, August 1989
+      set: no sixel scrolling
+      reset: sixel scrolling
+      page: C-30
+      source_snapshot_sha256: 6e8e9fbdb82408f03920db33ebd2d405fee356b849cc012fa0f68a1f62ae60c1
+    independent_implementations:
+    - name: xterm
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:7785-7792, 11726-11734; graphics_sixel.c:103-120
+      behavior: SET disables sixel scrolling; RESET enables it; mode/state availability depends on sixel graphics compile/runtime
+        configuration.
+    - name: Foot
+      revision: cb2771788998f6a6288e2de8273c55a8214551e0
+      source: csi.c:390-392, 648; sixel.c:1213-1227
+      behavior: SET disables sixel scrolling; RESET enables it. Sixel image anchoring and text-cursor motion are mode-dependent.
+    - name: WezTerm
+      revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+      source: term/src/terminalstate/mod.rs:1839-1851 and term/src/terminalstate/sixel.rs:124-155
+      behavior: SET retains cursor and places sixel at top-left; RESET follows scrolling image placement.
+    material_difference: Same exact ?80 h/l wires cause opposite scrolling, sixel origin and text-cursor results depending
+      on original DEC hardware family. Modern consensus follows DEC VT382, but the VT330/VT340 originating specification
+      is substantially different. A later model-specific author document is not automatically an erratum to the earlier
+      model.
+    scope_limit: This decision must retain both hardware-specific normative interpretations; do not silently adopt xterm
+      as an authority over the original VT330/VT340 source, and do not promote full sixel conformance without exact image
+      bounds.
+    question: Which DECSDM mode polarity and terminal profile should Howl expose for its intended single VT implementation
+      contract?
+    decision: null
+- id: decscl-hard-vs-soft-reset
+  status: resolved-by-reference-consensus
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: reference-consensus
+  accepted_interpretation:
+    wire: CSI Pl [ ; Pc ] " p
+    effect: Perform a soft reset when selecting an accepted conformance level, not RIS hard reset.
+  scope_limit: Reset class only, not a decision on supported levels, argument admission, C1 transmission or exact reset
+    state.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:5081-5126,14314-14321
+    observation: ReallyReset(False,False) soft reset.
+  - implementation: contour
+    revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    source: src/vtbackend/Screen.cpp:4483-4515; Screen_test.cpp:5049
+    observation: Select level and soft reset.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:5379-5388
+    observation: Soft reset, explicitly informed by xterm; corroboration, not independent historical origin.
+  material_differences_retained: VT420 p87 and VT510 manual both explicitly require RIS; preserve as original hardware profiles.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: decscl-hard-vs-soft-reset
+    status: material-original-profile-versus-xterm-reset-difference
+    wire: CSI Pl ; Pc " p
+    original_author_sources:
+    - clause: dec_vt420.select-conformance-level
+      revision: February 1992, printed p.87
+      meaning: Changing operating level performs RIS hard reset.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:5081-5126,14314-14321
+      meaning: ReallyReset(False,False) is soft reset and preserves savedLines.
+    question: If this capability is selected, what conformance level and reset consequences should Howl adopt? Verify additional
+      original hardware revisions before any resolution.
+    decision: null
+  additional_original_source:
+    url: https://vt100.net/docs/vt510-rm/DECSCL.html
+    snapshot_sha256: 73666ec72d634a98c71fc65ac433a5501a5c3121bb56663d6b125dbdbeaf2ed0
+    profile: DEC VT510 Programmer Information HTML reproduction
+    meaning: Changing conformance level performs RIS.
+- id: decaupss-latin1-assignment-selector
+  status: resolved-by-reference-consensus
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: reference-consensus
+  accepted_interpretation:
+    assignment: DCS 1 ! u A ST
+    report: DCS 1 ! u A ST
+    meaning: Select/report ISO Latin-1 supplemental standby set.
+  scope_limit: Only ISO Latin-1 selector 1 and corresponding report; other sets, selector 0/A, mapping, UTF-8 applicability
+    and exact malformed admission unselected.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: misc.c:4812-4864,5305-5322; charproc.c:5847-5862
+    observation: 1/A ISO Latin-1; reports corresponding size selector.
+  - implementation: windows_terminal
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    source: src/terminal/parser/OutputStateMachineEngine.cpp:730-731; adapter/DispatchTypes.hpp:663-664; adapter/adaptDispatch.cpp:4013-4048;
+      adapter/ut_adapter/adapterTest.cpp:3619-3622,3684-3688
+    observation: Selector 1 is 96-set; A ISO Latin-1; report 1!uA.
+  material_differences_retained: VT420 p100 assignment uses 0, p273 report uses 1; VT510 assignment table also says 0 for
+    ISO Latin-1. Not a proven erratum.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: decaupss-latin1-assignment-selector
+    status: material-original-source-assignment-report-selector-inconsistency
+    wire: DCS Ps ! u A ST
+    original_author_sources:
+    - clause: dec_vt420.assign-user-preferred-supplemental
+      revision: February 1992, printed p.100
+      meaning: Assignment example prints selector 0 for ISO Latin-1.
+    - clause: dec_vt420.assign-user-preferred-supplemental
+      revision: February 1992, printed p.273
+      meaning: Report prints selector 1 for ISO Latin-1.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: misc.c:4812-4864,5305-5322; charproc.c:5847-5862
+      meaning: 0/A is undocumented ASCII; 1/A ISO Latin-1; report reflects encoded charset size.
+    question: Verify earlier original DEC source and select exact assignment/report semantics if the UPSS capability is
+      targeted. Do not silently fix printed selector.
+    decision: null
+  additional_original_source:
+    url: https://vt100.net/docs/vt510-rm/DECAUPSS.html
+    snapshot_sha256: ebbf9c9e3c42630bceabee48900e7a54cdd3d11a4ee23294e216a8c251e9dca1
+    profile: DEC VT510 Programmer Information HTML reproduction
+    meaning: Assignment table includes ISO Latin-1 under selector 0.
+- id: xtwinops-14-window-vs-text-area
+  status: resolved-by-reference-consensus
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: reference-consensus
+  accepted_interpretation:
+    request: CSI 14 t
+    reply: CSI 4 ; text-area-height-px ; text-area-width-px t
+    geometry: Committed terminal text area, not native window frame, surrounding chrome/padding or display size.
+  scope_limit: Only default CSI 14 t geometry. Rounding, cell size provenance, 14;2 outer-window support and host permission
+    remain separate.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:9132-9157
+    observation: Text area Width/Height; modifier 2 frame.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:1315-1343
+    observation: Subtract text-area margins; modifier 2 window.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: kitty/screen.c:3468-3485
+    observation: Cell size times columns/lines; modifier 2 optionally OS size.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/stream.zig:2676-2681; stream_terminal.zig:5959-5962
+    observation: Text-area reply; ignores extra parameters.
+  - implementation: wezterm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    source: term/src/terminalstate/mod.rs:2167-2174; wezterm-escape-parser/src/csi.rs:2625-2626
+    observation: Text area pixel width/height.
+  - implementation: alacritty
+    revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+    source: alacritty_terminal/src/term/mod.rs:2259-2264
+    observation: Grid rows/columns times cell pixels.
+  material_differences_retained: CDE dtterm original published window size; Ghostty 14;2 not supported in checked branch.
+    Preserve both profiles.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: xtwinops-14-window-vs-text-area
+    status: material-original-profile-versus-extension-difference
+    wire: CSI 14 t
+    original_author_sources:
+    - clause: cde_dtterm.window-manipulation
+      revision: Digital UNIX 3.2c manual, historical HTML reproduction
+      meaning: Reports window in pixels.
+    - clause: xterm_controls.window-operation-extensions
+      revision: dated official control-sequence reference, observed 2026-11-23
+      meaning: 14 reports text-area pixels; 14;2 reports window pixels.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:9132-9157
+      meaning: Default uses Width/Height; parameter 2 uses WMFrameWindow attributes.
+    question: If targeted, select intended pixel geometry and distinguish text area, cell, outer window and screen sizes.
+      Do not treat shared CSI t family as identical geometry semantics.
+    decision: null
+- id: dec-vt3xx-graphics-print-vs-xterm-mode-45
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 45 h / CSI ? 45 l
+    set: Enable ordinary reverse wrapping within wrapped logical lines, requiring autowrap; do not wrap to unrelated physical
+      rows or from top to bottom.
+    reset: Disable ordinary reverse wrapping.
+    extended: Mode 1045 independently selects extended reverse wrapping.
+  scope_limit: Select xterm/Ghostty distinction, not exact complete cursor and margin/default behavior or all 1045 edge
+    cases.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:7695-7703; cursor.c:106-193
+    observation: Wrapped logical line versus extended mode.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/modes.zig:386,407; Terminal.zig:2591-2696
+    observation: Previous-row wrap gate and ordinary top clamp.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:376-378; vt.c:149-164
+    observation: 'Minority: prior physical row even without wrapped flag.'
+  - implementation: wezterm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    source: term/src/terminalstate/mod.rs:1588-1602; performer.rs:414-445
+    observation: 'Minority: top-to-bottom and physical row under 45.'
+  material_differences_retained: DEC mode 45 printer color syntax and modern reverse-wrap differences retained. Captain
+    accepted stricter xterm/Ghostty recommendation.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: dec-vt3xx-graphics-print-vs-xterm-mode-45
+    status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+    selector: 45
+    wire: CSI ? 45 h / CSI ? 45 l
+    original_dec:
+      clause: dec_vt3xx_text.graphics-print-dec-private-modes
+      source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+      name: DECGPCS
+      meaning: graphics print color syntax
+      detailed_source: dec_vt3xx_graphics.graphics-print-modes
+    xterm:
+      source: Pinned xterm ctlseqs DECSET/DECRST tables
+      meaning: reverse-wraparound mode (XTREVWRAP)
+      entries:
+      - entry_id: private-mode-45-h-line-946
+        wire: CSI ? 45 h
+        source_line: 946
+        interpretation: 'xterm: reverse-wraparound mode (XTREVWRAP)'
+      - entry_id: private-mode-45-l-line-1094
+        wire: CSI ? 45 l
+        source_line: 1094
+        interpretation: 'xterm: reverse-wraparound mode (XTREVWRAP)'
+    original_dec_xterm_mentions:
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-45-h-line-947
+      source_line: 947
+      wire: CSI ? 45 h
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-45-l-line-1095
+      source_line: 1095
+      wire: CSI ? 45 l
+    reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC
+      VT300 mode table independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference
+      consensus resolves this automatically.
+    next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical
+      dimensions and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining
+      original DEC semantics.
+    decision: null
+    independent_reference_evidence:
+    - implementation: Foot
+      revision: cb2771788998f6a6288e2de8273c55a8214551e0
+      source_location: terminals/foot/csi.c:dec_private_mode case 45
+      observed_source_behavior: Sets reverse_wrap to enabled or disabled.
+    - implementation: Ghostty
+      revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+      source_location: terminals/ghostty/src/terminal/modes.zig:reverse_wrap value 45; src/terminal/Terminal.zig reverse-wrap
+        behavior
+      observed_source_behavior: Names and implements reverse-wrap mode 45.
+    - implementation: WezTerm
+      revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+      source_location: terminals/wezterm/wezterm-escape-parser/src/csi.rs:ReverseWraparound=45; term/src/terminalstate/mod.rs
+        DecPrivateModeCode::ReverseWraparound
+      observed_source_behavior: Parses, sets, resets and queries reverse-wraparound mode 45.
+    modern_evidence_summary: Independently maintained modern terminals implement the xterm terminal meaning. This supports
+      its interoperability relevance but does not erase the originating DEC printing meaning or prove identical edge cases
+      across implementations.
+- id: dec-vt3xx-graphics-print-vs-xterm-mode-47
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: CSI ? 47 h / CSI ? 47 l
+    set: Switch to alternate screen without clearing.
+    reset: Switch to primary without clearing.
+    repeat: Already-selected buffer is a no-op; no separate cursor save/restore.
+    distinct: 1047 clears alternate on exit; 1049 saves cursor/switches/clears on entry and restores on exit.
+  scope_limit: Legacy 47 buffer transition and non-clearing effects only. Exact cursor/rendition/graphics lifetime and inhibition
+    policy require qualification.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:7754-7766
+    observation: ToAlternate/FromAlternate false; printer/profile gate.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/stream_terminal.zig:2032; Terminal.zig:5758-5802
+    observation: 47 non-clearing, no save.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: kitty/screen.c:2257-2261
+    observation: Switch with clear/save only for 1049.
+  - implementation: wezterm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    source: term/src/terminalstate/mod.rs:1794-1823
+    observation: Switch; pen reset.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:904-928
+    observation: Switch with cursor carry.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:498-543
+    observation: Minority clears alternate on entry; deletes alt sixels on exit.
+  material_differences_retained: DEC mode 47 rotated printing and destructive Foot behavior preserved. Captain accepted
+    non-clearing switch.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: dec-vt3xx-graphics-print-vs-xterm-mode-47
+    status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
+    selector: 47
+    wire: CSI ? 47 h / CSI ? 47 l
+    original_dec:
+      clause: dec_vt3xx_text.graphics-print-dec-private-modes
+      source: DEC VT330/VT340 Text Programming (May 1988), Table 12-3 page 221
+      name: DECGRPM
+      meaning: graphics rotated print
+      detailed_source: dec_vt3xx_graphics.graphics-print-modes
+    xterm:
+      source: Pinned xterm ctlseqs DECSET/DECRST tables
+      meaning: alternate screen buffer, subject to titeInhibit resource
+      entries:
+      - entry_id: private-mode-47-h-line-952
+        wire: CSI ? 47 h
+        source_line: 952
+        interpretation: 'xterm: alternate screen buffer, subject to titeInhibit resource'
+      - entry_id: private-mode-47-l-line-1099
+        wire: CSI ? 47 l
+        source_line: 1099
+        interpretation: 'xterm: alternate screen buffer, subject to titeInhibit resource'
+    original_dec_xterm_mentions:
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-47-h-line-954
+      source_line: 954
+      wire: CSI ? 47 h
+    - catalogue: xterm_ctlseqs
+      entry_id: private-mode-47-l-line-1100
+      source_line: 1100
+      wire: CSI ? 47 l
+    reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC
+      VT300 mode table independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference
+      consensus resolves this automatically.
+    next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical
+      dimensions and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining
+      original DEC semantics.
+    decision: null
+    independent_reference_evidence:
+    - implementation: Foot
+      revision: cb2771788998f6a6288e2de8273c55a8214551e0
+      source_location: terminals/foot/csi.c:case 47,1047,1049
+      observed_source_behavior: Switches between the primary and alternate grid for mode 47.
+    - implementation: Kitty
+      revision: a79f376b85fd95e3dfd0589877123996bacd4184
+      source_location: terminals/kitty/kitty/modes.h:TOGGLE_ALT_SCREEN_1=(47 << 5); kitty/screen.c:TOGGLE_ALT_SCREEN_1
+      observed_source_behavior: Switches main/alternate line buffer via mode 47.
+    - implementation: Ghostty
+      revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+      source_location: terminals/ghostty/src/terminal/modes.zig:alt_screen_legacy value 47; src/terminal/stream_terminal.zig
+        and Terminal.zig
+      observed_source_behavior: Legacy mode 47 invokes alternate-screen switching without the 1049 clearing semantics.
+    - implementation: WezTerm
+      revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+      source_location: terminals/wezterm/wezterm-escape-parser/src/csi.rs:EnableAlternateScreen=47; term/src/terminalstate/mod.rs
+      observed_source_behavior: Parses and switches the alternate screen via mode 47.
+    modern_evidence_summary: Independently maintained modern terminals implement the xterm terminal meaning. This supports
+      its interoperability relevance but does not erase the originating DEC printing meaning or prove identical edge cases
+      across implementations.
+- id: esc-z-decid-vs-ecma48-sci
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    wire: ESC Z
+    mode: ANSI
+    effect: Deprecated DECID primary Device Attributes request using the terminal own truthful primary DA reply; not SCI.
+  scope_limit: Exact 7-bit ANSI ESC Z only; no raw C1 0x9A equivalence or VT52 ID selection, no fabricated hardware identity.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:4062-4097
+    observation: DECID request.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/stream.zig:3327-3330; stream_terminal.zig:1712-1728
+    observation: Dispatch primary DA; callback-dependent output.
+  - implementation: windows_terminal
+    revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    source: src/terminal/parser/OutputStateMachineEngine.cpp:234-236; adapter/adaptDispatch.cpp:1435-1462
+    observation: Dispatch DeviceAttributes and reply.
+  - implementation: st
+    revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+    source: st.c:2356-2358
+    observation: Writes vtiden.
+  - implementation: iterm2
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    source: sources/VT100/VT100Terminal.m:2043-2044
+    observation: Minority no reply.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: vt.c:465-543
+    observation: No positive ESC Z execution established.
+  - implementation: wezterm
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    source: wezterm-escape-parser/src/esc.rs:52; term/src/terminalstate/performer.rs:588-738
+    observation: Parser recognizes, no execution case established.
+  material_differences_retained: ECMA-48 SCI and original DEC VT400 ambiguity retained. Multiple profiles mean isolated
+    ECMA48/xterm rule does not apply.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: esc-z-decid-vs-ecma48-sci
+    status: material-original-standard-versus-dec-xterm-request-awaiting-reference-review
+    wire: ESC Z
+    original_ecma48:
+      clause: ecma48.sci
+      source: Official ECMA-48 fifth edition (1991), 8.3.109
+      meaning: SINGLE CHARACTER INTRODUCER uses the following byte to represent a control/graphic character; the use is
+        reserved for future standardization.
+    dec_xterm:
+      source: Pinned xterm ctlseqs source line 193
+      meaning: DECID Return Terminal ID; legacy form of CSI c Device Attributes (DA).
+    reason: Same complete wire has materially different control-versus-reply semantics. An existing pinned iTerm2 comparison
+      test records no response for ESC Z, so first establish current independent behavior before treating this as an isolated
+      two-way ECMA/xterm tie-break.
+    next_step: Confirm independent current DECID behavior in pinned terminals and the originating DEC source; select semantic
+      role under the approved two rules or explicit Captain scope decision. Never merge SCI into DA.
+    decision: null
+    independent_reference_evidence:
+    - implementation: Ghostty
+      revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+      source_location: src/terminal/stream.zig, ESC Z dispatch around line 3327
+      observed_source_behavior: Without intermediates, dispatches primary Device Attributes report for DECID.
+    - implementation: iTerm2
+      revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      source_location: sources/VT100/VT100OtherParser.m:179 and VT100Terminal.m:2043
+      observed_source_behavior: Parses ESC Z as DECID but terminal execution breaks without generating a response.
+    - implementation: WezTerm
+      revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+      source_location: wezterm-escape-parser/src/esc.rs:ReturnTerminalId=ESC Z
+      observed_source_behavior: Parser names the DECID encoding; reply behavior was not established by this source-only
+        check.
+    evidence_limit: Modern Ghostty and iTerm2 show materially different DECID reply behavior; WezTerm parser recognition
+      alone is not a response proof. Keep the SCI-vs-DECID and reply questions distinct. Do not use the isolated two-way
+      ECMA/xterm rule without accounting for the independently maintained references.
+- id: sco-cursor-position-vs-dec-state
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-24'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    save: CSI s when DECLRMM disabled aliases canonical DEC cursor-state save. When DECLRMM enabled, use DECSLRM margin
+      semantics.
+    restore: CSI u aliases canonical DEC cursor-state restore.
+    cache: One canonical savepoint per existing screen model, shared with ESC 7 / ESC 8; no independent SCO position-only
+      cache.
+    separation: Kitty leader-qualified CSI ?u, =...u, >...u, <...u remain separate grammar and state.
+  scope_limit: Alias semantics and xterm/Ghostty ownership only. Qualify complete canonical saved fields, parameter admission,
+    page and bank lifecycle separately. Preserve actual DECSLRM defaults; no implication of Kitty negotiation changes.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:4880-4920
+    observation: CSI s disambiguation and DEC save/restore helpers.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/stream.zig:2749-2750; stream_terminal.zig:712-713; Terminal.zig:2703-2754
+    observation: Shared cursor state; position/style/protection/pending wrap/origin/charset.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: csi.c:1263-1269; terminal.c:3273-3295
+    observation: Shared cursor, attrs and charset save/restore.
+  - implementation: contour
+    revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    source: src/vtbackend/Screen.cpp:3671-3693,4208-4219,4621
+    observation: Shared cursor and page state; distinct page profile.
+  material_differences_retained: SCO vendor position-only wording and DEC VT520 SCO profile (no page) retained. Exact saved
+    state differs across references. Captain selected xterm/Ghostty and requested LazyGit acceptance if regression reproduces.
+  implementation_policy: semantic-selection-only; disposition and priority not yet triaged
+  superseded_pending_record:
+    id: sco-cursor-position-vs-dec-state
+    status: material-source-difference-awaiting-scope
+    wire: CSI s / CSI u
+    original_author_sources:
+    - clause: sco_console.save-cursor-position
+      revision: OpenDesktop 3.0.0; historical vendor manual reproduction
+      meaning: SCO vendor manual describes cursor position; DEC SCO emulation profile documents DECSC/DECRC except page.
+    - clause: sco_console.restore-cursor-position
+      revision: OpenDesktop 3.0.0; historical vendor manual reproduction
+      meaning: SCO vendor manual describes cursor position; DEC SCO emulation profile documents DECSC/DECRC except page.
+    xterm_implementation:
+      revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+      source: charproc.c:4880-4920
+      meaning: Xterm uses DEC save/restore helpers and mode69 disambiguation for CSI s.
+    question: Select exact saved-state fields with independent modern references; do not merge position-only and full DEC
+      state by name.
+    decision: null
+  runtime_observation: 2026-11-24 user re-test no longer reproduces arrow-key issue; retained cast SHA256 58a397ae0019e8657573a87cb8e735bff17c415b58d267971af5ff7ef10f5906
+    shows Kitty query and =1u/=0u, six arrow events with modifier 129, no ordinary CSI s/u. No causal or fix claim. Capture
+    stored in private workstream, not repository.
+  follow_up: If failure reproduces, compare actual LazyGit input/output in Howl and Ghostty runtime before changing input
+    code. Separately qualify no-operand CSI s with DECLRMM enabled; existing decoder dispatches no-operand s directly to
+    save_cursor.
