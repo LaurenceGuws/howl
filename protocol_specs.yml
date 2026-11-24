@@ -1761,25 +1761,139 @@ specifications:
       wire: CSI 200 ~ ... CSI 201 ~
       rule: When enabled, bracket the delivered paste bytes with start/end markers.
     - id: clipboard-osc52
-      section: Operating System Commands
+      section: Operating System Commands, lines 2145-2169
       level: defined
-      wire: OSC 52 ; selection ; base64 ST
-      rule: Requests copying or querying selected clipboard/selection data; authorization is host policy.
+      wire: OSC 52 ; Pc ; Pd (BEL | ST)
+      rule: Pc is an ordered list of zero or more selection characters c,p,q,s,0..7 for clipboard, primary, secondary, configurable
+        SELECT and cut buffers 0..7. Empty Pc defaults to s0. Pd is RFC 4648 base64 selection data (set), ? (query first available
+        selection in the stated order), or invalid base64 (published behavior clears selection). Query replies use the same
+        protocol and query terminator. Host authorization and selection ownership are explicit, not granted by receiving this
+        OSC.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-52
+        source_line: 2145
+        wire: OSC 52 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3320-3422,4323-4327
+      source_note: Pinned implementation requires a second semicolon, deduplicates recognized targets preserving first occurrence,
+        ignores unrecognized target characters, and gates query and set independently with AllowWindowOps. Reply prefix contains
+        the normalized recognized target list and uses base64_final. Exact decoding/invalid-clear and asynchronous selection
+        lifetime remain unassessed.
     - id: palette-osc4
-      section: Operating System Commands
+      section: Operating System Commands, lines 2031-2044,2051-2058
       level: defined
-      wire: OSC 4 ; index ; color ST
-      rule: Sets or queries indexed palette entries using the documented color grammar.
+      wire: OSC 4 ; c ; spec [ ; c ; spec ... ] (BEL | ST)
+      rule: 'Sets or queries one or more indexed colors. Each c/spec pair supplies the color number and XParseColor name or
+        RGB specification, or ? for a query. Color table: ANSI 0..7, bright 8..15, and remaining 88- or 256-color palette if
+        supported. Special colors may also be addressed as the maximum ANSI palette count plus the OSC 5 selector. Query response
+        uses OSC 4 ; c ; spec with the same final; multiple query pairs may yield multiple replies.'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:2636-2659,2980-3029,4182-4189; ptyx.h:1570-1594
+      source_note: Pinned reply formats color components as four hex digits each (rgb:rrrr/gggg/bbbb). Parser uses atoi for
+        c, bounds by MAXCOLORS, stops on invalid range/change, and can preserve earlier effects; do not infer strict atomic
+        multi-pair semantics or exact malformed admission from this.
     - id: palette-reset
-      section: Operating System Commands
+      section: Operating System Commands, lines 2214-2219
       level: defined
-      wire: OSC 104 [; index] ST
-      rule: Restores indexed palette entries to their configured defaults.
+      wire: OSC 104 [ ; c [ ; c ... ] ] (BEL | ST)
+      rule: Resets any supplied indexed color numbers to their configured resource values. No supplied indices resets the whole
+        table. Same palette-dependent indexed domain as OSC 4; do not equate resource defaults with immutable factory colors.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3031-3086,4105-4110,4243-4249
+      source_note: Pinned reset loop uses MAXCOLORS, including special color slots via start=0; exact overlap with OSC 105 and
+        malformed-index behavior is retained as an implementation observation.
     - id: dynamic-colors
-      section: Operating System Commands
+      section: Operating System Commands, lines 2067-2115
       level: defined
-      wire: OSC 10 / OSC 11 / OSC 12
-      rule: Sets or queries default foreground, background and cursor colors.
+      wire: OSC Ps ; spec [ ; spec ... ] (BEL | ST)
+      rule: For Ps=10..19, set or query the dynamic color at Ps and successive colors in the ordered list. At least one Pt parameter
+        is expected; each successive spec selects the next color, rather than another explicit index/spec pair. Names or RGB
+        specifications follow XParseColor; ? queries the corresponding color and may yield separate replies. These are distinct
+        from the ANSI palette; dynamic text foreground/background are used by SGR 39/49. Tektronix colors start from VT100 colors
+        but can change independently. Author documents allowColorOps gating.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-10
+        source_line: 2106
+        wire: OSC 10 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-11
+        source_line: 2107
+        wire: OSC 11 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-12
+        source_line: 2108
+        wire: OSC 12 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-13
+        source_line: 2109
+        wire: OSC 13 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-14
+        source_line: 2110
+        wire: OSC 14 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-15
+        source_line: 2111
+        wire: OSC 15 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-16
+        source_line: 2112
+        wire: OSC 16 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-17
+        source_line: 2113
+        wire: OSC 17 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-18
+        source_line: 2114
+        wire: OSC 18 ; Pt (BEL | ST)
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-19
+        source_line: 2115
+        wire: OSC 19 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3567-3597,3630-3714,4251-4268,6451; ptyx.h:1018-1036
+      selectors:
+      - selector: 10
+        role: VT100 text foreground
+        reset_selector: 110
+      - selector: 11
+        role: VT100 text background
+        reset_selector: 111
+      - selector: 12
+        role: text cursor
+        reset_selector: 112
+      - selector: 13
+        role: pointer foreground
+        reset_selector: 113
+      - selector: 14
+        role: pointer background
+        reset_selector: 114
+      - selector: 15
+        role: Tektronix foreground
+        reset_selector: 115
+      - selector: 16
+        role: Tektronix background
+        reset_selector: 116
+      - selector: 17
+        role: highlight background
+        reset_selector: 117
+      - selector: 18
+        role: Tektronix cursor
+        reset_selector: 118
+      - selector: 19
+        role: highlight foreground
+        reset_selector: 119
+      reply: OSC selector ; rgb:rrrr/gggg/bbbb (same BEL/ST final) in pinned code
+      source_note: Pinned code iterates up to OSC_NCOLORS, skips empty fields, resolves opposite colors under reverse video
+        and compile-gates Tektronix/highlight roles. Reply uses four hex digits per channel. Invalid or unsupported roles, unavailable
+        RGB and reverse-video interactions need separate qualification; this is not an assumed 10-role implementation obligation.
     - id: mouse-sgr
       section: Mouse Tracking / Extended coordinates
       level: defined
@@ -2781,6 +2895,536 @@ specifications:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         location: charproc.c:7988-7996; misc.c:5390,5460-5474,5835-5863; ptyx.h:1253-1256
         limit: OPT_WIDE_CHARS conditional; query status is MdBool (1/2), not 3/4.
+    - id: osc-framing
+      section: Operating System Commands, lines 2001-2022
+      level: defined
+      wire: OSC Ps ; Pt (BEL | ST)
+      rule: Xterm accepts either BEL or ST as OSC terminator and uses the query terminator for corresponding replies. ST is
+        the original ECMA-48 terminator; BEL is the xterm historical compatibility extension (publication dates it to X11R4,
+        December 1989). The semicolon/payload depends on the selected command; payloadless controls are not forced to have a
+        text parameter.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-9731e40b62
+        source_line: 2001
+        wire: OSC Ps ; Pt BEL
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-14418614ad
+        source_line: 2003
+        wire: OSC Ps ; Pt ST
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3987-4059,4097-4159; charproc.c:3692,5312
+      extends: ecma48.c1-osc
+      source_note: Pinned numeric selector parser rejects values above 65535 and nonprinting payload characters except in title
+        controls 0..2. This is observed implementation admission, not a general OSC standard requirement.
+    - id: special-colors
+      section: Operating System Commands, lines 2046-2058
+      level: defined
+      wire: OSC 5 ; c ; spec [ ; c ; spec ... ] (BEL | ST)
+      rule: 'Sets or queries special color slots: c=0 bold, 1 underline, 2 blink, 3 reverse, 4 italic. Uses the same XParseColor
+        name/RGB and ? query conventions and ordered pairs as OSC 4. The same special slots can be addressed with the palette-size
+        offset in OSC 4. They are not extra ANSI indices independent of the configured palette size.'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:2636-2659,2980-3029,4182-4189; ptyx.h:1585-1594
+      related_command: xterm_controls.palette-osc4
+      source_note: OSC 5 uses first=NUM_ANSI_COLORS; available slot count depends on compile-time attributes. Pinned query uses
+        opcode 5 and reports relative slot number, with four hex digits per component.
+    - id: special-color-mode
+      section: Operating System Commands, lines 2060-2065,2230-2241
+      level: defined
+      wire: OSC 6 ; c ; f / OSC 106 ; c ; f (BEL | ST)
+      rule: 'Two spellings for enabling or disabling special-color modes: nonzero f enables, zero disables. The author table
+        lists 0 bold,1 underline,2 blink,3 reverse,4 italic,5 override ANSI. No parameters has no effect. This changes use of
+        a special color, not its RGB value or reset to the configured default.'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:4190-4242
+      source_note: Pinned code processes successive c/f pairs and handles selectors 0..4 (4 compile-gated); selector 5 falls
+        through as unknown despite the published table. Keep that divergence, and do not infer the override-ANSI behavior from
+        this handler.
+    - id: special-color-reset
+      section: Operating System Commands, lines 2221-2228
+      level: defined
+      wire: OSC 105 [ ; c [ ; c ... ] ] (BEL | ST)
+      rule: Resets specified OSC 5 special color slots to configured resources, or all special slots if no numbers are supplied.
+        Uses relative special-color indices, not absolute ANSI palette indices.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3031-3086,4243-4249
+      related_command: xterm_controls.special-colors
+    - id: dynamic-colors-reset
+      section: Operating System Commands, lines 2243-2254
+      level: defined
+      wire: OSC Ps (BEL | ST)
+      rule: Ps=110..119 resets exactly the corresponding dynamic color (Ps minus 100) to its configured resource value. No color
+        spec or index list is required. This is not an OSC 104 palette reset. Pinned parser rejects nonempty extra payload and
+        accepts an empty semicolon form.
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3716-3752,4111-4131,4140-4159,4269-4286
+      selectors:
+      - selector: 110
+        role: VT100 text foreground
+        set_selector: 10
+      - selector: 111
+        role: VT100 text background
+        set_selector: 11
+      - selector: 112
+        role: text cursor
+        set_selector: 12
+      - selector: 113
+        role: pointer foreground
+        set_selector: 13
+      - selector: 114
+        role: pointer background
+        set_selector: 14
+      - selector: 115
+        role: Tektronix foreground
+        set_selector: 15
+      - selector: 116
+        role: Tektronix background
+        set_selector: 16
+      - selector: 117
+        role: highlight background
+        set_selector: 17
+      - selector: 118
+        role: Tektronix cursor
+        set_selector: 18
+      - selector: 119
+        role: highlight foreground
+        set_selector: 19
+      related_command: xterm_controls.dynamic-colors
+      source_note: Source conditions include dynamicColors, applicable compile gates, reverse-video index mapping and resource
+        restoration. Empty trailing semicolon accepted by code is not a required wire parameter.
+    - id: log-file
+      section: Operating System Commands, lines 2122-2124
+      level: defined
+      wire: OSC 46 ; Pt (BEL | ST)
+      rule: Requests changing xterm logFile resource to Pt. Logging and changing log-file names are compile-time-gated in the
+        pinned reference. This is source-only candidate behavior at the host filesystem boundary, not an authorization to open
+        or change arbitrary host paths.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-46
+        source_line: 2122
+        wire: OSC 46 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:4292-4311
+    - id: font-operations
+      section: Operating System Commands, lines 2126-2141
+      level: defined
+      wire: OSC 50 ; Pt (BEL | ST)
+      rule: 'Sets or queries font under allowFontOps. A # prefix specifies absolute font-menu index or relative index with +/-,
+        with optional number; author describes current entry for relative and zero for absolute omission. A space plus font
+        specifier can replace a menu entry. ? queries the font using corresponding index syntax, ignoring remaining text. With
+        renderFont TrueType selection, operation concerns faceName instead.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-50
+        source_line: 2126
+        wire: OSC 50 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3754-3932,4313-4321
+      source_note: Pinned ParseShiftedFont initializes to current menu entry and relative +/- to +/-1, while the published omission
+        wording is different. Query replies use OSC 50 with optional index/name or no value on failure, and same final. Do not
+        normalize omission/default or font-load behavior to the current VT.
+    - id: allowed-feature-query
+      section: Operating System Commands, lines 2171-2190
+      level: defined
+      wire: OSC 60 (BEL | ST)
+      rule: 'XTQALLOWED queries which optional runtime feature categories are allowed. Reply OSC 60 ; Pt ST with comma-separated
+        zero or more allowed categories: allowColorOps, allowFontOps, allowMouseOps, allowPasteControls, allowTcapOps, allowTitleOps,
+        allowWindowOps. These settings cannot be changed by control sequences; menus may change all except allowPasteControls.'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3936-3963,4126-4131,4330-4332
+      source_note: Pinned response omits the semicolon if the list is empty and uses the request final; parser rejects nonempty
+        payload. Empty semicolon spelling is admitted, not a required parameter.
+    - id: disallowed-feature-query
+      section: Operating System Commands, lines 2192-2201
+      level: defined
+      wire: OSC 61 ; category (BEL | ST)
+      rule: XTQDISALLOWED queries the optional subcategories which would be disallowed when the specified main feature category
+        is disabled. Category must be one returned by OSC 60. Reply OSC 61 ; comma-separated-list ST. Query only, not a request
+        to disable the feature.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-61
+        source_line: 2192
+        wire: OSC 61 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3965-3972,4334-4336; charproc.c:10659-10692
+      source_note: Pinned category comparison is case-insensitive; response contains only selected subcategory names (or numeric
+        fallback) and no category echo; empty/unknown category yields no list and no list semicolon. Uses same final.
+    - id: allowable-feature-query
+      section: Operating System Commands, lines 2203-2212
+      level: defined
+      wire: OSC 62 ; category (BEL | ST)
+      rule: XTQALLOWABLE queries all optional subcategories corresponding to a main feature category that might be returned
+        by OSC 60. Reply OSC 62 ; comma-separated-list ST. This does not change permissions.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: osc-selector-62
+        source_line: 2203
+        wire: OSC 62 ; Pt (BEL | ST)
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: misc.c:3974-3982,4338-4340; charproc.c:10695-10714
+      source_note: Pinned category comparison is case-insensitive; response contains only list, with omitted semicolon for empty/unknown
+        category. Same final.
+    - id: palette-stack-push
+      section: Functions using CSI / XTPUSHCOLORS, lines 638-643
+      level: defined
+      wire: 'CSI [ Pm ] # P'
+      rule: Push current dynamic and ANSI palette colors. Published parameters 1..10 address a specific stack entry without
+        pushing; default zero pushes. The indexed and push forms are the same command family. The related Kitty OSC color-stack
+        protocol has distinct wire encodings and is not merged.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-16a4dc30f6
+        source_line: 638
+        wire: 'CSI # P'
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-17a508e465
+        source_line: 639
+        wire: 'CSI Pm # P'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6085-6095; misc.c:8338-8366; ptyx.h:3618-3640
+      related_protocol: kitty_color.push
+      source_note: Pinned source has ten slots, treats omitted DEFAULT as push (increments used), but explicit 0 selects current
+        slot then assigns used=0, and positive slot sets used=value. This materially differs from published default-0 and no-push
+        wording; do not infer a resolved target stack position from command identity.
+    - id: palette-stack-pop
+      section: Functions using CSI / XTPOPCOLORS, lines 645-650
+      level: defined
+      wire: 'CSI [ Pm ] # Q'
+      rule: Pop saved dynamic and ANSI palette colors. Published 1..10 restore a specific stack entry without popping; default
+        zero pops. Different wire from Kitty OSC pop.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-2fae0da402
+        source_line: 645
+        wire: 'CSI # Q'
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-6ea5baa87d
+        source_line: 646
+        wire: 'CSI Pm # Q'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6097-6107; misc.c:8369-8398
+      related_protocol: kitty_color.pop
+      source_note: Pinned source restores actual slot (value<=0 selects used-1; positive selects value-1) and assigns used=actual,
+        including indexed restore. This is a source/documentation divergence; not an adopted no-pop guarantee.
+    - id: palette-stack-report
+      section: Functions using CSI / XTREPORTCOLORS, lines 652-654
+      level: defined
+      wire: 'CSI # R'
+      rule: Reports current palette-stack entry and number of stored palettes using the XTPOPCOLORS-like response form.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-ad2e28f70b
+        source_line: 652
+        wire: 'CSI # R'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6109-6113; misc.c:8401-8414
+      reply: 'CSI ? Pused ; Plast # Q'
+      source_note: Pinned implementation emits private ? prefix and used/last counters (last updated on default push), not a
+        count inferred from allocated slots. Preserve exact response shape and unresolved counter behavior.
+    - id: sgr-stack-push
+      section: Functions using CSI / XTPUSHSGR, lines 1519-1523,1861-1880
+      level: defined
+      wire: 'CSI [ Pm ] # { / CSI [ Pm ] # p'
+      rule: 'Push current video attributes or a selected subset. No parameters saves all. Selectors 1 bold,2 faint,3 italic,4
+        underline,5 blink,7 inverse,8 invisible,9 crossed-out,21 double underline,30 foreground color,31 background color. The
+        # p spelling is a documented alias for # { (C# language workaround). Published stack limited to ten levels. This saves
+        rendition, not dynamic palette entries.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-18367d6543
+        source_line: 1519
+        wire: 'CSI # p'
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-6dc3de0fc3
+        source_line: 1520
+        wire: 'CSI Pm # p'
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-49bd9f1f64
+        source_line: 1861
+        wire: 'CSI # {'
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-3da8d297df
+        source_line: 1862
+        wire: 'CSI Pm # {'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6048-6070; misc.c:8114-8137; ptyx.h:1459-1470,3618
+      source_note: Pinned code records entries only while used<10 but increments logical used even beyond storage; matching
+        pops retire overflow levels before restoring saved entries. Deprecated selectors 10/11 map to foreground/background.
+        Exact explicit zero/invalid handling, overflow and combined-attribute interactions remain source observations, not chosen
+        target semantics.
+    - id: sgr-stack-pop
+      section: Functions using CSI / XTPOPSGR, lines 1556-1558,1941-1943
+      level: defined
+      wire: 'CSI # } / CSI # q'
+      rule: 'Restore saved rendition attributes selected by the top XTPUSHSGR entry. The # q spelling is an alias of # }. Distinct
+        from palette restoration.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-9274687a13
+        source_line: 1556
+        wire: 'CSI # q'
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-c0bf8b230a
+        source_line: 1941
+        wire: 'CSI # }'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6079-6083; misc.c:8188-8248
+      related_command: xterm_controls.sgr-stack-push
+      source_note: Pinned empty-stack pop no-op; overflow logical depth retires before restoration; selected attributes restored
+        by mask rather than replacing every attribute.
+    - id: sgr-rectangle-report
+      section: Functions using CSI / XTREPORTSGR, lines 1886-1890
+      level: defined
+      wire: 'CSI Pt ; Pl ; Pb ; Pr # |'
+      rule: Reports selected graphic rendition common to all cells of the requested rectangle, as an SGR sequence.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-156199d0b1
+        source_line: 1886
+        wire: 'CSI Pt ; Pl ; Pb ; Pr # |'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6072-6077; misc.c:8140-8185
+      reply: CSI Pm m
+      source_note: Pinned code parses rectangle, intersects cell attribute bits and retains foreground/background only if values
+        agree, formats result as SGR. Allocation failure returns without reply. Rectangle clipping, exact SGR formatting, empty
+        rectangle and colors require separate qualification.
+    - id: title-stack-position
+      section: Functions using CSI / XTTITLEPOS, lines 658-663
+      level: defined
+      wire: 'CSI # S'
+      rule: 'Report current title-stack index and maximum index; response CSI Pn ; Pm # S. This is a read-only stack position
+        query, not title text or push/pop.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-7dc42143ea
+        source_line: 658
+        wire: 'CSI # S'
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6115-6118; misc.c:8043-8056
+      source_note: Pinned response uses saved_titles.used and MAX_SAVED_TITLES.
+    - id: title-mode-set
+      section: Functions using CSI / XTSMTITLE, lines 1698-1709,2869-2897
+      level: defined
+      wire: CSI > Pm t
+      rule: Each parameter enables one title/icon-label encoding feature. No parameters selects compiled-in initial title mode
+        defaults. UTF-8 title interpretation is distinct from current text encoding; hexadecimal encodes/decodes label strings.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-dbd1b93d52
+        source_line: 1698
+        wire: CSI > Pm t
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6387-6400
+      selectors:
+      - selector: 0
+        feature: hexadecimal label setting
+      - selector: 1
+        feature: hexadecimal label querying
+      - selector: 2
+        feature: UTF-8 label setting
+      - selector: 3
+        feature: UTF-8 label querying
+    - id: title-mode-reset
+      section: Functions using CSI / XTRMTITLE, lines 727-742
+      level: defined
+      wire: CSI > Pm T
+      rule: Each selector resets/disables the corresponding title feature (0..3). No parameters restores compiled-in default.
+        The publication notes compiled defaults may differ from disabled.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-518ec07749
+        source_line: 727
+        wire: CSI > Pm T
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6402-6415
+      selectors:
+      - selector: 0
+        feature: hexadecimal label setting
+      - selector: 1
+        feature: hexadecimal label querying
+      - selector: 2
+        feature: UTF-8 label setting
+      - selector: 3
+        feature: UTF-8 label querying
+      source_note: Pinned nonempty list clears each ValidTitleMode bit; empty path assigns DEF_TITLE_MODES. This is observed
+        behavior, not a universal host title rule.
+    - id: key-format-set
+      section: Functions using CSI / XTFMTKEYS, lines 844-869
+      level: defined
+      wire: CSI > Pp [ ; Pv ] f
+      rule: Set or reset resource controlling modifier key sequence format. Pp selects resource, Pv assigns value; omitted Pv
+        resets that resource to its initial value. Published selector 5 reserved for input via string action. No parameters
+        published as reset all resources.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-807c225322
+        source_line: 844
+        wire: CSI > Pp ; Pv f
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f0cc67d5c7
+        source_line: 845
+        wire: CSI > Pp f
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:2426-2464,6313-6327
+      selectors:
+      - selector: 0
+        resource: formatKeyboard
+      - selector: 1
+        resource: formatCursorKeys
+      - selector: 2
+        resource: formatFunctionKeys
+      - selector: 3
+        resource: formatKeypadKeys
+      - selector: 4
+        resource: formatOtherKeys
+      - selector: 6
+        resource: formatModifierKeys
+      - selector: 7
+        resource: formatSpecialKeys
+      source_note: Pinned no-parameter branch iterates 1..5 only, not all published 0..7 resources. Setter reads first two operands;
+        source does not establish stricter complete grammar.
+    - id: key-format-query
+      section: Functions using CSI / XTQFMTKEYS, lines 877-904
+      level: defined
+      wire: CSI ? Pp g
+      rule: Query the named format resource. Author describes a restorable XTFMTKEYS-form response, with same selectors as the
+        setter.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-c4b4b85336
+        source_line: 877
+        wire: CSI ? Pp g
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:2509-2548,6328-6334
+      reply: CSI > Pp ; Pv f
+      related_command: xterm_controls.key-format-set
+      source_note: Author displayed reply omits Pv, but pinned code emits two parameters selector and current value. Pinned
+        query iterates each operand; exact invalid/default/multi-query scope remains unassessed.
+    - id: key-modifier-set
+      section: Functions using CSI / XTMODKEYS, lines 1322-1347, Alt and Meta Keys
+      level: defined
+      wire: CSI > Pp [ ; Pv ] m
+      rule: Set modifier encoding resource by selector Pp and value Pv, or reset a resource by omitted Pv. Published selector
+        5 reserved for string action; no parameters published as reset all. The modifyOtherKeys resource has additional documented
+        modifier-mask subparameter semantics, not another SGR attribute.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-a7e271a5e0
+        source_line: 1322
+        wire: CSI > Pp ; Pv m
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d60cec79e7
+        source_line: 1323
+        wire: CSI > Pp m
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:2377-2423,6336-6357
+      selectors:
+      - selector: 0
+        resource: modifyKeyboard
+      - selector: 1
+        resource: modifyCursorKeys
+      - selector: 2
+        resource: modifyFunctionKeys
+      - selector: 3
+        resource: modifyKeypadKeys
+      - selector: 4
+        resource: modifyOtherKeys
+      - selector: 6
+        resource: modifyModifierKeys
+      - selector: 7
+        resource: modifySpecialKeys
+      related_query: xterm_controls.xtqmodkeys
+      source_note: Pinned no-parameter branch loops 1..5, not all documented resources. Parser supports a mask subparameter
+        in its expected structure. Do not change the existing explicitly accepted single-resource XTQMODKEYS decision or infer
+        exact query arity.
+    - id: key-modifier-disable
+      section: Functions using CSI / disable key modifier options, lines 1398-1418
+      level: defined
+      wire: CSI > [ Ps ] n
+      rule: Disable selected modifier option (corresponds to resource value -1, not expressible by ordinary XTMODKEYS value).
+        Omitted Ps disables modifyFunctionKeys. Selectors use the modify resource family.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-8dcde60b89
+        source_line: 1398
+        wire: CSI > Ps n
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6359-6367,2377-2423
+      related_command: xterm_controls.key-modifier-set
+    - id: version-report
+      section: Functions using CSI / XTVERSION, lines 1525-1528
+      level: defined
+      wire: CSI > Ps q
+      rule: Ps=0 requests terminal name/version; response DCS > | text ST.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-9c41e7f26d
+        source_line: 1525
+        wire: CSI > Ps q
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:5455-5466
+      reply: DCS > | text ST
+      source_note: Pinned code tests first parameter <=0 including omitted, and does not check exact arity here. Do not adopt
+        another terminal version string or parser admission as canonical.
+    - id: pointer-hide-mode
+      section: Functions using CSI / XTSMPOINTER, lines 1458-1471
+      level: defined
+      wire: CSI > [ Ps ] p
+      rule: 'Select pointer hiding during typing: 0 never,1 hide when mouse tracking disabled,2 always except leaving window,3
+        always even leaving/entering. Omitted parameter defaults to 1. This is host pointer visibility policy, not shape or
+        tracking mode.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-3b0d6ef095
+        source_line: 1458
+        wire: CSI > Ps p
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6377-6385
+      source_note: Pinned parser assigns first nondefault parameter directly; exact invalid-value consequences not established.
+    - id: shift-escape-mode
+      section: Functions using CSI / XTSHIFTESCAPE, lines 1590-1605
+      level: defined
+      wire: CSI > [ Ps ] s
+      rule: 0 permits Shift to override mouse protocol; 1 conditionally allows Shift as mouse modifier. Resource values 2 and
+        3 (always/never allow modifier) cannot be set with this control. Published omitted value defaults to 0.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-64d9c20f92
+        source_line: 1590
+        wire: CSI > Ps s
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:6302-6310
+      source_note: Pinned handler accepts 0..1 only, absent nparam uses 0, otherwise one_if_default(0). Exact omitted parameter
+        representation is not inferred.
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -4518,7 +5162,7 @@ specifications:
     - id: double-height-line
       section: Chapter 3 / DECDHL (transcribed PDF page 42)
       level: defined
-      wire: ESC # 3 / ESC # 4
+      wire: 'ESC # 3 / ESC # 4'
       rule: Select the top or bottom half of a double-height, double-width line containing the active position. Use paired adjacent lines
         and send identical character output to both to form full-height characters. Double width halves characters per line. On conversion
         from single width and height, characters right of the screen center are lost. The cursor retains its character position unless
@@ -4993,41 +5637,11 @@ discovery_catalogues:
       section: Device-Control functions
       source_line: 539
       symbol: XTGETTCAP
-    - id: csi-16a4dc30f6
-      wire: 'CSI # P'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 638
-    - id: csi-17a508e465
-      wire: 'CSI Pm # P'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 639
-    - id: csi-2fae0da402
-      wire: 'CSI # Q'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 645
-    - id: csi-6ea5baa87d
-      wire: 'CSI Pm # Q'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 646
-    - id: csi-ad2e28f70b
-      wire: 'CSI # R'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 652
-    - id: csi-7dc42143ea
-      wire: 'CSI # S'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 658
-      symbol: XTTITLEPOS
     - id: csi-7cdf7b8401
       wire: CSI ? Pi ; Pa ; Pv S
       section: Functions using CSI , ordered by the final character(s)
       source_line: 665
       symbol: XTSMGRAPHICS
-    - id: csi-518ec07749
-      wire: CSI > Pm T
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 727
-      symbol: XTRMTITLE
     - id: csi-01947d180b
       wire: CSI ? 5 W Reset tab stops to start with column 9, every 8 columns
       section: Functions using CSI , ordered by the final character(s)
@@ -5041,20 +5655,6 @@ discovery_catalogues:
       wire: CSI > Ps c
       section: Functions using CSI , ordered by the final character(s)
       source_line: 810
-    - id: csi-807c225322
-      wire: CSI > Pp ; Pv f
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 844
-    - id: csi-f0cc67d5c7
-      wire: CSI > Pp f
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 845
-      symbol: XTFMTKEYS
-    - id: csi-c4b4b85336
-      wire: CSI ? Pp g
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 877
-      symbol: XTQFMTKEYS
     - id: csi-7f26dc7a37
       wire: CSI ? Pm h
       section: Functions using CSI , ordered by the final character(s)
@@ -5065,24 +5665,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1062
       symbol: DECRST
-    - id: csi-a7e271a5e0
-      wire: CSI > Pp ; Pv m
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1322
-    - id: csi-d60cec79e7
-      wire: CSI > Pp m
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1323
-      symbol: XTMODKEYS
-    - id: csi-8dcde60b89
-      wire: CSI > Ps n
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1398
-    - id: csi-3b0d6ef095
-      wire: CSI > Ps p
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1458
-      symbol: XTSMPOINTER
     - id: csi-1ddd518ae0
       wire: CSI ! p
       section: Functions using CSI , ordered by the final character(s)
@@ -5093,20 +5675,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1475
       symbol: DECSCL
-    - id: csi-18367d6543
-      wire: 'CSI # p'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1519
-    - id: csi-6dc3de0fc3
-      wire: 'CSI Pm # p'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1520
-      symbol: XTPUSHSGR
-    - id: csi-9c41e7f26d
-      wire: CSI > Ps q
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1525
-      symbol: XTVERSION
     - id: csi-7973ed5976
       wire: CSI Ps q
       section: Functions using CSI , ordered by the final character(s)
@@ -5117,11 +5685,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1539
       symbol: DECSCUSR
-    - id: csi-9274687a13
-      wire: 'CSI # q'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1556
-      symbol: XTPOPSGR
     - id: csi-0c95b02fe1
       wire: CSI ? Pm r
       section: Functions using CSI , ordered by the final character(s)
@@ -5131,11 +5694,6 @@ discovery_catalogues:
       wire: CSI s
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1583
-    - id: csi-64d9c20f92
-      wire: CSI > Ps s
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1590
-      symbol: XTSHIFTESCAPE
     - id: csi-ba1c668e35
       wire: CSI ? Pm s
       section: Functions using CSI , ordered by the final character(s)
@@ -5146,10 +5704,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1616
       symbol: XTWINOPS
-    - id: csi-dbd1b93d52
-      wire: CSI > Pm t
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1698
     - id: csi-a6bef4a803
       wire: CSI Ps SP t
       section: Functions using CSI , ordered by the final character(s)
@@ -5209,20 +5763,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1850
       symbol: DECSLE
-    - id: csi-49bd9f1f64
-      wire: 'CSI # {'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1861
-    - id: csi-3da8d297df
-      wire: 'CSI Pm # {'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1862
-      symbol: XTPUSHSGR
-    - id: csi-156199d0b1
-      wire: 'CSI Pt ; Pl ; Pb ; Pr # |'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1886
-      symbol: XTREPORTSGR
     - id: csi-5bce18dca3
       wire: CSI Ps $ |
       section: Functions using CSI , ordered by the final character(s)
@@ -5238,11 +5778,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1938
       symbol: DECSNLS
-    - id: csi-c0bf8b230a
-      wire: 'CSI # }'
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1941
-      symbol: XTPOPSGR
     - id: csi-32051dd066
       wire: CSI Ps ; Pf ; Pb , |
       section: Functions using CSI , ordered by the final character(s)
@@ -5263,14 +5798,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1992
       symbol: DECSSDT
-    - id: osc-9731e40b62
-      wire: OSC Ps ; Pt BEL
-      section: Operating System Commands
-      source_line: 2001
-    - id: osc-14418614ad
-      wire: OSC Ps ; Pt ST
-      section: Operating System Commands
-      source_line: 2003
     - id: pm-3a72abf844
       wire: PM Pt ST
       section: Privacy Message
@@ -5451,130 +5978,59 @@ discovery_catalogues:
       wire: OSC 0 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2025
+      review:
+        classification: source-origin-or-semantic-review-required
+        reason: The xterm publication attributes the title family 0..2 to dtterm; originating title-family source still needs
+          verification.
+        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: osc-selector-1
       wire: OSC 1 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2026
+      review:
+        classification: source-origin-or-semantic-review-required
+        reason: The xterm publication attributes the title family 0..2 to dtterm; originating title-family source still needs
+          verification.
+        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: osc-selector-2
       wire: OSC 2 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2027
+      review:
+        classification: source-origin-or-semantic-review-required
+        reason: The xterm publication attributes the title family 0..2 to dtterm; originating title-family source still needs
+          verification.
+        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: osc-selector-3
       wire: OSC 3 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2028
-    - id: osc-selector-10
-      wire: OSC 10 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2106
-    - id: osc-selector-11
-      wire: OSC 11 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2107
-    - id: osc-selector-12
-      wire: OSC 12 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2108
-    - id: osc-selector-13
-      wire: OSC 13 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2109
-    - id: osc-selector-14
-      wire: OSC 14 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2110
-    - id: osc-selector-15
-      wire: OSC 15 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2111
-    - id: osc-selector-16
-      wire: OSC 16 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2112
-    - id: osc-selector-17
-      wire: OSC 17 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2113
-    - id: osc-selector-18
-      wire: OSC 18 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2114
-    - id: osc-selector-19
-      wire: OSC 19 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2115
+      review:
+        classification: source-origin-or-semantic-review-required
+        reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
+          directory for next session. Obtain originating dtterm source before scope resolution.
+        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: osc-selector-22
       wire: OSC 22 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2117
-    - id: osc-selector-46
-      wire: OSC 46 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2122
-    - id: osc-selector-50
-      wire: OSC 50 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2126
+      review:
+        classification: source-origin-or-semantic-review-required
+        reason: Xterm original proposal uses system cursor names and fallback; Kitty author explicitly extends it with portable
+          names, =, stack, queries and separate screen stacks. Pinned xterm rejects empty OSC 22 data before handler despite
+          published empty fallback. Retain both profiles, do not assume equivalence.
+        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
+        related_source: kitty_pointer.set / stack / query; pinned kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/pointer-shapes.rst;
+          xterm misc.c:991-1029
     - id: osc-selector-51
       wire: OSC 51 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2143
-    - id: osc-selector-52
-      wire: OSC 52 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2145
-    - id: osc-selector-60
-      wire: OSC 60 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2171
-    - id: osc-selector-61
-      wire: OSC 61 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2192
-    - id: osc-selector-62
-      wire: OSC 62 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2203
-    - id: osc-selector-110
-      wire: OSC 110 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2245
-    - id: osc-selector-111
-      wire: OSC 111 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2246
-    - id: osc-selector-112
-      wire: OSC 112 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2247
-    - id: osc-selector-113
-      wire: OSC 113 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2248
-    - id: osc-selector-114
-      wire: OSC 114 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2249
-    - id: osc-selector-115
-      wire: OSC 115 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2250
-    - id: osc-selector-116
-      wire: OSC 116 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2251
-    - id: osc-selector-117
-      wire: OSC 117 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2252
-    - id: osc-selector-118
-      wire: OSC 118 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2253
-    - id: osc-selector-119
-      wire: OSC 119 ; Pt (BEL | ST)
-      section: Operating System Commands
-      source_line: 2254
+      review:
+        classification: source-origin-or-semantic-review-required
+        reason: Reserved for Emacs shell in the xterm publication; pinned xterm has no recognized action. Do not invent an Emacs
+          protocol definition or claim implementation from a reserved selector.
+        source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
     - id: private-mode-4-h-line-917
       wire: CSI ? 4 h
       section: DEC Private Mode Set (DECSET)
@@ -6185,6 +6641,83 @@ discovery_catalogues:
       canonical_clause: xterm_controls.read-only-width-encoding-reports
       cause: The DECSET table lists a read-only resource selector, not an effective SET operation. Pinned charproc.c:7990-7996
         ignores set/reset; misc.c:5835-5848 reports the resource using DECRQM.
+    - original_id: osc-selector-110
+      source_line: 2245
+      incorrect_wire: OSC 110 ; Pt (BEL | ST)
+      actual_wire: OSC 110 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-111
+      source_line: 2246
+      incorrect_wire: OSC 111 ; Pt (BEL | ST)
+      actual_wire: OSC 111 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-112
+      source_line: 2247
+      incorrect_wire: OSC 112 ; Pt (BEL | ST)
+      actual_wire: OSC 112 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-113
+      source_line: 2248
+      incorrect_wire: OSC 113 ; Pt (BEL | ST)
+      actual_wire: OSC 113 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-114
+      source_line: 2249
+      incorrect_wire: OSC 114 ; Pt (BEL | ST)
+      actual_wire: OSC 114 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-115
+      source_line: 2250
+      incorrect_wire: OSC 115 ; Pt (BEL | ST)
+      actual_wire: OSC 115 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-116
+      source_line: 2251
+      incorrect_wire: OSC 116 ; Pt (BEL | ST)
+      actual_wire: OSC 116 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-117
+      source_line: 2252
+      incorrect_wire: OSC 117 ; Pt (BEL | ST)
+      actual_wire: OSC 117 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-118
+      source_line: 2253
+      incorrect_wire: OSC 118 ; Pt (BEL | ST)
+      actual_wire: OSC 118 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-119
+      source_line: 2254
+      incorrect_wire: OSC 119 ; Pt (BEL | ST)
+      actual_wire: OSC 119 (BEL | ST)
+      canonical_clause: xterm_controls.dynamic-colors-reset
+      cause: Generic OSC extractor attached a required ; Pt to the payloadless dynamic-color reset; pinned do_osc rejects nonempty
+        payload for this selector.
+    - original_id: osc-selector-60
+      source_line: 2171
+      incorrect_wire: OSC 60 ; Pt (BEL | ST)
+      actual_wire: OSC 60 (BEL | ST)
+      canonical_clause: xterm_controls.allowed-feature-query
+      cause: Generic extractor attached ; Pt to a no-payload query. The publication defines Pt in the reply, and pinned do_osc
+        rejects nonempty request data.
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
