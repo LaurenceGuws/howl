@@ -5287,6 +5287,71 @@ specifications:
       source_note: Pinned xterm two-parameter discovery documents a narrower form, and describes Pc=1 as Erase Below; actual
         code clears all only for Pc=0, then parses key/hex data, accepts nonempty definitions within MAX_UDK. It does not establish
         original 768-byte quota, lock or modifier semantics. These are original hardware requirements, not target choices.
+    - id: character-set-designation-profile
+      section: Chapter 5 / Selecting and Designating Character Sets, printed pp.91-95, Tables 5-2/5-3
+      level: defined
+      wire: ESC I1 [ I ... ] F
+      rule: VT420 designates a hard set into G0..G3 independently of mapping into GL/GR. The only 96-character hard set is ISO
+        Latin-1 supplemental. The 94-character designators in Table 5-3 include ASCII B, DEC supplemental %5, special graphics
+        0, technical >, and user-preferred <. Initial G0/G1 ASCII; G2/G3 DEC Supplemental Graphic. NRC sets require national
+        mode and the applicable worldwide hardware profile.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3806-3839,4853-4878,6256-6299
+      related_standard: ecma35 designate-g*-94 / designate-g*-96
+      original_nrc_designators:
+        A: UK
+        5/C: Finnish
+        R: French
+        9/Q: French Canadian
+        K: German
+        Y: Italian
+        '`': ISO Norwegian/Danish
+        6/E: DEC Norwegian/Danish
+        '%6': Portuguese
+        Z: Spanish
+        7/H: Swedish
+        '=': Swiss
+      original_96_designators:
+        A: ISO Latin-1 supplemental
+      source_note: The size prefix distinguishes 94-set A (UK) from 96-set A (Latin-1). Xterm documents additional profile-specific
+        sets; they are not added to the VT420 table. Individual registered glyph maps require separate source verification.
+    - id: secondary-device-attributes
+      section: Chapter 12 / Secondary DA, printed pp.232-233
+      level: defined
+      wire: CSI > [ 0 ] c
+      rule: Request terminal identification, firmware level and hardware options. VT420 reply CSI > 41 ; Pv ; Po c; firmware
+        examples 10 and 20, option 0 no options and 1 PC keyboard/interface. Do not infer a universal third parameter of zero
+        from the reference table.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-4fe5c0a5a6
+        source_line: 810
+        wire: CSI > Ps c
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4218-4273
+      reply: CSI > Ptype ; Pv ; Po c
+      later_profile: 'DEC VT520/525 July 1994 p.5-11: type 64 mono,65 color; option 0 standard VT keyboard,1 PC keyboard.'
+      source_note: Pinned xterm chooses emulation type, patch number and options=0, also permits nonstandard VT100 type 0. Hardware
+        values are profile data, not mandatory Howl identity.
+    - id: tertiary-device-attributes
+      section: Chapter 12 / Tertiary DA, printed pp.233-234
+      level: defined
+      wire: CSI = [ 0 ] c
+      rule: 'VT400-mode request for factory terminal unit identifier. Reply DCS ! | followed by four hexadecimal pairs (eight
+        digits): first pair site 00..FF, last three pairs unit number unique within site. DEC VT520/525 p.5-12 retains format.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-538ff9fdc8
+        source_line: 804
+        wire: CSI = Ps c
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4275-4292
+      reply: DCS ! | HHHHHHHH ST
+      source_note: Pinned xterm returns eight zero digits, explicitly not a real manufacturing identifier. No target identity,
+        privacy disclosure or generated serial selected.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -6167,6 +6232,442 @@ specifications:
           cursor-motion rules, sixel allocation dimensions or rendering bounds. Do not import those from xterm and label them DEC-authored.
       competes_with: dec_vt3xx_graphics.sixel-display-mode
       pending_reconciliation: decsdm-polarity-vt300-vt382
+  dec_vt520:
+    title: VT520/VT525 Video Terminal Programmer Information
+    author: Digital Equipment Corporation
+    authority: protocol-author
+    revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+    snapshot_sha256: 1df930cc62e87775555abd67046c53e378445ae91acb9292496b4188a899199b
+    scope: Selected original VT500 controls and color hardware profiles, not a complete repertoire.
+    clauses:
+    - id: cursor-style
+      section: 5-127 DECSCUSR
+      level: defined
+      wire: CSI Ps SP q
+      rule: Original selectors 0/1/omitted blinking block,2 steady block,3 blinking underline,4 steady underline. Applies
+        only when cursor is enabled; DECTCEM controls visibility.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-8c99edd0c8
+        source_line: 1539
+        wire: CSI Ps SP q
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4945-4990
+      parameter_extensions:
+      - source: xterm ctlseqs lines 1546-1547; pinned charproc.c:4975-4982
+        selectors:
+          '5': blinking bar
+          '6': steady bar
+        note: xterm-authored additions, not original DEC values.
+    - id: no-clear-column-change
+      section: 5-74 DECNCSM
+      level: defined
+      wire: CSI ? 95 h / CSI ? 95 l
+      rule: SET suppresses clearing screen on column-mode change (DECCOLM or SET-UP); RESET enables clearing. Does not alter
+        DECSCPP semantics.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-95-h-line-963
+        source_line: 963
+        wire: CSI ? 95 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-95-l-line-1110
+        source_line: 1110
+        wire: CSI ? 95 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7795-7799,7553-7574
+      related_commands:
+      - dec_vt420.column-mode
+      - dec_vt420.columns-per-page
+    - id: tab-every-eight-columns
+      section: 5-149 DECST8C
+      level: defined
+      wire: CSI ? 5 W
+      rule: Clear all existing tab stops then install stops every eight columns starting at one-based column 9. Distinct from
+        TBC clear and HTS current-position set.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5883-5896
+      source_note: Pinned xterm accepts selector 5 and also <=0, installs stops only through visible maximum column; original
+        printed command explicitly selects 5.
+    - id: assign-color
+      section: 5-16 DECAC
+      level: defined
+      wire: CSI Ps1 ; Ps2 ; Ps3 , |
+      rule: Select normal-text or frame colors in ANSI SGR color mode. Ps1=1 normal text,2 window frame; foreground/background
+        indices each 0..15. Normal colors are default foreground/background; frame foreground also applies to session icons
+        and keyboard indicator line. Item selectable in status-string report.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-32051dd066
+        source_line: 1945
+        wire: CSI Ps ; Pf ; Pb , |
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5929-5961
+      source_note: Pinned xterm gates terminal_id>=525, implements item 1 via ANSI palette and default fg/bg, explicitly leaves
+        item 2 unimplemented.
+    - id: alternate-text-color
+      section: 5-22 DECATC
+      level: defined
+      wire: CSI Ps1 ; Ps2 ; Ps3 , }
+      rule: Assign foreground/background indices 0..15 to one of sixteen attribute combinations. Selector is enumeration,
+        not the numeric SGR mask. DECRQSS may select that combination for reporting.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-31ba47f36d
+        source_line: 1956
+        wire: CSI Ps ; Pf ; Pb , }
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5963-5979
+      selectors:
+        '0': normal
+        '1': bold
+        '2': reverse
+        '3': underline
+        '4': blink
+        '5': bold reverse
+        '6': bold underline
+        '7': bold blink
+        '8': reverse underline
+        '9': reverse blink
+        '10': underline blink
+        '11': bold reverse underline
+        '12': bold reverse blink
+        '13': bold underline blink
+        '14': reverse underline blink
+        '15': bold reverse underline blink
+      related_command: dec_vt520.color-lookup-table
+      source_note: Pinned xterm accepts and stores indexed pair for terminal_id>=525; actual display mapping is not established
+        by storage alone.
+    - id: color-lookup-table
+      section: 5-151 DECSTGLT
+      level: defined
+      wire: CSI Ps ) {
+      rule: 'Select color mapping: 0 mono/gray,1 alternate colors from text attributes,2 alternate color (second profile;
+        table leaves description blank),3 ANSI SGR colors (default). Not an RGB setter.'
+      source_note: Original color lookup table gates relationship to DECATC; full distinction between modes 1 and 2 needs
+        SET-UP chapter review before implementation assessment.
+    - id: warning-bell-volume
+      section: 5-154 DECSWBV (PDF page 308, visually checked)
+      level: defined
+      wire: CSI Ps SP t
+      rule: 'Select warning bell volume for errors and Control-G. Original table: 1 off; 2,3,4 low; 5,5,7,8,0 or omitted high
+        (default). Duplicate 5 and missing 6 are present in the published table, not an extraction error. No inferred rule
+        for 6.'
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6421-6446
+      pending_reconciliation: decswbv-zero-volume-polarity
+    - id: margin-bell-volume
+      section: 5-138 DECSMBV (PDF page 292, visually checked)
+      level: defined
+      wire: CSI Ps SP u
+      rule: 'Select margin bell volume near right margin. Original table: 0/1/omitted off (default); 2..4 low; 5..8 high.
+        Separate from warning bell.'
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6448-6475
+      pending_reconciliation: decsmbv-zero-volume-polarity
+  dec_locator:
+    title: Locator Input Model for ANSI Terminals (sixth revision)
+    author: Peter Sichel, Digital Equipment Corporation Video Architecture
+    authority: protocol-author-memorandum
+    revision: 23 June 1989; sixth revision, author-circulated memorandum reproduced in HTML; formal publication not established
+    url: https://www.vt100.net/shuford/terminal/dec_vt_mouse.html
+    snapshot_sha256: 51676133c3e471e0de9fe27f0a02dbd7ee911d56fd131f33a0b21ea2988891f1
+    scope: Original author locator input model; text locator controls and reports only. Distinguish proposed hardware model
+      from later implemented profiles.
+    clauses:
+    - id: enable-locator-reporting
+      section: Enabling Locator Reporting (DECELR)
+      level: defined
+      wire: CSI Ps ; Pu ' z
+      rule: Ps 0/default disables,1 enables,2 one shot (disable after next report). Pu omitted/0 or 2 character cells,1 device
+        physical pixels. Enable tracks independent input cursor; DECELR cancels prior filter rectangle. Pointer events are
+        host input, not text cursor movement.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-fa2af1e6b1
+        source_line: 1833
+        wire: CSI Ps ; Pu ' z
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5531-5553; button.c:785-808
+    - id: select-locator-events
+      section: Selecting Locator Events (DECSLE)
+      level: defined
+      wire: CSI Pm ' {
+      rule: 'Apply one or more selectors: 0 default explicit requests only and cancel filter;1/2 enable/disable button down;3/4
+        enable/disable button up. Multiple selectors select transitions, not a mouse encoding.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-091043d69e
+        source_line: 1850
+        wire: CSI Pm ' {
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5555-5579
+    - id: locator-report
+      section: Locator Position Reporting (DECLRP)
+      level: defined
+      wire: CSI Pe ; Pb ; Pr ; Pc [ ; Pp ] & w
+      rule: Report event and simultaneous button state with decimal page coordinates. Pe=0 unavailable,1 explicit request,2/3
+        left down/up,4/5 middle,6/7 right,8/9 fourth,10 outside filter. Pb mask 1 right,2 middle,4 left,8 fourth; 0 none.
+        Undefined row/column are omitted; page may be omitted for page 1. Original input events are queued with keystrokes
+        in arrival order, one report per event; simultaneous events sorted by increasing Pe; original input silo minimum 9
+        positions and locks input when full. Inactive sessions do not receive active-session pointer state.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: button.c:785-808,811-1016
+      source_note: Physical pixel vs cell units are chosen by DECELR. Pinned xterm reports without page and has explicit unavailable
+        event-only response; this is not a proof of original focus, origin, ordering or queue behavior.
+    - id: enable-filter-rectangle
+      section: Filter Rectangles (DECEFR)
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ' w
+      rule: Inclusive rectangle in current DECELR units, upper-left origin 1:1. Missing bounds default to current locator
+        position; all omitted means report any movement. Leaving rectangle generates event 10 and disables filter (one shot);
+        replacing rectangle reactivates and immediate outside report if pointer already outside. DECELR and DECSLE 0 cancel.
+        Explicit bounds with undefined position trigger immediately with omitted coordinates; omitted bounds while undefined
+        trigger on entry into defined space. Inactive session has corresponding undefined-position behavior.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d3c7ca5037
+        source_line: 1767
+        wire: CSI Pt ; Pl ; Pb ; Pr ' w
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5511-5529; button.c:1019-1140
+      source_note: Pinned xterm InitLocatorFilter uses current coordinates for omitted bounds, clamps/sorts rectangle and
+        sends event 0 on some unavailable cases. Original inclusive geometry and undefined-coordinate semantics are retained,
+        not inferred from that code.
+    - id: request-locator-position
+      section: Requesting A Locator Position Report (DECRQLP)
+      level: defined
+      wire: CSI Ps ' |
+      rule: Ps 0/omitted or 1 requests one immediate DECLRP; other selectors ignored. Enabled active session returns event
+        1, with omitted coordinates if outside defined range. Disabled or inactive session returns event 0. Do not expose
+        another session pointer state.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5581-5588; button.c:953-1016
+      related_report: dec_locator.locator-report
+      pending_reconciliation: locator-query-undefined-position-and-filter-lifetime
+  ecma35:
+    title: 'ECMA-35: Character Code Structure and Extension Techniques'
+    author: Ecma International
+    authority: standard
+    revision: 6th edition, December 1994; identical to ISO/IEC 2022:1994
+    url: https://ecma-international.org/wp-content/uploads/ECMA-35_6th_edition_december_1994.pdf
+    snapshot_sha256: cd812a506f93bf44e0e6058fe423144c4dea8a64fbc96589cf99bcbe32fc1bf4
+    scope: Selected single-byte graphic set designations, code structure announcements and return from other coding systems.
+      Not all ECMA-35 functions or registered sets.
+    clauses:
+    - id: designate-g0-94
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC ( [ I ... ] F
+      rule: Designate identified single-byte 94-character graphic set as G0, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-f7c699f296
+        source_line: 312
+        wire: ESC ( C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3806-3809,4853-4878; xterm ctlseqs:312
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: designate-g1-94
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC ) [ I ... ] F
+      rule: Designate identified single-byte 94-character graphic set as G1, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-051e7a8374
+        source_line: 366
+        wire: ESC ) C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3811-3814,4853-4878; xterm ctlseqs:366
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: designate-g2-94
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC * [ I ... ] F
+      rule: Designate identified single-byte 94-character graphic set as G2, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-4ec6fa58b2
+        source_line: 369
+        wire: ESC * C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3816-3819,4853-4878; xterm ctlseqs:369
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: designate-g3-94
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC + [ I ... ] F
+      rule: Designate identified single-byte 94-character graphic set as G3, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-b2dd6280b9
+        source_line: 372
+        wire: ESC + C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3821-3824,4853-4878; xterm ctlseqs:372
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: designate-g1-96
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC - [ I ... ] F
+      rule: Designate identified single-byte 96-character graphic set as G1, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-90e75ff5f8
+        source_line: 375
+        wire: ESC - C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3826-3829,4853-4878; xterm ctlseqs:375
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: designate-g2-96
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC . [ I ... ] F
+      rule: Designate identified single-byte 96-character graphic set as G2, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-8f0b71c281
+        source_line: 387
+        wire: ESC . C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3831-3834,4853-4878; xterm ctlseqs:387
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: designate-g3-96
+      section: 14.1,14.3.1-14.3.2 Table 6, printed pp.33-35; 6.3.1
+      level: defined
+      wire: ESC / [ I ... ] F
+      rule: Designate identified single-byte 96-character graphic set as G3, superseding prior designation. Set identity is
+        the registered final byte with any associated intermediates, not always one final character. If the code element is
+        already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
+        set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-e6ea7a2f87
+        source_line: 390
+        wire: ESC / C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:3836-3839,4853-4878; xterm ctlseqs:390
+      source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+        DRCS, or an old DEC character mapping.
+      dec_profile: dec_vt420.character-set-designation-profile
+    - id: announce-ecma43-level-1
+      section: 15.2.2 Table 7 (facility 12/13/14), printed pp.37-39; 10.3.1
+      level: defined
+      wire: ESC SP L
+      rule: 'Announce ECMA-43 level 1 for subsequent information interchange (facility 12). Elementary 8-bit structure: C0,
+        G0 in GL, SPACE/DELETE, G1 in GR and optional C1; initial designation only. This announces code structure, not DEC
+        terminal operating level or a generic reset.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-5df28b937a
+        source_line: 292
+        wire: ESC SP L
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5063-5079,1310-1320
+      dec_profile: 'DEC VT420 printed pp.101-102: levels 1/2 designate ASCII G0 and ISO Latin-1 G1 and invoke into GL/GR;
+        level 3 designates/invokes ASCII G0 into GL; VT400 only, announcer must be re-sent after reset/power/off/DECSCL.'
+      source_note: Pinned xterm sets ansi_level only when vtXX_level>=3. Full ECMA-43 conformance and DEC-specific designation
+        side effects are not established by that assignment.
+    - id: announce-ecma43-level-2
+      section: 15.2.2 Table 7 (facility 12/13/14), printed pp.37-39; 10.3.1
+      level: defined
+      wire: ESC SP M
+      rule: Announce ECMA-43 level 2 for subsequent information interchange (facility 13). Level 1 plus G2/G3 (one or both)
+        and SS2/SS3 (one or both) with GL as single-shift area; initial designation only. This announces code structure, not
+        DEC terminal operating level or a generic reset.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-16e4711bcc
+        source_line: 294
+        wire: ESC SP M
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5063-5079,1310-1320
+      dec_profile: 'DEC VT420 printed pp.101-102: levels 1/2 designate ASCII G0 and ISO Latin-1 G1 and invoke into GL/GR;
+        level 3 designates/invokes ASCII G0 into GL; VT400 only, announcer must be re-sent after reset/power/off/DECSCL.'
+      source_note: Pinned xterm sets ansi_level only when vtXX_level>=3. Full ECMA-43 conformance and DEC-specific designation
+        side effects are not established by that assignment.
+    - id: announce-ecma43-level-3
+      section: 15.2.2 Table 7 (facility 12/13/14), printed pp.37-39; 10.3.1
+      level: defined
+      wire: ESC SP N
+      rule: Announce ECMA-43 level 3 for subsequent information interchange (facility 14). Level 2 plus one or more locking
+        shifts. This announces code structure, not DEC terminal operating level or a generic reset.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-ecb85e0fd8
+        source_line: 296
+        wire: ESC SP N
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5063-5079,1310-1320
+      dec_profile: 'DEC VT420 printed pp.101-102: levels 1/2 designate ASCII G0 and ISO Latin-1 G1 and invoke into GL/GR;
+        level 3 designates/invokes ASCII G0 into GL; VT400 only, announcer must be re-sent after reset/power/off/DECSCL.'
+      source_note: Pinned xterm sets ansi_level only when vtXX_level>=3. Full ECMA-43 conformance and DEC-specific designation
+        side effects are not established by that assignment.
+    - id: return-from-other-coding-system
+      section: 15.4.1-15.4.2, printed pp.41-42
+      level: defined
+      wire: ESC % @
+      rule: DOCS with final 04/00 and no extra intermediate returns from another registered coding system to ECMA-35 and restores
+        the prior announced, designated and invoked coding state. Restoration of active position or other terminal state is
+        outside this standard. This does not inherently mean ISO Latin-1.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6218-6249
+      pending_reconciliation: docs-return-vs-xterm-default-charset
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -6192,54 +6693,20 @@ discovery_catalogues:
           These cannot both be the same terminal action.
         scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction remains
           to be verified for applicability.
-    - id: esc-5df28b937a
-      wire: ESC SP L
-      section: Controls beginning with ESC
-      source_line: 292
-    - id: esc-16e4711bcc
-      wire: ESC SP M
-      section: Controls beginning with ESC
-      source_line: 294
-    - id: esc-ecb85e0fd8
-      wire: ESC SP N
-      section: Controls beginning with ESC
-      source_line: 296
     - id: esc-93bf6694ea
       wire: ESC % @
       section: Controls beginning with ESC
       source_line: 308
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: docs-return-vs-xterm-default-charset
+        reason: ECMA-35 restores prior coding-system announcement, designation and invocation state. Xterm describes selecting
+          default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally; restoration of prior state is
+          not established.
     - id: esc-e2136b9e51
       wire: ESC % G
       section: Controls beginning with ESC
       source_line: 310
-    - id: esc-f7c699f296
-      wire: ESC ( C
-      section: Controls beginning with ESC
-      source_line: 312
-    - id: esc-051e7a8374
-      wire: ESC ) C
-      section: Controls beginning with ESC
-      source_line: 366
-    - id: esc-4ec6fa58b2
-      wire: ESC * C
-      section: Controls beginning with ESC
-      source_line: 369
-    - id: esc-b2dd6280b9
-      wire: ESC + C
-      section: Controls beginning with ESC
-      source_line: 372
-    - id: esc-90e75ff5f8
-      wire: ESC - C
-      section: Controls beginning with ESC
-      source_line: 375
-    - id: esc-8f0b71c281
-      wire: ESC . C
-      section: Controls beginning with ESC
-      source_line: 387
-    - id: esc-e6ea7a2f87
-      wire: ESC / C
-      section: Controls beginning with ESC
-      source_line: 390
     - id: esc-64947902c6
       wire: ESC F
       section: Controls beginning with ESC
@@ -6286,19 +6753,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 665
       symbol: XTSMGRAPHICS
-    - id: csi-01947d180b
-      wire: CSI ? 5 W Reset tab stops to start with column 9, every 8 columns
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 744
-      symbol: DECST8C
-    - id: csi-538ff9fdc8
-      wire: CSI = Ps c
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 804
-    - id: csi-4fe5c0a5a6
-      wire: CSI > Ps c
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 810
     - id: csi-724bc8b026
       wire: CSI Pl ; Pc " p
       section: Functions using CSI , ordered by the final character(s)
@@ -6309,11 +6763,6 @@ discovery_catalogues:
         decision: decscl-hard-vs-soft-reset
         reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
           separate.
-    - id: csi-8c99edd0c8
-      wire: CSI Ps SP q
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1539
-      symbol: DECSCUSR
     - id: csi-0c95b02fe1
       wire: CSI ? Pm r
       section: Functions using CSI , ordered by the final character(s)
@@ -6338,6 +6787,11 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1711
       symbol: DECSWBV
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: decswbv-zero-volume-polarity
+        reason: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6. Pinned xterm zero/default
+          falls through to off and 5..8 high.
     - id: csi-1fcd21cd8e
       wire: CSI u
       section: Functions using CSI , ordered by the final character(s)
@@ -6347,41 +6801,27 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1730
       symbol: DECSMBV
-    - id: csi-d3c7ca5037
-      wire: CSI Pt ; Pl ; Pb ; Pr ' w
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1767
-      symbol: DECEFR
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: decsmbv-zero-volume-polarity
+        reason: VT520/525 July 1994 p.5-138 gives 0/omitted off. Pinned xterm zero/default falls into high branch.
     - id: csi-eb0e648cf6
       wire: 'CSI Ps # y'
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1814
       symbol: XTCHECKSUM
-    - id: csi-fa2af1e6b1
-      wire: CSI Ps ; Pu ' z
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1833
-      symbol: DECELR
-    - id: csi-091043d69e
-      wire: CSI Pm ' {
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1850
-      symbol: DECSLE
     - id: csi-d792d66921
       wire: CSI Ps ' |
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1898
       symbol: DECRQLP
-    - id: csi-32051dd066
-      wire: CSI Ps ; Pf ; Pb , |
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1945
-      symbol: DECAC
-    - id: csi-31ba47f36d
-      wire: CSI Ps ; Pf ; Pb , }
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1956
-      symbol: DECATC
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: locator-query-undefined-position-and-filter-lifetime
+        reason: Original DEC memo distinguishes active but undefined position (event 1 with omitted coordinates) from disabled/inactive
+          (event 0); query is a position request, not a documented filter-cancel command. Pinned xterm returns event 0 for out-of-range
+          pointer and explicitly disables locator and clears filter/events on request while filter active, emulating observed
+          DECterm behavior.
     - id: pm-3a72abf844
       wire: PM Pt ST
       section: Privacy Message
@@ -6672,10 +7112,6 @@ discovery_catalogues:
           original DEC VT330/VT340.
         disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly selected.
           Do not infer correctness from mnemonic or modern implementation counts alone.
-    - id: private-mode-95-h-line-963
-      wire: CSI ? 95 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 963
     - id: private-mode-1010-h-line-978
       wire: CSI ? 1010 h
       section: DEC Private Mode Set (DECSET)
@@ -6781,10 +7217,6 @@ discovery_catalogues:
           original DEC VT330/VT340.
         disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly selected.
           Do not infer correctness from mnemonic or modern implementation counts alone.
-    - id: private-mode-95-l-line-1110
-      wire: CSI ? 95 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1110
     - id: private-mode-1010-l-line-1124
       wire: CSI ? 1010 l
       section: DEC Private Mode Reset (DECRST)
@@ -7123,6 +7555,64 @@ discovery_catalogues:
       question: Verify earlier original DEC source and select exact assignment/report semantics if the UPSS capability is targeted.
         Do not silently fix printed selector.
       decision: null
+    - id: docs-return-vs-xterm-default-charset
+      status: material-original-source-versus-xterm-awaiting-scope
+      wire: ESC % @
+      original_author_sources:
+      - clause: ecma35.return-from-other-coding-system
+        revision: 6th edition, December 1994; identical to ISO/IEC 2022:1994
+        meaning: ECMA-35 restores prior coding-system announcement, designation and invocation state.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6218-6249
+        meaning: Xterm describes selecting default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally;
+          restoration of prior state is not established.
+      question: Choose intended coding-switch profile only after verifying original registered UTF-8 coding sequence and relevant
+        modern references.
+      decision: null
+    - id: decswbv-zero-volume-polarity
+      status: material-original-source-versus-xterm-awaiting-scope
+      wire: CSI Ps SP t
+      original_author_sources:
+      - clause: dec_vt520.warning-bell-volume
+        revision: July 1994; EK-VT520-RM. A01
+        meaning: VT520/525 July 1994 p.5-154 gives 0/omitted high; table prints 5 twice and omits 6.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6421-6446
+        meaning: Pinned xterm zero/default falls through to off and 5..8 high.
+      question: If warning-bell control is targeted, reconcile original VT510/other revisions and actual modern zero/default
+        behavior before choosing volume mapping.
+      decision: null
+    - id: decsmbv-zero-volume-polarity
+      status: material-original-source-versus-xterm-awaiting-scope
+      wire: CSI Ps SP u
+      original_author_sources:
+      - clause: dec_vt520.margin-bell-volume
+        revision: July 1994; EK-VT520-RM. A01
+        meaning: VT520/525 July 1994 p.5-138 gives 0/omitted off.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6448-6475
+        meaning: Pinned xterm zero/default falls into high branch.
+      question: If margin-bell control is targeted, reconcile original VT510/other revisions and modern zero/default semantics.
+      decision: null
+    - id: locator-query-undefined-position-and-filter-lifetime
+      status: material-original-source-versus-xterm-awaiting-scope
+      wire: CSI Ps ' |
+      original_author_sources:
+      - clause: dec_locator.request-locator-position
+        revision: 23 June 1989; sixth revision, author-circulated memorandum reproduced in HTML; formal publication not established
+        meaning: Original DEC memo distinguishes active but undefined position (event 1 with omitted coordinates) from disabled/inactive
+          (event 0); query is a position request, not a documented filter-cancel command.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: button.c:953-1016
+        meaning: Pinned xterm returns event 0 for out-of-range pointer and explicitly disables locator and clears filter/events
+          on request while filter active, emulating observed DECterm behavior.
+      question: If DEC locator is targeted, verify DECterm/modern references and select exact query reply and filter lifetime
+        semantics.
+      decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
@@ -7277,6 +7767,12 @@ discovery_catalogues:
       canonical_clause: xterm_controls.allowed-feature-query
       cause: Generic extractor attached ; Pt to a no-payload query. The publication defines Pt in the reply, and pinned do_osc
         rejects nonempty request data.
+    - original_id: csi-01947d180b
+      source_line: 744
+      incorrect_wire: CSI ? 5 W Reset tab stops to start with column 9, every 8 columns
+      actual_wire: CSI ? 5 W
+      canonical_clause: dec_vt520.tab-every-eight-columns
+      cause: Extractor appended explanatory prose to wire; original DEC p.5-149 and xterm line 744 establish complete command.
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
