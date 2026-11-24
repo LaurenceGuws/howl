@@ -271,6 +271,7 @@ pub const Parser = struct {
     csi_separators: CsiSeparatorList,
     csi_count: u8,
     csi_numeric_overflow: bool,
+    header_overflow: bool,
     intermediates: [csi_max_intermediates]u8,
     intermediates_len: u8,
     csi_in_param: bool,
@@ -303,6 +304,7 @@ pub const Parser = struct {
             .csi_separators = CsiSeparatorList.empty,
             .csi_count = 0,
             .csi_numeric_overflow = false,
+            .header_overflow = false,
             .intermediates = @as([csi_max_intermediates]u8, @splat(0)),
             .intermediates_len = 0,
             .csi_in_param = false,
@@ -429,7 +431,7 @@ pub const Parser = struct {
     /// The returned slices remain parser-owned and must be consumed synchronously.
     pub fn consumeOrdinarySgrFinal(self: *Parser, byte: u8) ?CsiAction {
         if (self.state != .csi_param or byte != 'm' or
-            self.intermediates_len != 0 or self.osc.alloc_failed) return null;
+            self.intermediates_len != 0 or self.header_overflow or self.osc.alloc_failed) return null;
         std.debug.assert(self.activeControlCount() == 0);
         const action = self.csiAction(byte);
         self.state = .ground;
@@ -569,7 +571,7 @@ pub const Parser = struct {
             .dcs_passthrough => dcs: {
                 const result = self.dcs.feed(byte) orelse break :dcs .{ .dcs_passthrough, null };
                 break :dcs switch (result) {
-                    .put => |payload_byte| .{ .dcs_passthrough, .{ .dcs_put = payload_byte } },
+                    .put => |payload_byte| .{ .dcs_passthrough, if (self.header_overflow) null else .{ .dcs_put = payload_byte } },
                     .finish => .{ .ground, null },
                 };
             },
@@ -607,7 +609,10 @@ pub const Parser = struct {
     // -------------------------------------------------------------------------
 
     fn collect(self: *Parser, byte: u8) void {
-        if (self.intermediates_len >= self.intermediates.len) return;
+        if (self.intermediates_len >= self.intermediates.len) {
+            self.header_overflow = true;
+            return;
+        }
         self.intermediates[self.intermediates_len] = byte;
         self.intermediates_len += 1;
     }
@@ -663,6 +668,7 @@ pub const Parser = struct {
             .dcs_passthrough => dcs: {
                 self.dcs.reset();
                 std.debug.assert(!self.dcs.active());
+                if (self.header_overflow) break :dcs null;
                 break :dcs if (stringControlCompleted(byte)) .dcs_unhook else .dcs_cancel;
             },
             .sos_pm_apc_string => switch (sos_kind orelse self.sosPmApcKind()) {
@@ -716,7 +722,7 @@ pub const Parser = struct {
                 self.dcs.start();
                 std.debug.assert(self.dcs.active());
                 std.debug.assert(self.activeControlCount() == 1);
-                break :entry self.dcsHook(byte);
+                break :entry if (self.header_overflow) null else self.dcsHook(byte);
             },
             .sos_pm_apc_string => switch (byte) {
                 '_', 0x9F => apc: {
@@ -776,6 +782,10 @@ pub const Parser = struct {
             },
             .ignore => null,
             .esc_dispatch => esc_dispatch: {
+                if (self.header_overflow) {
+                    self.clear();
+                    break :esc_dispatch null;
+                }
                 const esc: Action = .{ .esc_dispatch = .{
                     .final = byte,
                     .intermediates = self.intermediates,
@@ -800,7 +810,7 @@ pub const Parser = struct {
             .put => put: {
                 const result = self.dcs.feed(byte) orelse break :put null;
                 break :put switch (result) {
-                    .put => |payload_byte| .{ .dcs_put = payload_byte },
+                    .put => |payload_byte| if (self.header_overflow) null else .{ .dcs_put = payload_byte },
                     // zig-audit: acknowledge unreachable
                     // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                     .finish => unreachable,
@@ -894,6 +904,7 @@ pub const Parser = struct {
         self.csi_params[0] = 0;
         self.csi_count = 0;
         self.csi_numeric_overflow = false;
+        self.header_overflow = false;
         self.csi_separators = CsiSeparatorList.empty;
         self.intermediates_len = 0;
         self.csi_in_param = false;
@@ -919,6 +930,8 @@ pub const Parser = struct {
                 if (self.csi_count < self.csi_params.len) {
                     self.csi_params[self.csi_count] = 0;
                 }
+            } else {
+                self.header_overflow = true;
             }
             self.csi_in_param = false;
             return;
@@ -926,7 +939,10 @@ pub const Parser = struct {
 
         if (byte >= '0' and byte <= '9') {
             const digit: i32 = @intCast(byte - '0');
-            if (self.csi_count >= self.csi_params.len) return;
+            if (self.csi_count >= self.csi_params.len) {
+                self.header_overflow = true;
+                return;
+            }
             if (!self.csi_in_param) {
                 self.csi_params[self.csi_count] = digit;
                 self.csi_in_param = true;
@@ -944,6 +960,7 @@ pub const Parser = struct {
     }
 
     fn consumeCsiDispatch(self: *Parser, byte: u8) ?Action {
+        if (self.header_overflow) return null;
         return .{ .csi_dispatch = self.csiAction(byte) };
     }
 
@@ -1139,6 +1156,56 @@ test "parser keeps active string controls exclusive" {
     try std.testing.expect(!parser.pm.active());
 }
 
+test "header capacity rejects truncation without breaking ESC CSI or DCS framing" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+
+    // Exact capacity is distinct from overflowing the retained identity.
+    for ("\x1b[1 !#$") |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+    const csi = parser.next('p');
+    try expectPhaseTags(csi, null, .csi_dispatch, null);
+    try std.testing.expectEqualSlices(u8, " !#$", csi[1].?.csi_dispatch.intermediates);
+    for ("\x1b !#$") |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+    const esc = parser.next('B');
+    try expectPhaseTags(esc, null, .esc_dispatch, null);
+    try std.testing.expectEqualSlices(u8, " !#$", esc[1].?.esc_dispatch.intermediates[0..4]);
+
+    const full = "1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1";
+    const rejected = [_][]const u8{
+        "\x1b[1 !#$%p",
+        "\x9b?1 !#$p",
+        "\x1b !#$%B",
+        "\x1b[" ++ full ++ ";22m",
+        "\x1bP !#$%qpayload\x1b\\",
+        "\x90" ++ full ++ ";2qpayload\x9c",
+        "\x1bP" ++ full ++ ";2qpayload\x18",
+    };
+    for (rejected) |wire| {
+        for (wire) |byte| {
+            const phases = parser.next(byte);
+            if (byte == 0x18) {
+                try expectPhaseTags(phases, null, .execute, null);
+                try std.testing.expectEqual(byte, phases[1].?.execute);
+            } else {
+                try expectPhaseTags(phases, null, null, null);
+            }
+        }
+        try std.testing.expectEqual(ParseState.ground, parser.state);
+        try std.testing.expectEqual(@as(u3, 0), parser.activeControlCount());
+        try expectPhaseTags(parser.next('Z'), null, .print, null);
+        for ("\x1b[31") |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+        const valid = parser.next('m');
+        try expectPhaseTags(valid, null, .csi_dispatch, null);
+        try std.testing.expectEqualSlices(i32, &.{31}, valid[1].?.csi_dispatch.params);
+        try std.testing.expect(!parser.header_overflow);
+    }
+
+    // A C0 embedded in rejected CSI still executes; only the header dispatch is discarded.
+    for ("\x1b[1 !#$%") |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+    try expectPhaseTags(parser.next(0x07), null, .execute, null);
+    try expectPhaseTags(parser.next('p'), null, null, null);
+}
+
 test "CSI numeric overflow witness distinguishes the exact signed bound and resets per sequence" {
     var parser = try Parser.init(std.testing.allocator);
     defer parser.deinit();
@@ -1237,6 +1304,7 @@ test "CSI parameter runs match scalar phases and scratch for every following byt
             for (bytes[count..]) |byte| try std.testing.expectEqualDeep(scalar.next(byte), batched.next(byte));
             try std.testing.expectEqual(scalar.state, batched.state);
             try std.testing.expectEqual(scalar.csi_count, batched.csi_count);
+            try std.testing.expectEqual(scalar.header_overflow, batched.header_overflow);
             try std.testing.expectEqual(scalar.csi_in_param, batched.csi_in_param);
             try std.testing.expectEqualDeep(scalar.csi_separators, batched.csi_separators);
             try std.testing.expectEqualSlices(i32, &scalar.csi_params, &batched.csi_params);
@@ -1263,6 +1331,7 @@ test "ground CSI introducer prefix matches canonical scratch and all following b
             for (bytes[0..count]) |byte| try expectPhaseTags(scalar.next(byte), null, null, null);
             try std.testing.expectEqual(scalar.state, batched.state);
             try std.testing.expectEqual(scalar.csi_count, batched.csi_count);
+            try std.testing.expectEqual(scalar.header_overflow, batched.header_overflow);
             try std.testing.expectEqual(scalar.csi_in_param, batched.csi_in_param);
             try std.testing.expectEqualDeep(scalar.csi_separators, batched.csi_separators);
             try std.testing.expectEqualSlices(i32, &scalar.csi_params, &batched.csi_params);

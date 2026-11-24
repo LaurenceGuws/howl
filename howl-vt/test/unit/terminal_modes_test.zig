@@ -2284,6 +2284,61 @@ test "checksum legacy projection uses translated character without provenance" {
     }
 }
 
+test "over-capacity CSI headers cannot execute a truncated mutation" {
+    const full = "1" ++ ";1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1";
+    const invalid = [_][]const u8{
+        "\x1b[" ++ full ++ ";22m",
+        "\x9b" ++ full ++ ";22m",
+        "\x1b[" ++ full ++ ";;m",
+        "\x1b[?25" ++ ";25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25;25" ++ ";25l",
+    };
+    for (invalid) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[5n");
+            try std.testing.expect(!(try terminal.feed(wire[0..split])).stateChanged());
+            try std.testing.expect(!(try terminal.feed(wire[split..])).stateChanged());
+            try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+            try feed(&terminal, "A\x1b[1mB");
+            try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 0).attrs.bold);
+            try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 1).attrs.bold);
+        }
+    }
+
+    // The exact existing capacity is still accepted; ordinary numeric
+    // saturation and the current trailing omission convention are unchanged.
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[" ++ full ++ "mA\x1b[0m");
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 0).attrs.bold);
+    try feed(&terminal, "\x1b[" ++ full ++ ";mB");
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 1).attrs.bold);
+}
+
+test "over-capacity DCS headers consume their payload without reply or text leakage" {
+    const full = "1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1";
+    const cases = [_][]const u8{
+        "\x1bP" ++ full ++ ";2$qm\x1b\\",
+        "\x90" ++ full ++ ";2$qm\x9c",
+        "\x1bP !#$%qTEXT\x1b\\",
+        "\x1bP !#$%qTEXT\x18",
+    };
+    for (cases) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[5n");
+            try std.testing.expect(!(try terminal.feed(wire[0..split])).stateChanged());
+            try std.testing.expect(!(try terminal.feed(wire[split..])).stateChanged());
+            try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+            try feed(&terminal, "Z\x1bP$qm\x1b\\");
+            try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 0));
+            try std.testing.expectEqualStrings("\x1b[0n\x1bP1$r0m\x1b\\", pendingOutput(&terminal));
+        }
+    }
+}
+
 test "checksum mode resets to its default on RIS and DECSTR" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
