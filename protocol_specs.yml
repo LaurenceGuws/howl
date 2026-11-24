@@ -3491,7 +3491,7 @@ specifications:
     revision: EK-VT100-UG; Digital original guide, PDF transcription by Edwin Rhodes (2004)
     url: https://geoffg.net/Downloads/Terminal/VT100_User_Guide.pdf
     snapshot_sha256: 91f271c2eb0b0bf6f643de42422c8a2fb3efc910b086714414833940ce3de8ef
-    scope: Selected original DEC VT100 TBC, ANSI/VT52 mode transition and VT52 return controls in Chapter 3; not the complete VT100 repertoire.
+    scope: Selected original DEC VT100 TBC, ANSI/VT52 transition and line-size controls in Chapter 3; not the complete VT100 repertoire.
     clauses:
     - id: tbc
       section: Chapter 3 / Valid ANSI Mode Control Sequences / TBC (PDF page 50)
@@ -3565,6 +3565,54 @@ specifications:
         material_limit: The later DEC VT300/VT420 author text says return to prior mode, not necessarily VT100 level 1. Reconcile this restoration-level
           difference before implementing a full VT420-compatible VT52 cycle.
       pending_reconciliation: vt52-exit-restored-conformance-level
+    - id: double-height-line
+      section: Chapter 3 / DECDHL (transcribed PDF page 42)
+      level: defined
+      wire: ESC # 3 / ESC # 4
+      rule: Select the top or bottom half of a double-height, double-width line containing the active position. Use paired adjacent lines
+        and send identical character output to both to form full-height characters. Double width halves characters per line. On conversion
+        from single width and height, characters right of the screen center are lost. The cursor retains its character position unless
+        beyond the right margin, where it moves to that margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-44ab86aa54
+        source_line: 298
+        wire: 'ESC # 3'
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-9225af7f15
+        source_line: 300
+        wire: 'ESC # 4'
+      related_mode: dec_vt420.vertical-split-screen-mode
+    - id: double-width-line
+      section: Chapter 3 / DECDWL (transcribed PDF page 42)
+      level: defined
+      wire: 'ESC # 6'
+      rule: Select double width and single height for the active line, halving characters per line. Retain cursor character position unless
+        beyond the right margin, where it moves to that margin. On conversion from single width and height the original transcription
+        states characters to the right of the screen are lost; the exact wording is retained rather than silently correcting it to center.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-127380e396
+        source_line: 304
+        wire: 'ESC # 6'
+      related_mode: dec_vt420.vertical-split-screen-mode
+    - id: single-width-line
+      section: Chapter 3 / DECSWL (transcribed PDF page 46)
+      level: defined
+      wire: 'ESC # 5'
+      rule: Select single width and single height for the active line, retaining the same cursor character position. This is the default
+        for every new screen line.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-f22011512d
+        source_line: 302
+        wire: 'ESC # 5'
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c CASE_DECDHL/DECSWL/DECDWL at lines 3782-3800; doublechr.c repaint_line and xterm_DECDHL/DECSWL/DECDWL at lines 48-145
+        behavior: Distinct line attributes for top, bottom, single and double width, gated by OPT_DEC_CHRSET and left-right margin mode.
+        limits: Common repaint path changes line attributes and clamps cursor; original character-loss and exact right-margin effects are
+          not established by this inspection. Command identity only, not source-complete conformance.
   itu_t416:
     title: 'ITU-T Recommendation T.416 / ISO/IEC 8613-6: Character content architectures'
     author: International Telecommunication Union (ITU-T) / ISO-IEC
@@ -3903,26 +3951,6 @@ discovery_catalogues:
       wire: ESC SP N
       section: Controls beginning with ESC
       source_line: 296
-    - id: esc-44ab86aa54
-      wire: 'ESC # 3'
-      section: Controls beginning with ESC
-      source_line: 298
-      symbol: DECDHL
-    - id: esc-9225af7f15
-      wire: 'ESC # 4'
-      section: Controls beginning with ESC
-      source_line: 300
-      symbol: DECDHL
-    - id: esc-f22011512d
-      wire: 'ESC # 5'
-      section: Controls beginning with ESC
-      source_line: 302
-      symbol: DECSWL
-    - id: esc-127380e396
-      wire: 'ESC # 6'
-      section: Controls beginning with ESC
-      source_line: 304
-      symbol: DECDWL
     - id: esc-93bf6694ea
       wire: ESC % @
       section: Controls beginning with ESC
