@@ -1730,12 +1730,31 @@ specifications:
     revision: dated official control-sequence reference, observed 2026-11-23
     url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
     scope: Selected documented xterm extensions; not an alternative ECMA-48 or DEC normative standard
+    snapshot_sha256: 8c62d6c9f72af9f53c4744526132fee39630f465fd8d431766929faf1454e47f
     clauses:
     - id: bracketed-paste-mode
       section: Bracketed Paste Mode
       level: defined
       wire: CSI ? 2004 h / l
-      rule: Enable or disable bracketed paste reporting for host-delivered paste.
+      rule: Enable or disable bracketed paste. When enabled, program receives ESC [ 200 ~, pasted text, ESC [ 201 ~. The mode
+        and delimiter output are distinct; host-delivered paste is the relevant input, not arbitrary terminal output.
+      source_semantics:
+        selector: 2004
+        section: Bracketed Paste Mode, lines 2812-2823
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2004-h-line-1037
+        source_line: 1037
+        wire: CSI ? 2004 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2004-l-line-1179
+        source_line: 1179
+        wire: CSI ? 2004 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7947-7951 (OPT_PASTE64 or OPT_READLINE); button.c:2834-2837,2876-2879
+      related_command: xterm_controls.bracketed-paste-delimiters
     - id: bracketed-paste-delimiters
       section: Bracketed Paste Mode
       level: defined
@@ -1765,12 +1784,50 @@ specifications:
       section: Mouse Tracking / Extended coordinates
       level: defined
       wire: CSI ? 1006 h/l
-      rule: Uses the SGR mouse event encoding while the corresponding tracking mode reports pointer actions.
+      rule: 'Enable SGR mouse encoding: CSI < Cb ; Px ; Py M for press and motion, lowercase m for release. Decimal button value
+        excludes the legacy +32 offset; modifier bits stay the same. Distinguishes the released button rather than ambiguous
+        legacy release code. Highlight-tracking responses also use an SGR-like format. RESET disables this encoding.'
+      source_semantics:
+        selector: 1006
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / SGR extended
+          coordinates, 3149-3173
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1006-h-line-975
+        source_line: 975
+        wire: CSI ? 1006 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1006-l-line-1121
+        source_line: 1121
+        wire: CSI ? 1006 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7825-7842; button.c:5428-5434,5540-5543,5616 onward
+      encoding_state: Independent of tracking selection; coordinate formats are mutually exclusive. Pinned charproc.c:7825-7842
+        selects the encoding on SET and resets to the legacy format only when resetting the active matching encoding.
     - id: focus
       section: FocusIn/FocusOut
       level: defined
       wire: CSI ? 1004 h/l
-      rule: Enables or disables focus enter/leave events reported through the terminal.
+      rule: 'Enable independent focus enter/leave reports: CSI I when terminal gains focus, CSI O when it loses focus. May coexist
+        with any mouse tracking protocol. RESET disables focus reporting.'
+      source_semantics:
+        selector: 1004
+        section: FocusIn/FocusOut, lines 3115-3120
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1004-h-line-973
+        source_line: 973
+        wire: CSI ? 1004 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1004-l-line-1119
+        source_line: 1119
+        wire: CSI ? 1004 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7820-7824 (OPT_FOCUS_EVENT)
     - id: xtqmodkeys
       section: Functions using CSI / Query key modifier options (XTQMODKEYS)
       level: defined
@@ -1831,6 +1888,899 @@ specifications:
         source_line: 1420
         wire: CSI ? Ps n
       decision: dec-private-dsr-decxcpr-reply-shape
+    - id: mouse-x10
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / X10 compatibility,
+        2949-2960
+      level: defined
+      wire: CSI ? 9 h / CSI ? 9 l
+      rule: Enable button-press-only X10 xterm tracking. The legacy report is CSI M CbCxCy, with button 1..3 encoded as button
+        minus one then plus 32, and 1-based coordinates plus 32. RESET disables tracking. This is the historical X10 xterm scheme,
+        not DEC Locator.
+      source_semantics:
+        selector: 9
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / X10 compatibility,
+          2949-2960
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-9-h-line-922
+        source_line: 922
+        wire: CSI ? 9 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-9-l-line-1072
+        source_line: 1072
+        wire: CSI ? 9 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7608-7612,7425-7435; button.c:5486-5489,5546-5549
+      tracking_protocol_state: The five xterm tracking protocols (9,1000,1001,1002,1003) are mutually exclusive. Separate encoding
+        selection and focus events are not additional tracking protocols. Pinned charproc.c:7425-7435 sets the selected protocol
+        on SET and turns tracking off on RESET, even if another tracking protocol is active. This is an observed xterm reset
+        behavior, not a universal terminal requirement.
+      coordinate_encoding: Original X10 byte reports encode value+32, with top-left cell (1,1) and max coordinate 223 (255 minus
+        32). Extended encodings change the representation; do not conflate a tracking mode with an encoding.
+      pinned_coordinate_limit: button.c:212-279,5511-5517 preserves a NUL past-end marker for both legacy and UTF-8
+        coordinates. The 223 and 2015 ordinary positions are not permission to silently wrap or saturate the next value.
+        Exact marker admission remains unassessed.
+    - id: mouse-normal
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Normal tracking
+        and wheel/other buttons, 2962-3033
+      level: defined
+      wire: CSI ? 1000 h / CSI ? 1000 l
+      rule: Enable X11 xterm press and release reporting, including modifiers, no motion-only reports. Legacy CSI M CbCxCy uses
+        low bits 0/1/2 for buttons 1/2/3 and 3 for release; add Shift=4, Meta=8, Control=16, then byte offset 32. Wheel buttons
+        4/5 add 64 to codes 0/1 and do not report release; buttons 6/7 add 64 to 2/3, buttons 8..11 use 128 plus 0..3. Published
+        legacy encoding becomes ambiguous past button 11. RESET disables tracking.
+      source_semantics:
+        selector: 1000
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Normal tracking
+          and wheel/other buttons, 2962-3033
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1000-h-line-965
+        source_line: 965
+        wire: CSI ? 1000 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1000-l-line-1112
+        source_line: 1112
+        wire: CSI ? 1000 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7800-7803,7425-7435; button.c:5481-5500,5551-5560
+      related_tracking: xterm_controls.mouse-x10
+      source_note: Published X11 xterm encoding; modifier mapping is subject to host keyboard and selection/menu policy. Extended
+        formats and implementation-specific higher button admission are separate.
+    - id: mouse-highlight
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Highlight tracking,
+        3035-3081
+      level: defined
+      wire: CSI ? 1001 h / CSI ? 1001 l
+      rule: 'Enable cooperative highlight tracking: normal button-press report, application-supplied row range via XTHIMOUSE,
+        highlight until release, then report ending coordinates. Highlighting uses button 1; other button events can be received.
+        RESET disables tracking. The author warns that a noncooperating application can hang xterm; this is not permission for
+        Howl VT to block waiting on a host or application.'
+      source_semantics:
+        selector: 1001
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Highlight tracking,
+          3035-3081
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1001-h-line-968
+        source_line: 968
+        wire: CSI ? 1001 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1001-l-line-1114
+        source_line: 1114
+        wire: CSI ? 1001 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7804-7807,4024-4050; button.c:TrackMouse (3088 onward)
+      related_tracking: xterm_controls.mouse-normal
+      related_command: xterm_controls.mouse-highlight-range
+    - id: mouse-button-motion
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Button-event tracking,
+        3083-3106
+      level: defined
+      wire: CSI ? 1002 h / CSI ? 1002 l
+      rule: Normal button press/release reporting plus motion while a button is down, on changed character cell; motion adds
+        32 to the event code in addition to the legacy printable-byte offset. RESET disables tracking.
+      source_semantics:
+        selector: 1002
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Button-event
+          tracking, 3083-3106
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1002-h-line-969
+        source_line: 969
+        wire: CSI ? 1002 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1002-l-line-1115
+        source_line: 1115
+        wire: CSI ? 1002 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7808-7811; button.c:5384-5405,5586-5596
+      related_tracking: xterm_controls.mouse-normal
+    - id: mouse-any-motion
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Any-event tracking,
+        3108-3113
+      level: defined
+      wire: CSI ? 1003 h / CSI ? 1003 l
+      rule: Like button-event tracking, but report motion even when no button is down. RESET disables tracking.
+      source_semantics:
+        selector: 1003
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Any-event tracking,
+          3108-3113
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1003-h-line-971
+        source_line: 971
+        wire: CSI ? 1003 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1003-l-line-1117
+        source_line: 1117
+        wire: CSI ? 1003 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7812-7819,7425-7435
+      related_tracking: xterm_controls.mouse-button-motion
+    - id: mouse-utf8
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Extended coordinates,
+        3125-3147
+      level: defined
+      wire: CSI ? 1005 h / CSI ? 1005 l
+      rule: Enable UTF-8 encoding of Cb, Cx and Cy under tracking modes. Coordinate capacity expands from 223 to 2015 (value+32
+        encoded in at most two UTF-8 bytes). Published source states identical output below position 95; larger positions can
+        produce extra bytes and break non-UTF-8 readers or luit conversion. RESET disables this encoding.
+      source_semantics:
+        selector: 1005
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Extended coordinates,
+          3125-3147
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1005-h-line-974
+        source_line: 974
+        wire: CSI ? 1005 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1005-l-line-1120
+        source_line: 1120
+        wire: CSI ? 1005 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7825-7842; button.c:5435-5442
+      encoding_state: Independent of tracking selection; coordinate formats are mutually exclusive. Pinned charproc.c:7825-7842
+        selects the encoding on SET and resets to the legacy format only when resetting the active matching encoding.
+    - id: mouse-alternate-scroll
+      section: Mouse Tracking / Wheel mice, lines 2998-3013
+      level: defined
+      wire: CSI ? 1007 h / CSI ? 1007 l
+      rule: 'Enable alternate scroll: when displaying the alternate screen buffer, translated wheel scroll actions send cursor
+        up/down controls rather than scrolling the window. RESET disables this behavior. Initial state comes from alternateScroll
+        resource. This does not itself enable mouse tracking.'
+      source_semantics:
+        selector: 1007
+        section: Mouse Tracking / Wheel mice, lines 2998-3013
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1007-h-line-976
+        source_line: 976
+        wire: CSI ? 1007 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1007-l-line-1122
+        source_line: 1122
+        wire: CSI ? 1007 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7843-7845
+    - id: mouse-sgr-pixels
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / SGR-Pixels, 3193-3195
+      level: defined
+      wire: CSI ? 1016 h / CSI ? 1016 l
+      rule: Use SGR mouse report format (1006), but report pixel positions, not character cells. RESET disables this encoding.
+      source_semantics:
+        selector: 1016
+        section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / SGR-Pixels,
+          3193-3195
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1016-h-line-984
+        source_line: 984
+        wire: CSI ? 1016 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1016-l-line-1130
+        source_line: 1130
+        wire: CSI ? 1016 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7825-7842; button.c:220-279,5502-5509,5540-5543,5586-5613
+      encoding_state: Independent of tracking selection; coordinate formats are mutually exclusive. Pinned charproc.c:7825-7842
+        selects the encoding on SET and resets to the legacy format only when resetting the active matching encoding.
+      related_encoding: xterm_controls.mouse-sgr
+      coordinate_source: Pinned button.c subtracts OriginX/OriginY from event coordinates without dividing by cell dimensions,
+        emits decimal offset plus one, uses no legacy coordinate ceiling, and deduplicates motion by the resulting pixel position.
+        Exact event admission and clipping remain unassessed.
+    - id: mouse-highlight-range
+      section: Mouse Tracking / Highlight tracking, lines 722-725 and 3035-3081
+      level: defined
+      wire: CSI func ; startx ; starty ; firstrow ; lastrow T
+      rule: Nonzero func starts cooperative highlight tracking; zero aborts. startx/starty select the beginning. End stays at
+        or below firstrow and strictly above lastrow (top row=1). On release, equal endpoints report CSI t CxCy; otherwise CSI
+        T followed by six coordinates startx,starty,endx,endy,mousex,mousey. Mouse-up position need not lie over a character.
+        Legacy coordinates use value+32; SGR mode modifies highlight responses.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-235a751eee
+        source_line: 722
+        wire: CSI Ps ; Ps ; Ps ; Ps ; Ps T
+      related_mode: xterm_controls.mouse-highlight
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:4024-4050; button.c:TrackMouse
+        limit: Single nonzero parameter routes to SD; zero or multiple parameters route to TrackMouse in this pinned parser.
+          That broader admission is not a normative five-parameter grammar or permission to reinterpret CSI T.
+    - id: alternate-buffer-admission
+      section: The Alternate Screen Buffer, lines 2785-2810
+      level: defined
+      wire: CSI ? 1046 h / CSI ? 1046 l
+      rule: SET permits switching to/from alternate screen buffer (clears titeInhibit); RESET prohibits switching and returns
+        to normal buffer if currently alternate. This is an admission control, not a request to switch to alternate.
+      source_semantics:
+        selector: 1046
+        section: The Alternate Screen Buffer, lines 2785-2810
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1046-h-line-1013
+        source_line: 1013
+        wire: CSI ? 1046 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1046-l-line-1152
+        source_line: 1152
+        wire: CSI ? 1046 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7899-7907; misc.c:5708-5709
+      buffer_semantics: Normal buffer has saved lines subject to saveLines; alternate buffer is exactly display-sized with no
+        saved lines. Switching is distinct from clearing, saving/restoring cursor and disabling the switching controls. Host
+        policy may inhibit switching through titeInhibit.
+      source_note: Pinned mode reporter uses titeInhibit directly (inverse of documented allow meaning). Do not infer a correct
+        DECRPM polarity for this selector without separate reconciliation.
+    - id: alternate-buffer-switch
+      section: The Alternate Screen Buffer, lines 2785-2810
+      level: defined
+      wire: CSI ? 1047 h / CSI ? 1047 l
+      rule: SET selects alternate screen buffer without a specified entry clear; RESET clears the current alternate screen if
+        active, then selects normal buffer. Respect titeInhibit. Distinct from mode 47 and from save/restore modes.
+      source_semantics:
+        selector: 1047
+        section: The Alternate Screen Buffer, lines 2785-2810
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1047-h-line-1016
+        source_line: 1016
+        wire: CSI ? 1047 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1047-l-line-1157
+        source_line: 1157
+        wire: CSI ? 1047 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7741-7753
+      buffer_semantics: Normal buffer has saved lines subject to saveLines; alternate buffer is exactly display-sized with no
+        saved lines. Switching is distinct from clearing, saving/restoring cursor and disabling the switching controls. Host
+        policy may inhibit switching through titeInhibit.
+    - id: alternate-cursor-save
+      section: The Alternate Screen Buffer, lines 2785-2810
+      level: defined
+      wire: CSI ? 1048 h / CSI ? 1048 l
+      rule: SET saves cursor as DECSC; RESET restores cursor as DECRC. Respect titeInhibit. Does not by itself select another
+        buffer.
+      source_semantics:
+        selector: 1048
+        section: The Alternate Screen Buffer, lines 2785-2810
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1048-h-line-1018
+        source_line: 1018
+        wire: CSI ? 1048 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1048-l-line-1160
+        source_line: 1160
+        wire: CSI ? 1048 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7908-7915; misc.c:5711-5713
+      related_commands:
+      - dec_vt420.save-cursor
+      - dec_vt420.restore-cursor
+    - id: alternate-buffer-save-clear
+      section: The Alternate Screen Buffer, lines 2785-2810
+      level: defined
+      wire: CSI ? 1049 h / CSI ? 1049 l
+      rule: SET saves cursor, switches to alternate buffer and clears it; RESET switches to normal buffer and restores cursor.
+        Author recommends 1049 over 47 for terminfo applications. Respect titeInhibit.
+      source_semantics:
+        selector: 1049
+        section: The Alternate Screen Buffer, lines 2785-2810
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1049-h-line-1020
+        source_line: 1020
+        wire: CSI ? 1049 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1049-l-line-1162
+        source_line: 1162
+        wire: CSI ? 1049 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7727-7740
+      buffer_semantics: Normal buffer has saved lines subject to saveLines; alternate buffer is exactly display-sized with no
+        saved lines. Switching is distinct from clearing, saving/restoring cursor and disabling the switching controls. Host
+        policy may inhibit switching through titeInhibit.
+      related_modes:
+      - xterm_controls.alternate-buffer-switch
+      - xterm_controls.alternate-cursor-save
+    - id: readline-button1
+      section: Readline Modes, lines 2825-2867
+      level: defined
+      wire: CSI ? 2001 h / CSI ? 2001 l
+      rule: 'SET enables same-row button-1 select-end/extend cursor adjustment: send left/right cursor controls to host to match
+        click; RESET disables. A host input/selection consequence, not direct mutation of canonical cursor.'
+      source_semantics:
+        selector: 2001
+        section: Readline Modes, lines 2825-2867
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2001-h-line-1034
+        source_line: 1034
+        wire: CSI ? 2001 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2001-l-line-1176
+        source_line: 1176
+        wire: CSI ? 2001 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7952-7955 (OPT_READLINE); button.c:1398-1409
+    - id: readline-button2
+      section: Readline Modes, lines 2825-2867
+      level: defined
+      wire: CSI ? 2002 h / CSI ? 2002 l
+      rule: SET enables same-row cursor adjustment when pasting via insert-selection, normally button 2, only if mouse protocol
+        is not enabled; send left/right cursor controls to host. RESET disables.
+      source_semantics:
+        selector: 2002
+        section: Readline Modes, lines 2825-2867
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2002-h-line-1035
+        source_line: 1035
+        wire: CSI ? 2002 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2002-l-line-1177
+        source_line: 1177
+        wire: CSI ? 2002 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7956-7958 (OPT_READLINE); button.c:2926-2939
+    - id: readline-button3
+      section: Readline Modes, lines 2825-2867
+      level: defined
+      wire: CSI ? 2003 h / CSI ? 2003 l
+      rule: 'SET enables double-click button-3 selection-end/extend deletion on same line: send left/right cursor controls,
+        then one erase character per selected character. Selection may also span a wrapped line. RESET disables. This requests
+        editing by host input, not terminal-owned deletion.'
+      source_semantics:
+        selector: 2003
+        section: Readline Modes, lines 2825-2867
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2003-h-line-1036
+        source_line: 1036
+        wire: CSI ? 2003 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2003-l-line-1178
+        source_line: 1178
+        wire: CSI ? 2003 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7959-7961 (OPT_READLINE); button.c:1410-1416
+    - id: readline-paste-quote
+      section: Readline Modes, lines 2825-2867
+      level: defined
+      wire: CSI ? 2005 h / CSI ? 2005 l
+      rule: SET enables quoting pasted selection characters with literal-next (published as Ctrl-V); RESET disables.
+      source_semantics:
+        selector: 2005
+        section: Readline Modes, lines 2825-2867
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2005-h-line-1038
+        source_line: 1038
+        wire: CSI ? 2005 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2005-l-line-1180
+        source_line: 1180
+        wire: CSI ? 2005 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7962-7964; button.c:2512-2523
+      source_note: Pinned code retrieves configured TTY literal-next and quotes each byte, not necessarily one Unicode character
+        or a fixed Ctrl-V byte. Preserve the published wording and code distinction; no target choice or conformance inferred.
+    - id: readline-paste-literal-newline
+      section: Readline Modes, lines 2825-2867
+      level: defined
+      wire: CSI ? 2006 h / CSI ? 2006 l
+      rule: SET disables normal newline-to-carriage-return translation when pasting selections, sending newlines literally.
+        RESET restores translation.
+      source_semantics:
+        selector: 2006
+        section: Readline Modes, lines 2825-2867
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2006-h-line-1039
+        source_line: 1039
+        wire: CSI ? 2006 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2006-l-line-1181
+        source_line: 1181
+        wire: CSI ? 2006 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7965-7967; button.c:2530-2555
+    - id: allow-column-mode
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 40 h / CSI ? 40 l
+      rule: SET permits the 80/132-column DECCOLM operation; RESET disallows it. Does not itself resize. The xterm DECCOLM path
+        separately gates requesting window resize on allowed window operations.
+      source_semantics:
+        selector: 40
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-40-h-line-937
+        source_line: 937
+        wire: CSI ? 40 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-40-l-line-1085
+        source_line: 1085
+        wire: CSI ? 40 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7553-7574,7667-7670
+      related_command: dec_vt420.column-mode
+    - id: fast-scroll
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1014 h / CSI ? 1014 l
+      rule: SET enables fastScroll; RESET disables. The author manual describes suppressing refreshes when jump-scroll output
+        completely shifts screen contents off-screen, including related refreshes such as CR. Documented default true; presentation
+        optimization, not a different canonical scroll operation.
+      source_semantics:
+        selector: 1014
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1014-h-line-982
+        source_line: 982
+        wire: CSI ? 1014 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1014-l-line-1128
+        source_line: 1128
+        wire: CSI ? 1014 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7916-7918; xterm.man:3829-3842
+    - id: keyboard-special-modifiers
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1035 h / CSI ? 1035 l
+      rule: SET enables special Alt and NumLock modifier handling through numLock resource; RESET disables. Key mapping remains
+        dependent on keyboard profile.
+      source_semantics:
+        selector: 1035
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1035-h-line-992
+        source_line: 992
+        wire: CSI ? 1035 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1035-l-line-1133
+        source_line: 1133
+        wire: CSI ? 1035 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7859-7863 (OPT_NUM_LOCK)
+    - id: keyboard-meta-escape
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1036 h / CSI ? 1036 l
+      rule: SET enables ESC prefix when Meta modifies a key; RESET disables metaSendsEscape. This is input encoding, not output
+        parsing.
+      source_semantics:
+        selector: 1036
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1036-h-line-994
+        source_line: 994
+        wire: CSI ? 1036 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1036-l-line-1135
+        source_line: 1135
+        wire: CSI ? 1036 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7864-7867 (OPT_NUM_LOCK); input.c:1475-1505
+    - id: keyboard-alt-escape
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1039 h / CSI ? 1039 l
+      rule: SET enables ESC prefix when Alt modifies a key; RESET disables altSendsEscape. Distinct from Meta control.
+      source_semantics:
+        selector: 1039
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1039-h-line-998
+        source_line: 998
+        wire: CSI ? 1039 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1039-l-line-1139
+        source_line: 1139
+        wire: CSI ? 1039 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7873-7878 (OPT_NUM_LOCK); input.c:1492-1505
+    - id: keep-selection
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1040 h / CSI ? 1040 l
+      rule: SET keeps selection even when not highlighted, including when terminal output touches selected area; RESET disables
+        retention. The author manual default is true. This is host selection policy.
+      source_semantics:
+        selector: 1040
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1040-h-line-1000
+        source_line: 1000
+        wire: CSI ? 1040 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1040-l-line-1141
+        source_line: 1141
+        wire: CSI ? 1040 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7879-7882; xterm.man:4268-4273
+    - id: selection-to-clipboard
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1041 h / CSI ? 1041 l
+      rule: SET maps SELECT selection tokens to CLIPBOARD; RESET maps to PRIMARY. Author manual default false (PRIMARY). This
+        does not grant OSC 52 clipboard permission.
+      source_semantics:
+        selector: 1041
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1041-h-line-1002
+        source_line: 1002
+        wire: CSI ? 1041 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1041-l-line-1143
+        source_line: 1143
+        wire: CSI ? 1041 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7883-7886; xterm.man:5448-5454
+    - id: bell-urgency
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1042 h / CSI ? 1042 l
+      rule: SET enables the urgency window-manager hint on Control-G; RESET disables bellIsUrgent. Host consequence policy,
+        not a new BEL wire.
+      source_semantics:
+        selector: 1042
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1042-h-line-1004
+        source_line: 1004
+        wire: CSI ? 1042 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1042-l-line-1145
+        source_line: 1145
+        wire: CSI ? 1042 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7887-7890
+    - id: bell-pop-window
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1043 h / CSI ? 1043 l
+      rule: SET enables raising the window on Control-G; RESET disables popOnBell. Host consequence policy, not a VT window
+        mutation.
+      source_semantics:
+        selector: 1043
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1043-h-line-1007
+        source_line: 1007
+        wire: CSI ? 1043 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1043-l-line-1148
+        source_line: 1148
+        wire: CSI ? 1043 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7891-7894
+    - id: keep-clipboard
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1044 h / CSI ? 1044 l
+      rule: SET enables reuse of most recently copied selection data instead of querying current CLIPBOARD contents. The pinned
+        author table lists SET only; pinned common set/reset handler also supports disabling it. Author manual default false.
+      source_semantics:
+        selector: 1044
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1044-h-line-1009
+        source_line: 1009
+        wire: CSI ? 1044 h
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7895-7898; misc.c:5705-5707; xterm.man:4259-4266
+      source_note: Only the SET discovery row exists; no fabricated RESET discovery. The RESET wire in this clause is supported
+        by the pinned implementation, not printed in the pinned DECRST table.
+    - id: reverse-wrap-extended
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1045 h / CSI ? 1045 l
+      rule: SET enables extended reverse-wraparound (XTREVWRAP2); RESET disables. Distinct from mode 45, whose competing DEC
+        printer interpretation remains pending.
+      source_semantics:
+        selector: 1045
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1045-h-line-1011
+        source_line: 1011
+        wire: CSI ? 1045 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1045-l-line-1150
+        source_line: 1150
+        wire: CSI ? 1045 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7701-7703; cursor.c:106-192
+      pinned_detail: 'The source comment records the 2023 separation: 45 permits reverse movement within a wrapped logical line,
+        1045 to any line. CursorBack requires WRAPAROUND as well, may cross to bottom at top margin with extended mode, and
+        uses margin-aware bounds. This is observed source behavior, not a complete target contract.'
+    - id: keyboard-termcap
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1050 h / CSI ? 1050 l
+      rule: SET selects terminfo/termcap keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC
+        style). The selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred
+        from mode name.
+      source_semantics:
+        selector: 1050
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1050-h-line-1026
+        source_line: 1026
+        wire: CSI ? 1050 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1050-l-line-1167
+        source_line: 1167
+        wire: CSI ? 1050 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7920-7923; util.c:5593-5610
+      profile_selection: 'Pinned set_keyboard_type assigns one keyboard type on SET and keyboardIsDefault on RESET; it does
+        not maintain independent profile bits. Some profiles require compile-time support. Source tables: PC-style and other
+        keyboard sections, lines 2443-2783.'
+    - id: keyboard-sun
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1051 h / CSI ? 1051 l
+      rule: SET selects Sun keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style). The
+        selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from mode
+        name.
+      source_semantics:
+        selector: 1051
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1051-h-line-1028
+        source_line: 1028
+        wire: CSI ? 1051 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1051-l-line-1169
+        source_line: 1169
+        wire: CSI ? 1051 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7925-7928; util.c:5593-5610
+      profile_selection: 'Pinned set_keyboard_type assigns one keyboard type on SET and keyboardIsDefault on RESET; it does
+        not maintain independent profile bits. Some profiles require compile-time support. Source tables: PC-style and other
+        keyboard sections, lines 2443-2783.'
+    - id: keyboard-hp
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1052 h / CSI ? 1052 l
+      rule: SET selects HP keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style). The
+        selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from mode
+        name.
+      source_semantics:
+        selector: 1052
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1052-h-line-1029
+        source_line: 1029
+        wire: CSI ? 1052 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1052-l-line-1170
+        source_line: 1170
+        wire: CSI ? 1052 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7930-7933; util.c:5593-5610
+      profile_selection: 'Pinned set_keyboard_type assigns one keyboard type on SET and keyboardIsDefault on RESET; it does
+        not maintain independent profile bits. Some profiles require compile-time support. Source tables: PC-style and other
+        keyboard sections, lines 2443-2783.'
+    - id: keyboard-sco
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1053 h / CSI ? 1053 l
+      rule: SET selects SCO keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style). The
+        selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from mode
+        name.
+      source_semantics:
+        selector: 1053
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1053-h-line-1030
+        source_line: 1030
+        wire: CSI ? 1053 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1053-l-line-1171
+        source_line: 1171
+        wire: CSI ? 1053 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7935-7938; util.c:5593-5610
+      profile_selection: 'Pinned set_keyboard_type assigns one keyboard type on SET and keyboardIsDefault on RESET; it does
+        not maintain independent profile bits. Some profiles require compile-time support. Source tables: PC-style and other
+        keyboard sections, lines 2443-2783.'
+    - id: keyboard-legacy
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1060 h / CSI ? 1060 l
+      rule: SET selects legacy X11R6 keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC
+        style). The selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred
+        from mode name.
+      source_semantics:
+        selector: 1060
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1060-h-line-1031
+        source_line: 1031
+        wire: CSI ? 1060 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1060-l-line-1172
+        source_line: 1172
+        wire: CSI ? 1060 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7939-7942; util.c:5593-5610
+      profile_selection: 'Pinned set_keyboard_type assigns one keyboard type on SET and keyboardIsDefault on RESET; it does
+        not maintain independent profile bits. Some profiles require compile-time support. Source tables: PC-style and other
+        keyboard sections, lines 2443-2783.'
+    - id: keyboard-vt220
+      section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+      level: defined
+      wire: CSI ? 1061 h / CSI ? 1061 l
+      rule: SET selects VT220 keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style).
+        The selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from
+        mode name.
+      source_semantics:
+        selector: 1061
+        section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
+        authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1061-h-line-1033
+        source_line: 1033
+        wire: CSI ? 1061 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-1061-l-line-1174
+        source_line: 1174
+        wire: CSI ? 1061 l
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7943-7946; util.c:5593-5610
+      profile_selection: 'Pinned set_keyboard_type assigns one keyboard type on SET and keyboardIsDefault on RESET; it does
+        not maintain independent profile bits. Some profiles require compile-time support. Source tables: PC-style and other
+        keyboard sections, lines 2443-2783.'
+    - id: read-only-width-encoding-reports
+      section: DECSET read-only resource selector entries, lines 985-988; DECRQM/DECRPM
+      level: defined
+      wire: CSI ? Pd $ p
+      rule: Read-only xterm mode report selectors 1020..1023 expose UTF-8 encoding, CJK width, emoji width and private-use width
+        configuration. DECSET and DECRST do not change them. Query one mode per DECRQM; DECRPM reports its current boolean state.
+        Do not invent permanently-set/reset status simply because the resource is read-only.
+      selectors:
+      - selector: 1020
+        resource: utf8
+        source_line: 985
+        request: CSI ? 1020 $ p
+        reply: CSI ? 1020 ; Ps $ y
+        reply_values: 1 true, 2 false in the pinned compiled handler; 0 unrecognized where unavailable.
+      - selector: 1021
+        resource: cjkWidth
+        source_line: 986
+        request: CSI ? 1021 $ p
+        reply: CSI ? 1021 ; Ps $ y
+        reply_values: 1 true, 2 false in the pinned compiled handler; 0 unrecognized where unavailable.
+      - selector: 1022
+        resource: emojiWidth
+        source_line: 987
+        request: CSI ? 1022 $ p
+        reply: CSI ? 1022 ; Ps $ y
+        reply_values: 1 true, 2 false in the pinned compiled handler; 0 unrecognized where unavailable.
+      - selector: 1023
+        resource: privateWidth
+        source_line: 988
+        request: CSI ? 1023 $ p
+        reply: CSI ? 1023 ; Ps $ y
+        reply_values: 1 true, 2 false in the pinned compiled handler; 0 unrecognized where unavailable.
+      related_commands:
+      - dec_vt420.request-mode
+      - dec_vt420.report-mode
+      pinned_source_observation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        location: charproc.c:7988-7996; misc.c:5390,5460-5474,5835-5863; ptyx.h:1253-1256
+        limit: OPT_WIDE_CHARS conditional; query status is MdBool (1/2), not 3/4.
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -4073,11 +5023,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 665
       symbol: XTSMGRAPHICS
-    - id: csi-235a751eee
-      wire: CSI Ps ; Ps ; Ps ; Ps ; Ps T
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 722
-      symbol: XTHIMOUSE
     - id: csi-518ec07749
       wire: CSI > Pm T
       section: Functions using CSI , ordered by the final character(s)
@@ -4638,10 +5583,6 @@ discovery_catalogues:
       wire: CSI ? 5 h
       section: DEC Private Mode Set (DECSET)
       source_line: 918
-    - id: private-mode-9-h-line-922
-      wire: CSI ? 9 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 922
     - id: private-mode-10-h-line-924
       wire: CSI ? 10 h
       section: DEC Private Mode Set (DECSET)
@@ -4670,10 +5611,6 @@ discovery_catalogues:
       wire: CSI ? 38 h
       section: DEC Private Mode Set (DECSET)
       source_line: 936
-    - id: private-mode-40-h-line-937
-      wire: CSI ? 40 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 937
     - id: private-mode-41-h-line-938
       wire: CSI ? 41 h
       section: DEC Private Mode Set (DECSET)
@@ -4743,38 +5680,6 @@ discovery_catalogues:
       wire: CSI ? 95 h
       section: DEC Private Mode Set (DECSET)
       source_line: 963
-    - id: private-mode-1000-h-line-965
-      wire: CSI ? 1000 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 965
-    - id: private-mode-1001-h-line-968
-      wire: CSI ? 1001 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 968
-    - id: private-mode-1002-h-line-969
-      wire: CSI ? 1002 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 969
-    - id: private-mode-1003-h-line-971
-      wire: CSI ? 1003 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 971
-    - id: private-mode-1004-h-line-973
-      wire: CSI ? 1004 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 973
-    - id: private-mode-1005-h-line-974
-      wire: CSI ? 1005 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 974
-    - id: private-mode-1006-h-line-975
-      wire: CSI ? 1006 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 975
-    - id: private-mode-1007-h-line-976
-      wire: CSI ? 1007 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 976
     - id: private-mode-1010-h-line-978
       wire: CSI ? 1010 h
       section: DEC Private Mode Set (DECSET)
@@ -4783,142 +5688,18 @@ discovery_catalogues:
       wire: CSI ? 1011 h
       section: DEC Private Mode Set (DECSET)
       source_line: 980
-    - id: private-mode-1014-h-line-982
-      wire: CSI ? 1014 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 982
     - id: private-mode-1015-h-line-983
       wire: CSI ? 1015 h
       section: DEC Private Mode Set (DECSET)
       source_line: 983
-    - id: private-mode-1016-h-line-984
-      wire: CSI ? 1016 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 984
-    - id: private-mode-1020-h-line-985
-      wire: CSI ? 1020 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 985
-    - id: private-mode-1021-h-line-986
-      wire: CSI ? 1021 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 986
-    - id: private-mode-1022-h-line-987
-      wire: CSI ? 1022 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 987
-    - id: private-mode-1023-h-line-988
-      wire: CSI ? 1023 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 988
     - id: private-mode-1034-h-line-989
       wire: CSI ? 1034 h
       section: DEC Private Mode Set (DECSET)
       source_line: 989
-    - id: private-mode-1035-h-line-992
-      wire: CSI ? 1035 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 992
-    - id: private-mode-1036-h-line-994
-      wire: CSI ? 1036 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 994
     - id: private-mode-1037-h-line-996
       wire: CSI ? 1037 h
       section: DEC Private Mode Set (DECSET)
       source_line: 996
-    - id: private-mode-1039-h-line-998
-      wire: CSI ? 1039 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 998
-    - id: private-mode-1040-h-line-1000
-      wire: CSI ? 1040 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1000
-    - id: private-mode-1041-h-line-1002
-      wire: CSI ? 1041 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1002
-    - id: private-mode-1042-h-line-1004
-      wire: CSI ? 1042 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1004
-    - id: private-mode-1043-h-line-1007
-      wire: CSI ? 1043 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1007
-    - id: private-mode-1044-h-line-1009
-      wire: CSI ? 1044 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1009
-    - id: private-mode-1045-h-line-1011
-      wire: CSI ? 1045 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1011
-    - id: private-mode-1046-h-line-1013
-      wire: CSI ? 1046 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1013
-    - id: private-mode-1047-h-line-1016
-      wire: CSI ? 1047 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1016
-    - id: private-mode-1048-h-line-1018
-      wire: CSI ? 1048 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1018
-    - id: private-mode-1049-h-line-1020
-      wire: CSI ? 1049 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1020
-    - id: private-mode-1050-h-line-1026
-      wire: CSI ? 1050 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1026
-    - id: private-mode-1051-h-line-1028
-      wire: CSI ? 1051 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1028
-    - id: private-mode-1052-h-line-1029
-      wire: CSI ? 1052 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1029
-    - id: private-mode-1053-h-line-1030
-      wire: CSI ? 1053 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1030
-    - id: private-mode-1060-h-line-1031
-      wire: CSI ? 1060 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1031
-    - id: private-mode-1061-h-line-1033
-      wire: CSI ? 1061 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1033
-    - id: private-mode-2001-h-line-1034
-      wire: CSI ? 2001 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1034
-    - id: private-mode-2002-h-line-1035
-      wire: CSI ? 2002 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1035
-    - id: private-mode-2003-h-line-1036
-      wire: CSI ? 2003 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1036
-    - id: private-mode-2004-h-line-1037
-      wire: CSI ? 2004 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1037
-    - id: private-mode-2005-h-line-1038
-      wire: CSI ? 2005 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1038
-    - id: private-mode-2006-h-line-1039
-      wire: CSI ? 2006 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 1039
     - id: private-mode-4-l-line-1067
       wire: CSI ? 4 l
       section: DEC Private Mode Reset (DECRST)
@@ -4927,10 +5708,6 @@ discovery_catalogues:
       wire: CSI ? 5 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1068
-    - id: private-mode-9-l-line-1072
-      wire: CSI ? 9 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1072
     - id: private-mode-10-l-line-1073
       wire: CSI ? 10 l
       section: DEC Private Mode Reset (DECRST)
@@ -4955,10 +5732,6 @@ discovery_catalogues:
       wire: CSI ? 35 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1084
-    - id: private-mode-40-l-line-1085
-      wire: CSI ? 40 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1085
     - id: private-mode-41-l-line-1086
       wire: CSI ? 41 l
       section: DEC Private Mode Reset (DECRST)
@@ -5028,38 +5801,6 @@ discovery_catalogues:
       wire: CSI ? 95 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1110
-    - id: private-mode-1000-l-line-1112
-      wire: CSI ? 1000 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1112
-    - id: private-mode-1001-l-line-1114
-      wire: CSI ? 1001 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1114
-    - id: private-mode-1002-l-line-1115
-      wire: CSI ? 1002 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1115
-    - id: private-mode-1003-l-line-1117
-      wire: CSI ? 1003 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1117
-    - id: private-mode-1004-l-line-1119
-      wire: CSI ? 1004 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1119
-    - id: private-mode-1005-l-line-1120
-      wire: CSI ? 1005 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1120
-    - id: private-mode-1006-l-line-1121
-      wire: CSI ? 1006 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1121
-    - id: private-mode-1007-l-line-1122
-      wire: CSI ? 1007 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1122
     - id: private-mode-1010-l-line-1124
       wire: CSI ? 1010 l
       section: DEC Private Mode Reset (DECRST)
@@ -5068,122 +5809,18 @@ discovery_catalogues:
       wire: CSI ? 1011 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1126
-    - id: private-mode-1014-l-line-1128
-      wire: CSI ? 1014 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1128
     - id: private-mode-1015-l-line-1129
       wire: CSI ? 1015 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1129
-    - id: private-mode-1016-l-line-1130
-      wire: CSI ? 1016 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1130
     - id: private-mode-1034-l-line-1131
       wire: CSI ? 1034 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1131
-    - id: private-mode-1035-l-line-1133
-      wire: CSI ? 1035 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1133
-    - id: private-mode-1036-l-line-1135
-      wire: CSI ? 1036 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1135
     - id: private-mode-1037-l-line-1137
       wire: CSI ? 1037 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1137
-    - id: private-mode-1039-l-line-1139
-      wire: CSI ? 1039 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1139
-    - id: private-mode-1040-l-line-1141
-      wire: CSI ? 1040 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1141
-    - id: private-mode-1041-l-line-1143
-      wire: CSI ? 1041 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1143
-    - id: private-mode-1042-l-line-1145
-      wire: CSI ? 1042 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1145
-    - id: private-mode-1043-l-line-1148
-      wire: CSI ? 1043 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1148
-    - id: private-mode-1045-l-line-1150
-      wire: CSI ? 1045 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1150
-    - id: private-mode-1046-l-line-1152
-      wire: CSI ? 1046 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1152
-    - id: private-mode-1047-l-line-1157
-      wire: CSI ? 1047 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1157
-    - id: private-mode-1048-l-line-1160
-      wire: CSI ? 1048 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1160
-    - id: private-mode-1049-l-line-1162
-      wire: CSI ? 1049 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1162
-    - id: private-mode-1050-l-line-1167
-      wire: CSI ? 1050 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1167
-    - id: private-mode-1051-l-line-1169
-      wire: CSI ? 1051 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1169
-    - id: private-mode-1052-l-line-1170
-      wire: CSI ? 1052 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1170
-    - id: private-mode-1053-l-line-1171
-      wire: CSI ? 1053 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1171
-    - id: private-mode-1060-l-line-1172
-      wire: CSI ? 1060 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1172
-    - id: private-mode-1061-l-line-1174
-      wire: CSI ? 1061 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1174
-    - id: private-mode-2001-l-line-1176
-      wire: CSI ? 2001 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1176
-    - id: private-mode-2002-l-line-1177
-      wire: CSI ? 2002 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1177
-    - id: private-mode-2003-l-line-1178
-      wire: CSI ? 2003 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1178
-    - id: private-mode-2004-l-line-1179
-      wire: CSI ? 2004 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1179
-    - id: private-mode-2005-l-line-1180
-      wire: CSI ? 2005 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1180
-    - id: private-mode-2006-l-line-1181
-      wire: CSI ? 2006 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1181
     pending_reconciliation:
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-44
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
@@ -5520,6 +6157,34 @@ discovery_catalogues:
       actual_wire: CSI ? 5 i
       canonical_clause: dec_vt240.media-copy-dec-private
       cause: The extractor incorrectly continued treating Media Copy parameter lines as DECSET CSI ? Pm h.
+    - original_id: private-mode-1020-h-line-985
+      source_line: 985
+      incorrect_wire: CSI ? 1020 h
+      actual_wire: CSI ? 1020 $ p
+      canonical_clause: xterm_controls.read-only-width-encoding-reports
+      cause: The DECSET table lists a read-only resource selector, not an effective SET operation. Pinned charproc.c:7990-7996
+        ignores set/reset; misc.c:5835-5848 reports the resource using DECRQM.
+    - original_id: private-mode-1021-h-line-986
+      source_line: 986
+      incorrect_wire: CSI ? 1021 h
+      actual_wire: CSI ? 1021 $ p
+      canonical_clause: xterm_controls.read-only-width-encoding-reports
+      cause: The DECSET table lists a read-only resource selector, not an effective SET operation. Pinned charproc.c:7990-7996
+        ignores set/reset; misc.c:5835-5848 reports the resource using DECRQM.
+    - original_id: private-mode-1022-h-line-987
+      source_line: 987
+      incorrect_wire: CSI ? 1022 h
+      actual_wire: CSI ? 1022 $ p
+      canonical_clause: xterm_controls.read-only-width-encoding-reports
+      cause: The DECSET table lists a read-only resource selector, not an effective SET operation. Pinned charproc.c:7990-7996
+        ignores set/reset; misc.c:5835-5848 reports the resource using DECRQM.
+    - original_id: private-mode-1023-h-line-988
+      source_line: 988
+      incorrect_wire: CSI ? 1023 h
+      actual_wire: CSI ? 1023 $ p
+      canonical_clause: xterm_controls.read-only-width-encoding-reports
+      cause: The DECSET table lists a read-only resource selector, not an effective SET operation. Pinned charproc.c:7990-7996
+        ignores set/reset; misc.c:5835-5848 reports the resource using DECRQM.
 reconciliation:
 - choice: one-command-family-with-parameter-extensions
   approved_by: Captain
