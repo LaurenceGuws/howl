@@ -51,7 +51,7 @@ test_location_mapping:
     commit: 3bad29180ac08b486506ffc36c03845f7708eb33
     path: protocol_coverage.yml
     sha256: 94f4cabf656482255bbeb70b65ca37d2e3ad8f9ac5e93883436cd19277473411
-  declarations_checked_at: 81a286fd339fc5eec4799f6ad753792f36037ea8
+  declarations_checked_at: 2b392f3374e8fb7efc6f6a6fcdffdef818c793e2
   meaning: Candidate test locations for navigating the implementation. Wire-family matching preserves command class, leader
     and intermediates, not complete grammar or behavior. Protocol-family locations are shared starting points, not proof
     of the individual clause. Accepted-decision locations refer to existing separately qualified assessments. Test declarations
@@ -76,11 +76,22 @@ specifications:
       section: '5.4'
       level: defined
       wire: CSI parameters intermediates final
-      rule: Control sequences use a parameter/intermediate/final coded representation; private-use bytes do not redefine standard functions.
+      rule: Control sequences use a parameter/intermediate/final coded representation; private-use bytes do not redefine standard
+        functions.
       test_locations:
       - file: howl-vt/test/unit/parser/main_test.zig
         test: 'parser: split input - partial CSI then final byte'
         relation: protocol-family
+      - file: howl-vt/src/parser.zig
+        test: header capacity rejects truncation without breaking ESC CSI or DCS framing
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: over-capacity CSI headers cannot execute a truncated mutation
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
     - id: csi-parameters
       section: 5.4.1-5.4.3
       level: defined
@@ -90,6 +101,16 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: ordinary CSI geometry still saturates while Kitty rejects overflow
         relation: protocol-family
+      - file: howl-vt/src/parser.zig
+        test: header capacity rejects truncation without breaking ESC CSI or DCS framing
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: over-capacity CSI headers cannot execute a truncated mutation
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
     - id: c0-bel
       section: 8.3.3
       level: defined
@@ -219,6 +240,11 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: every byte split preserves mixed control framing'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: over-capacity CSI headers cannot execute a truncated mutation
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
     - id: c1-osc
       section: 8.3.89
       level: defined
@@ -267,6 +293,16 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: every byte split preserves mixed control framing'
         relation: protocol-family
+      - file: howl-vt/src/parser.zig
+        test: header capacity rejects truncation without breaking ESC CSI or DCS framing
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: over-capacity DCS headers consume their payload without reply or text leakage
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
     - id: c1-st
       section: 8.3.143
       level: defined
@@ -1381,6 +1417,12 @@ specifications:
       level: defined
       wire: '0x1B'
       rule: ESCAPE (ESC); ECMA-48 standardized control function, C0 form (source page 43).
+      test_locations:
+      - file: howl-vt/src/parser.zig
+        test: header capacity rejects truncation without breaking ESC CSI or DCS framing
+        relation: protocol-family
+        note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
+          grammar qualification.
     - id: etb
       section: 8.3.49
       level: defined
