@@ -3491,7 +3491,7 @@ specifications:
     revision: EK-VT100-UG; Digital original guide, PDF transcription by Edwin Rhodes (2004)
     url: https://geoffg.net/Downloads/Terminal/VT100_User_Guide.pdf
     snapshot_sha256: 91f271c2eb0b0bf6f643de42422c8a2fb3efc910b086714414833940ce3de8ef
-    scope: Selected VT100 TBC semantics in Chapter 3, not the entire DEC VT100 control repertoire.
+    scope: Selected original DEC VT100 TBC, ANSI/VT52 mode transition and VT52 return controls in Chapter 3; not the complete VT100 repertoire.
     clauses:
     - id: tbc
       section: Chapter 3 / Valid ANSI Mode Control Sequences / TBC (PDF page 50)
@@ -3502,6 +3502,69 @@ specifications:
       equivalent_to: xterm_controls.tbc-vt100-subset
       competes_with: ecma48.tbc
       decision: ecma48-tbc-vs-xterm-subset
+    - id: ansi-vt52-mode
+      section: Chapter 3 / Valid ANSI Mode Control Sequences / DECANM (original VT100 User Guide, transcribed PDF page 41)
+      level: defined
+      wire: CSI ? 2 h / CSI ? 2 l
+      rule: DECANM sets or resets the ANSI/VT52 control-code interpretation regime. Set selects ANSI-compatible sequences; reset enters VT52
+        compatibility mode. In VT52 mode CSI controls cannot normally be used, so the separate ESC < exits back to ANSI.
+      original_mode_semantics:
+        name: DECANM
+        selector: 2
+        source: Original DEC VT100 User Guide, Chapter 3, DECANM / ANSI-VT52 Mode; reaffirmed by DEC VT330/VT340 Text Programming (May 1988)
+          Appendix A and DEC VT420 Programmer Reference (Feb 1992) Appendix A
+        default: ANSI mode under normal VT100 operation; reset is the explicit transition into VT52 mode.
+        set_wire: CSI ? 2 h
+        set_effect: Use ANSI-compatible escape and control sequences rather than VT52-only commands.
+        reset_wire: CSI ? 2 l
+        reset_effect: Enter VT52 compatibility mode, where ANSI private controls, C1 controls, Latin-1 supplemental and NRC sets are unavailable;
+          G0 defaults to ASCII.
+        mode_boundaries: In VT52 mode, the terminal uses VT52-specific escape sequences; an ordinary ANSI CSI ? 2 h cannot be assumed usable
+          to leave VT52 mode. ESC < is the author-defined exit.
+        related_vt52_exit: dec_vt100.vt52-return-to-ansi
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2-h-line-914
+        source_line: 914
+        wire: CSI ? 2 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-2-l-line-1065
+        source_line: 1065
+        wire: CSI ? 2 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7507-7551, xterm ctlseqs lines 914-915 and 1065
+        behavior: xterm executes CSI ? 2 l by saving a subset of modes/charsets and entering VT52 parser mode. CSI ? 2 h is a no-op when
+          already in ANSI, since it cannot be reached from VT52. The xterm textual line claiming USASCII G0-G3 designation should not be
+          promoted over the concrete code without an explicit test.
+        limits: Xterm mode transition may resize to 80 columns if enabled by host policy; its own comment says some DEC STD-070 VT52 transition
+          mode restorations are undefined. Not proof of whole-hardware VT52 emulation.
+      implementation_note: Original protocol identity only; neither complete VT52 parsing nor Host migration is automatically selected or
+        FULL.
+    - id: vt52-return-to-ansi
+      section: Chapter 3 / Valid VT52 Mode Control Sequences / Enter ANSI Mode (original VT100 User Guide, transcribed PDF page 54)
+      level: defined
+      wire: ESC <
+      rule: While in VT52 mode, ESC < leaves VT52 compatibility mode and resumes ANSI interpretation of subsequent control sequences. This
+        is a distinct command from CSI ? 2 h/l.
+      original_source_variants:
+        VT100: Enter ANSI mode; subsequent escape/control sequences are interpreted according to ANSI X3.64-1977 and X3.41-1974.
+        VT330_VT340: 'May 1988 Text Programming, Appendix A printed pages 257-258: returns to the mode active before entry to VT52.'
+        VT420: 'February 1992 Programmer Reference, Appendix A printed pages 327-328: returns to the mode active before entry to VT52, which
+          may be VT400 rather than merely VT100.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-457e1dc272
+        source_line: 3388
+        wire: ESC <
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5039-5059; xterm ctlseqs line 3388
+        behavior: Exits VT52 and selects ANSI parser, explicitly invokes set_vtXX_level(screen,1), then restores selected saved flags and
+          charsets. The xterm prose calls this Enter VT100 mode.
+        material_limit: The later DEC VT300/VT420 author text says return to prior mode, not necessarily VT100 level 1. Reconcile this restoration-level
+          difference before implementing a full VT420-compatible VT52 cycle.
+      pending_reconciliation: vt52-exit-restored-conformance-level
   itu_t416:
     title: 'ITU-T Recommendation T.416 / ISO/IEC 8613-6: Character content architectures'
     author: International Telecommunication Union (ITU-T) / ISO-IEC
@@ -3662,8 +3725,8 @@ specifications:
     revision: Second edition, May 1988 (EK-VT3XX-GP-002)
     url: https://mirrors.meulie.net/bitsavers.org/pdf/dec/terminal/vt340/EK-VT3XX-GP-002_VT330_VT340_Graphics_Programming_198805.pdf
     snapshot_sha256: e4b2a69d1425db5e216d372cd080c3cff6dd216dc8acbb47f58b699fa2338669
-    scope: Original graphics printing controls and sixel printer-level output contracts in Chapter 16, printed pages 255-261; not all Volume
-      2 graphics semantics.
+    scope: Original sixel graphics display mode in Chapter 14 (printed pages 237-238), and graphics printing controls and printer-level output
+      in Chapter 16 (printed pages 255-261); not all Volume 2 graphics semantics.
     clauses:
     - id: graphics-print-modes
       section: Chapter 16 / Selecting a Format for Printing, printed pages 255-257
@@ -3734,6 +3797,54 @@ specifications:
       source_limit: Original printer-level grammar and physical sizing are documentary evidence. No target implementation or equivalence
         to VT text geometry is implied.
       related_original_media_copy: dec_vt240.media-copy-dec-private
+    - id: sixel-display-mode
+      section: Chapter 14 / Sixel Scrolling Mode / Sixel Display Mode Control Function, printed pages 237-238
+      level: defined
+      wire: CSI ? 80 h / CSI ? 80 l
+      rule: On DEC VT330/VT340 graphics terminals, SET enables sixel scrolling and RESET disables sixel scrolling. This polarity is explicit
+        in the original May 1988 edition, and is the opposite of the later DEC VT382 Thai control table and xterm/Foot/WezTerm.
+      original_mode_semantics:
+        source: DEC VT330/VT340 Graphics Programming, second edition May 1988, Chapter 14 pages 237-238
+        name: DECSDM
+        selector: 80
+        set_wire: CSI ? 80 h
+        set_effect: Enable sixel scrolling. Sixel cursor starts at the upper-left of the ANSI text cursor location; when the sixel active
+          position reaches the graphics-page bottom margin, scrolling occurs; on exiting sixel mode, text cursor moves to current sixel cursor
+          position.
+        reset_wire: CSI ? 80 l
+        reset_effect: Disable sixel scrolling. Sixel active position starts at upper-left of active graphics page, attempts to advance below
+          bottom margin are ignored; exiting sixel mode does not move text cursor.
+        default: The read Chapter 14 excerpts do not explicitly establish the initial DECSDM bit state for all VT300 models; do not infer
+          one.
+        page_semantics: Graphics-page bounds and sixel positioning, not text scrollback history, physical printer size or TUI-owned scroll
+          state.
+      competes_with: dec_vt382_thai.sixel-display-mode
+      pending_reconciliation: decsdm-polarity-vt300-vt382
+  dec_vt382_thai:
+    title: VT382 Thai Display Terminal Installing and Using Manual
+    author: Digital Equipment Corporation; Digital Equipment Korea Inc.; Digital Equipment (Thailand) Ltd.
+    authority: protocol-author
+    revision: First edition, August 1989 (EK-VT38T-UG-001)
+    url: https://vt100.net/dec/ek-vt38t-ug-001.pdf
+    snapshot_sha256: 6e8e9fbdb82408f03920db33ebd2d405fee356b849cc012fa0f68a1f62ae60c1
+    scope: Original DEC VT382 Thai control-function summary, appendix C printed page C-30 (PDF page 132), sixel display mode only; this is
+      a scanned image and other pages are not indexed.
+    clauses:
+    - id: sixel-display-mode
+      section: Appendix C / VT382 Control Function Summary / Display Set-Up sequence, printed page C-30 (PDF page 132)
+      level: defined
+      wire: CSI ? 80 h / CSI ? 80 l
+      rule: 'DEC VT382 Thai 1989 reverses the 1988 VT330/VT340 DECSDM meaning: SET disables sixel scrolling; RESET enables sixel scrolling.'
+      original_mode_semantics:
+        source: Original DEC VT382 Thai Installing and Using Manual (first edition, August 1989), control-function summary page C-30
+        set_wire: CSI ? 80 h
+        set_effect: No sixel scrolling.
+        reset_wire: CSI ? 80 l
+        reset_effect: Sixel scrolling.
+        source_limit: This source summary specifies set/reset scrolling polarity only; it does not independently define image anchoring,
+          cursor-motion rules, sixel allocation dimensions or rendering bounds. Do not import those from xterm and label them DEC-authored.
+      competes_with: dec_vt3xx_graphics.sixel-display-mode
+      pending_reconciliation: decsdm-polarity-vt300-vt382
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -4331,10 +4442,6 @@ discovery_catalogues:
       wire: ESC t
       section: Tektronix 4014 Mode
       source_line: 3371
-    - id: esc-457e1dc272
-      wire: ESC <
-      section: VT52 Mode
-      source_line: 3388
     - id: esc-1a52090ba5
       wire: ESC A
       section: VT52 Mode
@@ -4495,10 +4602,6 @@ discovery_catalogues:
       wire: OSC 119 ; Pt (BEL | ST)
       section: Operating System Commands
       source_line: 2254
-    - id: private-mode-2-h-line-914
-      wire: CSI ? 2 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 914
     - id: private-mode-4-h-line-917
       wire: CSI ? 4 h
       section: DEC Private Mode Set (DECSET)
@@ -4599,6 +4702,15 @@ discovery_catalogues:
       wire: CSI ? 80 h
       section: DEC Private Mode Set (DECSET)
       source_line: 961
+      review:
+        classification: source-author-variant-and-modern-polarity-conflict
+        pending_reconciliation: decsdm-polarity-vt300-vt382
+        original_1988: dec_vt3xx_graphics.sixel-display-mode
+        original_1989: dec_vt382_thai.sixel-display-mode
+        modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382 and contradicting
+          original DEC VT330/VT340.
+        disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly selected.
+          Do not infer correctness from mnemonic or modern implementation counts alone.
     - id: private-mode-95-h-line-963
       wire: CSI ? 95 h
       section: DEC Private Mode Set (DECSET)
@@ -4779,10 +4891,6 @@ discovery_catalogues:
       wire: CSI ? 2006 h
       section: DEC Private Mode Set (DECSET)
       source_line: 1039
-    - id: private-mode-2-l-line-1065
-      wire: CSI ? 2 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1065
     - id: private-mode-4-l-line-1067
       wire: CSI ? 4 l
       section: DEC Private Mode Reset (DECRST)
@@ -4879,6 +4987,15 @@ discovery_catalogues:
       wire: CSI ? 80 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1107
+      review:
+        classification: source-author-variant-and-modern-polarity-conflict
+        pending_reconciliation: decsdm-polarity-vt300-vt382
+        original_1988: dec_vt3xx_graphics.sixel-display-mode
+        original_1989: dec_vt382_thai.sixel-display-mode
+        modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382 and contradicting
+          original DEC VT330/VT340.
+        disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly selected.
+          Do not infer correctness from mnemonic or modern implementation counts alone.
     - id: private-mode-95-l-line-1110
       wire: CSI ? 95 l
       section: DEC Private Mode Reset (DECRST)
@@ -5268,6 +5385,64 @@ discovery_catalogues:
       evidence_limit: Modern Ghostty and iTerm2 show materially different DECID reply behavior; WezTerm parser recognition alone is not a
         response proof. Keep the SCI-vs-DECID and reply questions distinct. Do not use the isolated two-way ECMA/xterm rule without accounting
         for the independently maintained references.
+    - id: decsdm-polarity-vt300-vt382
+      status: original-dec-author-revisions-disagree-on-same-wire-set-reset-polarity
+      wire: CSI ? 80 h / CSI ? 80 l
+      original_author_sources:
+      - clause: dec_vt3xx_graphics.sixel-display-mode
+        revision: VT330/VT340 Volume 2, May 1988
+        set: sixel scrolling enabled
+        reset: sixel scrolling disabled
+        page: 237-238
+        source_snapshot_sha256: e4b2a69d1425db5e216d372cd080c3cff6dd216dc8acbb47f58b699fa2338669
+      - clause: dec_vt382_thai.sixel-display-mode
+        revision: VT382 Thai, August 1989
+        set: no sixel scrolling
+        reset: sixel scrolling
+        page: C-30
+        source_snapshot_sha256: 6e8e9fbdb82408f03920db33ebd2d405fee356b849cc012fa0f68a1f62ae60c1
+      independent_implementations:
+      - name: xterm
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7785-7792, 11726-11734; graphics_sixel.c:103-120
+        behavior: SET disables sixel scrolling; RESET enables it; mode/state availability depends on sixel graphics compile/runtime configuration.
+      - name: Foot
+        revision: cb2771788998f6a6288e2de8273c55a8214551e0
+        source: csi.c:390-392, 648; sixel.c:1213-1227
+        behavior: SET disables sixel scrolling; RESET enables it. Sixel image anchoring and text-cursor motion are mode-dependent.
+      - name: WezTerm
+        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        source: term/src/terminalstate/mod.rs:1839-1851 and term/src/terminalstate/sixel.rs:124-155
+        behavior: SET retains cursor and places sixel at top-left; RESET follows scrolling image placement.
+      material_difference: Same exact ?80 h/l wires cause opposite scrolling, sixel origin and text-cursor results depending on original
+        DEC hardware family. Modern consensus follows DEC VT382, but the VT330/VT340 originating specification is substantially different.
+        A later model-specific author document is not automatically an erratum to the earlier model.
+      scope_limit: This decision must retain both hardware-specific normative interpretations; do not silently adopt xterm as an authority
+        over the original VT330/VT340 source, and do not promote full sixel conformance without exact image bounds.
+      question: Which DECSDM mode polarity and terminal profile should Howl expose for its intended single VT implementation contract?
+      decision: null
+    - id: vt52-exit-restored-conformance-level
+      status: material-vt52-exit-conformance-level-difference-by-hardware-profile
+      wire: ESC <
+      original_author_sources:
+      - clause: dec_vt100.vt52-return-to-ansi
+        revision: DEC VT100 User Guide
+        meaning: VT52 exit to ANSI-compatible VT100 control mode.
+      - clause: dec_vt100.vt52-return-to-ansi
+        revision: DEC VT330/VT340 Text Programming May 1988 and DEC VT420 Programmer Reference Feb 1992, Appendix A
+        meaning: VT52 exit restores previously active operating mode, potentially VT300/VT400 rather than VT100 level 1.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5039-5059
+        meaning: On VT52 exit, xterm explicitly calls set_vtXX_level(screen,1) and restores selected saved flags and charsets, not proven
+          to restore prior VT400 level.
+      material_difference: For terminal emulation profiles newer than VT100, returning to VT100-level ANSI rather than the prior higher DEC
+        level may change the available protocol after ESC <.
+      scope_limit: Keep VT100 and later VT300/VT420 historical behavior distinct; do not assert this affects Howl runtime or that VT52 emulation
+        is yet selected for implementation.
+      question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC author manuals,
+        or enter VT100-level ANSI mode as in pinned xterm?
+      decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
