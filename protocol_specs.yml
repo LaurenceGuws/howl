@@ -51,7 +51,7 @@ test_location_mapping:
     commit: 3bad29180ac08b486506ffc36c03845f7708eb33
     path: protocol_coverage.yml
     sha256: 94f4cabf656482255bbeb70b65ca37d2e3ad8f9ac5e93883436cd19277473411
-  declarations_checked_at: 686b8d91d54ff46369b68d74d20bb825b53f3362
+  declarations_checked_at: 81a286fd339fc5eec4799f6ad753792f36037ea8
   meaning: Candidate test locations for navigating the implementation. Wire-family matching preserves command class, leader
     and intermediates, not complete grammar or behavior. Protocol-family locations are shared starting points, not proof
     of the individual clause. Accepted-decision locations refer to existing separately qualified assessments. Test declarations
@@ -5488,6 +5488,15 @@ specifications:
         test: checksum arithmetic uses source video weights and modular negation
         relation: protocol-family
         note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum resolves nonzero page selectors and zero rectangle defaults
+        relation: protocol-family
+        note: Narrow regression evidence at 81a286f; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum mode resets to its default on RIS and DECSTR
+        relation: protocol-family
+        note: Narrow regression evidence at 81a286f; not whole-clause qualification.
+      pending_reconciliation: xtchecksum-legacy-character-provenance
     - id: window-operation-extensions
       section: XTWINOPS, ctlseqs 1616-1696; history table 3720-3749
       level: defined
@@ -8811,6 +8820,15 @@ specifications:
         test: checksum arithmetic uses source video weights and modular negation
         relation: protocol-family
         note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum resolves nonzero page selectors and zero rectangle defaults
+        relation: protocol-family
+        note: Narrow regression evidence at 81a286f; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum mode resets to its default on RIS and DECSTR
+        relation: protocol-family
+        note: Narrow regression evidence at 81a286f; not whole-clause qualification.
+      pending_reconciliation: decrqcra-page-zero-profile
     - id: active-status-display
       section: Chapter 11 / DECSASD, printed pp.219-220
       level: defined
@@ -10658,6 +10676,10 @@ specifications:
         test: locator undefined query preserves one-shot and filter under reply pressure
         relation: protocol-family
         note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator simultaneous report rollback retains exact prior prefix
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
     - id: select-locator-events
       section: Selecting Locator Events (DECSLE)
       level: defined
@@ -10719,6 +10741,22 @@ specifications:
         test: locator event selection admits only the originating single intermediate
         relation: protocol-family
         note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator filters trigger immediately or on selected coordinate movement
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator filter and button reports are ordered within a sample
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator filter undefined entry and immediate report rollback
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator simultaneous report rollback retains exact prior prefix
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
     - id: enable-filter-rectangle
       section: Filter Rectangles (DECEFR)
       level: defined
@@ -10754,6 +10792,22 @@ specifications:
         test: locator undefined query preserves one-shot and filter under reply pressure
         relation: protocol-family
         note: Narrow regression evidence at 686b8d9; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator filters trigger immediately or on selected coordinate movement
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: locator filter and button reports are ordered within a sample
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator filter undefined entry and immediate report rollback
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
+      - file: howl-vt/src/locator.zig
+        test: locator simultaneous report rollback retains exact prior prefix
+        relation: protocol-family
+        note: Narrow regression evidence at 54e3fb3; not whole-clause qualification.
     - id: request-locator-position
       section: Requesting A Locator Position Report (DECRQLP)
       level: defined
@@ -12056,6 +12110,15 @@ specifications:
         test: checksum arithmetic uses source video weights and modular negation
         relation: protocol-family
         note: Narrow regression evidence at f066679; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum resolves nonzero page selectors and zero rectangle defaults
+        relation: protocol-family
+        note: Narrow regression evidence at 81a286f; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: checksum mode resets to its default on RIS and DECSTR
+        relation: protocol-family
+        note: Narrow regression evidence at 81a286f; not whole-clause qualification.
+      pending_reconciliation: decrqcra-page-zero-profile
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -12067,7 +12130,81 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences: []
-    pending_reconciliation: []
+    pending_reconciliation:
+    - id: decrqcra-page-zero-profile
+      status: material-original-profile-versus-modern-single-page-difference
+      wire: CSI Pid ; 0 ; Pt ; Pl ; Pb ; Pr * y
+      original_author_sources:
+      - clause: dec_vt420.request-rectangle-checksum
+        meaning: Page zero or omitted means all page memory and ignores rectangle parameters.
+      - clause: dec_std070.request-rectangle-checksum
+        meaning: Pp=0/omitted checks all pages regardless of rectangle operands; nonzero above highest page selects highest
+          page.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: screen.c:3133-3163,2608-2625
+        meaning: Ignore page selector; use requested rectangle.
+      independent_implementations:
+      - implementation: ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source: src/terminal/stream.zig:2842-2858; xt_checksum.zig:59-92
+        meaning: Ignores page and retains rectangle.
+      - implementation: wezterm
+        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        source: term/src/terminalstate/mod.rs:2188-2205
+        meaning: Ignores page in enabled checksum operation; computes rectangle.
+      - implementation: iterm2
+        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+        source: sources/VT100/VT100Terminal.m:2091-2105
+        meaning: Trusted/allowed level400 request uses rectangle starting at index2, discards page.
+      - implementation: windows_terminal
+        revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        source: src/terminal/adapter/adaptDispatch.cpp:1281-1303,1347; PageManager.cpp:113-141
+        meaning: Feature-gated page zero returns zero checksum; nonzero page selects page manager buffer.
+      question: Select original whole-page semantics for zero/omitted, or modern rectangle semantics regardless of page. Windows
+        Terminal zero result is another material profile. Howl already maps positive selectors to its sole active page; zero
+        currently keeps the rectangle. No need to introduce DEC multiple page memory, history or alternate-bank aggregation
+        for this choice.
+      recommendation: Original DEC page zero means the full active page in a one-page implementation, independent of rectangle
+        operands; keep existing DECOM qualification separate. Explicitly review because original normative meaning materially
+        diverges from modern references.
+      decision: null
+    - id: xtchecksum-legacy-character-provenance
+      status: material-legacy-mapping-implementation-difference
+      wire: 'CSI Ps # y (bit 4 clear); subsequent DECRQCRA'
+      original_author_sources:
+      - clause: xterm_controls.checksum-extension
+        meaning: Original extension describes bit4 as selecting full rather than byte-domain checksum; selected prior decision
+          follows actual xterm code; DEC STD070 checksum clauses do not define complete arithmetic.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charsets.c:366-380,608-669; charsets.h:213-248; screen.c:986-987,3182-3195
+        meaning: Retains original normalized byte and selected charset per cell, maps DEC special-graphics q to 0x1D, direct
+          Unicode U+2500 to ESC 0x1B. Bit4 set uses visible scalar instead.
+      independent_implementations:
+      - implementation: ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source: src/terminal/xt_checksum.zig:167-188
+        meaning: 'Translated-codepoint ASCII projection: no retained original byte/charset; both U+2500 inputs map to 0x1B.
+          Explicit approximation, not exact provenance.'
+      - implementation: windows_terminal
+        revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        source: src/terminal/adapter/adaptDispatch.cpp:1308-1319
+        meaning: Feature-gated checksum uses Unicode scalar units and special U+2426 mapping; acknowledges missing custom original
+          charset mapping.
+      howl_observation:
+        revision: 81a286fd339fc5eec4799f6ad753792f36037ea8
+        source: howl-vt/src/charset.zig:mapCodepoint/mapDecSpecial; howl-vt/src/terminal.zig:computeRectChecksum; scratch/20261124-locator-filter/checksum-provenance.zig
+        meaning: Public Debug probe proves ESC ( 0 q ESC ( B and directly encoded U+2500 produce identical canonical Cell values.
+          Current legacy projection returns zero for both; exact xterm mapping cannot be reconstructed from these cell values
+          alone.
+      question: Select exact legacy provenance semantics or a deliberately limited translated-codepoint projection; bit4, trim
+        and combining decisions remain unchanged. If exact needed, qualify a compact derived identity or optional provenance,
+        including write/edit/copy/reflow/history/resize and any current-mode dependence, before changing cell layout.
+      recommendation: Do not add blanket raw-byte and charset fields. Keep legacy mapping unqualified until scope decision.
+        A Ghostty-style deterministic ASCII projection is an explicit limited compatibility alternative, not FULL exact xterm
+        semantics; if exact compatibility is required first investigate a compact derived representation.
+      decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
