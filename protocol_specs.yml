@@ -6828,6 +6828,13 @@ specifications:
       source_note: Pinned xterm uses different macro table [200,200,450,300,250,183,150,130,112,100] vs horizontal 100; P2 non-1
         background register 0. Do not replace source macro values or reinterpret raster extents as clipping limits.
       pending_reconciliation: sixel-original-macro-aspect-vs-xterm
+      pinned_xterm_rendered_aspect_observation:
+        implementation: xterm_snapshots
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: graphics_sixel.c:409-456,214-272,298-306
+        observation: The macro table is an intermediate representation only. update_sixel_aspect unconditionally overrides final
+          pixw and pixh to 1 at lines 268-272 (#if 1 FIXME). The checked renderer therefore does not implement the documented
+          non-square aspect ratios.
     - id: regis-envelope
       section: Chapter 1 / Entering and Exiting ReGIS, printed pp.13-14
       level: defined
@@ -8283,21 +8290,28 @@ discovery_catalogues:
         entry_id: private-mode-46-h-line-951
         source_line: 951
         wire: CSI ? 46 h
-      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300 mode table
-        independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference consensus resolves this
-        automatically.
-      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
-        and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
+      reason: The pinned xterm table itself prints both meanings for identical DEC private mode numbers. The original DEC VT300
+        mode table independently confirms graphics printing. Neither the two-way ECMA-vs-xterm rule nor unmeasured reference
+        consensus resolves this automatically.
+      next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical
+        dimensions and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining
+        original DEC semantics.
       decision: null
       bounded_reference_sweep:
         consulted:
         - Foot private-mode switch in csi.c
         - Ghostty terminal/modes.zig private-mode registry
         - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
-        result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source locations. Do
-          not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
-        significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent adoption
-          is not yet established.
+        result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source
+          locations. Do not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
+        significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent
+          adoption is not yet established.
+      followup_evidence:
+      - implementation: contour
+        revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+        source: src/vtbackend/primitives.h:881,941; Terminal.cpp:2470-2475
+        observation: Mode 46 globally enables/disables debug logging categories, not established equivalent to xterm session
+          byte logging or DEC printer background. No complete semantic consensus.
     - id: vt52-exit-restored-conformance-level
       status: material-vt52-exit-conformance-level-difference-by-hardware-profile
       wire: ESC <
@@ -8311,15 +8325,21 @@ discovery_catalogues:
       xterm_implementation:
         revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
         source: charproc.c:5039-5059
-        meaning: On VT52 exit, xterm explicitly calls set_vtXX_level(screen,1) and restores selected saved flags and charsets, not proven
-          to restore prior VT400 level.
-      material_difference: For terminal emulation profiles newer than VT100, returning to VT100-level ANSI rather than the prior higher DEC
-        level may change the available protocol after ESC <.
-      scope_limit: Keep VT100 and later VT300/VT420 historical behavior distinct; do not assert this affects Howl runtime or that VT52 emulation
-        is yet selected for implementation.
-      question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC author manuals,
-        or enter VT100-level ANSI mode as in pinned xterm?
+        meaning: On VT52 exit, xterm explicitly calls set_vtXX_level(screen,1) and restores selected saved flags and charsets,
+          not proven to restore prior VT400 level.
+      material_difference: For terminal emulation profiles newer than VT100, returning to VT100-level ANSI rather than the prior
+        higher DEC level may change the available protocol after ESC <.
+      scope_limit: Keep VT100 and later VT300/VT420 historical behavior distinct; do not assert this affects Howl runtime or
+        that VT52 emulation is yet selected for implementation.
+      question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC author
+        manuals, or enter VT100-level ANSI mode as in pinned xterm?
       decision: null
+      followup_evidence:
+      - implementation: windows_terminal
+        revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        source: src/terminal/parser/OutputStateMachineEngine.cpp:378-400; adapter/adaptDispatch.cpp:2062-2075
+        observation: VT52 exit toggles ANSI parser and input mode; resets designated character sets via SoftReset. No higher
+          DEC conformance-level restoration behavior established. Not a vote for xterm level 1 or original previous-level restoration.
     - id: docs-return-vs-xterm-default-charset
       status: material-original-source-versus-xterm-awaiting-scope
       wire: ESC % @
@@ -8335,6 +8355,11 @@ discovery_catalogues:
       question: Choose intended coding-switch profile only after verifying original registered UTF-8 coding sequence and relevant
         modern references.
       decision: null
+      followup_evidence:
+      - source: iso_ir196.utf8-with-standard-return
+        observation: Original registration 196 visually confirms ESC % G designates UTF-8 with standard return, without specified
+          implementation level. ECMA-35 standard return therefore restores prior code state; not inherently Latin-1. Native
+          UTF-8-only scope vs actual coding switching still requires choice.
     - id: decswbv-zero-volume-polarity
       status: material-original-source-versus-xterm-awaiting-scope
       wire: CSI Ps SP t
@@ -8392,6 +8417,20 @@ discovery_catalogues:
           by trimmed total.
       question: Verify relevant modern reference implementations and actual checksum behavior before choosing mask semantics.
       decision: null
+      followup_evidence:
+      - implementation: ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source: src/terminal/xt_checksum.zig:20-57,123-153
+        observation: Explicitly follows xterm code rather than contradictory docs. Bit 3 makes unwritten cells eligible as spaces,
+          still subject to trim; bit 4 selects full-codepoint mapping, excludes combining additions. Combining codepoints added
+          only when bit 4 clear and no-trim sum selected. Implementation intentionally modeled on xterm; not independent algorithm
+          origin.
+      - implementation: xterm_snapshots
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: ptyx.h:488-496; screen.c:3177-3195,3236-3264
+        observation: Bit 3 permits undrawn cells as spaces, also admitted by bit 2. Trimmed result can omit spaces. Bit 4 selects
+          charData/full codepoint rather than DEC mapping; combining data only contributes to untrimmed total when bit 4 clear.
+          Special values may be skipped.
     - id: osc3-cde-directory-vs-xterm-xproperty
       status: material-source-difference-awaiting-scope
       wire: OSC 3 ; Pt BEL
@@ -8420,6 +8459,24 @@ discovery_catalogues:
       question: If macro aspect-ratio behavior is targeted, qualify original source and modern references, including final aspect
         calculation and raster overrides; no silent ratio reinterpretation.
       decision: null
+      followup_evidence:
+      - implementation: xterm_snapshots
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: graphics_sixel.c:409-456,214-272,298-306
+        observation: The macro table is an intermediate representation only. update_sixel_aspect unconditionally overrides final
+          pixw and pixh to 1 at lines 268-272 (#if 1 FIXME). The checked renderer therefore does not implement the documented
+          non-square aspect ratios.
+      - implementation: foot
+        revision: cb2771788998f6a6288e2de8273c55a8214551e0
+        source: sixel.c:66-106,1659-1672,1701-1720
+        observation: For macro values 0..9 uses original DEC vertical ratio 2/2/5/3/3/2/2/1/1/1 with horizontal 1; repeats physical
+          pixels according to pan/pad. Later explicit raster attributes have separate limitations and extent scaling.
+      - implementation: windows_terminal
+        revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        source: src/terminal/adapter/SixelParser.cpp:310-352,777-816
+        observation: At conformance >=3 uses the same original DEC macro table and repeats pixels by the selected aspect. Lower
+          conformance uses fixed 2:1. Explicit raster rounding, background dimensions and invalid macro values differ; not selected
+          by this evidence.
     - id: tek-hardcopy-vs-code-file
       status: material-source-difference-awaiting-scope
       wire: ESC ETB
@@ -8474,6 +8531,11 @@ discovery_catalogues:
         meaning: Xterm selects toolbar visibility when compiled.
       question: Choose intended host UI effect or scope exclusion if this historical mode is targeted.
       decision: null
+      followup_evidence:
+      - source: att_610.setup-private-profile-context
+        observation: Original AT&T 610 Appendix D pp.D-2/D-3 assigns SET 10 blank screen and RESET unblank screen, a third profile.
+          Source-specific mode 13 labels and mode 14 cartridge status also differ from xterm read-only blink queries. No new
+          target choice implied.
     - id: rxvt-mode35-shift-actions-vs-font-only
       status: material-source-difference-awaiting-scope
       wire: CSI ? 35 h/l
@@ -8550,6 +8612,12 @@ discovery_catalogues:
       question: Select portable name semantics, legacy aliases and exact unknown/empty handling. Preserve original source, not
         blanket Kitty parity.
       decision: null
+      followup_evidence:
+      - implementation: ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source: src/terminal/osc/parsers/mouse_shape.zig:8-25; stream.zig:3019-3032; stream_terminal.zig:758-759
+        observation: Bare OSC 22 empty payload resets pointer to text; unknown names ignored; no proof of Kitty stack/query
+          protocol here. Supports portable invalid-no-mutation behavior; default shape value and stack lifetime still differ.
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
