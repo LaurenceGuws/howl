@@ -51,7 +51,7 @@ test_location_mapping:
     commit: 3bad29180ac08b486506ffc36c03845f7708eb33
     path: protocol_coverage.yml
     sha256: 94f4cabf656482255bbeb70b65ca37d2e3ad8f9ac5e93883436cd19277473411
-  declarations_checked_at: 2c72379c9836ba8f163cb7761614dbb951ffbfe7
+  declarations_checked_at: c518d500bd8f4601badefba2b8f98513c218319d
   meaning: Candidate test locations for navigating the implementation. Wire-family matching preserves command class, leader
     and intermediates, not complete grammar or behavior. Protocol-family locations are shared starting points, not proof
     of the individual clause. Accepted-decision locations refer to existing separately qualified assessments. Test declarations
@@ -128,6 +128,10 @@ specifications:
         legacy_records:
         - iterm2.c0.bs
         - kitty.c0.bs
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: ordinary and extended reverse wrap share bounded BS and CUB movement
+        relation: protocol-family
+        note: Narrow regression evidence at c518d50; not whole-clause qualification.
     - id: c0-cr
       section: 8.3.15
       level: defined
@@ -408,6 +412,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.csi.cub
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: ordinary and extended reverse wrap share bounded BS and CUB movement
+        relation: protocol-family
+        note: Narrow regression evidence at c518d50; not whole-clause qualification.
     - id: cha
       section: 8.3.9
       level: defined
@@ -1461,6 +1469,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - libvterm.csi.hpb
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: ordinary and extended reverse wrap share bounded BS and CUB movement
+        relation: protocol-family
+        note: Narrow regression evidence at c518d50; not whole-clause qualification.
     - id: hpr
       section: 8.3.59
       level: defined
@@ -3891,6 +3903,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.alt_1047
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: mode 1047 clears only alternate cells and placements on exit
+        relation: protocol-family
+        note: Narrow regression evidence at f8235b9; not whole-clause qualification.
     - id: alternate-cursor-save
       section: The Alternate Screen Buffer, lines 2785-2810
       level: defined
@@ -4307,8 +4323,8 @@ specifications:
       section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
       level: defined
       wire: CSI ? 1045 h / CSI ? 1045 l
-      rule: SET enables extended reverse-wraparound (XTREVWRAP2); RESET disables. Distinct from mode 45, whose competing DEC
-        printer interpretation remains pending.
+      rule: SET enables extended reverse-wraparound (XTREVWRAP2); RESET disables. Distinct from mode 45; its selected interpretation
+        and competing DEC printer profile are retained in the accepted reconciliation.
       source_semantics:
         selector: 1045
         section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
@@ -4330,6 +4346,11 @@ specifications:
         uses margin-aware bounds. This is observed source behavior, not a complete target contract.'
       accepted_reconciliations:
       - dec-vt3xx-graphics-print-vs-xterm-mode-45
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: ordinary and extended reverse wrap share bounded BS and CUB movement
+        relation: protocol-family
+        note: Narrow regression evidence at c518d50; not whole-clause qualification.
     - id: keyboard-termcap
       section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
       level: defined
@@ -5110,6 +5131,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.csi.modify_other_keys
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: modifyOtherKeys rejects unrepresentable values across every split
+        relation: protocol-family
+        note: Narrow regression evidence at a351e4f; not whole-clause qualification.
     - id: key-modifier-disable
       section: Functions using CSI / disable key modifier options, lines 1398-1418
       level: defined
@@ -5718,6 +5743,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - iterm2.mode.reverse_wrap
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: ordinary and extended reverse wrap share bounded BS and CUB movement
+        relation: protocol-family
+        note: Narrow regression evidence at c518d50; not whole-clause qualification.
     - id: alternate-buffer-legacy
       section: DECSET/DECRST 47, ctlseqs 952/1099
       level: defined
@@ -5763,6 +5792,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.alt_47
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: mode 1047 clears only alternate cells and placements on exit
+        relation: protocol-family
+        note: Narrow regression evidence at f8235b9; not whole-clause qualification.
     - id: pointer-shape-x11
       section: OSC 22, ctlseqs 2117-2120
       level: defined
@@ -5897,8 +5930,9 @@ specifications:
     - id: flags
       section: Progressive enhancement
       level: defined
-      wire: CSI flags ; mode u
-      rule: Sets, adds or clears the five progressive enhancement flags according to the requested mode.
+      wire: CSI = flags [ ; mode ] u
+      rule: 'Sets, adds or clears the five progressive enhancement flags according to mode: 1 (default) replaces the flags,
+        2 sets specified bits, 3 clears specified bits.'
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard stack has exact flags depth mutation and replies
@@ -5916,6 +5950,10 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard flags stay separate across alternate screen
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
+        relation: protocol-family
+        note: Narrow regression evidence at fefdce7; not whole-clause qualification.
     - id: query
       section: Progressive enhancement
       level: defined
@@ -5931,6 +5969,10 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard query preserves full pending output on failure
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
+        relation: protocol-family
+        note: Narrow regression evidence at fefdce7; not whole-clause qualification.
     - id: stack
       section: Progressive enhancement
       level: defined
@@ -7084,6 +7126,14 @@ specifications:
       - file: howl-vt/src/sixel.zig
         test: Sixel decoder releases every allocation failure boundary
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Sixel discard without cell geometry releases decoded pixels'
+        relation: protocol-family
+        note: Narrow regression evidence at 5cca2e7; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Sixel discard at full plane releases decoded pixels'
+        relation: protocol-family
+        note: Narrow regression evidence at 5cca2e7; not whole-clause qualification.
     - id: six-dots
       section: 2.14 / Sixel Data Format, page 96
       level: defined
@@ -7197,10 +7247,11 @@ specifications:
       original_parameters:
         source: VT420 Programmer Reference Manual (Feb 1992), page 133
         gate: DECVSSM (CSI ? 69 h); xterm names this setting DECLRMM
-        constraints: Pl defaults to 1; Pr defaults to current page width (80 or 132 in original). Pl must be less than Pr; region width at
-          least 2 columns and at most the page width.
+        constraints: Pl defaults to 1; Pr defaults to current page width (80 or 132 in original). Pl must be less than Pr; region
+          width at least 2 columns and at most the page width.
         effect: Sets horizontal scrolling margins and homes cursor to row 1, column 1 of the page.
-        xterm_context: Source line 1586 admits DECSLRM only when DECLRMM mode is enabled; the implementation is not assumed source-complete.
+        xterm_context: Source line 1586 admits DECSLRM only when DECLRMM mode is enabled; the implementation is not assumed
+          source-complete.
       requires_mode: dec_vt420.vertical-split-screen-mode
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
@@ -7209,10 +7260,11 @@ specifications:
         legacy_records:
         - libvterm.csi.decslrm
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: parameterless CSI s remains a savepoint under DECLRMM'
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
         relation: protocol-family
         legacy_records:
         - iterm2.csi.save_or_margins
+        note: Historical test expectation superseded by the accepted DECLRMM/SCO dispatch choice, fefdce7.
     - id: top-bottom-margins
       section: Page Memory / Set Top and Bottom Margins, p134
       level: defined
@@ -7881,6 +7933,10 @@ specifications:
         - libvterm.esc.decsc
         - iterm2.esc.decsc
         - kitty.esc.decsc
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
+        relation: protocol-family
+        note: Narrow regression evidence at fefdce7; not whole-clause qualification.
     - id: restore-cursor
       section: Cursor and Presentation State / DECRC
       level: defined
@@ -7901,6 +7957,10 @@ specifications:
         - libvterm.esc.decrc
         - iterm2.esc.decrc
         - kitty.esc.decrc
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
+        relation: protocol-family
+        note: Narrow regression evidence at fefdce7; not whole-clause qualification.
     - id: request-status-string
       section: Reports / Request Selection or Setting
       level: defined
@@ -10249,6 +10309,14 @@ specifications:
       - file: howl-vt/src/sixel.zig
         test: Sixel decoder releases every allocation failure boundary
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Sixel discard without cell geometry releases decoded pixels'
+        relation: protocol-family
+        note: Narrow regression evidence at 5cca2e7; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Sixel discard at full plane releases decoded pixels'
+        relation: protocol-family
+        note: Narrow regression evidence at 5cca2e7; not whole-clause qualification.
     - id: regis-envelope
       section: Chapter 1 / Entering and Exiting ReGIS, printed pp.13-14
       level: defined
@@ -11500,10 +11568,11 @@ specifications:
       - sco-cursor-position-vs-dec-state
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: parameterless CSI s remains a savepoint under DECLRMM'
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
         relation: protocol-family
         legacy_records:
         - iterm2.csi.save_or_margins
+        note: Historical test expectation superseded by the accepted DECLRMM/SCO dispatch choice, fefdce7.
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: cursor savepoints retain exact bank reset and resize state'
         relation: protocol-family
@@ -11534,6 +11603,10 @@ specifications:
         legacy_records:
         - iterm2.csi.restore_cursor
         - kitty.csi.restore_cursor
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
+        relation: protocol-family
+        note: Narrow regression evidence at fefdce7; not whole-clause qualification.
   rxvt:
     title: rxvt reference and implementation
     author: rxvt authors
