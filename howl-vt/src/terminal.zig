@@ -387,7 +387,7 @@ const SemanticEvent = union(enum) {
     xtversion,
     xttitlepos,
     xtchecksum: u16,
-    rect_checksum_request: struct { request_id: u16, page: u16, area: RectArea },
+    rect_checksum_request: struct { request_id: u16, area: RectArea },
     selected_graphic_rendition_report: RectArea,
     screen_extent_report,
     parameters_report: u16,
@@ -700,10 +700,21 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
         return SemanticEvent{ .container_request = .{ .resize_rows = @intCast(params[0]) } };
     }
     if (final != 'y') return null;
-    const area = rectArea(params, 2) orelse return null;
+    // Nonzero page selectors clamp to the sole active page. Keep the
+    // existing rectangle interpretation for page zero until its competing
+    // DEC all-pages semantics are resolved.
+    const bottom = paramAtOrDefault0(params, 4);
+    const right = paramAtOrDefault0(params, 5);
+    const area: RectArea = .{
+        .top = paramAtOrDefault1(params, 2) - 1,
+        .left = paramAtOrDefault1(params, 3) - 1,
+        .bottom = if (bottom == 0) null else bottom - 1,
+        .right = if (right == 0) null else right - 1,
+    };
+    if (area.bottom) |value| if (area.top > value) return null;
+    if (area.right) |value| if (area.left > value) return null;
     return SemanticEvent{ .rect_checksum_request = .{
         .request_id = paramAtOrDefault0(params, 0),
-        .page = paramAtOrDefault1(params, 1),
         .area = area,
     } };
 }
@@ -2439,7 +2450,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             reply_buffer,
             encode_buf,
             req.request_id,
-            computeRectChecksum(active, vt.xtchecksum_flags, req.page, req.area),
+            computeRectChecksum(active, vt.xtchecksum_flags, req.area),
         ),
         .selected_graphic_rendition_report => |area| try appendSelectedGraphicRenditionReport(
             reply_buffer,
@@ -2885,8 +2896,7 @@ fn appendSgrAttrs(
     try output.append("m");
 }
 
-fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, page: u16, area: RectArea) u16 {
-    if (page != 1) return 0;
+fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, area: RectArea) u16 {
     const bounds = screen.rectBounds(area) orelse return 0;
     const no_trim = (xtchecksum_flags & (1 << 2)) != 0;
     const include_undrawn = no_trim or (xtchecksum_flags & (1 << 3)) != 0;
@@ -7451,6 +7461,7 @@ pub const Terminal = struct {
         self.stream_state.parser.resetTextEncoding();
         self.stream_state.pending_input = null;
         self.reply_buffer.resetFraming();
+        self.xtchecksum_flags = 0;
         self.kitty = .{};
         self.locator.reset();
         self.consequences.resetTerminal();
@@ -7488,6 +7499,10 @@ pub const Terminal = struct {
         if (self.modes.mouse_protocol != .none) changed = true;
         self.modes.mouse_protocol = .none;
         changed = self.reply_buffer.setEightBitControls(false) or changed;
+        if (self.xtchecksum_flags != 0) {
+            self.xtchecksum_flags = 0;
+            changed = true;
+        }
         changed = self.charset.reset() or changed;
         changed = self.kitty.resetTerminalState() or changed;
         return changed;
@@ -11062,7 +11077,8 @@ const ReportRoutingOwnerTests = struct {
         params[5] = 5;
         const crc = routeParserEvent(ParserEvent{ .style_change = .{ .final = 'y', .params = params[0..], .separators = empty_separators, .param_count = 6, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).?.rect_checksum_request;
         try std.testing.expectEqual(@as(u16, 7), crc.request_id);
-        try std.testing.expectEqual(@as(u16, 1), crc.page);
+        try std.testing.expectEqual(@as(u16, 1), crc.area.top);
+        try std.testing.expectEqual(@as(u16, 2), crc.area.left);
         try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('x', 1, 0, 1)).?.parameters_report);
         intermediates[0] = '#';
         try std.testing.expect(routeParserEvent(ParserEvent{ .style_change = .{ .final = 'R', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).? == .xtreportcolors);

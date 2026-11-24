@@ -2203,6 +2203,39 @@ test "checksum arithmetic uses source video weights and modular negation" {
     try std.testing.expectEqualStrings("\x1bP3!~0083\x1b\\", pendingOutput(&terminal));
 }
 
+test "checksum resolves nonzero page selectors and zero rectangle defaults" {
+    const cases = [_]struct { request: []const u8, reply: []const u8 }{
+        .{ .request = "\x1b[7;1;1;2;2;3*y", .reply = "\x1bP7!~0110\x1b\\" },
+        .{ .request = "\x1b[7;2;1;2;2;3*y", .reply = "\x1bP7!~0110\x1b\\" },
+        .{ .request = "\x9b7;65535;1;2;2;3*y", .reply = "\x1bP7!~0110\x1b\\" },
+        .{ .request = "\x1b[8;1;2;2;0;0*y", .reply = "\x1bP8!~008B\x1b\\" },
+        .{ .request = "\x1b[8;1;2;2*y", .reply = "\x1bP8!~008B\x1b\\" },
+    };
+    for (cases) |case| {
+        for (0..case.request.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+            defer terminal.deinit();
+            try feed(&terminal, "ABCDEF\x1b[3#y");
+            try feed(&terminal, case.request[0..split]);
+            try feed(&terminal, case.request[split..]);
+            try std.testing.expectEqualStrings(case.reply, pendingOutput(&terminal));
+        }
+    }
+}
+
+test "checksum mode resets to its default on RIS and DECSTR" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "AB\x1b[1#y\x1b[1;1;1;1;1;2*y");
+    try std.testing.expectEqualStrings("\x1bP1!~0083\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[!p\x1b[2;1;1;1;1;2*y");
+    try std.testing.expectEqualStrings("\x1bP2!~FF7D\x1b\\", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[1#y\x1bcAB\x1b[3;1;1;1;1;2*y");
+    try std.testing.expectEqualStrings("\x1bP3!~FF7D\x1b\\", pendingOutput(&terminal));
+}
+
 test "locator requests reply unavailable, then current position, then disable one-shot" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
