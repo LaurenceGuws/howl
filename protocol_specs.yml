@@ -4002,7 +4002,8 @@ specifications:
     revision: second edition, February 1992, EK-VT420-RM.002
     url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
     snapshot_sha256: 6edca845f10c8fc10be87f111d0ad95130d6aa15a09de578bbb8d5133511ecd2
-    scope: Original DEC VT400 operations; existing ECMA-48 functions are not redefined here
+    scope: Original DEC VT400 operations; existing ECMA-48 functions are not redefined here. Includes selected original mode,
+      keypad, geometry, report, presentation-state and UDK families.
     clauses:
     - id: column-mode
       section: Page Memory / Selecting 80 or 132 Columns, p130
@@ -4448,13 +4449,49 @@ specifications:
         conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements all defaults,
           side effects, sizing or response semantics.
     - id: app-keypad
-      section: Keyboard / Keypad Application and Numeric Modes, p192
+      section: Chapter 11 / Keypad Application and Numeric Modes, printed pp.192-193; DEC VT100 Tables 3-7/3-8, transcribed
+        PDF pp.121-122
       level: defined
       wire: ESC = / ESC >
-      rule: DECKPAM and DECKPNM select application or numeric keypad behavior.
+      rule: DECKPAM selects application sequences, DECKPNM selects numeric keypad characters; VT420 resets/powers up in numeric
+        mode. PF1..PF4 send application sequences in either mode. Original VT100 ANSI and VT52 keypad tables define distinct
+        prefix encodings, not a claim that a modern PC keypad has the same mapping.
       related_dec_private_mode: dec_vt420.numeric-keypad-mode
-      wire_relation: ESC = and ESC > directly select application/numeric keypad state; CSI ? 66 h/l selects the same state using a DEC-private
-        mode that supports DECRQM/DECRPM. They are distinct valid commands.
+      wire_relation: ESC = and ESC > directly select application/numeric keypad state; CSI ? 66 h/l selects the same state using
+        a DEC-private mode that supports DECRQM/DECRPM. They are distinct valid commands.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-5948c81512
+        source_line: 401
+        wire: ESC =
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-c378320387
+        source_line: 403
+        wire: ESC >
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4922-4935; VTPrsTbl.c:9643-9647; xterm ctlseqs 401,403,3390,3392
+      original_vt100_key_table:
+        source: DEC VT100 Tables 3-7/3-8, transcribed PDF pp.121-122
+        numeric_mode: Digits 0..9, minus, comma, period are ASCII; Enter acts as RETURN. PF1..PF4 always application sequences.
+        ansi_application:
+          prefix: ESC O
+          digits_0_through_9: p q r s t u v w x y
+          minus: m
+          comma: l
+          period: n
+          enter: M
+          PF1_through_PF4: P Q R S
+        vt52_application:
+          prefix: ESC ?
+          digits_0_through_9: p q r s t u v w x y
+          minus: m
+          comma: l
+          period: n
+          enter: M
+          PF1_through_PF4: ESC P / ESC Q / ESC R / ESC S
+      source_note: Pinned xterm keypad state is selected by both ESC controls and mode 66; xterm PC-style mapping and NumLock
+        overrides are separately documented. Original key tables are not silently replaced with the modern mapping.
     - id: save-cursor
       section: Cursor and Presentation State / DECSC
       level: defined
@@ -4842,6 +4879,414 @@ specifications:
       - dec_vt420.media-copy-dec-private-extended
       - dec_vt240.media-copy-dec-private
       implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not yet triaged.
+    - id: private-mode-set
+      section: Chapter 12 / Setting or Resetting Modes, printed pp.263-265
+      level: defined
+      wire: CSI ? Pd [ ; Pd ... ] h
+      rule: Set one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own
+        unprefixed SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions
+        and supported defaults belong to their specific original mode clauses.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-7f26dc7a37
+        source_line: 911
+        wire: CSI ? Pm h
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4809-4817 and dpmodes private-mode dispatch
+    - id: private-mode-reset
+      section: Chapter 12 / Setting or Resetting Modes, printed pp.263-265
+      level: defined
+      wire: CSI ? Pd [ ; Pd ... ] l
+      rule: Reset one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own
+        unprefixed SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions
+        and supported defaults belong to their specific original mode clauses.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-8326970770
+        source_line: 1062
+        wire: CSI ? Pm l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4809-4817 and dpmodes private-mode dispatch
+    - id: send-seven-bit-c1
+      section: Chapter 4 / Sending C1 Controls to the Host, printed p.88
+      level: defined
+      wire: ESC SP F
+      rule: Select 7-bit escape equivalents for C1 controls transmitted to host in VT400 mode. Already selected mode unchanged.
+        VT100 and VT52 mode ignore these selectors. Does not by itself change admission of inbound C1 controls.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-6436a8e3dc
+        source_line: 282
+        wire: ESC SP F
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6121-6127
+    - id: send-eight-bit-c1
+      section: Chapter 4 / Sending C1 Controls to the Host, printed p.88
+      level: defined
+      wire: ESC SP G
+      rule: Select single 8-bit C1 bytes for C1 controls transmitted to host in VT400 mode. Already selected mode unchanged.
+        VT100 and VT52 mode ignore these selectors. Does not by itself change admission of inbound C1 controls.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-41198bce8d
+        source_line: 287
+        wire: ESC SP G
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6129-6135
+    - id: scrolling-mode
+      section: Chapter 4 p.89 (DECNRCM) or Chapter 11 pp.216-217 (DECSCNM/DECSCLM); VT100 Chapter 3 for modes 4/5
+      level: defined
+      wire: CSI ? 4 h / CSI ? 4 l
+      rule: SET smooth scroll, RESET jump scroll. Original VT100 smooth maximum six lines/second; VT420 default smooth, with
+        slow/fast display SET-UP choices, and jump as fast as data arrives. This selects display scrolling behavior; do not
+        import physical scan timing into a modern compositor without scope selection.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-4-h-line-917
+        source_line: 917
+        wire: CSI ? 4 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-4-l-line-1067
+        source_line: 1067
+        wire: CSI ? 4 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7575-7584
+    - id: screen-video-mode
+      section: Chapter 4 p.89 (DECNRCM) or Chapter 11 pp.216-217 (DECSCNM/DECSCLM); VT100 Chapter 3 for modes 4/5
+      level: defined
+      wire: CSI ? 5 h / CSI ? 5 l
+      rule: SET dark characters on light background; RESET light characters on dark background (VT420 default). Original DEC
+        explicitly says this affects appearance, not data in page memory. Distinct from cell-level inverse rendition.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-5-h-line-918
+        source_line: 918
+        wire: CSI ? 5 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-5-l-line-1068
+        source_line: 1068
+        wire: CSI ? 5 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7585-7591
+    - id: national-replacement-mode
+      section: Chapter 4 p.89 (DECNRCM) or Chapter 11 pp.216-217 (DECSCNM/DECSCLM); VT100 Chapter 3 for modes 4/5
+      level: defined
+      wire: CSI ? 42 h / CSI ? 42 l
+      rule: 'Worldwide VT420 model: SET national replacement mode, 7-bit input/output and one NRC set, resets character-set
+        designations to power-up/reset defaults. RESET multinational, 7/8-bit DEC Multinational or ISO Latin-1. Default multinational;
+        terminal ignores mode with North American/UK keyboard selected in SET-UP.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-42-h-line-939
+        source_line: 939
+        wire: CSI ? 42 h
+      - catalogue: xterm_ctlseqs
+        entry_id: private-mode-42-l-line-1087
+        source_line: 1087
+        wire: CSI ? 42 l
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:7675-7681
+    - id: select-conformance-level
+      section: Chapter 4 / Selecting an Operating Level (DECSCL), printed p.87
+      level: defined
+      wire: CSI Pl [ ; Pc ] " p
+      rule: VT420 selects level 1 with Pl=61; Pl=62,63,64 select VT400-compatible levels (level 4 includes 2 and 3). For higher
+        levels omitted Pc or 0/2 selects 8-bit transmission, 1 selects 7-bit; factory default is level 4 with 7-bit controls.
+        Original manual explicitly requires hard reset (RIS) when changing operating level.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5081-5126,14314-14321
+      pending_reconciliation: decscl-hard-vs-soft-reset
+      source_note: Pinned xterm explicitly invokes ReallyReset(xw,False,False), a soft reset retaining saved lines. Its source
+        comment cites VT220/DEC STD-070 soft reset versus VT300/420/520 hard reset; only the pinned VT420 manual and actual
+        xterm branch were independently verified here. Pl=65 is a later profile, not a VT420 selector.
+    - id: soft-terminal-reset
+      section: Chapter 13 / DECSTR, printed pp.285-286, Table 13-1
+      level: defined
+      wire: CSI ! p
+      rule: VT400-mode soft reset changes only the functions listed in Table 13-1 to the stated defaults. Do not conflate with
+        RIS hard reset or silently reset unrelated modes. SET-UP Reset differs by not resetting DECNRCM.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-1ddd518ae0
+        source_line: 1473
+        wire: CSI ! p
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6147-6150,14314-14372
+      original_reset_states:
+        DECTCEM: cursor enabled
+        IRM: replace
+        DECOM: absolute
+        DECAWM: no autowrap
+        DECNRCM: multinational
+        KAM: unlocked
+        DECNKM: numeric
+        DECCKM: normal
+        DECSTBM: top 1, bottom page length
+        G0_G1_G2_G3_GL_GR: VT420 defaults
+        SGR: normal rendition
+        DECSCA: normal erasable
+        DECSC: home with VT420 defaults
+        DECAUPSS: SET-UP selected set
+        DECSASD: main display (first 24 lines)
+        DECKPM: send character codes
+        DECSMKR: modifier keys default functions
+      source_note: Pinned xterm invokes its soft reset path; it additionally calls ResetAnsiColorRequest and uses configured
+        defaults for cursor/keypad. The original exact reset scope remains preserved, not claimed equivalent.
+    - id: columns-per-page
+      section: Chapter 6 / DECSCPP, printed pp.130-131
+      level: defined
+      wire: CSI Ps $ |
+      rule: Omitted/0/80 selects 80 columns per page; 132 selects 132. Default 80. Sets every page width and matching font without
+        clearing page memory or resetting scrolling regions (unlike DECCOLM). Cursor remains unless beyond new right edge, then
+        clamps. Columns lost when shrinking 132 to 80 are destructive. Page geometry is not a host-pixel size.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-5bce18dca3
+        source_line: 1892
+        wire: CSI Ps $ |
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5712-5738
+      source_note: Pinned xterm uses a resize request and cursor clamp. Multi-page memory and font consequences are not established.
+    - id: lines-per-screen
+      section: Chapter 11 / DECSNLS, printed p.218
+      level: defined
+      wire: CSI Pn * |
+      rule: Pn=1..255 requests maximum display lines. Original VT420 supports 24,39,49 screen lines plus status line via three
+        font heights; choose next higher supported value or highest if above maximum. Active session space and current page
+        size further limit displayed lines; e.g. page 36 with display 39 leaves 3 blank lines. Do not reinterpret these as pixel
+        dimensions or arbitrary page-resize quotas.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-43f1b260e7
+        source_line: 1938
+        wire: CSI Ps * |
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5740-5749
+      source_note: Pinned xterm directly requests host resize for 1..255 under window policy; not original discrete font/viewport
+        behavior.
+    - id: request-displayed-extent
+      section: Chapter 12 / DECRQDE and DECRPDE, printed pp.271-272
+      level: defined
+      wire: CSI " v
+      rule: 'Requests how much of the current page is displayed in the active session window, excluding status line. Reply fields:
+        displayed line count, displayed column count, leftmost page column, top page line, page number. Session windows may
+        display only part of a page.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-dd97c5f289
+        source_line: 1736
+        wire: CSI " v
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5751-5766
+      reply: CSI Ph ; Pw ; Pml ; Pmt ; Pmp " w
+      source_note: Pinned xterm reports MaxRows,MaxCols,1,1,1; single-page subset, not a multipage display contract.
+    - id: request-rectangle-checksum
+      section: Chapter 12 / DECRQCRA and DECCKSR, printed pp.243-244
+      level: defined
+      wire: CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y
+      rule: VT400-mode request labels checksum by Pid. Page Pp=0 or omitted means all pages and ignores rectangle operands;
+        above available page count means last page. For a specified page, rectangle coordinates obey DECOM, top<=bottom and
+        left<=right; defaults printed top=1,bottom=page length,right=page width (left default not explicitly listed in the checked
+        text). Omitted rectangle reports whole selected page. Response exactly four uppercase hexadecimal digits; this section
+        does not specify the complete checksum arithmetic.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d3b76a1dbb
+        source_line: 1824
+        wire: CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5619-5639; screen.c:xtermCheckRect
+      reply: DCS Pid ! ~ HHHH ST
+      source_note: Pinned xterm uses window permission, computes a rectangular checksum and masks to 16 bits. Do not infer original
+        arithmetic, page semantics or admissible checksum extensions from that code.
+    - id: active-status-display
+      section: Chapter 11 / DECSASD, printed pp.219-220
+      level: defined
+      wire: CSI Ps $ }
+      rule: VT400 mode. Ps=0 default routes display data to main display only; Ps=1 routes to status line only. This selects
+        write destination, not visibility or status text content.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-d29e668ba9
+        source_line: 1984
+        wire: CSI Ps $ }
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6015-6020
+    - id: status-display-type
+      section: Chapter 11 / DECSSDT, printed pp.220-221
+      level: defined
+      wire: CSI Ps $ ~
+      rule: VT400 mode. Ps=0 no status line (parameter default; line becomes extra user-window line), 1 indicator (factory display
+        default), 2 host-writable. Switching indicator to host-writable starts empty. Main/status share character sets, scroll
+        mode, insert mode, tabs and autowrap; only column cursor operands act on status line; DECANM ignored there, DECSCL/DECSTR
+        exit it, RIS erases and exits. SET-UP always shows indicator.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-0cc14c89d4
+        source_line: 1992
+        wire: CSI Ps $ ~
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:6022-6027
+      source_note: VT420 summary p.227 appears to print a different final character; detailed format p.220 and report query
+        table identify $ ~. Preserve detailed form, do not normalize parameter default to factory state.
+    - id: request-presentation-state
+      section: Chapter 12 / DECRQPSR and reports, printed pp.248-255
+      level: defined
+      wire: CSI Ps $ w
+      rule: VT400 mode. Ps=0 error ignored; 1 requests cursor information DECCIR; 2 requests tab-stop report DECTABSR. Report
+        is distinct from restoring state.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-f38f13fb1a
+        source_line: 1753
+        wire: CSI Ps $ w
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5768-5845
+      replies:
+        '1': DCS 1 $ u Pr ; Pc ; Pp ; Srend ; Satt ; Sflag ; Pgl ; Pgr ; Scss ; Sdesig ST
+        '2': DCS 2 $ u column[/column...] ST
+      original_cursor_report:
+        position: 1-based row, column, display page
+        bitfield_bytes: Bits 8=0,7=1,6 extension indicator; bit 5 reserved 0 in original VT420 tables. Base byte 0x40.
+        Srend: bits 1 bold,2 underline,3 blink,4 reverse video
+        Satt: bit 1 selective erase protection; bits 2..5 reserved
+        Sflag: bits 1 origin,2 SS2 pending,3 SS3 pending,4 autowrap pending
+        Pgl_Pgr: 0..3 select G0..G3
+        Scss: bits 1..4 correspond G0..G3, zero=94 chars, one=96 chars
+        Sdesig: concatenated intermediate/final designators in G0,G1,G2,G3 order, e.g. BB%5%5
+      source_note: Pinned xterm limits tab report to NPARAM and current visible columns; cursor field generation is code-specific.
+        Full report byte matrix, page count and restore interactions not proved.
+    - id: restore-presentation-state
+      section: Chapter 12 / DECRSPS, printed pp.255-257
+      level: defined
+      wire: DCS Ps $ t D...D ST
+      rule: 'Restore one presentation report per request: Ps=0 ignored error,1 DECCIR payload,2 DECTABSR payload. Use exactly
+        the original report data format (change u to t). Original DEC explicitly stops at invalid value and may leave partially
+        restored state; do not assume whole-command atomicity.'
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-47fd6579ab
+        source_line: 499
+        wire: DCS Ps $ t Pt ST
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: misc.c:5323-5343,4647-4748
+      related_command: dec_vt420.request-presentation-state
+      source_note: Pinned restore mutates fields sequentially; requires page 1, and tab restore clears existing stops before
+        processing. These observations are not proof of complete hardware restore semantics.
+    - id: assign-user-preferred-supplemental
+      section: Chapter 5 / DECAUPSS, printed p.100; Chapter 12 / report p.273
+      level: defined
+      wire: DCS Ps ! u designator ST
+      rule: 'Assign standby supplemental set; original VT420 default DEC Supplemental Graphic. Chapter 5 prints DCS 0 ! u %
+        5 ST for DEC Supplemental and DCS 0 ! u A ST for ISO Latin-1; Chapter 12 prints DCS 1 ! u A ST for ISO Latin-1 report.
+        Assignment is not designation/mapping: designate G1/G2/G3 and map GR before use. Preserve literal conflicting selector
+        values.'
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: misc.c:4812-4864,5305-5322
+      pending_reconciliation: decaupss-latin1-assignment-selector
+      source_note: Pinned xterm table uses selector 1 with A for ISO Latin-1, selector 0 with A for an undocumented ASCII variant,
+        and ignores assignment in UTF-8 mode. Other later hardware sets require their own original source.
+    - id: request-user-preferred-supplemental
+      section: Chapter 12 / DECRQUPSS, printed p.273
+      level: defined
+      wire: CSI & u
+      rule: VT400 mode query. Original report DCS 0 ! u % 5 ST for DEC Supplemental Graphic, DCS 1 ! u A ST for ISO Latin-1.
+        Query only; report selector must not be silently rewritten to match Chapter 5 assignment example.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-996d289cc3
+        source_line: 1727
+        wire: CSI & u
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5847-5862
+      related_command: dec_vt420.assign-user-preferred-supplemental
+    - id: user-defined-keys
+      section: Chapter 11 / DECUDK, printed pp.202-209, Tables 11-1/11-2
+      level: defined
+      wire: DCS Pc ; Pl [ ; Pm ] | Ky/St[;Ky/St...] ST
+      rule: VT420 VT400/PC TERM only, 48 UDKs sharing 768 bytes. Pc=0/omitted clears all before loading; 1 clears/reloads selected
+        keys in sequence with current free space. Pl=0/omitted locks after loading;1 leaves unlocked, cannot unlock already
+        locked keys except SET-UP. Pm=0/2/omitted shifted,1 unshifted,3/4 alternate unshifted/shifted PC only. Key selector
+        uses original tables; data consists of ASCII hex pairs encoding any 8-bit byte, semicolon between definitions. Invalid
+        pair stops load, keeps earlier definitions and sends rest to screen. RIS clears all UDKs. Do not confuse this with arbitrary
+        host input injection or modern key profiles.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: dcs-26ac144774
+        source_line: 434
+        wire: DCS Ps ; Ps | Pt ST
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: misc.c:4392-4429,5362-5368; ptyx.h:3514-3521
+      original_key_selectors:
+        ANSI_F1_F20:
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 23
+        - 24
+        - 25
+        - 26
+        - 28
+        - 29
+        - 31
+        - 32
+        - 33
+        - 34
+        PC_F1_F12:
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 23
+        - 24
+        PC_alternate_F3_F12:
+        - 25
+        - 26
+        - 28
+        - 29
+        - 31
+        - 32
+        - 33
+        - 34
+        - 35
+        - 36
+        source: Tables 11-1/11-2; local ANSI F1-F5 restrictions remain separately specified.
+      source_note: Pinned xterm two-parameter discovery documents a narrower form, and describes Pc=1 as Erase Below; actual
+        code clears all only for Pc=0, then parses key/hex data, accepts nonempty definitions within MAX_UDK. It does not establish
+        original 768-byte quota, lock or modifier semantics. These are original hardware requirements, not target choices.
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -5085,7 +5530,8 @@ specifications:
     revision: EK-VT100-UG; Digital original guide, PDF transcription by Edwin Rhodes (2004)
     url: https://geoffg.net/Downloads/Terminal/VT100_User_Guide.pdf
     snapshot_sha256: 91f271c2eb0b0bf6f643de42422c8a2fb3efc910b086714414833940ce3de8ef
-    scope: Selected original DEC VT100 TBC, ANSI/VT52 transition and line-size controls in Chapter 3; not the complete VT100 repertoire.
+    scope: Selected DEC VT100 Chapter 3 controls, ANSI/VT52 transition, line-size, keypad, VT52 emulation, serial parameter
+      and LED semantics; not complete.
     clauses:
     - id: tbc
       section: Chapter 3 / Valid ANSI Mode Control Sequences / TBC (PDF page 50)
@@ -5207,6 +5653,240 @@ specifications:
         behavior: Distinct line attributes for top, bottom, single and double width, gated by OPT_DEC_CHRSET and left-right margin mode.
         limits: Common repaint path changes line attributes and clamps cursor; original character-loss and exact right-margin effects are
           not established by this inspection. Command identity only, not source-complete conformance.
+    - id: index
+      section: Chapter 3 / IND (transcribed PDF p.48)
+      level: defined
+      wire: ESC D
+      rule: Move the active position downward one line without changing column. At bottom margin, scroll up. Independent of
+        LNM (line feed/new line mode). ANSI-mode format effector documented by DEC VT100; ECMA-48 fifth edition removed INDEX.
+        In VT52 mode ESC D instead moves left.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-514c28b6ff
+        source_line: 161
+        wire: ESC D
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5423-5427; VTPrsTbl.c:9653-9657
+      source_note: Original VT100 document prints ESC D, while pinned xterm identifies it as the 7-bit equivalent of C1 IND.
+        Raw C1 admission in this hardware profile is not inferred from xterm.
+      historical_c1_equivalent: 0x84 (pinned xterm C1 table; not an asserted raw-input capability of VT100)
+    - id: vt52-cursor-up
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC A
+      rule: Move up one position, same column; clamp at top margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-1a52090ba5
+        source_line: 3394
+        wire: ESC A
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9648-9652; charproc.c:3913-3917
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-cursor-down
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC B
+      rule: Move down one position, same column; clamp at bottom margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-b0bb2d201b
+        source_line: 3396
+        wire: ESC B
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9648-9652; charproc.c:3919-3923
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-cursor-right
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC C
+      rule: Move right one position; clamp at right margin.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-76873eeca9
+        source_line: 3398
+        wire: ESC C
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9648-9652; charproc.c:3925-3929
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-cursor-left
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC D
+      rule: Move left one position; clamp at left margin. In ANSI mode this wire is historical IND, not cursor-left.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9653-9657; charproc.c:3931-3935
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-graphics-enter
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC F
+      rule: Use the special graphics character set. DEC notes VT100 special graphics differ from actual VT52 graphics. Not ANSI
+        HP lower-left extension.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9653-9657; charproc.c:3775-3779
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-graphics-exit
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC G
+      rule: Use standard ASCII character set.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-3290703b9a
+        source_line: 3404
+        wire: ESC G
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9653-9657; charproc.c:3768-3774
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-home
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC H
+      rule: Move cursor to home position.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9658-9662; charproc.c:3937-3944
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-reverse-line-feed
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC I
+      rule: Move up one position, same column; at top margin scroll down.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-6d8ca0843a
+        source_line: 3408
+        wire: ESC I
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9658-9662; charproc.c:5468-5472
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-erase-display-end
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC J
+      rule: Erase from active position to end of screen, inclusive; cursor unchanged.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-10f130db3f
+        source_line: 3410
+        wire: ESC J
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9658-9662; charproc.c:3986-3991
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-erase-line-end
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC K
+      rule: Erase from active position to end of current line, inclusive; cursor unchanged.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-fb8c0ef87a
+        source_line: 3412
+        wire: ESC K
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9658-9662; charproc.c:3993-3997
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-direct-cursor-address
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC Y row-byte column-byte
+      rule: Move to row and column. Each coordinate uses one ASCII byte, 1-based number plus octal 037 (decimal 31), equivalent
+        to zero-based value plus 32; byte 0x20 denotes first row or column. Do not parse decimal CSI parameters.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-13153bf1ce
+        source_line: 3414
+        wire: ESC Y Ps Ps
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9678-9682; charproc.c:3171-3179,3720-3724
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: vt52-identify
+      section: Chapter 3 / Valid VT52 Mode Control Sequences, transcribed PDF pp.52-54
+      level: defined
+      wire: ESC Z
+      rule: Respond ESC / Z for VT100 emulating VT52. Distinct from ANSI DECID and ECMA SCI. Actual VT52 identification is a
+        distinct hardware profile; do not infer its identifier from this VT100 guide.
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: VTPrsTbl.c:9678-9682; charproc.c:4062-4089
+      mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
+    - id: request-terminal-parameters
+      section: Chapter 3 / DECREQTPARM and DECREPTPARM, transcribed PDF pp.44-45
+      level: defined
+      wire: CSI Ps x
+      rule: Ps=0 or omitted requests terminal parameters and permits unsolicited reports on leaving SET-UP. Ps=1 requests parameters
+        and permits reports only on request. At power-up/reset unsolicited reports inhibited. Report first parameter 2 (ordinary)
+        or 3 (request-only). Original serial settings are not inferred from a modern PTY.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-1e399e435a
+        source_line: 1779
+        wire: CSI Ps x
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:4788-4807
+      reply: CSI Psol ; Ppar ; Pnbits ; Pxspeed ; Prspeed ; Pclkmul ; Pflags x
+      original_report_fields:
+        sol:
+        - 2
+        - 3
+        parity:
+          '1': none
+          '4': odd
+          '5': even
+        bits:
+          '1': 8
+          '2': 7
+        speed_code_to_baud:
+          '0': 50
+          '8': 75
+          '16': 110
+          '24': 134.5
+          '32': 150
+          '40': 200
+          '48': 300
+          '56': 600
+          '64': 1200
+          '72': 1800
+          '80': 2000
+          '88': 2400
+          '96': 3600
+          '104': 4800
+          '112': 9600
+          '120': 19200
+        clock_multiplier: 1 denotes bit-rate multiplier 16
+        flags: 0..15 encode four STP-option SET-UP B block 5 switches
+      source_note: Pinned xterm reports fixed CSI (Ps+2);1;1;128;128;1;0 x only if terminal_id<200; 128 represents 38.4k in
+        this implementation, outside original VT100 speed table. No evidence that it implements unsolicited report state.
+    - id: load-leds
+      section: Chapter 3 / DECLL, transcribed PDF p.43
+      level: defined
+      wire: CSI Pm q
+      rule: Default 0 clears all four programmable keyboard LEDs L1..L4; selectors 1..4 illuminate corresponding LED. Parameter
+        list allowed. Physical hardware LEDs, not a generic cursor-style command.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: csi-7973ed5976
+        source_line: 1530
+        wire: CSI Ps q
+      xterm_reference:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5001-5027
+      source_note: Pinned xterm documents and implements a different LED profile (1 NumLock,2 CapsLock,3 ScrollLock,21..23 extinguish);
+        does not implement original L4. Preserve these as implementation-specific observations, not replacement of original
+        selector meanings.
   itu_t416:
     title: 'ITU-T Recommendation T.416 / ISO/IEC 8613-6: Character content architectures'
     author: International Telecommunication Union (ITU-T) / ISO-IEC
@@ -5498,17 +6178,6 @@ discovery_catalogues:
     warning: These are documented XTerm control inputs and responses, including older ECMA, DEC and ISO controls. This list is for finding
       protocol branches, not evidence of who originated a control, what Howl implements, or what is mandatory.
     sequences:
-    - id: esc-514c28b6ff
-      wire: ESC D
-      section: C1 (8-Bit) Control Characters
-      source_line: 161
-      review:
-        classification: historical-source-removed-not-an-ecma48-fifth-edition-clause
-        source: ECMA-48 fifth edition Appendix F.8.2 explicitly removed INDEX (IND), formerly C1 0x84 / ESC D; pinned xterm ctlseqs line
-          161 retains DEC-style IND.
-        semantic_identity: DEC-compatible Index/IND, not an alternate spelling of ECMA-48 CCH (0x94).
-        next_step: Trace the original DEC IND meaning before disposition; leave as separately sourced compatibility candidate and do not
-          claim Howl conformance.
     - id: esc-f342577b57
       wire: ESC Z
       section: C1 (8-Bit) Control Characters
@@ -5523,16 +6192,6 @@ discovery_catalogues:
           These cannot both be the same terminal action.
         scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction remains
           to be verified for applicability.
-    - id: esc-6436a8e3dc
-      wire: ESC SP F
-      section: Controls beginning with ESC
-      source_line: 282
-      symbol: S7C1T
-    - id: esc-41198bce8d
-      wire: ESC SP G
-      section: Controls beginning with ESC
-      source_line: 287
-      symbol: S8C1T
     - id: esc-5df28b937a
       wire: ESC SP L
       section: Controls beginning with ESC
@@ -5581,16 +6240,6 @@ discovery_catalogues:
       wire: ESC / C
       section: Controls beginning with ESC
       source_line: 390
-    - id: esc-5948c81512
-      wire: ESC =
-      section: Controls beginning with ESC
-      source_line: 401
-      symbol: DECKPAM
-    - id: esc-c378320387
-      wire: ESC >
-      section: Controls beginning with ESC
-      source_line: 403
-      symbol: DECKPNM
     - id: esc-64947902c6
       wire: ESC F
       section: Controls beginning with ESC
@@ -5607,21 +6256,16 @@ discovery_catalogues:
       wire: APC Pt ST None.
       section: Application Program-Command functions
       source_line: 428
-    - id: dcs-26ac144774
-      wire: DCS Ps ; Ps | Pt ST
-      section: Device-Control functions
-      source_line: 434
-      symbol: DECUDK
     - id: dcs-1903109226
       wire: DCS Ps ! u Pt ST
       section: Device-Control functions
       source_line: 451
       symbol: DECAUPSS
-    - id: dcs-47fd6579ab
-      wire: DCS Ps $ t Pt ST
-      section: Device-Control functions
-      source_line: 499
-      symbol: DECRSPS
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: decaupss-latin1-assignment-selector
+        reason: VT420 original assignment and report sections disagree on ISO Latin-1 selector; xterm distinguishes 0!uA and
+          1!uA. Retain secondary entry for explicit scope reconciliation.
     - id: dcs-e4533479c3
       wire: DCS + Q Pt ST
       section: Device-Control functions
@@ -5655,31 +6299,16 @@ discovery_catalogues:
       wire: CSI > Ps c
       section: Functions using CSI , ordered by the final character(s)
       source_line: 810
-    - id: csi-7f26dc7a37
-      wire: CSI ? Pm h
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 911
-      symbol: DECSET
-    - id: csi-8326970770
-      wire: CSI ? Pm l
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1062
-      symbol: DECRST
-    - id: csi-1ddd518ae0
-      wire: CSI ! p
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1473
-      symbol: DECSTR
     - id: csi-724bc8b026
       wire: CSI Pl ; Pc " p
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1475
       symbol: DECSCL
-    - id: csi-7973ed5976
-      wire: CSI Ps q
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1530
-      symbol: DECLL
+      review:
+        classification: source-confirmed-material-semantic-difference
+        decision: decscl-hard-vs-soft-reset
+        reason: Original VT420 specifies hard reset; pinned xterm implements soft reset. Keep source versions and target scope
+          separate.
     - id: csi-8c99edd0c8
       wire: CSI Ps SP q
       section: Functions using CSI , ordered by the final character(s)
@@ -5713,46 +6342,21 @@ discovery_catalogues:
       wire: CSI u
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1725
-    - id: csi-996d289cc3
-      wire: CSI & u
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1727
-      symbol: DECRQUPSS
     - id: csi-f8ef357623
       wire: CSI Ps SP u
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1730
       symbol: DECSMBV
-    - id: csi-dd97c5f289
-      wire: CSI " v
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1736
-      symbol: DECRQDE
-    - id: csi-f38f13fb1a
-      wire: CSI Ps $ w
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1753
-      symbol: DECRQPSR
     - id: csi-d3c7ca5037
       wire: CSI Pt ; Pl ; Pb ; Pr ' w
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1767
       symbol: DECEFR
-    - id: csi-1e399e435a
-      wire: CSI Ps x
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1779
-      symbol: DECREQTPARM
     - id: csi-eb0e648cf6
       wire: 'CSI Ps # y'
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1814
       symbol: XTCHECKSUM
-    - id: csi-d3b76a1dbb
-      wire: CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1824
-      symbol: DECRQCRA
     - id: csi-fa2af1e6b1
       wire: CSI Ps ; Pu ' z
       section: Functions using CSI , ordered by the final character(s)
@@ -5763,21 +6367,11 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1850
       symbol: DECSLE
-    - id: csi-5bce18dca3
-      wire: CSI Ps $ |
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1892
-      symbol: DECSCPP
     - id: csi-d792d66921
       wire: CSI Ps ' |
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1898
       symbol: DECRQLP
-    - id: csi-43f1b260e7
-      wire: CSI Ps * |
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1938
-      symbol: DECSNLS
     - id: csi-32051dd066
       wire: CSI Ps ; Pf ; Pb , |
       section: Functions using CSI , ordered by the final character(s)
@@ -5788,16 +6382,6 @@ discovery_catalogues:
       section: Functions using CSI , ordered by the final character(s)
       source_line: 1956
       symbol: DECATC
-    - id: csi-d29e668ba9
-      wire: CSI Ps $ }
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1984
-      symbol: DECSASD
-    - id: csi-0cc14c89d4
-      wire: CSI Ps $ ~
-      section: Functions using CSI , ordered by the final character(s)
-      source_line: 1992
-      symbol: DECSSDT
     - id: pm-3a72abf844
       wire: PM Pt ST
       section: Privacy Message
@@ -5942,38 +6526,6 @@ discovery_catalogues:
       wire: ESC t
       section: Tektronix 4014 Mode
       source_line: 3371
-    - id: esc-1a52090ba5
-      wire: ESC A
-      section: VT52 Mode
-      source_line: 3394
-    - id: esc-b0bb2d201b
-      wire: ESC B
-      section: VT52 Mode
-      source_line: 3396
-    - id: esc-76873eeca9
-      wire: ESC C
-      section: VT52 Mode
-      source_line: 3398
-    - id: esc-3290703b9a
-      wire: ESC G
-      section: VT52 Mode
-      source_line: 3404
-    - id: esc-6d8ca0843a
-      wire: ESC I
-      section: VT52 Mode
-      source_line: 3408
-    - id: esc-10f130db3f
-      wire: ESC J
-      section: VT52 Mode
-      source_line: 3410
-    - id: esc-fb8c0ef87a
-      wire: ESC K
-      section: VT52 Mode
-      source_line: 3412
-    - id: esc-13153bf1ce
-      wire: ESC Y Ps Ps
-      section: VT52 Mode
-      source_line: 3414
     - id: osc-selector-0
       wire: OSC 0 ; Pt (BEL | ST)
       section: Operating System Commands
@@ -6031,14 +6583,6 @@ discovery_catalogues:
         reason: Reserved for Emacs shell in the xterm publication; pinned xterm has no recognized action. Do not invent an Emacs
           protocol definition or claim implementation from a reserved selector.
         source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
-    - id: private-mode-4-h-line-917
-      wire: CSI ? 4 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 917
-    - id: private-mode-5-h-line-918
-      wire: CSI ? 5 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 918
     - id: private-mode-10-h-line-924
       wire: CSI ? 10 h
       section: DEC Private Mode Set (DECSET)
@@ -6071,10 +6615,6 @@ discovery_catalogues:
       wire: CSI ? 41 h
       section: DEC Private Mode Set (DECSET)
       source_line: 938
-    - id: private-mode-42-h-line-939
-      wire: CSI ? 42 h
-      section: DEC Private Mode Set (DECSET)
-      source_line: 939
     - id: private-mode-44-h-line-943
       wire: CSI ? 44 h
       section: DEC Private Mode Set (DECSET)
@@ -6156,14 +6696,6 @@ discovery_catalogues:
       wire: CSI ? 1037 h
       section: DEC Private Mode Set (DECSET)
       source_line: 996
-    - id: private-mode-4-l-line-1067
-      wire: CSI ? 4 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1067
-    - id: private-mode-5-l-line-1068
-      wire: CSI ? 5 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1068
     - id: private-mode-10-l-line-1073
       wire: CSI ? 10 l
       section: DEC Private Mode Reset (DECRST)
@@ -6192,10 +6724,6 @@ discovery_catalogues:
       wire: CSI ? 41 l
       section: DEC Private Mode Reset (DECRST)
       source_line: 1086
-    - id: private-mode-42-l-line-1087
-      wire: CSI ? 42 l
-      section: DEC Private Mode Reset (DECRST)
-      source_line: 1087
     - id: private-mode-44-l-line-1091
       wire: CSI ? 44 l
       section: DEC Private Mode Reset (DECRST)
@@ -6563,6 +7091,37 @@ discovery_catalogues:
         is yet selected for implementation.
       question: If VT52 compatibility is targeted, should ESC < restore the prior configured DEC level as in the later DEC author manuals,
         or enter VT100-level ANSI mode as in pinned xterm?
+      decision: null
+    - id: decscl-hard-vs-soft-reset
+      status: material-original-profile-versus-xterm-reset-difference
+      wire: CSI Pl ; Pc " p
+      original_author_sources:
+      - clause: dec_vt420.select-conformance-level
+        revision: February 1992, printed p.87
+        meaning: Changing operating level performs RIS hard reset.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: charproc.c:5081-5126,14314-14321
+        meaning: ReallyReset(False,False) is soft reset and preserves savedLines.
+      question: If this capability is selected, what conformance level and reset consequences should Howl adopt? Verify additional
+        original hardware revisions before any resolution.
+      decision: null
+    - id: decaupss-latin1-assignment-selector
+      status: material-original-source-assignment-report-selector-inconsistency
+      wire: DCS Ps ! u A ST
+      original_author_sources:
+      - clause: dec_vt420.assign-user-preferred-supplemental
+        revision: February 1992, printed p.100
+        meaning: Assignment example prints selector 0 for ISO Latin-1.
+      - clause: dec_vt420.assign-user-preferred-supplemental
+        revision: February 1992, printed p.273
+        meaning: Report prints selector 1 for ISO Latin-1.
+      xterm_implementation:
+        revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+        source: misc.c:4812-4864,5305-5322; charproc.c:5847-5862
+        meaning: 0/A is undocumented ASCII; 1/A ISO Latin-1; report reflects encoded charset size.
+      question: Verify earlier original DEC source and select exact assignment/report semantics if the UPSS capability is targeted.
+        Do not silently fix printed selector.
       decision: null
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
