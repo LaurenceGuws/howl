@@ -228,7 +228,7 @@ test "native mouse mask and capacity admission precede stateful locator effects"
     _ = try owner.encode(value, event, &bytes);
     var required: usize = 0;
     try owner.copyReplies(value, &bytes, &required);
-    try std.testing.expectEqualSlices(u8, "\x1b[10;4;3;4;0&w", bytes[0..required]);
+    try std.testing.expectEqualSlices(u8, "\x1b[10;4;3;4;1&w", bytes[0..required]);
 }
 
 test "native search and copied selection unwind all temporary allocation prefixes" {

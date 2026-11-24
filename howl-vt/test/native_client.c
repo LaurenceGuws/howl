@@ -401,10 +401,10 @@ int main(void) {
     CHECK(hvt_observe(value,0,&after)==HVT_OK && memcmp(&before,&after,sizeof before)==0);
     CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && !count);
     CHECK(hvt_encode_mouse(value,HVT_MOUSE_PRESS,HVT_BUTTON_LEFT,0,1,2,3,1,UINT32_MAX,UINT32_MAX,bytes,sizeof bytes,&count)==HVT_OK && !count);
-    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==strlen("\033[10;4;4294967296;4294967296;0&w") && memcmp(bytes,"\033[10;4;4294967296;4294967296;0&w",count)==0);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==strlen("\033[10;4;4294967296;4294967296;1&w") && memcmp(bytes,"\033[10;4;4294967296;4294967296;1&w",count)==0);
     CHECK(drain(value)==HVT_OK && feed_all(value,"\033[1;1;1;1'w")==HVT_OK);
     CHECK(hvt_encode_mouse(value,HVT_MOUSE_PRESS,HVT_BUTTON_LEFT,0,1,2,3,1,UINT32_MAX-1,UINT32_MAX-1,bytes,sizeof bytes,&count)==HVT_OK && !count);
-    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==strlen("\033[10;4;4294967295;4294967295;0&w") && memcmp(bytes,"\033[10;4;4294967295;4294967295;0&w",count)==0);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==strlen("\033[10;4;4294967295;4294967295;1&w") && memcmp(bytes,"\033[10;4;4294967295;4294967295;1&w",count)==0);
     CHECK(drain(value)==HVT_OK && feed_all(value,"\033[0'z")==HVT_OK);
     CHECK(feed_all(value,"A\033[5nTAIL")==HVT_OK);
     CHECK(hvt_copy_replies(value,NULL,0,&count)==HVT_BUFFER_TOO_SMALL && count==4);

@@ -757,7 +757,7 @@ test "terminal RIS delegates hard-reset owners" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
 
-    try std.testing.expect((try vt.feed("ab\x1b[1;0'z\x1b[1'*{")).stateChanged());
+    try std.testing.expect((try vt.feed("ab\x1b[1;0'z\x1b[1'{")).stateChanged());
     var scratch: Terminal.InputScratch = .{};
     var before = try vt.encodeInput(
         std.testing.allocator,

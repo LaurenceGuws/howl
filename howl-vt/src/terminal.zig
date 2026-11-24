@@ -644,7 +644,6 @@ fn csiProcess(
 
 // Decodes one CSI sequence with intermediates; unsupported forms return null.
 fn decodeCsiIntermediate(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
-    if (intermediates.len == 2) return processPair(final, params, intermediates);
     if (intermediates.len != 1) return null;
     return switch (intermediates[0]) {
         '"' => processQuote(final, params),
@@ -656,12 +655,6 @@ fn decodeCsiIntermediate(final: u8, params: []const i32, intermediates: []const 
         ' ' => processSpace(final, params),
         else => null,
     };
-}
-
-fn processPair(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
-    if (intermediates[0] != '\'' or intermediates[1] != '*') return null;
-    if (final != '{') return null;
-    return SemanticEvent{ .locator_events = collectParams(params) };
 }
 
 fn processQuote(final: u8, params: []const i32) ?SemanticEvent {
@@ -754,7 +747,11 @@ fn processTick(final: u8, params: []const i32) ?SemanticEvent {
             .mode = paramAtOrDefault0(params, 0),
             .unit = paramAtOrDefault0(params, 1),
         } },
-        '|' => SemanticEvent{ .locator_request = paramAtOrDefault0(params, 0) },
+        '{' => SemanticEvent{ .locator_events = collectParams(params) },
+        '|' => if (queryParam(params)) |param|
+            if (param <= 1) SemanticEvent{ .locator_request = param } else null
+        else
+            null,
         '~' => SemanticEvent{ .delete_columns = paramAtOrDefault1(params, 0) },
         else => null,
     };
@@ -8587,7 +8584,8 @@ pub const Terminal = struct {
         return encoded;
     }
 
-    fn encodeFocusInput(self: *const Terminal, scratch: *InputScratch, event: input.FocusEvent) []const u8 {
+    fn encodeFocusInput(self: *Terminal, scratch: *InputScratch, event: input.FocusEvent) []const u8 {
+        self.locator.setActive(event == .in);
         if (!self.modes.focus_reporting) return scratch.buf[0..0];
         return input.writeScratch(scratch, switch (event) {
             .in => "\x1b[I",
@@ -10577,7 +10575,7 @@ const RouteOwnerTests = struct {
         try std.testing.expectEqual(@as(u16, 1), elr.locator_reporting.unit);
 
         params = @as([csi_max_params]i32, @splat(0));
-        params[0] = 3;
+        params[0] = 1;
         const req = routeParserEvent(ParserEvent{ .style_change = .{
             .final = '|',
             .params = params[0..],
@@ -10588,7 +10586,7 @@ const RouteOwnerTests = struct {
             .intermediates = intermediates[0..],
             .intermediates_len = 1,
         } }) orelse return error.NoEvent;
-        try std.testing.expectEqual(@as(u16, 3), req.locator_request);
+        try std.testing.expectEqual(@as(u16, 1), req.locator_request);
 
         params = @as([csi_max_params]i32, @splat(0));
         params[0] = 2;
@@ -10608,7 +10606,6 @@ const RouteOwnerTests = struct {
         try std.testing.expectEqual(@as(?u16, 1), filter.locator_filter.top);
         try std.testing.expectEqual(@as(?u16, 4), filter.locator_filter.right);
 
-        intermediates[1] = '*';
         params = @as([csi_max_params]i32, @splat(0));
         params[0] = 1;
         params[1] = 3;
@@ -10620,7 +10617,7 @@ const RouteOwnerTests = struct {
             .leader = 0,
             .private = false,
             .intermediates = intermediates[0..],
-            .intermediates_len = 2,
+            .intermediates_len = 1,
         } }) orelse return error.NoEvent;
         try std.testing.expectEqual(@as(u8, 2), sle.locator_events.param_count);
     }

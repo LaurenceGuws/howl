@@ -33,6 +33,7 @@ pub const FilterArea = struct {
 /// Owns DEC locator reporting mode, filtering, and latest pointer state.
 pub const State = struct {
     mode: ReportingMode = .disabled,
+    active: bool = true,
     coordinate_unit: u16 = 0,
     report_button_down: bool = false,
     report_button_up: bool = false,
@@ -45,7 +46,22 @@ pub const State = struct {
 
     /// Restores the disabled default without allocation.
     pub fn reset(self: *State) void {
-        self.* = .{};
+        self.* = .{ .active = self.active };
+    }
+
+    /// Accepts the caller's session focus, independently of focus-report mode.
+    pub fn setActive(self: *State, active: bool) void {
+        if (self.active == active) return;
+        self.active = active;
+        self.clearCoordinates();
+        self.last_buttons_down = 0;
+    }
+
+    fn clearCoordinates(self: *State) void {
+        self.last_row = null;
+        self.last_col = null;
+        self.last_pixel_x = null;
+        self.last_pixel_y = null;
     }
 
     /// Selects reporting mode and cell-or-pixel coordinates.
@@ -56,6 +72,7 @@ pub const State = struct {
             else => .disabled,
         };
         self.coordinate_unit = unit;
+        self.filter_rect = null;
     }
 
     /// Installs an optional filter rectangle using the latest position for omitted edges.
@@ -76,7 +93,8 @@ pub const State = struct {
 
     /// Replaces selected button and filter event flags from borrowed DEC modes.
     pub fn setEvents(self: *State, modes: []const u16) void {
-        for (modes) |mode| switch (mode) {
+        const selected: []const u16 = if (modes.len == 0) &.{0} else modes;
+        for (selected) |mode| switch (mode) {
             0 => {
                 self.report_button_down = false;
                 self.report_button_up = false;
@@ -98,45 +116,42 @@ pub const State = struct {
         param: u16,
     ) replies.AppendError!void {
         if (param > 1) return;
-        if (self.mode == .disabled or self.last_row == null or self.last_col == null) {
+        if (self.mode == .disabled or !self.active) {
             try output.appendCsi(.terminal, "0&w");
             return;
         }
-        try self.appendReport(
-            output,
-            encode_buf,
-            1,
-            self.last_buttons_down,
-            self.last_row.?,
-            self.last_col.?,
-        );
+        try self.appendReport(output, encode_buf, 1, self.last_buttons_down);
     }
 
     /// Updates representable coordinates and emits enabled reports transactionally.
     ///
-    /// Rows outside the retained `u16` coordinate domain are ignored. Reply
-    /// failure preserves one-shot and filter latches while retaining the latest
-    /// representable pointer facts.
+    /// Rows outside the retained coordinate domain invalidate the latest position.
+    /// Inactive sessions do not accept locator facts. Reply failure preserves
+    /// one-shot and filter latches while retaining the latest pointer facts.
     pub fn handleMouseEvent(
         self: *State,
         output: *replies.Buffer,
         encode_buf: []u8,
         event: input.MouseEvent,
     ) replies.AppendError!void {
-        if (event.row < 0 or event.row > std.math.maxInt(u16)) return;
+        if (!self.active) return;
+        self.last_buttons_down = event.buttons_down;
+        if (event.row < 0 or event.row > std.math.maxInt(u16)) {
+            self.clearCoordinates();
+            return;
+        }
         const row: u16 = @intCast(event.row);
         const col = event.col;
         self.last_row = row;
         self.last_col = col;
         self.last_pixel_x = event.pixel_x;
         self.last_pixel_y = event.pixel_y;
-        self.last_buttons_down = event.buttons_down;
 
         if (self.mode == .disabled) return;
 
         if (self.filter_rect) |filter| {
             if (row < filter.top or row > filter.bottom or col < filter.left or col > filter.right) {
-                try self.appendReport(output, encode_buf, 10, event.buttons_down, row, col);
+                try self.appendReport(output, encode_buf, 10, event.buttons_down);
                 self.filter_rect = null;
                 return;
             }
@@ -157,7 +172,7 @@ pub const State = struct {
             } else null,
             else => null,
         };
-        if (event_code) |code| try self.appendReport(output, encode_buf, code, event.buttons_down, row, col);
+        if (event_code) |code| try self.appendReport(output, encode_buf, code, event.buttons_down);
     }
 
     fn appendReport(
@@ -166,26 +181,31 @@ pub const State = struct {
         encode_buf: []u8,
         event_code: u16,
         buttons_down: u8,
-        row: u16,
-        col: u16,
     ) replies.AppendError!void {
         const button_mask = buttonsMask(buttons_down);
-        const coords = self.coordinates(row, col);
         std.debug.assert(encode_buf.len >= report_max_bytes);
-        const text = std.fmt.bufPrint(
-            encode_buf,
-            "{d};{d};{d};{d};0&w",
-            .{ event_code, button_mask, @as(u64, coords.row) + 1, @as(u64, coords.col) + 1 },
-            // zig-audit: acknowledge catch_unreachable
-            // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-        ) catch unreachable;
-        try output.appendCsi(.terminal, text);
+        const text = if (self.coordinates()) |coords|
+            std.fmt.bufPrint(
+                encode_buf,
+                "{d};{d};{d};{d};1&w",
+                .{ event_code, button_mask, @as(u64, coords.row) + 1, @as(u64, coords.col) + 1 },
+            )
+        else
+            std.fmt.bufPrint(encode_buf, "{d};{d}&w", .{ event_code, button_mask });
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The bounded report buffer fits all event codes, button masks, and one-based u32 coordinates.
+        try output.appendCsi(.terminal, text catch unreachable);
         if (self.mode == .one_shot) self.mode = .disabled;
     }
 
-    fn coordinates(self: *const State, row: u16, col: u16) struct { row: u32, col: u32 } {
+    fn coordinates(self: *const State) ?struct { row: u32, col: u32 } {
+        const row = self.last_row orelse return null;
+        const col = self.last_col orelse return null;
         if (self.coordinate_unit == 1) {
-            return .{ .row = self.last_pixel_y orelse row, .col = self.last_pixel_x orelse col };
+            return .{
+                .row = self.last_pixel_y orelse return null,
+                .col = self.last_pixel_x orelse return null,
+            };
         }
         return .{ .row = row, .col = col };
     }
@@ -230,12 +250,12 @@ test "locator emits exact cell and pixel reports" {
     state.setReporting(1, 0);
     state.setEvents(&.{ 1, 3 });
     try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 2, 3, 1, null, null));
-    try std.testing.expectEqualStrings("\x1b[2;4;3;4;0&w", output.bytes());
+    try std.testing.expectEqualStrings("\x1b[2;4;3;4;1&w", output.bytes());
     output.truncate(0);
 
     state.setReporting(1, 1);
     try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 4, 5, 1, 9, 11));
-    try std.testing.expectEqualStrings("\x1b[2;4;12;10;0&w", output.bytes());
+    try std.testing.expectEqualStrings("\x1b[2;4;12;10;1&w", output.bytes());
 }
 
 test "locator one-based pixel reports preserve the full u32 coordinate domain" {
@@ -246,10 +266,10 @@ test "locator one-based pixel reports preserve the full u32 coordinate domain" {
     defer output.deinit();
     var scratch: [report_max_bytes]u8 = undefined;
     try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 2, 3, 1, std.math.maxInt(u32), std.math.maxInt(u32)));
-    try std.testing.expectEqualStrings("\x1b[2;4;4294967296;4294967296;0&w", output.bytes());
+    try std.testing.expectEqualStrings("\x1b[2;4;4294967296;4294967296;1&w", output.bytes());
     output.truncate(0);
     try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 2, 3, 1, std.math.maxInt(u32) - 1, std.math.maxInt(u32) - 1));
-    try std.testing.expectEqualStrings("\x1b[2;4;4294967295;4294967295;0&w", output.bytes());
+    try std.testing.expectEqualStrings("\x1b[2;4;4294967295;4294967295;1&w", output.bytes());
 }
 
 test "locator filter resolves omitted edges and preserves its valid latch" {
@@ -290,9 +310,48 @@ test "locator one-shot and filter latches commit only after reply append" {
 
     output.truncate(0);
     try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 4, 5, 1, null, null));
-    try std.testing.expectEqualStrings("\x1b[10;4;5;6;0&w", output.bytes());
+    try std.testing.expectEqualStrings("\x1b[10;4;5;6;1&w", output.bytes());
     try std.testing.expectEqual(ReportingMode.disabled, state.mode);
     try std.testing.expectEqual(@as(?FilterRect, null), state.filter_rect);
+}
+
+test "locator undefined query preserves one-shot and filter under reply pressure" {
+    var state: State = .{};
+    state.setReporting(2, 0);
+    state.setFilter(.{ .top = 1, .left = 1, .bottom = 2, .right = 2 });
+    const before = state;
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    const full = try std.testing.allocator.alloc(u8, replies.max_bytes);
+    defer std.testing.allocator.free(full);
+    @memset(full, 'x');
+    try output.append(full);
+    var scratch: [report_max_bytes]u8 = undefined;
+
+    try std.testing.expectError(error.ReplyLimit, state.appendReportForRequest(&output, &scratch, 0));
+    try std.testing.expectEqualDeep(before, state);
+    try std.testing.expectEqualSlices(u8, full, output.bytes());
+    output.truncate(0);
+    try state.appendReportForRequest(&output, &scratch, 1);
+    try std.testing.expectEqualStrings("\x1b[1;0&w", output.bytes());
+    try std.testing.expectEqual(ReportingMode.disabled, state.mode);
+    try std.testing.expectEqualDeep(before.filter_rect, state.filter_rect);
+
+    state.setReporting(1, 0);
+    try std.testing.expect(state.filter_rect == null);
+    state.setEvents(&.{ 1, 3 });
+    state.setFilter(.{ .top = 1, .left = 1, .bottom = 2, .right = 2 });
+    state.setEvents(&.{});
+    try std.testing.expect(!state.report_button_down and !state.report_button_up);
+    try std.testing.expect(state.filter_rect == null);
+    state.setActive(false);
+    state.reset();
+    try std.testing.expect(!state.active);
+    state.setReporting(1, 0);
+    try state.handleMouseEvent(&output, &scratch, mouse(.move, .none, 2, 3, 1, null, null));
+    output.truncate(0);
+    try state.appendReportForRequest(&output, &scratch, 1);
+    try std.testing.expectEqualStrings("\x1b[0&w", output.bytes());
 }
 
 test "locator reset clears every retained pointer fact and event selection" {

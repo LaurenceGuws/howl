@@ -2215,14 +2215,82 @@ test "locator requests reply unavailable, then current position, then disable on
     write(&terminal, "\x1b[1;0'z");
     try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 2, .col = 3, .mod = .{}, .buttons_down = 1 }).len);
     write(&terminal, "\x1b[0'|");
-    try std.testing.expectEqualStrings("\x1b[1;4;3;4;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[1;4;3;4;1&w", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
     write(&terminal, "\x1b[2;0'z\x1b[0'|");
-    try std.testing.expectEqualStrings("\x1b[1;4;3;4;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[1;4;3;4;1&w", pendingOutput(&terminal));
     try consumeReplies(&terminal);
     write(&terminal, "\x1b[0'|");
     try std.testing.expectEqualStrings("\x1b[0&w", pendingOutput(&terminal));
+}
+
+test "locator query distinguishes active undefined and inactive without consuming a filter" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    // Single caller-owned session starts active, but has no pointer sample.
+    try feed(&terminal, "\x1b[1'z\x1b['|");
+    try std.testing.expectEqualStrings("\x1b[1;0&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 1, .col = 1, .mod = .{}, .buttons_down = 0 }));
+    try feed(&terminal, "\x1b[2;2;2;2'w\x1b[1'|");
+    try std.testing.expectEqualStrings("\x1b[1;0;2;2;1&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 2, .col = 2, .mod = .{}, .buttons_down = 0 }));
+    try std.testing.expectEqualStrings("\x1b[10;0;3;3;1&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // Focus state is meaningful even when xterm focus reports are disabled.
+    try std.testing.expectEqualStrings("", encodeFocusOut(&terminal));
+    try feed(&terminal, "\x1b['|");
+    try std.testing.expectEqualStrings("\x1b[0&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 3, .col = 3, .mod = .{}, .buttons_down = 1 }));
+    try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
+    try feed(&terminal, "\x1b[0'|");
+    try std.testing.expectEqualStrings("\x1b[1;0&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+
+    // Pixel mode must not mislabel a cell-only sample as physical pixels.
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 2, .col = 3, .mod = .{}, .buttons_down = 1 }));
+    try feed(&terminal, "\x1b[1;1'z\x1b['|");
+    try std.testing.expectEqualStrings("\x1b[1;4&w", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = -1, .col = 0, .mod = .{}, .buttons_down = 0 }));
+    try feed(&terminal, "\x1b[2;0'z\x1b[1'|\x1b[1'|");
+    try std.testing.expectEqualStrings("\x1b[1;0&w\x1b[0&w", pendingOutput(&terminal));
+}
+
+test "locator event selection admits only the originating single intermediate" {
+    for ([_][]const u8{ "\x1b[1;3'{", "\x9b1;3'{" }) |command| {
+        for (0..command.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[1'z");
+            const press: MouseEvent = .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 };
+            const release: MouseEvent = .{ .kind = .release, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0 };
+            try std.testing.expect(!(try terminal.feed("\x1b[1;3'*{")).stateChanged());
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+            try feed(&terminal, command[0..split]);
+            try feed(&terminal, command[split..]);
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, release));
+            try std.testing.expectEqualStrings("\x1b[2;4;2;3;1&w\x1b[3;0;2;3;1&w", pendingOutput(&terminal));
+            try consumeReplies(&terminal);
+            try feed(&terminal, "\x1b[2;4'{");
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, release));
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+            try feed(&terminal, "\x1b[1;3'{\x1b['{");
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
+            try std.testing.expectEqualStrings("", encodeMouse(&terminal, release));
+            try std.testing.expect(!(try terminal.feed("\x1b[2'|\x1b[1;1'|")).stateChanged());
+            try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+        }
+    }
 }
 
 test "locator button and filter events append DECLRP" {
@@ -2230,26 +2298,26 @@ test "locator button and filter events append DECLRP" {
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
 
-    write(&terminal, "\x1b[1;0'z\x1b[1;3'*{");
+    write(&terminal, "\x1b[1;0'z\x1b[1;3'{");
 
     try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 }).len);
-    try std.testing.expectEqualStrings("\x1b[2;4;2;3;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;4;2;3;1&w", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .release, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0 }).len);
-    try std.testing.expectEqualStrings("\x1b[3;0;2;3;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[3;0;2;3;1&w", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
     write(&terminal, "\x1b[2;2;2;2'w");
     try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 3, .col = 3, .mod = .{}, .buttons_down = 0 }).len);
-    try std.testing.expectEqualStrings("\x1b[10;0;4;4;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[10;0;4;4;1&w", pendingOutput(&terminal));
 }
 
 test "locator ignores rows outside its retained coordinate domain" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    write(&terminal, "\x1b[1;0'z\x1b[1'*{");
+    write(&terminal, "\x1b[1;0'z\x1b[1'{");
 
     const rows = [_]i32{ -1, @as(i32, std.math.maxInt(u16)) + 1 };
     for (rows) |row| {
@@ -2274,11 +2342,11 @@ test "locator ignores rows outside its retained coordinate domain" {
         .buttons_down = 1,
     } });
     defer encoded.deinit();
-    try std.testing.expectEqualStrings("\x1b[2;4;65536;3;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;4;65536;3;1&w", pendingOutput(&terminal));
 }
 
 test "locator mouse allocation failure is exact and preserves one-shot reporting" {
-    const setup = "\x1b[2;0'z\x1b[1'*{";
+    const setup = "\x1b[2;0'z\x1b[1'{";
     const event: MouseEvent = .{
         .kind = .press,
         .button = .left,
@@ -2312,7 +2380,7 @@ test "locator mouse allocation failure is exact and preserves one-shot reporting
     failing_allocator.fail_index = std.math.maxInt(usize);
     var encoded = try terminal.encodeInput(failing_allocator.allocator(), &encode_scratch, .{ .mouse = event });
     encoded.deinit();
-    try std.testing.expectEqualStrings("\x1b[2;4;2;3;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;4;2;3;1&w", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
     encoded = try terminal.encodeInput(failing_allocator.allocator(), &encode_scratch, .{ .mouse = event });
@@ -2324,7 +2392,7 @@ test "locator mouse output limit is exact and preserves pending output" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    try feed(&terminal, "\x1b[1;0'z\x1b[1'*{");
+    try feed(&terminal, "\x1b[1;0'z\x1b[1'{");
 
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes, false);
     defer allocator.free(fill);
@@ -2346,7 +2414,7 @@ test "locator mouse output limit is exact and preserves pending output" {
     try consumeReplies(&terminal);
     var encoded = try terminal.encodeInput(allocator, &encode_scratch, .{ .mouse = event });
     defer encoded.deinit();
-    try std.testing.expectEqualStrings("\x1b[2;4;2;3;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;4;2;3;1&w", pendingOutput(&terminal));
 }
 
 test "DECCIR cursor information request is not supported" {
@@ -4277,11 +4345,11 @@ test "pointer reporting interest includes DEC locator and leaves one-shot consum
     try std.testing.expect(!observation.pointerReportingRequested());
     write(&terminal, "\x1b[?1000h");
     try std.testing.expect(observation.pointerReportingRequested());
-    write(&terminal, "\x1b[?1000l\x1b[2;0'z\x1b[1'*{");
+    write(&terminal, "\x1b[?1000l\x1b[2;0'z\x1b[1'{");
     try std.testing.expect(observation.pointerReportingRequested());
     try std.testing.expect(observation.pointerReportingRequested());
     try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 }).len);
-    try std.testing.expectEqualStrings("\x1b[2;4;2;3;0&w", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;4;2;3;1&w", pendingOutput(&terminal));
     try std.testing.expect(!observation.pointerReportingRequested());
     write(&terminal, "\x1b[1;0'z");
     try std.testing.expect(observation.pointerReportingRequested());
