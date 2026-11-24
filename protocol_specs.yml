@@ -1,6 +1,6 @@
 schema: 1
 kind: terminal-protocol-specifications
-as_of: '2026-11-23'
+as_of: '2026-11-24'
 scope: howl-vt-implementation-specification-under-reconciliation
 policy:
   purpose: This file is the single evolving specification of the VT protocols Howl intends to implement. Broad original-source indexing,
@@ -101,21 +101,61 @@ specifications:
       level: defined
       wire: CSI
       rule: Introduces a control sequence; seven-bit and eight-bit representations follow the standard coding rules.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-10d308deeb
+        source_line: 196
+        wire: ESC [
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.16
+        eight_bit: '0x9B'
+        seven_bit: ESC [
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: c1-osc
       section: 8.3.89
       level: defined
       wire: OSC ... ST
       rule: Introduces an operating-system control string; its contents are not defined by this standard.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-8527fe776c
+        source_line: 202
+        wire: ESC ]
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.89
+        eight_bit: '0x9D'
+        seven_bit: ESC ]
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: c1-dcs
       section: 8.3.27
       level: defined
       wire: DCS ... ST
       rule: Introduces a device control string; private payload protocols require their own source.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-40aa4b63e9
+        source_line: 181
+        wire: ESC P
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.27
+        eight_bit: '0x90'
+        seven_bit: ESC P
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: c1-st
       section: 8.3.143
       level: defined
       wire: ST
       rule: Terminates an applicable control string.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-5f0dd1b590
+        source_line: 199
+        wire: ESC \
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.143
+        eight_bit: '0x9C'
+        seven_bit: ESC \
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: cup
       section: 8.3.21
       level: defined
@@ -411,6 +451,16 @@ specifications:
       level: defined
       wire: HTS
       rule: Sets a tabulation stop at the active position.
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-353d33e4a2
+        source_line: 167
+        wire: ESC H
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.62
+        eight_bit: '0x88'
+        seven_bit: ESC H
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: tbc
       section: 8.3.154
       level: defined
@@ -437,6 +487,16 @@ specifications:
       level: defined
       wire: 0x9F | ESC _
       rule: APPLICATION PROGRAM COMMAND (APC); ECMA-48 standardized control function, C1 form (source page 33).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-6d43c2b77b
+        source_line: 208
+        wire: ESC _
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.2
+        eight_bit: '0x9F'
+        seven_bit: ESC _
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: bph
       section: 8.3.4
       level: defined
@@ -603,6 +663,16 @@ specifications:
       level: defined
       wire: 0x97 | ESC W
       rule: END OF GUARDED AREA (EPA); ECMA-48 standardized control function, C1 form (source page 43).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-4ff368f782
+        source_line: 187
+        wire: ESC W
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.46
+        eight_bit: '0x97'
+        seven_bit: ESC W
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: esa
       section: 8.3.47
       level: defined
@@ -865,6 +935,16 @@ specifications:
       level: defined
       wire: 0x85 | ESC E
       rule: NEXT LINE (NEL); ECMA-48 standardized control function, C1 form (source page 51).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-789593f177
+        source_line: 164
+        wire: ESC E
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.86
+        eight_bit: '0x85'
+        seven_bit: ESC E
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: np
       section: 8.3.87
       level: defined
@@ -900,6 +980,16 @@ specifications:
       level: defined
       wire: 0x9E | ESC ^
       rule: PRIVACY MESSAGE (PM); ECMA-48 standardized control function, C1 form (source page 53).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-96f3bd2d29
+        source_line: 205
+        wire: ESC ^
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.94
+        eight_bit: '0x9E'
+        seven_bit: ESC ^
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: pp
       section: 8.3.95
       level: defined
@@ -945,6 +1035,16 @@ specifications:
       level: defined
       wire: 0x8D | ESC M
       rule: REVERSE LINE FEED (RI); ECMA-48 standardized control function, C1 form (source page 55).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-4a4cc79e89
+        source_line: 170
+        wire: ESC M
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.104
+        eight_bit: '0x8D'
+        seven_bit: ESC M
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: sacs
       section: 8.3.107
       level: defined
@@ -960,6 +1060,11 @@ specifications:
       level: defined
       wire: 0x9A | ESC Z
       rule: SINGLE CHARACTER INTRODUCER (SCI); ECMA-48 standardized control function, C1 form (source page 58).
+      competing_interpretations:
+      - wire: ESC Z
+        source: xterm ctlseqs line 193 (DECID; obsolete CSI c / DA identification request)
+        original_ecma48: SCI introduces one following graphic/control byte, ECMA-48 §8.3.109; not a terminal-identity request.
+        decision: esc-z-decid-vs-ecma48-sci
     - id: sco
       section: 8.3.110
       level: defined
@@ -1050,11 +1155,31 @@ specifications:
       level: defined
       wire: 0x98 | ESC X
       rule: START OF STRING (SOS); ECMA-48 standardized control function, C1 form (source page 66).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-7963134488
+        source_line: 190
+        wire: ESC X
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.128
+        eight_bit: '0x98'
+        seven_bit: ESC X
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: spa
       section: 8.3.129
       level: defined
       wire: 0x96 | ESC V
       rule: START OF GUARDED AREA (SPA); ECMA-48 standardized control function, C1 form (source page 66).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-b2634d45b1
+        source_line: 184
+        wire: ESC V
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.129
+        eight_bit: '0x96'
+        seven_bit: ESC V
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: spd
       section: 8.3.130
       level: defined
@@ -1120,11 +1245,31 @@ specifications:
       level: defined
       wire: 0x8E | ESC N
       rule: SINGLE-SHIFT TWO (SS2); ECMA-48 standardized control function, C1 form (source page 70).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-25192095af
+        source_line: 173
+        wire: ESC N
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.141
+        eight_bit: '0x8E'
+        seven_bit: ESC N
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: ss3
       section: 8.3.142
       level: defined
       wire: 0x8F | ESC O
       rule: SINGLE-SHIFT THREE (SS3); ECMA-48 standardized control function, C1 form (source page 70).
+      also_documented:
+      - catalogue: xterm_ctlseqs
+        entry_id: esc-fe2e229e2f
+        source_line: 177
+        wire: ESC O
+      original_c1_representation:
+        source: ECMA-48 5th edition (June 1991), clause 8.3.142
+        eight_bit: '0x8F'
+        seven_bit: ESC O
+        equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
     - id: stab
       section: 8.3.144
       level: defined
@@ -1310,6 +1455,7 @@ specifications:
       level: defined
       wire: CSI Pm h / CSI Pm l
       rule: ZERO DEFAULT MODE (ZDM); standard mode selection; see section for exact mode value and effects.
+    snapshot_sha256: 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
   osc8:
     title: Hyperlinks in Terminal Emulators (OSC 8)
     author: Egmont Koblinger, VTE/iTerm2 collaboration
@@ -3086,67 +3232,27 @@ discovery_catalogues:
       wire: ESC D
       section: C1 (8-Bit) Control Characters
       source_line: 161
-    - id: esc-789593f177
-      wire: ESC E
-      section: C1 (8-Bit) Control Characters
-      source_line: 164
-    - id: esc-353d33e4a2
-      wire: ESC H
-      section: C1 (8-Bit) Control Characters
-      source_line: 167
-    - id: esc-4a4cc79e89
-      wire: ESC M
-      section: C1 (8-Bit) Control Characters
-      source_line: 170
-    - id: esc-25192095af
-      wire: ESC N
-      section: C1 (8-Bit) Control Characters
-      source_line: 173
-    - id: esc-fe2e229e2f
-      wire: ESC O
-      section: C1 (8-Bit) Control Characters
-      source_line: 177
-    - id: esc-40aa4b63e9
-      wire: ESC P
-      section: C1 (8-Bit) Control Characters
-      source_line: 181
-    - id: esc-b2634d45b1
-      wire: ESC V
-      section: C1 (8-Bit) Control Characters
-      source_line: 184
-    - id: esc-4ff368f782
-      wire: ESC W
-      section: C1 (8-Bit) Control Characters
-      source_line: 187
-    - id: esc-7963134488
-      wire: ESC X
-      section: C1 (8-Bit) Control Characters
-      source_line: 190
+      review:
+        classification: historical-source-removed-not-an-ecma48-fifth-edition-clause
+        source: ECMA-48 fifth edition Appendix F.8.2 explicitly removed INDEX (IND), formerly C1 0x84 / ESC D; pinned xterm ctlseqs line
+          161 retains DEC-style IND.
+        semantic_identity: DEC-compatible Index/IND, not an alternate spelling of ECMA-48 CCH (0x94).
+        next_step: Trace the original DEC IND meaning before disposition; leave as separately sourced compatibility candidate and do not
+          claim Howl conformance.
     - id: esc-f342577b57
       wire: ESC Z
       section: C1 (8-Bit) Control Characters
       source_line: 193
       symbol: DA
-    - id: esc-10d308deeb
-      wire: ESC [
-      section: C1 (8-Bit) Control Characters
-      source_line: 196
-    - id: esc-5f0dd1b590
-      wire: ESC \
-      section: C1 (8-Bit) Control Characters
-      source_line: 199
-    - id: esc-8527fe776c
-      wire: ESC ]
-      section: C1 (8-Bit) Control Characters
-      source_line: 202
-    - id: esc-96f3bd2d29
-      wire: ESC ^
-      section: C1 (8-Bit) Control Characters
-      source_line: 205
-    - id: esc-6d43c2b77b
-      wire: ESC _
-      section: C1 (8-Bit) Control Characters
-      source_line: 208
+      review:
+        classification: same-wire-semantic-conflict
+        meaning: DEC terminal-identification request (DECID), obsolete DA/CSI c spelling in xterm
+        competes_with: ecma48.sci
+        decision: esc-z-decid-vs-ecma48-sci
+        reason: ECMA-48 fifth edition SCI uses ESC Z to introduce a following character, whereas xterm uses ESC Z to request terminal identity.
+          These cannot both be the same terminal action.
+        scope_note: Do not equate ESC Z with the standard SCI or silently promote to FULL; independent current terminal reaction remains
+          to be verified for applicability.
     - id: esc-6436a8e3dc
       wire: ESC SP F
       section: Controls beginning with ESC
@@ -4576,6 +4682,15 @@ discovery_catalogues:
       next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
         and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
+      bounded_reference_sweep:
+        consulted:
+        - Foot private-mode switch in csi.c
+        - Ghostty terminal/modes.zig private-mode registry
+        - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
+        result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source locations. Do
+          not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
+        significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent adoption
+          is not yet established.
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-45
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
       selector: 45
@@ -4613,6 +4728,21 @@ discovery_catalogues:
       next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
         and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
+      independent_reference_evidence:
+      - implementation: Foot
+        revision: cb2771788998f6a6288e2de8273c55a8214551e0
+        source_location: terminals/foot/csi.c:dec_private_mode case 45
+        observed_source_behavior: Sets reverse_wrap to enabled or disabled.
+      - implementation: Ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source_location: terminals/ghostty/src/terminal/modes.zig:reverse_wrap value 45; src/terminal/Terminal.zig reverse-wrap behavior
+        observed_source_behavior: Names and implements reverse-wrap mode 45.
+      - implementation: WezTerm
+        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        source_location: terminals/wezterm/wezterm-escape-parser/src/csi.rs:ReverseWraparound=45; term/src/terminalstate/mod.rs DecPrivateModeCode::ReverseWraparound
+        observed_source_behavior: Parses, sets, resets and queries reverse-wraparound mode 45.
+      modern_evidence_summary: Independently maintained modern terminals implement the xterm terminal meaning. This supports its interoperability
+        relevance but does not erase the originating DEC printing meaning or prove identical edge cases across implementations.
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-46
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
       selector: 46
@@ -4646,6 +4776,15 @@ discovery_catalogues:
       next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
         and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
+      bounded_reference_sweep:
+        consulted:
+        - Foot private-mode switch in csi.c
+        - Ghostty terminal/modes.zig private-mode registry
+        - WezTerm CSI private-mode enum in wezterm-escape-parser/src/csi.rs
+        result: No positive handler for the xterm-specific meaning of this selector was established in those bounded source locations. Do
+          not infer that the terminals necessarily reject the bytes or assign any majority rule from absence.
+        significance: Printer behavior is source-defined by DEC. Xterm source still documents the alternative, but current independent adoption
+          is not yet established.
     - id: dec-vt3xx-graphics-print-vs-xterm-mode-47
       status: original-author-versus-xterm-same-wire-conflict-awaiting-scope
       selector: 47
@@ -4683,6 +4822,57 @@ discovery_catalogues:
       next_step: The original May 1988 Volume 2 Chapter 16 is now pinned with full print-mode definitions, approximate physical dimensions
         and printer-level sixel syntax. Compare independent current terminal references for target scope, retaining original DEC semantics.
       decision: null
+      independent_reference_evidence:
+      - implementation: Foot
+        revision: cb2771788998f6a6288e2de8273c55a8214551e0
+        source_location: terminals/foot/csi.c:case 47,1047,1049
+        observed_source_behavior: Switches between the primary and alternate grid for mode 47.
+      - implementation: Kitty
+        revision: a79f376b85fd95e3dfd0589877123996bacd4184
+        source_location: terminals/kitty/kitty/modes.h:TOGGLE_ALT_SCREEN_1=(47 << 5); kitty/screen.c:TOGGLE_ALT_SCREEN_1
+        observed_source_behavior: Switches main/alternate line buffer via mode 47.
+      - implementation: Ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source_location: terminals/ghostty/src/terminal/modes.zig:alt_screen_legacy value 47; src/terminal/stream_terminal.zig and Terminal.zig
+        observed_source_behavior: Legacy mode 47 invokes alternate-screen switching without the 1049 clearing semantics.
+      - implementation: WezTerm
+        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        source_location: terminals/wezterm/wezterm-escape-parser/src/csi.rs:EnableAlternateScreen=47; term/src/terminalstate/mod.rs
+        observed_source_behavior: Parses and switches the alternate screen via mode 47.
+      modern_evidence_summary: Independently maintained modern terminals implement the xterm terminal meaning. This supports its interoperability
+        relevance but does not erase the originating DEC printing meaning or prove identical edge cases across implementations.
+    - id: esc-z-decid-vs-ecma48-sci
+      status: material-original-standard-versus-dec-xterm-request-awaiting-reference-review
+      wire: ESC Z
+      original_ecma48:
+        clause: ecma48.sci
+        source: Official ECMA-48 fifth edition (1991), 8.3.109
+        meaning: SINGLE CHARACTER INTRODUCER uses the following byte to represent a control/graphic character; the use is reserved for future
+          standardization.
+      dec_xterm:
+        source: Pinned xterm ctlseqs source line 193
+        meaning: DECID Return Terminal ID; legacy form of CSI c Device Attributes (DA).
+      reason: Same complete wire has materially different control-versus-reply semantics. An existing pinned iTerm2 comparison test records
+        no response for ESC Z, so first establish current independent behavior before treating this as an isolated two-way ECMA/xterm tie-break.
+      next_step: Confirm independent current DECID behavior in pinned terminals and the originating DEC source; select semantic role under
+        the approved two rules or explicit Captain scope decision. Never merge SCI into DA.
+      decision: null
+      independent_reference_evidence:
+      - implementation: Ghostty
+        revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+        source_location: src/terminal/stream.zig, ESC Z dispatch around line 3327
+        observed_source_behavior: Without intermediates, dispatches primary Device Attributes report for DECID.
+      - implementation: iTerm2
+        revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+        source_location: sources/VT100/VT100OtherParser.m:179 and VT100Terminal.m:2043
+        observed_source_behavior: Parses ESC Z as DECID but terminal execution breaks without generating a response.
+      - implementation: WezTerm
+        revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        source_location: wezterm-escape-parser/src/esc.rs:ReturnTerminalId=ESC Z
+        observed_source_behavior: Parser names the DECID encoding; reply behavior was not established by this source-only check.
+      evidence_limit: Modern Ghostty and iTerm2 show materially different DECID reply behavior; WezTerm parser recognition alone is not a
+        response proof. Keep the SCI-vs-DECID and reply questions distinct. Do not use the isolated two-way ECMA/xterm rule without accounting
+        for the independently maintained references.
     extraction_corrections:
     - original_id: private-mode-0-h-line-1042
       source_line: 1042
