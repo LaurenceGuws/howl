@@ -3479,6 +3479,12 @@ specifications:
           location: 309-342
           meaning: Recognizes Rex status protocol as adopting parser; full field limits and lifecycle correspondence not established
             by dispatch alone.
+        - url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-server/src/panes/grid.rs
+          revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+          sha256: 67f33778602724802cb5a88c34592956fafad9d6303b3d85fdcaabaa9ff25f5e
+          location: Grid::osc_end 7501
+          meaning: Zellij routes typed query/report to per-pane attention state; query reply uses incoming terminator. Complete
+            grammar/lifetime not established by route.
     - id: unknown-keys
       section: Syntax
       level: must
@@ -4290,6 +4296,11 @@ specifications:
           sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
           location: osc_dispatch1337
           meaning: Only image parse and insert_graphic path; does not imply other iTerm2 actions.
+        - url: https://github.com/xtermjs/xterm.js/blob/f447274f430fd22513f6adbf9862d19524471c04/addons/addon-image/src/ImageAddon.ts
+          revision: f447274f430fd22513f6adbf9862d19524471c04
+          sha256: 2f6f3bbe488f698e45f1e7db58722f8abf5f1935739d83c604a7ae55e281140b
+          location: ImageAddon.activate
+          meaning: OSC1337 image registration gated by iipSupport; not blanket support for other iTerm2 subcommands.
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -4801,6 +4812,12 @@ specifications:
           location: strhandle52
           meaning: Gated allowwindowops, ignores selection field, decodes third field and copies to selection/clipboard; no
             readback branch. No host policy selected.
+        - url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-server/src/panes/grid.rs
+          revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+          sha256: 67f33778602724802cb5a88c34592956fafad9d6303b3d85fdcaabaa9ff25f5e
+          location: Grid::osc_end52
+          meaning: Query forwards host clipboard request with selection first byte and original terminator; store decodes Base64
+            UTF8 and queues update. Host permissions separate.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences own latest clipboard, attention and typed reply FIFO
@@ -10031,6 +10048,12 @@ specifications:
           entry_id: dcs-27fe9c2ba4
           source_line: 3221
           wire: DCS Pa ; Pb ; Ph q
+        adopter_observations:
+        - url: https://github.com/xtermjs/xterm.js/blob/f447274f430fd22513f6adbf9862d19524471c04/addons/addon-image/src/ImageAddon.ts
+          revision: f447274f430fd22513f6adbf9862d19524471c04
+          sha256: 2f6f3bbe488f698e45f1e7db58722f8abf5f1935739d83c604a7ae55e281140b
+          location: ImageAddon.activate
+          meaning: Sixel DCS q registration gated by addon option; core registration does not guarantee image handling.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: fragmented Sixel retains exact image placement and cursor lifetime'
@@ -10817,6 +10840,10 @@ specifications:
         legacy_records:
         - iterm2.mode.dectcem
         - kitty.mode.dectcem
+      relations:
+      - kind: related
+        clause: wezterm_mode25_profile.ansi25
+        role: separate-nonprivate-profile
     - id: back-index
       section: Cursor Movement / Back Index, p177
       level: defined
@@ -15933,6 +15960,14 @@ specifications:
       - kind: related
         clause: ecma48.ls3r
         role: invocation
+      evidence:
+        adopter_observations:
+        - url: https://github.com/xtermjs/xterm.js/blob/f447274f430fd22513f6adbf9862d19524471c04/src/common/InputHandler.ts
+          revision: f447274f430fd22513f6adbf9862d19524471c04
+          sha256: b03afd5d38dd708440699e81135f1735626d55ffdf24621fbd54cfbc41320925
+          location: ESC |, }, ~ registrations; setgLevel
+          meaning: xterm.js v6 routes right-lock shifts to same single g-level service used for GL shifts. No independent GR
+            bank semantics established.
     - id: single-shift
       section: 8.4; ECMA-48 8.3.141-142
       level: defined
@@ -15999,6 +16034,13 @@ specifications:
           location: 305-320,502-507
           meaning: WezTerm also admits Sun letter OSC l/L setters by removing first letter from payload; original CDE source
             documents same strings as query responses. Earliest setter origin and exact semicolon grammar remain open.
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/osc.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 8503a11fe722283ac38dfabf90cd14ee68b1e93ff2ac8273620935c1f580fd39
+          location: OperatingSystemCommand::parse/fmt
+          meaning: WezTerm legacy l/L emission has no semicolon; parser recognizes letter prefix only for single parameter,
+            otherwise exact lookup of first parameter then slices first letter. Does not prove semicolon-containing Sun titles
+            round-trip. Exact origin now indexed under sun_shelltool.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences decline container geometry and window mutation without changing VT
@@ -16032,6 +16074,10 @@ specifications:
         - iterm2.window.report_window_title
         - iterm2.window.push_title
         - iterm2.window.pop_title
+      relations:
+      - kind: related
+        clause: sun_shelltool.title-reports
+        role: recovered-sun-source
     - id: title-selector-0
       section: Received Escape Sequences / Set text parameters
       level: defined
@@ -18549,6 +18595,14 @@ specifications:
       dispatch:
       - OSC 133
       rule: Optional command line using shell printf %q or UTF-8 URL percent encoding.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/input.c
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+          sha256: e39f0d288e87daa243262b09ff18f55f51748eab6495737bd8a1f288fccd28f6
+          location: input_osc_133_command_line
+          meaning: Pinned tmux C reads cmdline_url field, validates percent escapes, rejects decoded NUL and >16384 bytes before
+            clean_name; no cmdline=%q branch in this function. Adoption distinct from author protocol.
   kitty_remote_control:
     title: Kitty remote-control wire protocol
     author: Kovid Goyal / kitty
@@ -20881,6 +20935,12 @@ specifications:
           location: osc_dispatch9
           meaning: Progress parser first; if not parsed, notification fallback from second field. Not equivalent to all numeric
             ConEmu commands.
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/input.c
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+          sha256: e39f0d288e87daa243262b09ff18f55f51748eab6495737bd8a1f288fccd28f6
+          location: input_osc_9
+          meaning: Pinned tmux sub9 routes cwd; sub4 validates state0..4 and progress0..100, absent/empty percentage passes
+            -1. No generic OSC9 notification fallback.
     - id: wait-key
       section: ConEmu specific OSC table, HTML lines 768-832
       level: defined
@@ -23199,6 +23259,9 @@ specifications:
       - kind: related
         clause: cde_dtterm.title-selector-2
         role: adopted-profile
+      - kind: related
+        clause: sun_shelltool.window-title
+        role: recovered-origin
       evidence:
         additional_sources:
         - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
@@ -23218,6 +23281,10 @@ specifications:
         - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
           sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
           revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+      relations:
+      - kind: related
+        clause: sun_shelltool.icon-file
+        role: historical-origin
     - id: cwd-profile
       section: Working directory
       level: defined
@@ -26617,6 +26684,28 @@ specifications:
         - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
           sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
           revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    - id: apc-title-profile
+      section: input.c input_exit_apc
+      level: defined
+      wire: APC title ST
+      rule: Pinned tmux code dispatches APC starting G with length>1 to Kitty graphics when image build enabled and pane exists;
+        other APC bodies can set pane title if allow-set-title and screen_set_title accept. This is implementation observation
+        of a legacy title path, exact original attribution not established; no general APC title assignment, no host policy
+        selected.
+      dispatch:
+      - APC *
+      relations:
+      - kind: related
+        clause: ecma48.apc
+        role: adopting-profile
+      - kind: related
+        clause: kitty_graphics.envelope
+        role: dispatch-precedence
+      evidence:
+        additional_sources:
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/input.c
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+          sha256: e39f0d288e87daa243262b09ff18f55f51748eab6495737bd8a1f288fccd28f6
   mintty_rendition:
     title: Mintty additional character rendition attributes
     author: Thomas Wolff / Mintty
@@ -27907,6 +27996,255 @@ specifications:
         - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/window.py
           revision: a79f376b85fd95e3dfd0589877123996bacd4184
           sha256: 91f5bbabcb55e0482b7f304a2803f5d33166fd271ba9a81caf73f4da512acb20
+  sun_shelltool:
+    title: Sun shelltool tty-subwindow window controls
+    author: Sun Microsystems
+    authority: protocol-author
+    revision: SunCD Demo 1.0 shelltool(1), OpenWindows manual, observed 2026-11-26
+    url: https://www.typewritten.org/Manual/Sun/unbundled/SunCD_Demo_1.0/man1/shelltool.html
+    snapshot_sha256: 0fab293262e28da78f52079222b359b4800e0136192a4d6f60c3085c1dacbe7a
+    scope: Sun-authored OpenWindows shelltool(1) manual preserved by Typewritten museum, SunCD Demo 1.0. Observed mirror bytes;
+      not first SunView edition or earliest release proof. Original letter-title grammar and related report family, not whole
+      Sun workstation architecture.
+    clauses:
+    - id: window-title
+      section: USAGE / The Terminal Emulator
+      level: defined
+      wire: OSC l text ST
+      rule: Set tool header (window title). Lowercase letter l immediately followed by text, not numeric selector or required
+        semicolon. Manual explicitly uses ESC backslash terminator; BEL and empty-title/encoding admission not specified. This
+        is host window chrome rather than grid text.
+      relations:
+      - kind: related
+        clause: cde_dtterm.title-selector-2
+        role: later-numeric-profile
+      - kind: related
+        clause: mintty_controls.title-letter
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/osc.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 8503a11fe722283ac38dfabf90cd14ee68b1e93ff2ac8273620935c1f580fd39
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
+    - id: icon-label
+      section: USAGE / The Terminal Emulator
+      level: defined
+      wire: OSC L label ST
+      rule: Set tool icon label. Uppercase L, immediately followed by label; ST is ESC backslash. Distinct from lowercase l
+        title and numeric OSC1. Empty label and escaping not specified.
+      relations:
+      - kind: related
+        clause: cde_dtterm.title-selector-1
+        role: later-numeric-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/osc.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 8503a11fe722283ac38dfabf90cd14ee68b1e93ff2ac8273620935c1f580fd39
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
+    - id: title-reports
+      section: USAGE / The Terminal Emulator
+      level: defined
+      wire: CSI 20 t / OSC L label ST; CSI 21 t / OSC l label ST
+      rule: Request icon label or tool header respectively; same letter OSC grammar as corresponding setters returned terminal-to-host.
+        Request/reply direction distinct from applying a received setter. No host disclosure policy selected.
+      dispatch:
+      - CSI 20 t
+      - CSI 21 t
+      relations:
+      - kind: related
+        clause: sun_shelltool.window-title
+        role: reply-form
+      - kind: related
+        clause: sun_shelltool.icon-label
+        role: reply-form
+      - kind: related
+        clause: cde_dtterm.window-manipulation
+        role: adopted-window-operations
+      evidence:
+        additional_sources:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/osc.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 8503a11fe722283ac38dfabf90cd14ee68b1e93ff2ac8273620935c1f580fd39
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+    - id: icon-file
+      section: USAGE / The Terminal Emulator
+      level: defined
+      wire: OSC I file ST
+      rule: Set tool icon from file in iconedit output format. Uppercase I; immediately followed by filename, not semicolon.
+        Original host file/chrome request, not inline image transport. No permission or path access selected.
+      relations:
+      - kind: related
+        clause: mintty_controls.window-icon
+        role: related-adopting-profile
+  wezterm_mode25_profile:
+    title: WezTerm nonprivate cursor visibility alias
+    author: WezTerm project
+    authority: author-implementation
+    revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+    url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/csi.rs
+    snapshot_sha256: db1494003f9e389a42c0cc4e3b46b8673fd6401af467b450f8e4092c3d18727f
+    scope: Pinned source observation; original Microsoft attribution in enum comment remains uncorroborated. Retained local
+      Git history shallow. Microsoft current documentation and pinned DispatchTypes define DEC private25, not this alias. Not
+      a new authoritative Microsoft specification.
+    clauses:
+    - id: ansi25
+      section: TerminalModeCode::ShowCursor; terminalstate/mod.rs:1872-1877
+      level: defined
+      wire: CSI 25 h / CSI 25 l
+      rule: Pinned WezTerm sets/resets cursor_visible for nonprivate standard mode25 in addition to DEC private25. Enum comment
+        attributes MS terminal but neither preserved current Microsoft source nor official console VT documentation establishes
+        nonprivate alias. No independent original assignment or earliest-introduction claim. No nonprivate query behavior inferred.
+      dispatch:
+      - CSI 25 h
+      - CSI 25 l
+      relations:
+      - kind: related
+        clause: dec_vt420.cursor-visible
+        role: adopting-alias-observation
+      evidence:
+        additional_sources:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/DispatchTypes.hpp
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+          sha256: b37f33bb86ca061d8b9560e9874b2f12df3364e7e010bae56a002aa8534836c0
+        - url: https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
+          revision: Microsoft Learn author page, observed 2026-11-26
+          sha256: caad81b87cdf61e5c8426e27ebbbd1207b6205c23aa77054e13333af7393ccf6
+  zellij_internal_wire:
+    title: Zellij nested-session and UI-component transport boundaries
+    author: Zellij project
+    authority: author-implementation
+    revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+    url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-utils/src/nested_session.rs
+    snapshot_sha256: 833959e7cd5b137fe8c11c00f6500038d60aafe361455e35c4fd8521b608063f
+    scope: Pinned author producer, schema and receiving grid. Internal application protocols carried over terminal framing,
+      deliberately scoped to envelope/owner, not full protobuf, UI layout or host operation semantics.
+    clauses:
+    - id: nested-session
+      section: NESTED_FRAME_HEADER; encode_frame; Grid::hook/put/unhook
+      level: defined
+      wire: DCS 26661 n Base64-protobuf ST
+      rule: 'Private host/guest nested-session message envelope: standard Base64 encoded NestedSessionMessage protobuf. Grid
+        admits final n, no intermediates, exactly one parameter26661; encoded body collection bounded at1048576 bytes, overflow
+        drops collection; decode then queue valid message for session layer. Decoder accepts padded/unpadded Base64; no ordinary
+        VT cell mutation or host action authorization selected. Full contract, role negotiation and frame scan admission deferred.'
+      dispatch:
+      - DCS 26661 n
+      relations:
+      - kind: related
+        clause: ecma48.c1-dcs
+        role: transport-framing
+      evidence:
+        additional_sources:
+        - url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-utils/src/nested_session_contract/nested_session_message.proto
+          revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+          sha256: 70544db937280ecfd9937f218a9b7ec14bb9c0cf3ed5486d58a93c06b696088b
+        - url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-server/src/panes/grid.rs
+          revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+          sha256: 67f33778602724802cb5a88c34592956fafad9d6303b3d85fdcaabaa9ff25f5e
+      details:
+        encoded_grid_body_limit: 1048576
+        schema: nested_session_message.proto
+        scope: internal host/guest
+    - id: ui-components
+      section: Grid::hook/unhook; UiComponentParser::parse
+      level: defined
+      wire: DCS z component-name [ ; component-fields ... ] ST
+      rule: Internal UI component transport admitted when ui_components_enabled; hook checks final z and flag (no exact intermediate/parameter
+        guard established). Parser lossy UTF8-decodes and splits semicolons, first name and optional coordinates, component-specific
+        fields compiled to ANSI and fed back into grid. Default normal grid disables flag. No general VT component rendering
+        protocol, resource guarantee or complete nested grammar selected.
+      dispatch:
+      - DCS z
+      relations:
+      - kind: related
+        clause: ecma48.c1-dcs
+        role: transport-framing
+      evidence:
+        additional_sources:
+        - url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-server/src/panes/grid.rs
+          revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+          sha256: 67f33778602724802cb5a88c34592956fafad9d6303b3d85fdcaabaa9ff25f5e
+        - url: https://github.com/zellij-org/zellij/blob/0ef03437270ce7f015bf4733df19c8960fa2e618/zellij-server/src/ui/components/mod.rs
+          revision: 0ef03437270ce7f015bf4733df19c8960fa2e618
+          sha256: 1e8ba8279d620f73564ae835169c28a52c1ed961131e248b77e3e3861d579ab4
+  iterm2_conductor_wire:
+    title: iTerm2 SSH conductor framing and recovery boundaries
+    author: iTerm2 project
+    authority: author-implementation
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    url: https://github.com/gnachman/iTerm2/blob/1d6e758a390f7141f6e21b06e2663a53a02409c6/sources/VT100/VT100ConductorParser.swift
+    snapshot_sha256: 1a8f9a5713ff8950dcb2ed0a405406776d7ef1b77ee7a22862d369a6a5c139d1
+    scope: Pinned author implementation-specific SSH conductor transport and recovery, not a generic remote shell or full application
+      protocol. Preserve real envelope and owner while deferring detailed session state/host actions.
+    clauses:
+    - id: framer
+      section: framer.py send_esc; VT100ConductorParser parseGround/parseFramerPayload; VT100XtermParser
+      level: defined
+      wire: OSC 134 ; :payload ST
+      rule: Framer emits OSC134 followed by colon and text, ESC-backslash terminated. In conductor hook, 134 routes framer payload
+        (begin, output/autopoll/notification/terminate families); outside hook Xterm token triggers SSH recovery handling with
+        state-dependent routing or drop. Internal session transport, not ordinary OSC title/command execution; exact nested
+        message schemas, IDs, limits and recovery ordering deferred.
+      dispatch:
+      - OSC 134
+      relations:
+      - kind: related
+        clause: ecma48.c1-osc
+        role: transport-framing
+      evidence:
+        additional_sources:
+        - url: https://github.com/gnachman/iTerm2/blob/1d6e758a390f7141f6e21b06e2663a53a02409c6/OtherResources/framer.py
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          sha256: 13623b349555ad72799c95ccbe4e6a63a335c7ae6c6f0d5a2bcdc0cb875ee998
+        - url: https://github.com/gnachman/iTerm2/blob/1d6e758a390f7141f6e21b06e2663a53a02409c6/sources/VT100/VT100XtermParser.m
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          sha256: 0d6bc3063f74f22c564ba84060177e17a7f194abc66f47ce8a964dcb19871d2c
+        - url: https://github.com/gnachman/iTerm2/blob/1d6e758a390f7141f6e21b06e2663a53a02409c6/sources/VT100/VT100Terminal.m
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          sha256: 0d9babb6bddd083948ce3dad291f2c20032f5f2e1525ef8296bbe958de755c87
+    - id: pre-framer
+      section: VT100ConductorParser parseGround/parsePreFramerPayload/parseBody
+      level: defined
+      wire: OSC 135 ; payload ST
+      rule: 'Conductor parser recognizes OSC135 as pre-framer payload in ground hook: begin ID enters body; unhook ends hook;
+        unrecognized token unhooks. Body accepts 134 or135 lines and matching end ID prefix; nonconductor OSC/output can unhook.
+        Exact producer and prefix/escape grammar not recovered here; no claim standalone OSC135 ordinary terminal action.'
+      dispatch:
+      - OSC 135
+      relations:
+      - kind: related
+        clause: iterm2_conductor_wire.framer
+        role: internal-session-context
+    - id: wrapped-command-request
+      section: VT100Terminal.m key wrap; wrapChannelIDIsValid
+      level: defined
+      wire: OSC 1337 ; wrap=a=start;cmd=base64;uid=hex ST
+      rule: Pinned trusted-terminal-only branch decodes UTF8 command and validates channel ID at least16 hex chars, nonempty
+        decoded command, then delegates wrapped-command start. Source comment prints BEL/ST ambiguously; actual OSC token framing
+        handled separately. This is a host-side command request, no execution authorization, shell protocol or permission policy
+        selected.
+      dispatch:
+      - OSC 1337
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.custom-control
+        role: host-operation-boundary
+      evidence:
+        additional_sources:
+        - url: https://github.com/gnachman/iTerm2/blob/1d6e758a390f7141f6e21b06e2663a53a02409c6/sources/VT100/VT100Terminal.m
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          sha256: 0d9babb6bddd083948ce3dad291f2c20032f5f2e1525ef8296bbe958de755c87
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
