@@ -140,6 +140,12 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: MAX_ESCAPE_PARAMETERS; parseArg
           meaning: 32 argument entries including colon subparameters. Overflow behavior not inferred solely from bound.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: csiparse; ESC_ARG_SIZ
+          meaning: Flat16 integer arguments; first colon changes delimiter to colon, later semicolon no longer same delimiter.
+            Does not retain ECMA colon subparameter grouping.
     - id: c0-bel
       section: 8.3.3
       level: defined
@@ -927,6 +933,17 @@ specifications:
           location: collect_sgr
           meaning: SGR21 sets double underline,5/6 share blink bit; bright ranges mapped independently; overline53/55. Distinct
             from Alacritty SGR21 cancel-bold. Prior selection retained.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tsetattr
+          meaning: SGR5/6 share blink bit; 21 not recognized; 58 consumed without rendering. AIXterm bright ranges mapped independently.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: terminal_attribute
+          meaning: CancelBold for21, blink5/6/25 callbacks unhandled. Preserve selected original rendition and distinct adopter
+            behavior.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rendition protection and rectangle owners report exact mutation'
@@ -1184,6 +1201,13 @@ specifications:
           entry_id: csi-74aff5c25d
           source_line: 761
           wire: CSI Ps b
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: csihandle b; tputc control path
+          meaning: Repeat last stored printable codepoint with count clamped1..65535; control path clears lastc if no escape
+            remains. Source-specific bound, no change to selected original REP rule.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: REP retains bounded glyph state and exact lifetime'
@@ -1359,6 +1383,12 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: processCodePoint CAN/SUB
           meaning: When escape active both cancel and emit DEL codepoint127; in ground ignored. APC separate early path.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tcontrolcode
+          meaning: Resets CSI buffer and cancels string state; SUB shares cancellation after writing question mark. Full parser
+            transitions not qualified.
     - id: cbt
       section: 8.3.7
       level: defined
@@ -2164,6 +2194,14 @@ specifications:
           entry_id: csi-2852648ca5
           source_line: 1041
           wire: CSI Ps i
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: csihandle i; tdumpsel/tdumpline
+          meaning: Selectors0 dump display,1 current line,2 current selection to configured printer sink,4/5 disable/enable
+            printing input. Selector2 observed st-specific selection dump; no separate originating definition inferred. Host
+            sink/access policy separate.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: low priority private modes and media copy retain caller-neutral state
@@ -2471,6 +2509,11 @@ specifications:
           sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
           location: csi_dispatch SCP; default Handler::set_scp
           meaning: Parser accepts path0/1/2 and effect0/1/2; Alacritty Term does not override default no-op.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: Handler::set_scp; csi_dispatch
+          meaning: Recognized path0/1/2 and update0/1/2, but default no-op and pinned Crosswords handler has no override.
     - id: scs
       section: 8.3.112
       level: defined
@@ -2911,6 +2954,17 @@ specifications:
           revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
           sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
           location: substitute
+          meaning: Explicitly unimplemented.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tcontrolcode
+          meaning: Writes question-mark cell at current cursor then falls through CAN cancellation; no cursor advance in this
+            branch.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: Crosswords::substitute
           meaning: Explicitly unimplemented.
     - id: svs
       section: 8.3.149
@@ -4229,6 +4283,13 @@ specifications:
       - kind: related
         clause: iterm2_images.multipart-start
         role: extension
+      evidence:
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: osc_dispatch1337
+          meaning: Only image parse and insert_graphic path; does not imply other iTerm2 actions.
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -4734,6 +4795,12 @@ specifications:
           location: accumulate_st_terminated_esc_code; dispatch_osc
           meaning: Long unterminated OSC52 split internally by synthetic 52;; prefix and negative callback code -52. This is
             internal streaming adaptation, not new wire syntax.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: strhandle52
+          meaning: Gated allowwindowops, ignores selection field, decodes third field and copies to selection/clipboard; no
+            readback branch. No host policy selected.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences own latest clipboard, attention and typed reply FIFO
@@ -4774,6 +4841,11 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: doOscSetTextParameters 4
           meaning: Pairs dispatched to color parser, no question-mark reply branch.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: strhandle; osc_color_response
+          meaning: Only first index/value pair used; query returns rgb component repetition as 16-bit fields, always BEL terminated.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: xterm color query replies preserve BEL or ST request termination
@@ -4795,6 +4867,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:3031-3086,4105-4110,4243-4249
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: strhandle104
+          meaning: Only first index used; if no parameter resets colors via xloadcols after invalid index path.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: xterm OSC 104 rejects numeric-prefix junk unlike pinned iTerm2 scanner
@@ -4898,6 +4976,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:3567-3597,3630-3714,4251-4268,6451; ptyx.h:1018-1036
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: strhandle10/11/12; osc_color_response
+          meaning: Each operation uses first color value only, query always BEL reply, no successive-color list handling in
+            this branch.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: xterm color query replies preserve BEL or ST request termination
@@ -5614,6 +5699,11 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: doDecSetOrReset 47/1047/1049
           meaning: Shared handler clears alternate on entry, not xterm1047 exit-clear contract.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tsetmode47/1047/1049
+          meaning: Same shared clearing and swap route as47; source-specific effect ordering.
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -5715,6 +5805,12 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: doDecSetOrReset 47/1047/1049
           meaning: Shared handler with conditional bank-change guard.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tsetmode1049
+          meaning: Save/load cursor on both sides of shared screen swap path; clears if currently alternate. No full equivalence
+            inferred.
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -6456,6 +6552,13 @@ specifications:
           meaning: Decoded C1 ignored; OSC BEL/ST, non-ST ESC retained; length check8192 UTF16 code units before append, DCS
             checks > limit and treats backslash as terminator after ESC ignored. Source-specific malformed framing, not general
             contract.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tputc; strhandle; strparse
+          meaning: String grows by realloc with SIZE_MAX overflow guard, no fixed practical length bound shown; BEL or ESC/control
+            ends string collection; args split at semicolons, max16. UTF8 mode ignores decoded C1 handling. Distinguish collection
+            from command execution.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: every byte split preserves mixed control framing'
@@ -6582,6 +6685,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:3716-3752,4111-4131,4140-4159,4269-4286
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: strhandle110/111/112
+          meaning: Only exact one argument (numeric selector alone) accepted.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC palette and dynamic resets own exact bounds mutation and lifetime
@@ -7324,6 +7433,12 @@ specifications:
           location: Terminal::XTERM_RQTCAP
           meaning: Aggregates successful capability pairs in one response; skips unknown or malformed names and continues, valid1
             if any successful else0. Explicit comment distinguishes xterm stop-on-unknown behavior.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: process_xtgettcap_request
+          meaning: Per-name DCS reply (including failure name), invalid hex skipped, continues beyond unknown names; empty result
+            generic failure. Parameterized terminfo values retained in source form.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: XTGETTCAP replies preserve ordered names values failures and C1 serialization
@@ -7367,6 +7482,12 @@ specifications:
           location: Terminal::XTERM_SMGRAPHICS
           meaning: Replies error status1; no actual graphics attributes exposed by handler. Comment labels item indices0..2,
             not original xterm1..3. Prior original definition unchanged.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: csi_dispatch ?S
+          meaning: Only first two parameters forwarded to graphics_attribute; no value operand passed. Consumer read current/max
+            for color registers; reset/set unsupported. No complete geometry profile inferred.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: 'terminal: XTSMGRAPHICS reads only its owned Sixel register count'
@@ -7649,6 +7770,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:8969-9309; misc.c:7970-8040; ptyx.h:2357
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: csi_dispatch t
+          meaning: Only selectors14,16,18,22,23 routed, no resize request execution in this switch.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences decline container geometry and window mutation without changing VT
@@ -7964,6 +8091,12 @@ specifications:
           location: doDecSetOrReset 47/1047/1049
           meaning: All three selectors share entry save-cursor/clear-alt and exit restore-cursor handler on actual bank change,
             unlike distinct xterm definitions.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tsetmode47/1047/1049
+          meaning: '47 and1047 share handler: when current screen alternate, clears it before optional swap, including repeated
+            SET. Config allowaltscreen gates. Distinct from original xterm profiles.'
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -8137,6 +8270,13 @@ specifications:
       - kind: related
         clause: dec_vt3xx_graphics.regis-envelope
         role: graphics
+      evidence:
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: unknown1070
+          meaning: Consumer SET private-palette bit; RESET clears shared palette and bit. Query unsupported.
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -8181,6 +8321,11 @@ specifications:
           sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
           location: csi_dispatch =u
           meaning: Truncates flags to known bitset; behavior2 union,3 difference, otherwise replace including invalid selector.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: csi_dispatch =u
+          meaning: Unknown bits truncated; behavior2 union,3 difference, other replace, including invalid behavior value.
     - id: query
       section: Progressive enhancement
       level: defined
@@ -8210,6 +8355,11 @@ specifications:
           location: report_keyboard_mode
           meaning: Config gates report; reply from last stack entry or zero. Direct setter and stack-top interaction needs targeted
             trace.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: report_keyboard_mode
+          meaning: Report current stack entry.
     - id: stack
       section: Progressive enhancement
       level: defined
@@ -8258,6 +8408,12 @@ specifications:
           sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
           location: dispatch_csi u
           meaning: Push accepts at most one flag parameter, pop at most one count; separate query/set.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: KEYBOARD_MODE_STACK_MAX_DEPTH; push/pop_keyboard_modes
+          meaning: 8 slots, cyclic index on push, pop clears traversed slots and wraps, >=8 clears all. Separate bank fields;
+            not proof of original empty-pop semantics.
     - id: disambiguate
       section: Disambiguate escape codes
       level: defined
@@ -10007,6 +10163,11 @@ specifications:
           sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
           location: deccolm; set_private_mode; report_private_mode
           meaning: Resets scrolling region and grid rather than changing column count; reports not supported.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: deccolm; report_private_mode
+          meaning: Clears scrolling region/grid rather than resizing to132/80; reports unsupported.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DEC column modes own permission preservation query save and reset lifetime
@@ -10079,6 +10240,13 @@ specifications:
           entry_id: csi-542315e11b
           source_line: 1560
           wire: CSI Ps ; Ps r
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: csihandle r; tsetscroll
+          meaning: Clamps endpoints to grid, swaps if reversed, homes after setting. Different invalid-margin admission from
+            original DEC.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: cursor origin margins own exact aliases geometry wrap and resize'
@@ -11058,6 +11226,13 @@ specifications:
           entry_id: csi-4d9e66b18d
           source_line: 1507
           wire: CSI ? Ps $ p
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: report_private_mode
+          meaning: Named modes plus unknown80/1070/8452 special handling in set/unset. Unknown modes report0 even for those
+            three handled Sixel selectors; no inferred query support. SyncUpdate always reports reset.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DEC mode queries append DECRPM replies
@@ -14046,9 +14221,8 @@ specifications:
       - CSI 38 m
       - CSI 48 m
       rule: SGR 38 selects foreground and SGR 48 background colour. Colon-separated parameter elements select 0 (implementation-defined
-        foreground only), 1 (transparent), 2 (direct RGB), 3 (direct CMY), 4 (direct CMYK), or 5 (indexed palette colour).
-        Direct colours include a colour-space identifier and components; optional tolerance and tolerance-space elements may
-        follow.
+        foreground only), 1 (transparent), 2 (direct RGB), 3 (direct CMY), 4 (direct CMYK), or 5 (indexed palette colour). Direct
+        colours include a colour-space identifier and components; optional tolerance and tolerance-space elements may follow.
       relations:
       - kind: extends
         clause: ecma48.sgr
@@ -14080,6 +14254,13 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.sgr.underline_color
+      evidence:
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: csiparse; tsetattr; tdefcolor
+          meaning: Flat colon delimiter adaptation cannot establish complete colon-group or color-space semantics.
   dec_vt3xx_text:
     title: 'DEC VT330/VT340 Programmer Reference Manual, Volume 1: Text Programming'
     author: Digital Equipment Corporation
@@ -14460,8 +14641,8 @@ specifications:
       dispatch:
       - CSI ? 80 h
       - CSI ? 80 l
-      rule: 'DEC VT382 Thai 1989 reverses the 1988 VT330/VT340 DECSDM meaning: SET disables sixel scrolling; RESET enables
-        sixel scrolling.'
+      rule: 'DEC VT382 Thai 1989 reverses the 1988 VT330/VT340 DECSDM meaning: SET disables sixel scrolling; RESET enables sixel
+        scrolling.'
       relations:
       - kind: conflicts
         clause: dec_vt3xx_graphics.sixel-display-mode
@@ -14473,9 +14654,9 @@ specifications:
           set_effect: No sixel scrolling.
           reset_wire: CSI ? 80 l
           reset_effect: Sixel scrolling.
-          source_limit: This source summary specifies set/reset scrolling polarity only; it does not independently define
-            image anchoring, cursor-motion rules, sixel allocation dimensions or rendering bounds. Do not import those from
-            xterm and label them DEC-authored.
+          source_limit: This source summary specifies set/reset scrolling polarity only; it does not independently define image
+            anchoring, cursor-motion rules, sixel allocation dimensions or rendering bounds. Do not import those from xterm
+            and label them DEC-authored.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -14487,8 +14668,8 @@ specifications:
             pending_reconciliation: decsdm-polarity-vt300-vt382
             original_1988: dec_vt3xx_graphics.sixel-display-mode
             original_1989: dec_vt382_thai.sixel-display-mode
-            modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC
-              VT382 and contradicting original DEC VT330/VT340.
+            modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382
+              and contradicting original DEC VT330/VT340.
             disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly
               selected. Do not infer correctness from mnemonic or modern implementation counts alone.
         - catalogue: xterm_ctlseqs
@@ -14500,10 +14681,16 @@ specifications:
             pending_reconciliation: decsdm-polarity-vt300-vt382
             original_1988: dec_vt3xx_graphics.sixel-display-mode
             original_1989: dec_vt382_thai.sixel-display-mode
-            modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC
-              VT382 and contradicting original DEC VT330/VT340.
+            modern_xterm: Current pinned xterm implementation uses SET=non-scrolling, RESET=scrolling, matching later DEC VT382
+              and contradicting original DEC VT330/VT340.
             disposition: Keep both xterm discovery records until the target mode polarity and hardware-profile scope are explicitly
               selected. Do not infer correctness from mnemonic or modern implementation counts alone.
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: set_private_mode/unset_private_mode unknown80
+          meaning: Actual consumer route exists despite absence from named enum; query unsupported.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: DECSIXEL mode owns query save reset and fixed-origin cursor preservation'
@@ -14624,6 +14811,11 @@ specifications:
           sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
           location: Terminal::DECST8C
           meaning: Only selector5 admitted; resets interval8 and unsets column0.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: Handler::set_tabs; csi_dispatch ?5W
+          meaning: Routes to set_tabs(8); pinned Crosswords has no override.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: tab stops remain bank local and Kitty DECST8C resets only the active bank'
@@ -15097,6 +15289,49 @@ specifications:
       - kind: related
         clause: dec_vt520.secure-reset
         role: reply
+    - id: scroll-speed
+      section: 5-146 DECSSCLS
+      level: defined
+      wire: CSI Ps SP p
+      dispatch:
+      - CSI SP p
+      rule: 'Select scrolling speed (user preference): omitted or 0..3 smooth2,9 lines per second (default);4..8 smooth4,18
+        lines per second;9 jump, as fast as received. If User Features Locked is enabled, host command cannot change speed.
+        DECSCLM may change between Smooth2 and Jump. Values outside documented range not assigned a behavior. This is presentation
+        timing, not an alternative logical scroll operation. No timing architecture or Howl implementation selected.'
+      details:
+        default: Smooth2
+        selector_bands:
+        - selectors:
+          - 0
+          - 1
+          - 2
+          - 3
+          lines_per_second: 9
+        - selectors:
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          lines_per_second: 18
+        - selectors:
+          - 9
+          speed: jump
+        omitted: Smooth2
+      relations:
+      - kind: related
+        clause: dec_vt420.scrolling-mode
+        role: mode-interaction
+      evidence:
+        adopter_observations:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: dfc3a47c2b2182bf9da4187f9b09918df06f0bb5acf44bc7b1773c2ea2f8f64f
+          location: Screen::setScrollSpeed; apply DECSSCLS
+          meaning: Pinned Contour uses omitted default2; speed>=9 disables smooth scrolling; 0..8 map individually to3,6,9,12,18,22,27,31,36
+            lines/sec, delay truncated integer milliseconds. Does not implement original grouped speed bands; no original replacement
+            inferred.
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -15622,6 +15857,12 @@ specifications:
             reason: ECMA-35 restores prior coding-system announcement, designation and invocation state. Xterm describes selecting
               default ISO 8859-1 and its pinned parser switches PTY UTF-8 mode off conditionally; restoration of prior state
               is not established.
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tdefutf8
+          meaning: '% @ only clears UTF8 mode flag in this profile, not original ECMA35 coding-state restore.'
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime'
@@ -17521,9 +17762,9 @@ specifications:
       wire: ESC % G
       dispatch:
       - ESC % G
-      rule: Designate and invoke UCS transformation format UTF-8 with standard return. Registry escape suffix 02/05 04/07,
-        full 7-bit wire 0x1b 0x25 0x47. Implementation level unspecified. By ECMA-35 DOCS standard-return semantics, ESC %
-        @ returns to previous coding state; not an inherent switch to Latin-1.
+      rule: Designate and invoke UCS transformation format UTF-8 with standard return. Registry escape suffix 02/05 04/07, full
+        7-bit wire 0x1b 0x25 0x47. Implementation level unspecified. By ECMA-35 DOCS standard-return semantics, ESC % @ returns
+        to previous coding state; not an inherent switch to Latin-1.
       source_note: Xterm changes wide/UTF-8 mode subject to resource policy. Selection identity reconciled, standard-return
         state semantics remain pending. Registration 190/191/192 are different without-standard-return wires; not aliases.
       relations:
@@ -17539,6 +17780,12 @@ specifications:
         pinned_xterm_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6218-6249
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tdefutf8
+          meaning: ESC % G sets UTF8 flag, % @ clears UTF8 flag. No prior coding-state restoration in this handler.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: pinned iTerm2 UTF8 selection disables raw C1 execution unlike Howl'
@@ -18058,6 +18305,11 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: selectGraphicRendition 58; pen field comment
           meaning: Stores underline color but source comment says not used in rendering.
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: tsetattr58
+          meaning: Consumes color parameter operands via tdefcolor but does not apply underline color.
     - id: reset-color
       section: lines 29-32
       level: defined
@@ -18608,6 +18860,12 @@ specifications:
           sha256: f4264a3e240fb12d241440bc341000c5175dbd6b11b310c6d6d00ebe7e45a83a
           location: protocol origin
           meaning: Ghostty repository credits Rio glyph protocol; no separate originating Ghostty namespace inferred.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: process_apc_buffer; dispatch_glyph_protocol
+          meaning: Exact source prefix25a1 routed before Kitty G; actual glyph support/query/register/clear dispatch. Prior
+            author spec SHA matches same preserved Rio Git revision. No new protocol inferred.
     - id: support
       section: section 3
       level: defined
@@ -18623,6 +18881,14 @@ specifications:
       - APC 25a1
       rule: Any valid scalar including non-PUA. Echo cp. Coverage set empty,system,glossary,system+glossary (comma-separated).
         Glossary overrides system on rendering. Non-PUA cannot have glossary coverage. Ignore unknown names.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: dispatch_glyph_protocol query
+          meaning: Query forwarded to frontend for System/Glossary coverage, response written to originating pane. Preserve
+            host boundary; no claim of synchronous reply.
     - id: register
       section: section 6.1
       level: defined
@@ -18640,6 +18906,14 @@ specifications:
       - APC 25a1
       rule: Registration reply policy0 silent,1 all(default),2 errors. Status0 success; errors include out_of_namespace,composite_unsupported,hinting_unsupported,malformed_payload,payload_too_large.
         Unknown reply values default1; cp echoed.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: dispatch_glyph_protocol
+          meaning: Register success/error emitted according to reply flags; clear emits response. Malformed parse logs; out-of-namespace
+            clear has dedicated error.
     - id: clear
       section: sections 7.1-7.3
       level: defined
@@ -18654,6 +18928,14 @@ specifications:
       wire: APC 25a1 registrations
       rule: Only PUA E000..F8FF,F0000..FFFFD,100000..10FFFD. Limit1024 per session, FIFO eviction; decoded payload <=64KiB.
         No cross-session/persistent registration. RIS may clear.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/ansi/glyph_protocol.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 04ffeaf6913a5fc23105f5b570d786db9e4b8856331f3a8bc6efe485b4d3b5b7
+          location: MAX_PAYLOAD_BYTES; parse
+          meaning: Decoder bounds decoded payload at64KiB. APC accumulation in performer occurs before decoding, so decoded
+            cap alone is not transport buffer bound.
     - id: glyf
       section: sections 8.1-8.5
       level: defined
@@ -20411,6 +20693,11 @@ specifications:
           sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
           location: osc_dispatch 50
           meaning: Only CursorShape=0/1/2 prefix, reads first digit and ignores suffix; no general profile property mutation.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/osc.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 2bdbe230aadabdbbf9d7da3ae54cf95054675fdf6e51de242006a53c25be493c
+          location: parse_cursor_shape
+          meaning: CursorShape-only OSC50 parse, not general profile mutation.
     - id: cursor-blink
       section: Vt102Emulation.cpp:1623-1638
       level: defined
@@ -20588,6 +20875,12 @@ specifications:
           meaning: Pure leading digit prefix ending or followed by semicolon is ConEmu subcommand, never notification; only4
             dispatched. Once applied Rex report seen, suppress legacy progress until RIS. This is a concrete adopting disambiguation,
             not proof all OSC9 dialects agree.
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/performer/handler.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
+          location: osc_dispatch9
+          meaning: Progress parser first; if not parsed, notification fallback from second field. Not equivalent to all numeric
+            ConEmu commands.
     - id: wait-key
       section: ConEmu specific OSC table, HTML lines 768-832
       level: defined
@@ -25270,6 +25563,13 @@ specifications:
         selector: 8452
         documented_alias: null
         source_classification: '*3'
+      evidence:
+        adopter_observations:
+        - url: https://github.com/raphamorim/rio/blob/e1946a7b98a5a5a4074f384437f0256abf1df75b/rio-backend/src/crosswords/mod.rs
+          revision: e1946a7b98a5a5a4074f384437f0256abf1df75b
+          sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
+          location: unknown8452
+          meaning: Consumer SET/RESET controls Sixel cursor-to-right bit; query unsupported.
     - id: mode-drcs-mapping
       section: DECOPT table line4999
       level: defined
@@ -26472,6 +26772,13 @@ specifications:
       - kind: related
         clause: cde_dtterm.title-selector-2
         role: alternative-title-wire
+      evidence:
+        adopter_observations:
+        - url: https://git.suckless.org/st/file/st.c.html
+          revision: 688f70add0d1da8a416bf7df763328d694a24a3a
+          sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
+          location: eschandle k; strhandle
+          meaning: Adopts title string, only first semicolon-separated field used. No dynamic-title semantics established.
     - id: dynamic-title
       section: 10.1.2 Dynamic Titles
       level: defined
