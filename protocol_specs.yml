@@ -12048,14 +12048,18 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.notify_777
+      relations:
+      - kind: related
+        clause: urxvt.perl-envelope
+        role: exact-release-origin
     - id: notify-convention
       section: Common notify Perl extension convention
       level: defined
       wire: OSC 777 ; notify ; title ; body ST
       dispatch:
       - OSC 777
-      rule: Uses the notify extension namespace to request a plain-text notification; this convention is distinct from the
-        generic rxvt OSC 777 hook.
+      rule: Uses the notify extension namespace to request a plain-text notification; this convention is distinct from the generic
+        rxvt OSC 777 hook.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences only request attention for focus and attention notifications
@@ -14861,8 +14865,9 @@ specifications:
     revision: 2.7.10, 26 March 2003; release archive SHA-256
     url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
     snapshot_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
-    scope: Selected rxvt private modes from doc/rxvtRef.txt and src/command.c; archive pin covers both. Do not treat xterm
-      compatibility adaptations as original rxvt semantics.
+    scope: Selected rxvt private modes from doc/rxvtRef.txt and src/command.c; archive pin covers both. Do not treat xterm compatibility
+      adaptations as original rxvt semantics. Expanded source-specific OSC, menu and legacy graphics/keycode families from exact
+      release reference; full historic parser/graphics inner grammar remains open.
     clauses:
     - id: menu-bar
       section: rxvtRef.txt:357-359; command.c:2679-2681,2767-2771
@@ -14908,8 +14913,8 @@ specifications:
       dispatch:
       - CSI ? 35 h
       - CSI ? 35 l
-      rule: Enable/disable rxvt Shift-key action family. With Shift and no Ctrl/Meta, mode permits Shift+Insert selection
-        paste and Shift+keypad Add/Subtract font changes. Shift+F1..F10 mapping to F11..F20 is a separate branch.
+      rule: Enable/disable rxvt Shift-key action family. With Shift and no Ctrl/Meta, mode permits Shift+Insert selection paste
+        and Shift+keypad Add/Subtract font changes. Shift+F1..F10 mapping to F11..F20 is a separate branch.
       evidence:
         pinned_xterm_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -14924,8 +14929,8 @@ specifications:
       - CSI ? 1010 h
       - CSI ? 1010 l
       rule: SET inhibits scroll-to-bottom on tty output, RESET enables it. rxvt source uses inverse state to Opt_scrollTtyOutput.
-        urxvt 9.31 doc/rxvt.7.pod:2010-2017 and command.C:3888-3890 corroborate original polarity. This controls viewport
-        following, not canonical scrollback contents.
+        urxvt 9.31 doc/rxvt.7.pod:2010-2017 and command.C:3888-3890 corroborate original polarity. This controls viewport following,
+        not canonical scrollback contents.
       evidence:
         pinned_xterm_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -14938,8 +14943,8 @@ specifications:
           previous_review:
             classification: source-confirmed-material-semantic-difference
             decision: rxvt-mode1010-inverse-polarity
-            reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm
-              directly sets scrollttyoutput to mode state, opposite polarity.
+            reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
+              sets scrollttyoutput to mode state, opposite polarity.
         - catalogue: xterm_ctlseqs
           entry_id: private-mode-1010-l-line-1124
           wire: CSI ? 1010 l
@@ -14947,8 +14952,8 @@ specifications:
           previous_review:
             classification: source-confirmed-material-semantic-difference
             decision: rxvt-mode1010-inverse-polarity
-            reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm
-              directly sets scrollttyoutput to mode state, opposite polarity.
+            reason: Original rxvt 2.7.10 and descendant urxvt 9.31 SET inhibits, RESET enables output-follow. Pinned xterm directly
+              sets scrollttyoutput to mode state, opposite polarity.
     - id: scroll-keypress
       section: rxvtRef.txt:413-415; command.c:2695,2804-2809
       level: defined
@@ -14971,6 +14976,452 @@ specifications:
         pinned_xterm_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:7850-7853
+    - id: legacy-private-toggle
+      section: DEC Private Modes
+      level: defined
+      wire: CSI ? Pm t
+      dispatch:
+      - CSI ? t
+      rule: Toggle specified DEC-private mode values; source identifies as rxvt extension. Save/restore/set/reset distinct.
+        Exact unsupported mode list and ordering require code proof.
+      relations:
+      - kind: related
+        clause: xterm_controls.save-private-modes
+        role: state
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-menubar
+      section: XTerm Operating System Commands; menuBar
+      level: defined
+      wire: OSC 10 ; menu-command (BEL | ST)
+      dispatch:
+      - OSC 10
+      rule: Compile-option menuBar control; OSC10 historically means menu command, not dynamic foreground. Named circular set
+        of menu bars, menu path/item operations and quick arrows. Source explicitly warns selector may change.
+      relations:
+      - kind: conflicts
+        clause: xterm_controls.dynamic-colors
+      - kind: related
+        clause: rxvt.menu-bar
+        role: visibility
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-menu-management
+      section: menuBar / Commands
+      level: defined
+      wire: '[menu:name] / [menu] / [title:string] / [done] / [rm:name] / [rm] / [rm*] / [swap] / [prev] / [next] / [show] /
+        [hide]'
+      rule: Create/access named menu bar (name max15 chars), new pushes previous onto stack; access current for edit; title
+        expands %% literal,%n name,%v version; done readonly. Remove named/current/all, swap top two, prev/next circular navigation,
+        show/hide like private10. No selected host menu ownership.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-menu-file
+      section: menuBar / Commands
+      level: defined
+      wire: '[read:file] / [read:file;name] / [dump] / [pixmap:name[;scaling]]'
+      rule: Read menu commands from file (append .menu if required) from menu header until done; named form selects matching
+        menu, comments/blank ignored. Dump all to /tmp/rxvt-PID; pixmap selects background globally as OSC20. These are historical
+        host request semantics, not permission to read/write files.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-menu-path
+      section: menuBar / Adding and accessing menus; Removing menus
+      level: defined
+      wire: '[+] /path/menu / /path/menu/* / /path/{item}[{right-text}][ action] / -/path/...'
+      rule: Navigate / root, ./ current, ../ parent; add/access menu, wildcard clear; {-} separator, {item} label or action,
+        optional right-aligned text defaults to action if no explicit action. Prefix . to hide left label. Minus removes target/all
+        items; [:command:] overrides readonly. No executable actions selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-menu-action
+      section: menuBar / action encoding
+      level: defined
+      wire: menu action text
+      rule: Backslash escapes a,b,E,e,n,r,t,octal; caret C0/DEL notation; leading NUL stripped and sends remainder back to terminal,
+        double NUL strips one and sends remaining to process. M- maps ESC, M-x appends CR if absent, OSC action adds BEL if
+        needed. User activation consequence separate from canonical VT input.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-quick-arrows
+      section: menuBar / Quick Arrows
+      level: defined
+      wire: <r>action / <l>action / <u>action / <d>action / <b>prefix / <e>suffix
+      rule: Define four shortcut arrow actions individually or collectively with common beginning/end; default cursor keys.
+        Source grammar within OSC10 menu family.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-cursor-color
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 12 ; value (BEL | ST)
+      dispatch:
+      - OSC 12
+      rule: Set text cursor foreground. Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-pointer-color
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 13 ; value (BEL | ST)
+      dispatch:
+      - OSC 13
+      rule: Set mouse foreground. Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-highlight-color
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 17 ; value (BEL | ST)
+      dispatch:
+      - OSC 17
+      rule: Set highlight character color. Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-bold-color
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 18 ; value (BEL | ST)
+      dispatch:
+      - OSC 18
+      rule: Set bold character color. Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-underline-color
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 19 ; value (BEL | ST)
+      dispatch:
+      - OSC 19
+      rule: Set underlined character color. Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-foreground
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 39 ; value (BEL | ST)
+      dispatch:
+      - OSC 39
+      rule: Set default foreground (compile option). Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-background
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 49 ; value (BEL | ST)
+      dispatch:
+      - OSC 49
+      rule: Set default background (compile option). Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-pixmap
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 20 ; value (BEL | ST)
+      dispatch:
+      - OSC 20
+      rule: Change default background pixmap; optional scaling grammar in XPM section. Original rxvt selector role; no host
+        access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-dump
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 55 ; value (BEL | ST)
+      dispatch:
+      - OSC 55
+      rule: Log all screen and scrollback to named path. Original rxvt selector role; no host access or modern mapping selected.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-font-select
+      section: XTerm Operating System Commands
+      level: defined
+      wire: OSC 50 ; Pt (BEL | ST)
+      dispatch:
+      - OSC 50
+      rule: 'Set font. #+n/#-n step up/down n fonts; missing/zero n treated1; empty select font0, numeric n select font n. Original
+        rxvt variant, not complete xterm font menu syntax.'
+      relations:
+      - kind: related
+        clause: xterm_controls.font-operations
+        role: historical-profile
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-graphics-query
+      section: Special Graphics Mode
+      level: defined
+      wire: ESC G Q / ESC G 0|1
+      dispatch:
+      - ESC G
+      rule: Query rxvt private graphics support; reply0 unavailable,1 color graphics available. Source explicitly incomplete
+        graphics documentation.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-graphics-window
+      section: Special Graphics Mode
+      level: defined
+      wire: 'ESC G W ;x;y;w;h: / ESC G C id / ESC G G id:'
+      dispatch:
+      - ESC G
+      rule: Create graphics window, clear by id, query window. Query reply ESC G id x y w h fw fh nw nh. Exact delimiters/units
+        and create reply not fully stated by author.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-graphics-draw
+      section: Special Graphics Mode
+      level: defined
+      wire: ESC G L|P|F id / ;x;y
+      dispatch:
+      - ESC G
+      rule: Start point/line/fill as listed by author and extend with coordinates. Manual list aligns L,P,F with start point,line,fill
+        in that order; underlying code needs verification before assuming operation-letter meaning. No inferred bounds.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-graphics-text
+      section: Special Graphics Mode
+      level: defined
+      wire: ESC G T id;x;y;mode;len:text
+      dispatch:
+      - ESC G
+      rule: Place text in private graphics window. Exact mode/length encoding and malformed recovery open.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+    - id: legacy-key-encoding
+      section: Key Codes
+      level: defined
+      wire: CSI n ~|$|^|@ / CSI A..D or a..d / ESC O a..d or A..D
+      dispatch:
+      - CSI ~
+      - CSI ^
+      - CSI @
+      rule: 'Original key table: editing n1..8 (Find,Insert,Execute,Select,Prior,Next,Home,End), Delete3; normal ~,Shift $,Ctrl
+        ^,CtrlShift @ except Shift Insert paste/Prior/Next viewport. F1..20 numbers11,12,13,14,15,17,18,19,20,21,23,24,25,26,28,29,31,32,33,34;
+        Shift F1..10→F11..20. Arrow normal CSI uppercase,Shift CSI lowercase,Ctrl SS3 lowercase,CtrlShift SS3 uppercase. Compile
+        choices and keypad modes vary.'
+      source_note: CSI $ alone is an intermediate, not a complete CSI final. Published legacy keyboard output table ends with
+        $, retained as wire notation; dispatch only complete lookup keys.
+      evidence:
+        additional_sources:
+        - url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+          sha256: 0dabba520a3689c2a33583a06a0c594efc917fcc33b233765c74b59bff9c893f
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/doc/rxvtRef.txt
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
+        - url: https://sourceforge.net/projects/rxvt/
+          sha256: b4ede9581f868e3fa25f544a6fd7d373247dcf0d30a234e6da317084a698245c
+          revision: rxvt-2.7.10
+          archive_member: rxvt-2.7.10/src/command.c
+          archive_sha256: 616ad56502820264e6933d07bc4eb752aa6940ec14add6e780ffccf15f38d449
   urxvt:
     title: rxvt-unicode reference and implementation
     author: rxvt-unicode authors
@@ -14979,6 +15430,8 @@ specifications:
     url: https://deb.debian.org/debian/pool/main/r/rxvt-unicode/rxvt-unicode_9.31.orig.tar.bz2
     snapshot_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
     scope: Selected urxvt decimal mouse encoding and corroboration of inherited rxvt modes from doc/rxvt.7.pod and src/command.C.
+      Expanded 9.31 OSC, private modes, color grammar and source-specific reports. Separate inherited rxvt and adopting profiles,
+      not a complete Perl extension catalogue.
     clauses:
     - id: decimal-mouse-encoding
       section: doc/rxvt.7.pod:2028-2035, Mode 1015; src/command.C:1330-1371,3743
@@ -14991,8 +15444,8 @@ specifications:
         3 plus modifiers then +32), x/y are one-based decimal cell coordinates without +32. Shift-left press at column80,row1
         -> CSI 36;80;1M. Encoding does not enable tracking by itself.
       source_note: Pinned xterm treats encoding modes as mutually exclusive and RESET affects matching active mode only; decimal
-        positions do not have the legacy byte ceiling. urxvt source gives SGR precedence over 1015 when both bits present,
-        then UTF8; exact mixed-mode state and reset differences require separate qualification.
+        positions do not have the legacy byte ceiling. urxvt source gives SGR precedence over 1015 when both bits present, then
+        UTF8; exact mixed-mode state and reset differences require separate qualification.
       details:
         reply: CSI Pb ; Px ; Py M
       evidence:
@@ -15016,6 +15469,534 @@ specifications:
         - libvterm.mode.mouse_urxvt
         - iterm2.mode.mouse_urxvt
         - kitty.mode.mouse_urxvt
+    - id: osc-syn-escape
+      section: XTerm Operating System Commands; command.C:3224-3262
+      level: defined
+      wire: OSC Ps ; Pt (BEL | ST)
+      dispatch:
+      - OSC *
+      rule: Any payload octet may be escaped by preceding SYN0x16 (Ctrl-V). Source code reads raw next byte after SYN; ordinary
+        controls below0x20 except BEL, ESC, SYN abort, ESC only valid with backslash. Terminator remembered for replies; no
+        universal OSC framing change selected.
+      relations:
+      - kind: related
+        clause: xterm_controls.osc-framing
+        role: different-framing-profile
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: el-wrapped
+      section: CSI Sequences / EL
+      level: defined
+      wire: CSI 3 K
+      dispatch:
+      - CSI 3 K
+      rule: Erase like EL0 to end of line except ignored when line wrapped. Source labels urxvt extension; exact meaning of
+        wrapped and boundary checks need scr_erase_line trace.
+      relations:
+      - kind: extends
+        clause: ecma48.el
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: dsr-display-name
+      section: CSI Sequences / DSR
+      level: defined
+      wire: CSI 7 n
+      dispatch:
+      - CSI 7 n
+      rule: Request display name (insecure mode). Exact reply framing and failure behavior not fully defined by manual; no host
+        disclosure permission selected.
+      relations:
+      - kind: extends
+        clause: ecma48.dsr
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: dsr-version-title
+      section: CSI Sequences / DSR
+      level: defined
+      wire: CSI 8 n
+      dispatch:
+      - CSI 8 n
+      rule: Request version number by placing it in window title, not ordinary PTY report.
+      relations:
+      - kind: extends
+        clause: ecma48.dsr
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: bright-default
+      section: CSI Sequences / SGR
+      level: defined
+      wire: CSI 99|109 m
+      dispatch:
+      - CSI 99 m
+      - CSI 109 m
+      rule: Select bright default foreground/background (99/109), distinct from ordinary39/49. Exact intensity mapping needs
+        code qualification.
+      relations:
+      - kind: extends
+        clause: ecma48.sgr
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: style-intensity
+      section: DEC Private Modes
+      level: defined
+      wire: CSI ? 1021 h / CSI ? 1021 l
+      dispatch:
+      - CSI ? 1021 h
+      - CSI ? 1021 l
+      rule: Set bold/italic implies high intensity; reset font styles do not affect intensity. Compile styles. Manual attributes
+        mode to rxvt; exact earlier introduction not recovered.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: utf8-mouse-profile
+      section: DEC Private Modes / 1005
+      level: defined
+      wire: CSI ? 1005 h / CSI ? 1005 l
+      dispatch:
+      - CSI ? 1005 h
+      - CSI ? 1005 l
+      rule: Locale-specific coordinate encoding, not always UTF8; source says coords larger than2015 work unlike xterm. Avoid
+        nonUTF8 locale; use1015. Compile frills.
+      relations:
+      - kind: related
+        clause: xterm_controls.mouse-utf8
+        role: profile
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: window-property-query
+      section: XTerm Operating System Commands / 3
+      level: defined
+      wire: OSC 3 ; ?name|name=value|name (BEL | ST)
+      dispatch:
+      - OSC 3
+      rule: Query STRING window property if leading ?, insecure mode; name=value sets; name alone deletes. Extend xterm property
+        operation with query. No host read authorization.
+      relations:
+      - kind: extends
+        clause: xterm_controls.x-property
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: locale
+      section: XTerm Operating System Commands / 701; command.C:3620-3630
+      level: defined
+      wire: OSC 701 ; locale|? (BEL | ST)
+      dispatch:
+      - OSC 701
+      rule: Change locale and PTY UTF8 mode; query reports current locale if insecure enabled, otherwise empty (pinned code).
+        Reply uses corresponding terminator, source code truncates to250 chars. Original urxvt operation; Mintty adds explicit
+        configured-default empty semantics.
+      relations:
+      - kind: related
+        clause: mintty_controls.locale
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: version
+      section: XTerm Operating System Commands / 702; command.C:3604-3611
+      level: defined
+      wire: OSC 702 ; ? ST / OSC 702 ; rxvt-unicode ; name ; major ; minor ST
+      dispatch:
+      - OSC 702
+      rule: Query product, resource name and major/minor version. Pinned format uses resource name at most20 chars and VERSION[0],VERSION[2],
+        single characters, so exact multi-digit version semantics differ from general description; preserve code observation.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: italic-color
+      section: XTerm Operating System Commands; command.C:3551-3563
+      level: defined
+      wire: OSC 704 ; color|? (BEL | ST)
+      dispatch:
+      - OSC 704
+      rule: Set/query italic characters color. Special attribute styles compile-gated where applicable. Query uses common color
+        response helper.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: bold-color
+      section: XTerm Operating System Commands; command.C:3551-3563
+      level: defined
+      wire: OSC 706 ; color|? (BEL | ST)
+      dispatch:
+      - OSC 706
+      rule: Set/query bold characters color. Special attribute styles compile-gated where applicable. Query uses common color
+        response helper.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: underline-color
+      section: XTerm Operating System Commands; command.C:3551-3563
+      level: defined
+      wire: OSC 707 ; color|? (BEL | ST)
+      dispatch:
+      - OSC 707
+      rule: Set/query underlined characters color. Special attribute styles compile-gated where applicable. Query uses common
+        color response helper.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: border-color
+      section: XTerm Operating System Commands; command.C:3551-3563
+      level: defined
+      wire: OSC 708 ; color|? (BEL | ST)
+      dispatch:
+      - OSC 708
+      rule: Set/query window border color. Special attribute styles compile-gated where applicable. Query uses common color
+        response helper.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: background-tint
+      section: XTerm Operating System Commands / 705
+      level: defined
+      wire: OSC 705 ; color (BEL | ST)
+      dispatch:
+      - OSC 705
+      rule: Change background tint; delegated to urxvt-background extension, not direct text background. Full extension grammar
+        and availability remain open.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: a1d4d9eebecf5a8d8f3a89e718cb8b057e28caafd9519e7941303aba38175e91
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/perl/background
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: background-image
+      section: XTerm Operating System Commands / 20
+      level: defined
+      wire: OSC 20 ; background-spec (BEL | ST)
+      dispatch:
+      - OSC 20
+      rule: Change background image via linked background extension. Source-specific expression language/permissions remain
+        separate; no arbitrary file or expression execution selected.
+      relations:
+      - kind: related
+        clause: rxvt.legacy-pixmap
+        role: historical-profile
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: a1d4d9eebecf5a8d8f3a89e718cb8b057e28caafd9519e7941303aba38175e91
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/perl/background
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: fontsets
+      section: XTerm Operating System Commands / 710..713; command.C:3581-3602
+      level: defined
+      wire: OSC 710|711|712|713 ; fontset|? (BEL | ST)
+      dispatch:
+      - OSC 710
+      - OSC 711
+      - OSC 712
+      - OSC 713
+      rule: 710 normal alias of50,711 bold,712 italic,713 bold-italic (style compile). Set resource fontset; query returns descriptor
+        when insecure enabled else empty, truncation250 observed. Distinct style fontsets.
+      relations:
+      - kind: related
+        clause: rxvt.legacy-font-select
+        role: historical-profile
+      details:
+        selectors:
+          710: normal
+          711: bold
+          712: italic
+          713: bold-italic
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: viewport-up
+      section: XTerm Operating System Commands / 720
+      level: defined
+      wire: OSC 720 ; lines (BEL | ST)
+      dispatch:
+      - OSC 720
+      rule: Move viewing window up by lines, zero clears scrollback. Pinned code atoi conversion means nonnumeric text can become
+        zero. This is host viewport operation/retained-history mutation, not cursor movement.
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: viewport-down
+      section: XTerm Operating System Commands / 721
+      level: defined
+      wire: OSC 721 ; lines (BEL | ST)
+      dispatch:
+      - OSC 721
+      rule: Move viewing window down by lines, zero clears scrollback. Pinned code atoi on payload, including nonnumeric strings
+        converting to zero. Conflicts with DomTerm keyed HTML replacement.
+      relations:
+      - kind: conflicts
+        clause: domterm_wire.html-replace
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: cell-metrics
+      section: XTerm Operating System Commands / 776; command.C:3613-3618
+      level: defined
+      wire: OSC 776 ; ? ST / OSC 776 ; width ; height ; ascent ST
+      dispatch:
+      - OSC 776
+      rule: Since9.29 query cell width,height,font ascent, in device pixel metrics of source font. Pinned code responds only
+        if exact ?. Reply order width first, unlike iTerm2 ReportCellSize logical height first.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.report-cell-size
+        role: alternative-metrics
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: alpha-color
+      section: rxvt.1.pod / ALPHA CHANNEL SUPPORT; command.C:3413-3441
+      level: defined
+      wire: '[percent]color / rgba:rrrr/gggg/bbbb/aaaa'
+      rule: With Xft support, bracketed decimal opacity0..100 prefixes any color; four-channel rgba form exactly four hex digits
+        each, alpha0000 transparent/ffff opaque. Common OSC color query helper reports rgba when alpha nonopaque, rgb otherwise,
+        indexed replies include index; reply terminator remembered. Background image/pseudo transparency makes background fully
+        transparent; other colors alpha subject to RENDER, compositor. Distinct from WezTerm variable hex widths and Kitty alpha
+        grammar.
+      relations:
+      - kind: related
+        clause: wezterm_rgba.dynamic-colors
+        role: historical-alpha-profile
+      - kind: related
+        clause: kitty_color.alpha
+        role: alternative-alpha-grammar
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://deb.debian.org/debian/pool/main/r/rxvt-unicode/rxvt-unicode_9.31.orig.tar.bz2
+          sha256: 15cb63bb779e59989d63e378f01e42269d44d3adfe42d196083d775e5eadd0c3
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.1.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+    - id: perl-envelope
+      section: XTerm Operating System Commands / 777; urxvt.pm on_osc_seq_perl
+      level: defined
+      wire: OSC 777 ; prefix ; string (BEL | ST)
+      dispatch:
+      - OSC 777
+      rule: Compile Perl hook receives payload and response terminator; extension name sans -osc or suitable prefix followed
+        by semicolon recommended, cursor/current state up-to-date. Installed hook decides operation; no generic notify behavior
+        or host extension execution permission implied.
+      relations:
+      - kind: related
+        clause: urxvt_notify.perl-osc
+        role: origin
+      evidence:
+        additional_sources:
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 29b2a50c8d7f61bdb49ff9fff50f44973a007f115ac0f44f6f95500642640d9b
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/doc/rxvt.7.pod
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://software.schmorp.de/pkg/rxvt-unicode.html
+          sha256: 3afa4070b382a036a141d016da2b287cbd301a9e79abd0ea67a7f6d552e61f64
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/command.C
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
+        - url: https://deb.debian.org/debian/pool/main/r/rxvt-unicode/rxvt-unicode_9.31.orig.tar.bz2
+          sha256: d5bcca658fcf702b0f56331ba3ac21a1df5377c07fef360fbf0e74308e66f5ac
+          revision: rxvt-unicode-9.31
+          archive_member: rxvt-unicode-9.31/src/urxvt.pm
+          archive_sha256: aaa13fcbc149fe0f3f391f933279580f74a96fd312d6ed06b8ff03c2d46672e8
   iso_ir196:
     title: 'ISO-IR 196: UCS Transformation Format (UTF-8) with standard return'
     author: ISO/IEC JTC1/SC2; ECMA sponsor
@@ -20114,6 +21095,12 @@ specifications:
       rule: 'Adopts rxvt-unicode locale/charset operation: query returns restorable setting, nonempty locale same format as
         LANG, empty configured/environment default. Terminal encoding and process locale not automatically synchronized. Original
         rxvt-unicode spec remains discovery obligation.'
+      relations:
+      - kind: related
+        clause: urxvt.locale
+        role: origin
+      source_note: Original rxvt-unicode 9.31 OSC701 reference and parser recovered under urxvt.locale. Empty locale/reset semantics
+        remain separate profile qualification.
     - id: title-copy
       section: Window title copy
       level: defined
@@ -20266,6 +21253,12 @@ specifications:
       - CSI ? 8452 l
       rule: Set leaves cursor next to lower right image; reset below image. Author credits xterm; local xterm docs additionally
         attribute RLogin. Origin RLogin not recovered. Applies to Mintty Sixel/other image exit profile.
+      relations:
+      - kind: related
+        clause: rlogin_extensions.mode-sixel-exit-right
+        role: origin
+      source_note: RLogin original-labelled DECOPT8452 recovered at pinned RLogin2.32.0; earliest introduction revision remains
+        untraced. xterm and Mintty documented adoption retained.
     - id: graphics-no-scroll
       section: Graphics position
       level: defined
@@ -21311,6 +22304,1370 @@ specifications:
       - kind: related
         clause: xterm_controls.dynamic-colors-reset
         role: adopted-profile
+  domterm_wire:
+    title: DomTerm specific escape sequences and wire byte protocol
+    author: Per Bothner / DomTerm project
+    authority: protocol-author
+    revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+    snapshot_sha256: 6d55083129620d43eb13a65699dfebfceb31cc17754359b38f4c6d24ee716eae
+    scope: Author Texinfo manual Wire byte protocol section, with separately labelled internal back-end/front-end framing and
+      exact selected parser observations. Source says wire may change. Public and internal controls are not interchangeable;
+      no browser or host action authorization selected.
+    clauses:
+    - id: erase-except-line
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI 7 J
+      dispatch:
+      - CSI 7 J
+      rule: Delete all buffer lines including scrollback except current line. Distinct from ED3 saved-lines-only.
+      relations:
+      - kind: extends
+        clause: ecma48.ed
+    - id: secondary-da
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI > 0 c / CSI > 990 ; version ; 0 c
+      dispatch:
+      - CSI > c
+      rule: DomTerm-specific secondary DA type990, version calculated major*100000+minor*100+patch. Manual prints OSC-like ESC
+        ]990;...;0c without terminator; pinned parser emits CSI >990;...;0c. Preserve source notation discrepancy rather than
+        invent an OSC reply.
+      relations:
+      - kind: related
+        clause: dec_vt420.secondary-device-attributes
+        role: profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: hyperlink-profile
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 8 ; options ; URL BEL / OSC 8 ; ; BEL
+      dispatch:
+      - OSC 8
+      rule: Author documents hyperlink span start/end and options ignored. Do not infer support for OSC8 id association from
+        source; presentation styling is host-specific.
+      relations:
+      - kind: related
+        clause: osc8.open
+        role: adopted-profile
+      - kind: related
+        clause: osc8.close
+        role: adopted-profile
+      - kind: related
+        clause: osc8.id
+        role: profile
+    - id: window-name
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 30 ; name BEL
+      dispatch:
+      - OSC 30
+      rule: Set DomTerm window name, reflected in title and DOM window-name attribute, usable for conditional stylesheet selection.
+        This is name identity, not necessarily ordinary title or other-terminal OSC30 semantics.
+      relations:
+      - kind: related
+        clause: konsole_profiles.session-name
+        role: alternative-profile
+    - id: html-insert
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 72 ; HTML-fragment BEL
+      dispatch:
+      - OSC 72
+      rule: Insert safety-scrubbed HTML; complete document wrappers and style elements ignored. Base href skipped as element
+        but supplies relative URL base within fragment for images/links. Allowed tags/attributes host policy, explicitly evolving.
+        Pinned parser unconditionally calls HTML insertion handler for selector72; no disambiguating guard at dispatch. No HTML
+        execution or network permission selected.
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: html-replace
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 721 ; key ; HTML-fragment BEL
+      dispatch:
+      - OSC 721
+      rule: Find latest element in document order with can-replace-children class and matching replace-key; replace children
+        with safety-scrubbed HTML. Pinned code requires nonempty key before separator, no match does nothing. Distinct from
+        urxvt OSC721 viewport movement.
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: simulate-key
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 73|74 ; keyName [ TAB key-string ] BEL
+      dispatch:
+      - OSC 73
+      - OSC 74
+      rule: Simulate named key for automatic line editing. 73 suppresses echo;74 enables. Backend KEY protocol additionally
+        documents seqno field between tab separators; exact old/new parameter profile preserved under backend-key.
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: fresh-line
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI 20 u
+      dispatch:
+      - CSI 20 u
+      rule: If cursor already at beginning of line, no-op; otherwise start new line.
+      relations:
+      - kind: related
+        clause: bothner_semantic_prompts.fresh-line
+        role: predecessor
+    - id: input-mode
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI 80 ; Ps u
+      dispatch:
+      - CSI 80 u
+      rule: Set local editing mode:97 automatic based on inferior PTY mode,99 character-by-character,108 local line editing
+        and complete line on Enter,112 pipe line mode with local echo. Pinned handler defaults112 when second field absent,
+        not explicitly documented.
+      details:
+        selectors:
+          97: automatic
+          99: character
+          108: line
+          112: pipe
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: window-state-request
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI 81 u
+      dispatch:
+      - CSI 81 u
+      rule: Request WINDOW-CONTENTS state from front-end for attachment/snapshot. Manual prints LF following command; parser
+        dispatches at u, not proven LF requirement. Internal session protocol, not general terminal readback.
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: local-settings
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 88 ; JSON-object BEL
+      dispatch:
+      - OSC 88
+      rule: Update only supplied local setting keys; null removes override and restores global/default. Other keys unchanged.
+        Host setting schema separate.
+    - id: user-settings
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 89 ; settings BEL
+      dispatch:
+      - OSC 89
+      rule: Internal user-settings update; payload uses DomTerm settings format, no general public setting-change contract inferred.
+    - id: auto-pause
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI 92 ; Ps u
+      dispatch:
+      - CSI 92 u
+      rule: 1 temporarily enables auto-pause;2 disables temporary enable only. Intended for paging, not arbitrary canonical
+        PTY blocking mandate.
+    - id: eof
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: CSI 99 ; 99 u
+      dispatch:
+      - CSI 99 u
+      rule: Signal end of output stream to front-end; invokes EOF handling which may close window. Internal session effect.
+    - id: saved-state
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 103 ; state BEL
+      dispatch:
+      - OSC 103
+      rule: Send saved state to newly attached window. Internal snapshot format/lifetime distinct from public terminal protocol.
+    - id: paste
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 231 ; JSON-string BEL
+      dispatch:
+      - OSC 231
+      rule: Paste decoded JSON string in front-end. Backend clipboard request may produce this instead of process OSC52 response;
+        permission separate.
+      relations:
+      - kind: related
+        clause: xterm_controls.clipboard-osc52
+        role: alternate-host-bridge
+    - id: host-command
+      section: Wire byte protocol / Miscellaneous sequences
+      level: defined
+      wire: OSC 97 ; command-or-JSON-object BEL
+      dispatch:
+      - OSC 97
+      rule: Request named host command, or JSON object with cmd, optional numeric id echoed in RESPONSE and command-specific
+        options. Internal command roster/permission rules not specified by wire section; no execution authorization selected.
+    - id: error-span
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: CSI 12 u / CSI 11 u
+      dispatch:
+      - CSI 12 u
+      - CSI 11 u
+      rule: Start error output span then end with11; default styling red. Legacy shell integration, not standard CSI-u keyboard
+        protocol.
+    - id: prompt-span
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: CSI 14 u / CSI 13 u
+      dispatch:
+      - CSI 14 u
+      - CSI 13 u
+      rule: Begin prompt style and end selectable prompt; selection includes prompt.
+      relations:
+      - kind: related
+        clause: bothner_semantic_prompts.prompt
+        role: predecessor
+    - id: nonselectable-prompt
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: CSI 18 u
+      dispatch:
+      - CSI 18 u
+      rule: End prompt excluding text from selection; requires plain unstyled text, recommended for continuation prompts.
+      relations:
+      - kind: related
+        clause: domterm_wire.prompt-span
+        role: alternative-end
+    - id: input-span
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: CSI 15 [ ; edit-mode ] u
+      dispatch:
+      - CSI 15 u
+      rule: Start input line, implicitly end selectable prompt. Mode0 no editing/arrow support,1 default single-line,2 first
+        of multiline group. Manual says LF escape notation but parenthetical carriage return; exact terminator semantics not
+        inferred.
+    - id: fold-button
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: CSI 16 u text CSI 17 u
+      dispatch:
+      - CSI 16 u
+      - CSI 17 u
+      rule: Delimit one or two codepoint hide/show control. First visible when content shown; second when hidden; may default
+        via predefined marker pair. User activation toggles related spans, not a terminal input key report.
+    - id: fold-span
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: CSI 83 ; Ps u
+      dispatch:
+      - CSI 83 u
+      rule: 0 end fold-controlled span,1 begin visible,2 begin hidden. Previously printed hide/show button controls it.
+      relations:
+      - kind: related
+        clause: domterm_wire.fold-button
+        role: presentation
+    - id: command-group
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: OSC 119 ; group-id BEL / CSI 19 u
+      dispatch:
+      - OSC 119
+      - CSI 19 u
+      rule: Fresh-line and end existing matching group, start new group nested if no matching group. CSI19u deprecated empty-id
+        alias; commonly id REPL PID.
+      relations:
+      - kind: related
+        clause: bothner_semantic_prompts.restart-command
+        role: predecessor
+    - id: group-enter
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: OSC 120 ; group-id BEL
+      dispatch:
+      - OSC 120
+      rule: Experimental start group without closing existing groups.
+    - id: group-exit
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: OSC 121 ; group-id BEL
+      dispatch:
+      - OSC 121
+      rule: Experimental exit named group.
+    - id: continuation-template
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: OSC 122 ; pattern BEL
+      dispatch:
+      - OSC 122
+      rule: Set continuation prompt template for noninitial multiline editing rows; print-style percent escapes, JLine-like.
+        Full template token grammar not supplied by this section.
+    - id: reopen-input
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: OSC 123 ; BEL
+      dispatch:
+      - OSC 123
+      rule: Reopen prior input for editing and append empty fresh line, e.g. syntactically incomplete command.
+    - id: semantic-prompt-adoption
+      section: Wire byte protocol / Command parts (shell integration)
+      level: defined
+      wire: OSC 133 ; A|N|B|I|C|P|D|L [ ; options ] ST
+      dispatch:
+      - OSC 133
+      rule: 'Pinned parser follows Bothner proposal: A/N fresh line, N ends matching group, B/I input variants, C output, P
+        prompt, D end group and optional error marker (err named option or nonzero first field), L fresh line. No Z branch;
+        parser observes D assignment, not resolution of original draft textual inconsistency.'
+      relations:
+      - kind: related
+        clause: bothner_semantic_prompts.start-command
+        role: adopted-profile
+      - kind: related
+        clause: bothner_semantic_prompts.finish
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: pane-create
+      section: Wire byte protocol / Window operations
+      level: defined
+      wire: OSC 204 ; op [ , oldwin ] , options ...
+      dispatch:
+      - OSC 204
+      rule: Internal create pane relative to specified/default current window. Manual terminator printed ambiguously as a followed
+        by newline; exact internal envelope and option grammar need code trace. Do not infer public pane-creation behavior.
+    - id: window-hide
+      section: Wire byte protocol / Window operations
+      level: defined
+      wire: CSI 2 ; 72|73|74 t
+      dispatch:
+      - CSI 2 t
+      rule: Electron/Qt-specific:72 hide including taskbar;73 toggle normal/minimized;74 toggle normal/hidden. Hidden/minimized
+        toggles show. Extends xterm minimize selector2.
+      relations:
+      - kind: extends
+        clause: cde_dtterm.window-manipulation
+    - id: resize-replay
+      section: Wire byte protocol / Window operations
+      level: defined
+      wire: CSI 8 ; rows ; columns [ ; mode ] t
+      dispatch:
+      - CSI 8 t
+      rule: Manual prints columns then rows, but pinned parser reads height/rows from second field and width/columns from third,
+        as xterm. Mode8 synchronizes secondary window/replay; ignored by primary outside replay. Preserve exact doc/code order
+        issue.
+      relations:
+      - kind: related
+        clause: xterm_controls.window-operation-extensions
+        role: extended-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: out-of-band
+      section: Wire byte protocol / Urgent messages
+      level: defined
+      wire: 0x13 0x15 sequence 0x14
+      rule: 'Internal server-to-front-end framing: save interrupted parser/UTF8 state, execute embedded sequence then restore
+        state. Distinct from ordinary C0 flow-control bytes. Not a general PTY admission rule.'
+    - id: urgent-order
+      section: Wire byte protocol / Urgent messages
+      level: defined
+      wire: 0x13 0x17 sequence 0x14
+      rule: 'Same embedded control but higher priority: process before preceding bytes in received chunk. Explicit internal
+        ordering profile, not selected VT behavior.'
+      relations:
+      - kind: related
+        clause: domterm_wire.out-of-band
+        role: priority
+    - id: uncounted-urgent
+      section: Wire byte protocol / Urgent messages
+      level: defined
+      wire: 0x13 [ 0x16 ] sequence 0x14
+      rule: Reserved backend-only variants excluded from received-byte flow-control count and saved output log. With0x16 urgent
+        reorder, without ordinary out-of-band behavior.
+      relations:
+      - kind: related
+        clause: domterm_wire.out-of-band
+        role: framing
+      - kind: related
+        clause: domterm_wire.urgent-order
+        role: priority
+    - id: diagnostic-start
+      section: Wire byte protocol / Diagnostic (error) messages
+      level: defined
+      wire: OSC 44 ; options BEL
+      dispatch:
+      - OSC 44
+      rule: Begin diagnostic span with options JSON object minus braces; repl:true identifies earlier REPL error/warning. Pinned
+        handler stores raw info; JSON parsing commented as future work.
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: diagnostic-end
+      section: Wire byte protocol / Diagnostic (error) messages
+      level: defined
+      wire: CSI 44 ; 0 u
+      dispatch:
+      - CSI 44 u
+      rule: Close current diagnostic span. Other second parameters reserved future, not defined operations.
+      relations:
+      - kind: related
+        clause: domterm_wire.diagnostic-start
+        role: lifetime
+    - id: style-rule
+      section: Wire byte protocol / Stylesheet manipulation
+      level: defined
+      wire: OSC 94 ; JSON-quoted-rule BEL
+      dispatch:
+      - OSC 94
+      rule: Append CSS rule to temporary stylesheet, create if needed. Host CSS rendering and safety policy separate.
+    - id: style-list
+      section: Wire byte protocol / Stylesheet manipulation
+      level: defined
+      wire: OSC 90 ; BEL
+      dispatch:
+      - OSC 90
+      rule: Deprecated request list of stylesheets. Reply raw0x9D followed by tab-separated JSON strings and LF.
+    - id: style-enable
+      section: Wire byte protocol / Stylesheet manipulation
+      level: defined
+      wire: OSC 91|92 ; index BEL
+      dispatch:
+      - OSC 91
+      - OSC 92
+      rule: Deprecated selector91 disables indexed stylesheet,92 enables. Reply raw0x9D then empty success or error text then
+        LF.
+    - id: style-print
+      section: Wire byte protocol / Stylesheet manipulation
+      level: defined
+      wire: OSC 93 ; index BEL
+      dispatch:
+      - OSC 93
+      rule: Deprecated request stylesheet rules. Manual prints successful response raw0x9D, JSON quoted rules, raw0x9D (not
+        LF); error nonquoted. Exact delimiter inconsistency with neighboring commands remains open.
+    - id: style-replace
+      section: Wire byte protocol / Stylesheet manipulation
+      level: defined
+      wire: OSC 95|96 ; JSON-name , JSON-styles BEL
+      dispatch:
+      - OSC 95
+      - OSC 96
+      rule: Deprecated create/replace stylesheet with matching name or append new. 95 replies raw0x9D,index,LF;96 no reply.
+        Both arguments JSON strings.
+    - id: buffer-push
+      section: Wire byte protocol / Alterate screen buffers
+      level: defined
+      wire: CSI 84 ; 2|3|5 u
+      dispatch:
+      - CSI 84 u
+      rule: Push fresh buffer even if already alternate; cursor upper-left. 2 main without automatic scroll,3 main scrolled
+        to visible window start,5 alternate scrolled. Manual labels5 alternate, pinned call passes param1==4 (false for all
+        three admitted values); actual buffer marker requires consumer trace.
+      relations:
+      - kind: extends
+        clause: xterm_controls.alternate-buffer-save-clear
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: buffer-pop
+      section: Wire byte protocol / Alterate screen buffers
+      level: defined
+      wire: CSI 84 ; 1 u
+      dispatch:
+      - CSI 84 u
+      rule: Pop most recent buffer, ignore when only buffer remains.
+      relations:
+      - kind: related
+        clause: domterm_wire.buffer-push
+        role: lifetime
+    - id: logical-block-start
+      section: Wire byte protocol / Pretty-printing
+      level: defined
+      wire: OSC 110 [ ; JSON-prefix ] BEL
+      dispatch:
+      - OSC 110
+      rule: Start logical block of output grouped for minimal line breaks; continuation indent current horizontal position,
+        optional prefix repeated on every continuation. Source derives Common Lisp pretty-printing concepts. Conflicts with
+        xterm color reset110 on empty form.
+    - id: logical-block-end
+      section: Wire byte protocol / Pretty-printing
+      level: defined
+      wire: OSC 111 BEL
+      dispatch:
+      - OSC 111
+      rule: End current logical block; suffix emitted after command. Pinned parser pops existing group if present. Collides
+        with xterm dynamic background reset111.
+      evidence:
+        additional_sources:
+        - url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/hlib/domterm-parser.js
+          sha256: f5fdc22d6f5c9c108f212390e36cb2a1a412cea451b0b330f45dd255f5afdbe6
+          revision: 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    - id: indent-current
+      section: Wire byte protocol / Pretty-printing
+      level: defined
+      wire: OSC 112 ; amount BEL
+      dispatch:
+      - OSC 112
+      rule: Adjust future-line indentation relative to current position, signed character amount; negative allowed but not left
+        of prefix.
+    - id: indent-block
+      section: Wire byte protocol / Pretty-printing
+      level: defined
+      wire: OSC 113 ; amount BEL
+      dispatch:
+      - OSC 113
+      rule: Indent relative to block start after any per-line prefix, rather than current position.
+    - id: prefix
+      section: Wire byte protocol / Pretty-printing
+      level: defined
+      wire: OSC 114 ; JSON-prefix BEL
+      dispatch:
+      - OSC 114
+      rule: Add extra per-line prefix for future lines.
+    - id: conditional-breaks
+      section: Wire byte protocol / Pretty-printing
+      level: defined
+      wire: OSC 115|116|117|118 [ ; JSON-prebreak , JSON-postbreak , JSON-nonbreak ] BEL
+      dispatch:
+      - OSC 115
+      - OSC 116
+      - OSC 117
+      - OSC 118
+      rule: Insert fill115,linear116,miser117 (currently fill),required118 newline. Nonbreak text when not broken, prebreak
+        before actual break, postbreak following indent/prefix. Required break preferred to raw LF inside group. All three payload
+        strings JSON-quoted; no payload allowed in bare forms. Collide with xterm reset115..118.
+      details:
+        selectors:
+          115: fill
+          116: linear
+          117: miser (currently fill)
+          118: required
+    - id: font-family
+      section: Wire byte protocol / Variable-width fonts (experimental)
+      level: defined
+      wire: CSI 144 ; font m
+      dispatch:
+      - CSI 144 m
+      rule: 0 or1 monospace,2 default sans-serif,3 default serif; other values unspecified, custom fonts future. Recommended
+        for logical-indexing lines.
+    - id: logical-indexing
+      section: Wire byte protocol / Variable-width fonts (experimental)
+      level: defined
+      wire: CSI 76 ; kind l
+      dispatch:
+      - CSI 76 l
+      rule: Experimental begin-of-line mode where horizontal positions count Unicode codepoints, not cells or graphemes; soft
+        visual wraps ignored by application addressing. Kind0 disables,1/omitted user default normally3,2 character wrap,3 prefer
+        whitespace near edge,4 browser wrap. 2/3 show wrap marker. Manual marks clearing by EL/ED/DL not implemented; do not
+        claim full lifecycle.
+    - id: backend-frame
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD name SP data LF / 0xFD LF
+      rule: Internal front-end event framing; FD cannot be UTF8 text byte. FD LF encodes literal FD to process. Event identifier,
+        optional textual data excluding LF/controls (JSON in some cases). Distinct internal channel, not normal PTY escape syntax.
+    - id: backend-window-size
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD WS rows cols height width LF
+      rule: Report grid rows/cols and physical height/width to backend.
+    - id: backend-key
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD KEY keyname TAB seqno TAB JSON-keychars LF / OSC 74 ; keyname TAB seqno TAB JSON-keychars BEL
+      dispatch:
+      - OSC 74
+      rule: Auto-line key event; seqno modulo1024; backend in canonical mode echoes event as OSC74 for local editing, otherwise
+        sends keychars to PTY. Exact OSC73 variant and legacy shorter format separate.
+      relations:
+      - kind: related
+        clause: domterm_wire.simulate-key
+        role: return
+    - id: backend-link
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD LINK JSON-object LF
+      rule: User link click event with at least href. Backend may open in user browser subject to configuration; no host capability
+        granted by receipt.
+    - id: backend-received
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD RECEIVED count LF
+      rule: Flow-control acknowledgement of received/processed bytes, not screen correctness proof.
+      relations:
+      - kind: related
+        clause: domterm_wire.uncounted-urgent
+        role: accounting
+    - id: backend-window-name
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD WINDOW-NAME JSON-name LF
+      rule: Report session/window name to server.
+      relations:
+      - kind: related
+        clause: domterm_wire.window-name
+        role: event
+    - id: backend-detach
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD DETACH LF
+      rule: Keep session rather than destroy on last-window close; does not necessarily detach immediately when other windows
+        connected.
+    - id: backend-focused
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD FOCUSED LF
+      rule: Report focus of current subwindow to backend.
+    - id: backend-window-contents
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD WINDOW-CONTENTS rcount , JSON-state LF
+      rule: Snapshot for reattachment. rcount measured as of start of most recent urgent message, not normal current RECEIVED
+        count.
+      relations:
+      - kind: related
+        clause: domterm_wire.window-state-request
+        role: reply
+    - id: backend-version
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD VERSION version-info LF
+      rule: Send version information on initialization.
+    - id: backend-clipboard
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD REQUEST-CLIPBOARD-TEXT [ OSC52 ] LF / 0xFD REQUEST-SELECTION-TEXT [ OSC52 ] LF
+      rule: Front-end asks backend for clipboard or latest selection when browser lacks access. OSC52 flag requests response
+        to process, otherwise reply OSC231 to front-end. Permission and exact whitespace admission not inferred.
+      relations:
+      - kind: related
+        clause: domterm_wire.paste
+        role: reply
+      - kind: related
+        clause: xterm_controls.clipboard-osc52
+        role: reply
+    - id: backend-response
+      section: Wire byte protocol / Special sequences sent by DomTerm to back-end
+      level: defined
+      wire: 0xFD RESPONSE JSON-object LF
+      rule: Response to backend request has integer id matching request, out or err text; route to correct requesting process
+        output stream.
+      relations:
+      - kind: related
+        clause: domterm_wire.host-command
+        role: reply
+  rlogin_extensions:
+    title: RLogin documented original controls and specific extensions
+    author: RLogin project / kmiya-culti
+    authority: protocol-author
+    revision: 2.32.0; git 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/docs/ctrlcode.html
+    snapshot_sha256: f82fb43551ca44f07d82dec9b3adb2fa63e594caa0394ca479c1c8b2742ea678
+    scope: 'Japanese author control-code table: original-labelled private CSI/OSC/DCS controls, documented extended DEC private
+      mode rows and selected Sixel/macro extensions. Exact source retained; translated summaries and code observations explicitly
+      bounded. Full ordinary control/charset/macro/MML/ReGIS/DRCS grammar and complete parser roster remain open.'
+    clauses:
+    - id: cursor-local
+      section: CSI table / C25LCT line852
+      level: defined
+      wire: CSI = Ps S
+      dispatch:
+      - CSI = S
+      rule: Documented0 or omitted show cursor,1 hide; pinned handler also2 show. Code credits cons25 local cursor type although
+        table marks original *3. Preserve attribution ambiguity; do not claim RLogin invented cons25.
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: field-attributes
+      section: CSI table / RLBFAT line1678
+      level: defined
+      wire: CSI Pn p
+      dispatch:
+      - CSI p
+      rule: Set field rendition bits:1 bold/high intensity,2 rapid blink,4 conceal by same foreground/background,8 underline,16
+        reverse. Pinned handler clears current std.attr then builds those flags, optionally copies to space attrs; does not
+        imply all-SGR reset. Table also lists DECSSL under same wire depending on setting.
+      relations:
+      - kind: related
+        clause: ecma48.sgr
+        role: alternative-attributes
+      details:
+        bits:
+          1: bold/high intensity
+          2: blink
+          4: conceal
+          8: underline
+          16: reverse
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: cursor-display
+      section: CSI table / RLSCD line2402
+      level: defined
+      wire: CSI Ps v
+      dispatch:
+      - CSI v
+      rule: Documented0/omitted show cursor,1 hide; pinned handler default all nonzero hides. Comment notes collision with DECSVTS.
+        Original *3-labelled profile, not ECMA command.
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: cursor-color
+      section: CSI table / RLCURCOL line1922
+      level: defined
+      wire: CSI < [ Pn | Pr ; Pg ; Pb ] ! q
+      dispatch:
+      - CSI < ! q
+      rule: Omitted parameter selects default cursor color; one index0..255 selects palette; three RGB components0..255 select
+        direct color. Pinned handler at8993..9009 takes first three if count>=3, otherwise nonempty first field palette, else
+        default. Host color request, not direct palette mutation.
+      relations:
+      - kind: related
+        clause: xterm_controls.dynamic-colors
+        role: alternative-cursor-color
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: image-copy
+      section: CSI table / RLIMGCP lines1210-1240
+      level: defined
+      wire: CSI < Ps ! i
+      dispatch:
+      - CSI < ! i
+      rule: 0/default capture visible screen to image window,1 save GIF,2 JPG,3 PNG,4 BMP; source says w2k binary cannot save
+        file. No path, consent or execution policy selected.
+      relations:
+      - kind: related
+        clause: mintty_controls.screen-dump
+        role: alternative-media-copy
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: encoding
+      section: OSC table line3227
+      level: defined
+      wire: OSC 800 ; Pc|? BEL
+      dispatch:
+      - OSC 800
+      rule: Query/change Japanese character encoding.0 EUC,1 SJIS,2 ASCII,3 UTF8; query returns OSC800 with current selector.
+        This is encoding selection, not process locale.
+      relations:
+      - kind: related
+        clause: urxvt.locale
+        role: alternative-encoding
+      details:
+        selectors:
+          0: EUC
+          1: SJIS
+          2: ASCII
+          3: UTF-8
+    - id: speech
+      section: OSC table line3261
+      level: defined
+      wire: OSC 801 ; string BEL
+      rule: Request speech synthesis of text. Author says string affected by title-format settings XTSMTT/XTRMTT; exact transformations
+        open. No host speech authorization.
+      dispatch:
+      - OSC 801
+    - id: mml-envelope
+      section: DCS table / RLMML line4305
+      level: defined
+      wire: 'DCS P1 ; P2 # m MML-or-data ST'
+      dispatch:
+      - 'DCS # m'
+      rule: Music Macro Language MIDI operation. P1 default0 reset all,1 reset parameters only,2 append without reset,3 read
+        Base64 SMF in place of MML,4 save SMF,5 save reconstructed MML. P2 default0 start,1 stop,2 interrupt. Extensive nested
+        MML note, tempo, articulation, instrument and MIDI control grammar remains open, not claimed fully indexed. Host playback/file
+        effects not selected.
+      details:
+        p1:
+          0: reset all
+          1: reset parameters
+          2: append
+          3: Base64 SMF
+          4: save SMF
+          5: save reconstructed MML
+        p2:
+          0: start
+          1: stop
+          2: interrupt
+    - id: unicode-width-table
+      section: DCS table / RLUCSIZE line4559
+      level: defined
+      wire: 'DCS Ps # u entries ST'
+      dispatch:
+      - 'DCS # u'
+      rule: 'Define Unicode scalar width ranges: comma-separated Start[-End]=Size; hex with optional U+ prefix; Start+Offset=Size
+        inclusive range end from hex offset; size1 single cell,2 double,A follows mode8428. Ps0/default replace (empty resets
+        defaults),1 add,2 replace differential,3 add differential,4 save then replace,5 restore then add,9 report. Source heading
+        summary lists subset but table and code enumerate all.'
+      relations:
+      - kind: related
+        clause: mintty_controls.explicit-width
+        role: alternative-width-control
+      details:
+        operations:
+          0: replace/default reset
+          1: add
+          2: replace differential
+          3: add differential
+          4: save and replace
+          5: restore and add
+          9: query
+        widths:
+        - 1
+        - 2
+        - A
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: unicode-width-stack
+      section: DCS RLUCSIZE / TextRamProc.cpp:4952-5013; TextRam.h:27
+      level: defined
+      wire: 'DCS 4 # u entries ST / DCS 5 # u entries ST'
+      dispatch:
+      - 'DCS 4 # u'
+      - 'DCS 5 # u'
+      - 'DCS 9 # u'
+      rule: 'Pinned stack maximum20, push when full removes oldest before saving current table and replacing; restore pops latest
+        or configured default if empty then merges provided entries. Query9 serializes current table into DCS #u...ST with no
+        numeric selector. Exact differential entry interpretation and malformed input need CCodeFlag trace.'
+      relations:
+      - kind: related
+        clause: rlogin_extensions.unicode-width-table
+        role: lifetime
+      details:
+        stack_max: 20
+        reply: 'DCS # u entries ST'
+      evidence:
+        additional_sources:
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRamProc.cpp
+          sha256: c7cb521a27dcedad57ec358e2793ef4fa337278bfcfe2ecee1b964d9a3f59658
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+        - url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/RLogin/TextRam.h
+          sha256: 151c94ab207748238eae7195e9ec07ed543f1bfc27991ee5de9cb37bb2ce318e
+          revision: 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    - id: mode-space-rendition
+      section: DECOPT table line4891
+      level: defined
+      wire: CSI ? 8400 h / CSI ? 8400 l
+      dispatch:
+      - CSI ? 8400 h
+      - CSI ? 8400 l
+      rule: Set does not set space attributes through SGR; reset applies SGR to space attributes. Exact erase-cell policy requires
+        source trace.
+      details:
+        selector: 8400
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-no-delayed-wrap
+      section: DECOPT table line4897
+      level: defined
+      wire: CSI ? 8401 h / CSI ? 8401 l
+      dispatch:
+      - CSI ? 8401 h
+      - CSI ? 8401 l
+      rule: Set disables delayed newline at right margin, reset enables it. Distinct from DECAWM enabling wrap itself.
+      relations:
+      - kind: related
+        clause: dec_vt420.autowrap
+        role: interaction
+      details:
+        selector: 8401
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-auto-browser
+      section: DECOPT table line4903
+      level: defined
+      wire: CSI ? 8402 h / CSI ? 8402 l
+      dispatch:
+      - CSI ? 8402 h
+      - CSI ? 8402 l
+      rule: Set enables automatic browser activation, reset disables. Host policy only; no authorization.
+      details:
+        selector: 8402
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-bold-display
+      section: DECOPT table line4909
+      level: defined
+      wire: CSI ? 8403 h / CSI ? 8403 l
+      dispatch:
+      - CSI ? 8403 h
+      - CSI ? 8403 l
+      rule: Set uses bold font for bold rendition, reset displays bold as high intensity.
+      details:
+        selector: 8403
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-auto-file-transfer
+      section: DECOPT table line4915
+      level: defined
+      wire: CSI ? 8405 h / CSI ? 8405 l
+      dispatch:
+      - CSI ? 8405 h
+      - CSI ? 8405 l
+      rule: Set enables automatic BPlus/ZModem/Kermit transfer detection, reset disables. This is a mode, not the wire definition
+        or authorization of those file protocols.
+      details:
+        selector: 8405
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-disable-screen-stack
+      section: DECOPT table line4921
+      level: defined
+      wire: CSI ? 8406 h / CSI ? 8406 l
+      dispatch:
+      - CSI ? 8406 h
+      - CSI ? 8406 l
+      rule: Set prohibits screen stack, reset enables. Exact interaction with xterm alternate modes open.
+      details:
+        selector: 8406
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-ambiguous-width
+      section: DECOPT table line4927
+      level: defined
+      wire: CSI ? 8428 h / CSI ? 8428 l
+      dispatch:
+      - CSI ? 8428 h
+      - CSI ? 8428 l
+      rule: Set Unicode East Asian Ambiguous narrow (one cell), reset wide (two cells). Source labels RLAMBCHM.
+      relations:
+      - kind: related
+        clause: rlogin_extensions.unicode-width-table
+        role: width-A
+      details:
+        selector: 8428
+        documented_alias: null
+        source_classification: RLAMBCHM *3
+    - id: mode-column-resize
+      section: DECOPT table line4933
+      level: defined
+      wire: CSI ? 8435 h / CSI ? 8435 l
+      dispatch:
+      - CSI ? 8435 h
+      - CSI ? 8435 l
+      rule: Set allows window resize with DECCOLM, reset does not resize window.
+      relations:
+      - kind: related
+        clause: dec_vt420.column-mode
+        role: host-profile
+      details:
+        selector: 8435
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-auto-encoding
+      section: DECOPT table line4939
+      level: defined
+      wire: CSI ? 8437 h / CSI ? 8437 l
+      dispatch:
+      - CSI ? 8437 h
+      - CSI ? 8437 l
+      rule: Set automatically follows Japanese encoding, reset retains encoding; exact detection rules open.
+      details:
+        selector: 8437
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-keypad-normal
+      section: DECOPT table line4945
+      level: defined
+      wire: CSI ? 8440 h / CSI ? 8440 l
+      dispatch:
+      - CSI ? 8440 h
+      - CSI ? 8440 l
+      rule: Set normal keypad mode DECPNM, reset application DECPAM. Source inverted relative to ordinary DECNKM set.
+      relations:
+      - kind: related
+        clause: dec_vt420.numeric-keypad-mode
+        role: alternative-mode
+      details:
+        selector: 8440
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-ime
+      section: DECOPT table line4951
+      level: defined
+      wire: CSI ? 8441 h / CSI ? 8441 l
+      dispatch:
+      - CSI ? 8441 h
+      - CSI ? 8441 l
+      rule: Set opens IME, reset closes.
+      relations:
+      - kind: related
+        clause: teraterm_ime.set
+        role: alternative-mode
+      details:
+        selector: 8441
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-escape-key
+      section: DECOPT table line4957
+      level: defined
+      wire: CSI ? 8442 h / CSI ? 8442 l / CSI ? 7727 h/l
+      dispatch:
+      - CSI ? 8442 h
+      - CSI ? 8442 l
+      - CSI ? 7727 h
+      - CSI ? 7727 l
+      rule: Set includes Escape key in CKM mode, reset excludes; table aliases7727 and credits Mintty.
+      relations:
+      - kind: related
+        clause: mintty_controls.escape-application
+        role: adopted
+      details:
+        selector: 8442
+        documented_alias: 7727
+        source_classification: 7727 *8
+    - id: mode-wheel-key
+      section: DECOPT table line4963
+      level: defined
+      wire: CSI ? 8443 h / CSI ? 8443 l / CSI ? 7786 h/l
+      dispatch:
+      - CSI ? 8443 h
+      - CSI ? 8443 l
+      - CSI ? 7786 h
+      - CSI ? 7786 l
+      rule: Set wheel generates cursor keys, reset ordinary wheel behavior; table aliases7786 and credits Mintty.
+      relations:
+      - kind: related
+        clause: mintty_controls.wheel-reporting
+        role: adopted
+      details:
+        selector: 8443
+        documented_alias: 7786
+        source_classification: 7786 *8
+    - id: mode-no-normalization
+      section: DECOPT table line4969
+      level: defined
+      wire: CSI ? 8448 h / CSI ? 8448 l
+      dispatch:
+      - CSI ? 8448 h
+      - CSI ? 8448 l
+      rule: Set disables UTF8 normalization, reset enables; exact normalization form not stated.
+      details:
+        selector: 8448
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-no-narrow-adjust
+      section: DECOPT table line4975
+      level: defined
+      wire: CSI ? 8449 h / CSI ? 8449 l
+      dispatch:
+      - CSI ? 8449 h
+      - CSI ? 8449 l
+      rule: Set disables adjustment of Unicode narrow characters, reset enables; exact font scaling not specified.
+      details:
+        selector: 8449
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-modify-keys-priority
+      section: DECOPT table line4981
+      level: defined
+      wire: CSI ? 8450 h / CSI ? 8450 l
+      dispatch:
+      - CSI ? 8450 h
+      - CSI ? 8450 l
+      rule: Set prioritizes modifyKeys, reset prioritizes shortcuts.
+      details:
+        selector: 8450
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-box-glyphs
+      section: DECOPT table line4987
+      level: defined
+      wire: CSI ? 8451 h / CSI ? 8451 l
+      dispatch:
+      - CSI ? 8451 h
+      - CSI ? 8451 l
+      rule: Set displays box drawing as characters, reset draws lines.
+      details:
+        selector: 8451
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-sixel-exit-right
+      section: DECOPT table line4993
+      level: defined
+      wire: CSI ? 8452 h / CSI ? 8452 l
+      dispatch:
+      - CSI ? 8452 h
+      - CSI ? 8452 l
+      rule: Set cursor right of Sixel image; reset below. Author explicitly marks original *3, xterm and Mintty adopt this selector.
+      relations:
+      - kind: related
+        clause: mintty_controls.graphics-exit-right
+        role: adopted-by
+      details:
+        selector: 8452
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-drcs-mapping
+      section: DECOPT table line4999
+      level: defined
+      wire: CSI ? 8453 h / CSI ? 8453 l / CSI ? 8800 h/l
+      dispatch:
+      - CSI ? 8453 h
+      - CSI ? 8453 l
+      - CSI ? 8800 h
+      - CSI ? 8800 l
+      rule: Set enables DRCS Unicode mapping, reset disables. Alias8800 DRCSMMv1; linked independent mlterm DRCS-Sixel lineage
+        still open.
+      details:
+        selector: 8453
+        documented_alias: 8800
+        source_classification: 8800 DRCSMMv1
+    - id: mode-erase-scroll
+      section: DECOPT table line5005
+      level: defined
+      wire: CSI ? 8455 h / CSI ? 8455 l
+      dispatch:
+      - CSI ? 8455 h
+      - CSI ? 8455 l
+      rule: Set erase by scrolling, reset ordinary full-display erase. Exact retained-history and cursor transitions require
+        source trace.
+      details:
+        selector: 8455
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-malformed-mbc
+      section: DECOPT table line5011
+      level: defined
+      wire: CSI ? 8456 h / CSI ? 8456 l
+      dispatch:
+      - CSI ? 8456 h
+      - CSI ? 8456 l
+      rule: Set show symbol for broken multibyte character, reset ignore broken MBC. Exact replacement symbol and recovery open.
+      details:
+        selector: 8456
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-ed-home
+      section: DECOPT table line5017
+      level: defined
+      wire: CSI ? 8457 h / CSI ? 8457 l / CSI ? 8200 h/l
+      dispatch:
+      - CSI ? 8457 h
+      - CSI ? 8457 l
+      - CSI ? 8200 h
+      - CSI ? 8200 l
+      rule: Set move cursor upper-left on ED2, reset leave cursor; alias8200 attributed Tera Term.
+      relations:
+      - kind: related
+        clause: teraterm_ime.ed-home
+        role: adopted
+      details:
+        selector: 8457
+        documented_alias: 8200
+        source_classification: 8200 *7
+    - id: mode-bold-bright-combine
+      section: DECOPT table line5023
+      level: defined
+      wire: CSI ? 8458 h / CSI ? 8458 l
+      dispatch:
+      - CSI ? 8458 h
+      - CSI ? 8458 l
+      rule: Set permits bold font and high intensity together, reset chooses bold or high intensity.
+      details:
+        selector: 8458
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-yen-key
+      section: DECOPT table line5029
+      level: defined
+      wire: CSI ? 8459 h / CSI ? 8459 l
+      dispatch:
+      - CSI ? 8459 h
+      - CSI ? 8459 l
+      rule: Set yen key sends U+00A5, reset U+005C.
+      details:
+        selector: 8459
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-sixel-font-size
+      section: DECOPT table line5035
+      level: defined
+      wire: CSI ? 8460 h / CSI ? 8460 l
+      dispatch:
+      - CSI ? 8460 h
+      - CSI ? 8460 l
+      rule: Set calculate Sixel size from font, reset from fixed value. Exact unit/fallback in linked graphics documentation
+        not fully qualified.
+      details:
+        selector: 8460
+        documented_alias: null
+        source_classification: '*3'
+    - id: mode-drcs-v3
+      section: DECOPT table line5041
+      level: defined
+      wire: CSI ? 8461 h / CSI ? 8461 l / CSI ? 8801 h/l
+      dispatch:
+      - CSI ? 8461 h
+      - CSI ? 8461 l
+      - CSI ? 8801 h
+      - CSI ? 8801 l
+      rule: Set DRCS mapping method v3, reset v2. Alias8801 DRCSMMv3; independent original proposal still to trace.
+      details:
+        selector: 8461
+        documented_alias: 8801
+        source_classification: 8801 DRCSMMv3
+    - id: sixel-header
+      section: DCS table / DECSIXEL lines3381-3591
+      level: defined
+      wire: DCS P1 ; P2 ; P3 ; P4 ; P5 q sixels ST
+      dispatch:
+      - DCS q
+      rule: RLogin profile adds P4 image index0..1023 (since2.17.3, permits redisplay by index), P5 noise filtering strength0..100
+        (since2.31.1). P1 horizontal reduction percentage table; P3 scale0=100%,1..20 ten-percent steps. Sixel raster attributes
+        Pan/Pad override header aspect/scale per source. P2 background and palette depend on DECTID; separate clause. Original
+        DEC three-parameter envelope distinct.
+      relations:
+      - kind: extends
+        clause: dec_sixel.envelope
+      details:
+        horizontal_percent:
+          0: 50
+          1: 50
+          2: 20
+          3: 30
+          4: 40
+          5: 60
+          6: 70
+          7: 80
+          8: 90
+          9: 100
+        scale_percent: P3=0:100;1..20:10*P3
+        image_index:
+        - 0
+        - 1023
+        noise_strength:
+        - 0
+        - 100
+    - id: sixel-background-profile
+      section: DCS table / DECSIXEL Pn2
+      level: defined
+      wire: DCS P1 ; P2 ; ... q sixels ST
+      dispatch:
+      - DCS q
+      rule: For DECTID>=5, P2=1 initialize complementary current text background,0/2 current background; use documented color
+        palette. For DECTID<=4,0/1 initialize white,2 current text background, monochrome palette. Matching palette color becomes
+        complement of background. P2=5 OR mode since2.25.1. Exact OR compositing and palette values not established in this
+        tranche.
+      source_note: Source-specific display profile, not original transparent/unset sixel rule.
+      relations:
+      - kind: conflicts
+        clause: dec_sixel.background
+    - id: sixel-rgb255
+      section: DECSIXEL / DECGCI extension
+      level: defined
+      wire: 'Sixel # Pc ; 3 ; R ; G ; B [ ; A ]'
+      rule: Pu=3 RGB values0..255 (since2.17.2); extra alpha since2.23.7,255 opaque. Original DEC RGB mode2 components0..100
+        remains separate. Exact missing alpha and color register range not specified in this row.
+      relations:
+      - kind: extends
+        clause: dec_sixel.color
+    - id: sixel-display-size
+      section: DECSIXEL / RLGDSPSZ extension
+      level: defined
+      wire: Sixel % Pu ; Px ; Py ; Pa
+      rule: Since2.29.2 choose display size in cells/rows for Pu0, percentage of screen for Pu1; Pa0 ignore image aspect ratio,1
+        preserve. Optional dimensions/defaults and interaction with raster extent require author code trace.
+      relations:
+      - kind: related
+        clause: dec_sixel.raster
+        role: display-extent
+    - id: regis-window
+      section: DCS table / DECREGIS line3363
+      level: defined
+      wire: DCS Ps p ReGIS-data ST
+      dispatch:
+      - DCS p
+      rule: RLogin0/default append drawing to existing ReGIS window when open;1 always new window. Distinct from original DEC
+        Pm command-level/display meaning; host window handling profile.
+      relations:
+      - kind: related
+        clause: dec_vt3xx_graphics.regis-envelope
+        role: alternative-profile
+    - id: macro-encoding
+      section: DCS table / DECDMAC line4041
+      level: defined
+      wire: DCS Pid ; Pdt ; Pen ! z data ST
+      dispatch:
+      - DCS ! z
+      - CSI * z
+      rule: Documented macro ID0..63, Pdt0 clear selected macro/1 all; Pen0 text excluding basic controls,1 hex with ! repeat,2
+        escaped text,3 Base64 optionally gzip (2/3 extensions since2.31.1). Escapes for2 a,b,t,n,v,f,r,e,backslash, octal and
+        hex. Invocation via CSI Pn * z (DECINVM) as author table states; exact original DEC macro grammar/caps not yet recovered.
+        No macro execution or decompression selected.
+      details:
+        id_range:
+        - 0
+        - 63
+        encodings:
+          0: text
+          1: hex-repeat
+          2: escaped text
+          3: Base64 optional gzip
+    - id: terminal-id-profile
+      section: DCS table / DECSTUI line4148
+      level: defined
+      wire: DCS ! { hex-id ST
+      dispatch:
+      - DCS ! {
+      rule: Author table says four hex digits terminal ID, unlike original DEC eight hex digits. Exact admission and persisted
+        identity readback require code trace.
+      relations:
+      - kind: related
+        clause: dec_vt520.set-terminal-unit-id
+        role: profile
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -24126,3 +26483,103 @@ pending_reconciliation:
     - dec_vt420.selective-erase-rect
     - teraterm_ime.rectangle-defaults
     scope: CSI Pt ; Pl ; Pb ; Pr $ z/{
+- id: osc72-domterm-html-vs-kitty-dnd
+  status: material-originating-extension-conflict
+  wire: OSC 72 ; payload ST
+  original_author_sources:
+  - clause: domterm_wire.html-insert
+    meaning: DomTerm documented HTML; pinned parser calls scrub/insert without selector-level discrimination.
+  - clause: kitty_dnd.envelope
+    meaning: Kitty metadata and Base64 drag/drop payload.
+  question: Trace author coordination and any actual disjoint admission rule. Do not assume HTML angle-bracket discriminator
+    exists in pinned DomTerm.
+  decision: null
+  applies_to:
+    clauses:
+    - domterm_wire.html-insert
+    - kitty_dnd.envelope
+    scope: OSC 72 ; payload ST
+- id: osc721-domterm-vs-urxvt
+  status: material-originating-extension-conflict
+  wire: OSC 721 ; payload ST
+  original_author_sources:
+  - clause: domterm_wire.html-replace
+    meaning: DomTerm key;HTML replacement.
+  - clause: urxvt.viewport-down
+    meaning: urxvt decimal viewport movement; atoi zero clears history.
+  question: Determine disjoint grammar and malformed handling explicitly; current urxvt conversion can turn nonnumeric key
+    into history clear.
+  decision: null
+  applies_to:
+    clauses:
+    - domterm_wire.html-replace
+    - urxvt.viewport-down
+    scope: OSC 721 ; payload ST
+- id: osc110-118-domterm-pretty-vs-xterm-reset
+  status: material-originating-extension-conflict
+  wire: OSC 110..118 ST
+  original_author_sources:
+  - clause: domterm_wire.logical-block-start
+    meaning: DomTerm OSC110 starts block; empty form valid.
+  - clause: domterm_wire.logical-block-end
+    meaning: OSC111 closes block.
+  - clause: domterm_wire.conditional-breaks
+    meaning: OSC115..118 bare line-break controls.
+  - clause: xterm_controls.dynamic-colors-reset
+    meaning: Same selectors reset dynamic colors, bare or empty semicolon forms.
+  question: Preserve exact overlapping empty forms, and distinguish argument-bearing DomTerm indentation forms; no priority
+    selection.
+  decision: null
+  applies_to:
+    clauses:
+    - domterm_wire.conditional-breaks
+    - domterm_wire.logical-block-end
+    - domterm_wire.logical-block-start
+    - xterm_controls.dynamic-colors-reset
+    scope: OSC 110..118 ST
+- id: osc10-rxvt-menu-vs-xterm-color
+  status: material-originating-extension-conflict
+  wire: OSC 10 ; payload ST
+  original_author_sources:
+  - clause: rxvt.legacy-menubar
+    meaning: Historical rxvt compile-option menu commands.
+  - clause: xterm_controls.dynamic-colors
+    meaning: xterm dynamic foreground and successive colors.
+  question: Review exact legacy menu grammar, potential overlap and host policy; do not dispatch solely by number.
+  decision: null
+  applies_to:
+    clauses:
+    - rxvt.legacy-menubar
+    - xterm_controls.dynamic-colors
+    scope: OSC 10 ; payload ST
+- id: domterm-resize-document-order
+  status: material-originating-extension-conflict
+  wire: CSI 8 ; P1 ; P2 ; mode t
+  original_author_sources:
+  - clause: domterm_wire.resize-replay
+    meaning: Manual says columns then rows; pinned parser gets rows then columns.
+  - clause: xterm_controls.window-operation-extensions
+    meaning: xterm rows then columns.
+  question: Source documentation inconsistency; preserve pinned actual observation and review author intent. Existing window
+    geometry decisions unchanged.
+  decision: null
+  applies_to:
+    clauses:
+    - domterm_wire.resize-replay
+    - xterm_controls.window-operation-extensions
+    scope: CSI 8 ; P1 ; P2 ; mode t
+- id: rlogin-sixel-background-vs-dec
+  status: material-originating-extension-conflict
+  wire: DCS P1 ; P2 ; P3 q sixels ST
+  original_author_sources:
+  - clause: dec_sixel.background
+    meaning: Original P2=1 preserves existing pixel colors;0/2 paint unset pixels.
+  - clause: rlogin_extensions.sixel-background-profile
+    meaning: RLogin P2=1 initializes complement of text background for color profile; other settings vary with DECTID.
+  question: Trace precise RLogin background and OR-mode semantics; do not replace accepted original Sixel interpretation.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_sixel.background
+    - rlogin_extensions.sixel-background-profile
+    scope: DCS P1 ; P2 ; P3 q sixels ST
