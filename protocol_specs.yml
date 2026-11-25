@@ -3951,6 +3951,9 @@ specifications:
       - kind: related
         clause: dec_vt520.cursor-style
         role: cursor
+      - kind: related
+        clause: konsole_profiles.cursor-shape
+        role: predecessor
     - id: progress-profile
       section: Progress Bar
       level: defined
@@ -3994,6 +3997,10 @@ specifications:
           k: selected text
           l: cursor
           m: cursor text
+      relations:
+      - kind: related
+        clause: linux_console.compact-palette-set
+        role: historical-dialect
     - id: annotation
       section: Annotations
       level: defined
@@ -4180,6 +4187,11 @@ specifications:
       - kind: related
         clause: iterm2_osc1337.current-dir
         role: metadata
+      - kind: related
+        clause: apple_terminal_location.cwd
+        role: historical-origin
+      source_note: Apple Terminal Lion contemporary OSC7 account recovered; VTE adoption lineage separate. Exact original vendor
+        help/bytes and all URI admission details still open.
     - id: cursor-default
       section: DECSCUSR 0
       level: defined
@@ -11683,7 +11695,8 @@ specifications:
     url: https://iterm2.com/3.6/documentation-escape-codes.html
     scope: Only original common OSC 133 semantic zones; iTerm2 is a preserving secondary documentation source Preserved iTerm2
       reproduction, not the complete original FinalTerm specification; earlier FinalTerm-only sequences still require primary-source
-      recovery.
+      recovery. Original Final Term author implementation now separately pinned under finalterm_original; these A-D definitions
+      describe the later iTerm2 reproduction, not all historical grammar.
     clauses:
     - id: prompt-start
       section: Shell Integration/FinalTerm / FTCS_PROMPT
@@ -11699,6 +11712,10 @@ specifications:
         legacy_records:
         - iterm2.osc.shell_mark
         - kitty.osc.shell_mark
+      relations:
+      - kind: related
+        clause: finalterm_original.prompt
+        role: original-code
     - id: prompt-end
       section: Shell Integration/FinalTerm / FTCS_COMMAND_START
       level: defined
@@ -11713,6 +11730,10 @@ specifications:
         legacy_records:
         - iterm2.osc.shell_mark
         - kitty.osc.shell_mark
+      relations:
+      - kind: related
+        clause: finalterm_original.command-start
+        role: original-code
     - id: command-executed
       section: Shell Integration/FinalTerm / FTCS_COMMAND_EXECUTED
       level: defined
@@ -11727,6 +11748,10 @@ specifications:
         legacy_records:
         - iterm2.osc.shell_mark
         - kitty.osc.shell_mark
+      relations:
+      - kind: related
+        clause: finalterm_original.command-executed
+        role: original-code
     - id: command-finished
       section: Shell Integration/FinalTerm / FTCS_COMMAND_FINISHED
       level: defined
@@ -11741,6 +11766,10 @@ specifications:
         legacy_records:
         - iterm2.osc.shell_mark
         - kitty.osc.shell_mark
+      relations:
+      - kind: related
+        clause: finalterm_original.command-finished
+        role: original-code
     snapshot_sha256: b297c4fcd7ea35908e145420d743fe98fc0ee5bbb5844ed4a1f35f2d547cac98
   vscode_shell:
     title: VS Code shell integration protocol (OSC 633)
@@ -12165,8 +12194,8 @@ specifications:
     authority: extension-publisher
     revision: Linux man-pages pinned source 637b0aa571b61d98c717e7ab7490df8a3d9e4841
     url: https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages/+/637b0aa571b61d98c717e7ab7490df8a3d9e4841/man/man4/console_codes.4
-    scope: De facto Linux kernel virtual-console semantics, not a universal VT standard and not the graphical backend used
-      by Howl.
+    scope: De facto Linux kernel virtual-console semantics, not a universal VT standard and not the graphical backend used by
+      Howl.
     clauses:
     - id: sgr21
       section: console_codes(4), ECMA-48 Select Graphic Rendition / parameter 21
@@ -12195,6 +12224,39 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: SGR 21 means double underline rather than Linux console single underline'
         relation: accepted-decision-location
+    - id: compact-palette-set
+      section: console_codes(4), ESC sequences / lines 188-199
+      level: defined
+      wire: ESC ] P n rrggbb
+      rule: 'Linux console palette write consumes seven hexadecimal digits after P: index0..f plus three byte-sized RGB components.
+        No OSC ST/BEL terminator in printed command grammar. Distinct from iTerm2 extended terminated form; exact malformed
+        byte recovery remains kernel-source review.'
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.compact-palette
+        role: dialect
+      details:
+        index: 0..f
+        payload_hex_digits: 7
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mkerrisk/man-pages/637b0aa571b61d98c717e7ab7490df8a3d9e4841/man/man4/console_codes.4
+          sha256: 1b404c05b1714fe037faea6fdfa7de61f44c4f4c68b8f2b224f19f8e48c17ffc
+    - id: compact-palette-reset
+      section: console_codes(4), ESC sequences / lines 188-199
+      level: defined
+      wire: ESC ] R
+      rule: Reset palette using compact Linux console sequence without printed OSC terminator. Exact subsequent-byte recovery
+        and default palette need kernel qualification.
+      relations:
+      - kind: related
+        clause: linux_console.compact-palette-set
+        role: reset
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mkerrisk/man-pages/637b0aa571b61d98c717e7ab7490df8a3d9e4841/man/man4/console_codes.4
+          sha256: 1b404c05b1714fe037faea6fdfa7de61f44c4f4c68b8f2b224f19f8e48c17ffc
+    snapshot_sha256: 1b404c05b1714fe037faea6fdfa7de61f44c4f4c68b8f2b224f19f8e48c17ffc
   dec_vt100:
     title: DEC VT100 User Guide
     author: Digital Equipment Corporation
@@ -16931,6 +16993,1869 @@ specifications:
       - kind: related
         role: lifetime
         clause: iterm2_legacy_sync.timeout
+  finalterm_original:
+    title: Original Final Term control sequences (OSC 133)
+    author: Philipp Emanuel Weidmann / Final Term project
+    authority: author-implementation
+    revision: git f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e
+    url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalStream.vala
+    snapshot_sha256: 33a7836f217c9437e4903163cee21162ae991d7b55dac097d104600895ed6981
+    scope: Archived originating implementation and shipped Bash startup emitter; original prose specification has not been recovered.
+      All eight FTCS selectors in this pinned parser are enumerated. Observed parser/consumer semantics are not a universal
+      later OSC133 contract.
+    clauses:
+    - id: envelope
+      section: TerminalStream.vala:369-379,541-549,612-643,667-721; bash_startup.in:15-24
+      level: defined
+      wire: OSC 133 ; selector ; [ parameter [ ; parameter ... ] ] (BEL | ST)
+      dispatch:
+      - OSC 133
+      rule: Pinned parser recognizes A through H, followed by a mandatory semicolon and a captured parameter string split on
+        semicolons. OSC regex includes ESC ] and U+009D; terminator regex BEL, U+009C, ESC backslash. Bash emitter appends a
+        semicolon after every argument, including selector. Source TODO notes delimiter escaping is not implemented. Do not
+        infer raw byte C1 admission from a Unicode regex.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: prompt
+      section: TerminalOutput.vala:375-378
+      level: defined
+      wire: OSC 133 ; A ; ST
+      dispatch:
+      - OSC 133
+      rule: Mark current cursor line as prompt line and notify line update. Original does not move cursor as part of this operation.
+      relations:
+      - kind: related
+        clause: finalterm_shell.prompt-start
+        role: historical-origin
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: command-start
+      section: TerminalOutput.vala:380-387
+      level: defined
+      wire: OSC 133 ; B ; ST
+      dispatch:
+      - OSC 133
+      rule: Enter command mode and save current cursor position; duplicate B warns but still enters and saves.
+      relations:
+      - kind: related
+        clause: finalterm_shell.prompt-end
+        role: historical-origin
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: command-executed
+      section: TerminalOutput.vala:389-393
+      level: defined
+      wire: OSC 133 ; C ; command-text [ ; ] ST
+      dispatch:
+      - OSC 133
+      rule: Exit command mode; command text comes from first parameter, default empty, then emit command-executed event. Shipped
+        preexec emits command argument, not screen reconstruction.
+      relations:
+      - kind: related
+        clause: finalterm_shell.command-executed
+        role: historical-origin
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: command-finished
+      section: TerminalOutput.vala:395-412
+      level: defined
+      wire: OSC 133 ; D ; return-code [ ; ] ST
+      dispatch:
+      - OSC 133
+      rule: Read first numeric parameter with absent default0. If retained last_command nonempty, emit completion and finish
+        progress; set return code on most recent prompt line. Source does not implement the later documented iTerm2 B-abort
+        semantics here.
+      relations:
+      - kind: related
+        clause: finalterm_shell.command-finished
+        role: historical-origin
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: text-menu-start
+      section: TerminalOutput.vala:414-417
+      level: defined
+      wire: OSC 133 ; E ; menu-code [ ; ] ST
+      dispatch:
+      - OSC 133
+      rule: Copy current character attributes; select a registered text menu by numeric code (absent default -1). Applies through
+        current attributes to subsequent text. Source menu registry and UI activation not independently specified.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: text-menu-end
+      section: TerminalOutput.vala:419-422
+      level: defined
+      wire: OSC 133 ; F ; [ parameters ] ST
+      dispatch:
+      - OSC 133
+      rule: Copy current attributes and clear their text-menu association. No stack restore in this handler.
+      relations:
+      - kind: related
+        clause: finalterm_original.text-menu-start
+        role: lifetime
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: progress
+      section: TerminalOutput.vala:424-432
+      level: defined
+      wire: OSC 133 ; G ; percentage [ ; operation ] [ ; ] ST
+      dispatch:
+      - OSC 133
+      rule: Read numeric percentage, absent default -1. Value -1 emits progress-finished; otherwise emit progress update with
+        optional operation text default empty. Numeric range and display clamping not established by this handler. Command-finished
+        may also finish progress.
+      relations:
+      - kind: related
+        clause: conemu_progress.format
+        role: alternative-progress
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+    - id: host-commands
+      section: TerminalOutput.vala:434-459; Command.vala:24-110
+      level: defined
+      wire: 'OSC 133 ; H ; command-spec [ ; command-spec ... ] [ ; # ; argument ... ] ST'
+      dispatch:
+      - OSC 133
+      rule: 'Historical host-command dispatch, distinct from shell command marking. First exact # parameter separates command
+        specifications from placeholder arguments; trim and discard empty entries. Author constructs Command objects and dispatches
+        sequentially. Command parser uses name and up to five quoted fields, with unescaping and positional substitution. No
+        authority to execute host actions is selected; exact error and permission behavior not established.'
+      details:
+        source_roster:
+        - QUIT_PROGRAM
+        - SEND_TO_SHELL
+        - CLEAR_SHELL_COMMAND
+        - SET_SHELL_COMMAND
+        - RUN_SHELL_COMMAND
+        - TOGGLE_VISIBLE
+        - TOGGLE_FULLSCREEN
+        - TOGGLE_DROPDOWN
+        - ADD_TAB
+        - SPLIT
+        - CLOSE
+        - LOG
+        - PRINT_METRICS
+        - COPY_TO_CLIPBOARD
+        - PASTE_FROM_CLIPBOARD
+        - OPEN_URL
+        source_boundary: Static originating-code observation; no commands executed in this census.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalOutput.vala
+          sha256: b58fb7ba203db2efd3060a93782edb2444a2c4e9c1f60ab4052c3a99f63e806e
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/Command.vala
+          sha256: 11098a83b34e1880fa7b273b850e23a9348f856ef6d79249525df02cef2103df
+        - url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/data/Startup/bash_startup.in
+          sha256: cb9d290ace4ba44c061d14a246cd8b6268264de6973a723fce2eeef2936e2683
+  bothner_semantic_prompts:
+    title: Semantic prompts proposal (extended OSC 133)
+    author: Per Bothner
+    authority: protocol-author
+    revision: Started 2019-05-11; git 4d2e1d75d4861a1d924895e106f8f016880e12a7
+    url: https://gitlab.freedesktop.org/Per_Bothner/specifications/-/raw/4d2e1d75d4861a1d924895e106f8f016880e12a7/proposals/semantic-prompts.md
+    snapshot_sha256: b8e5462f99b61044b8fb03c5d5ab2e901a760d0f7d16ff2958f2889ee2a8125a
+    scope: Author terminal-wg fork proposal extending FinalTerm and iTerm2. Proposed semantics and explicit open questions retained
+      without treating draft as adopted standard.
+    clauses:
+    - id: fresh-line
+      section: Commands / L
+      level: defined
+      wire: OSC 133 ; L BEL
+      dispatch:
+      - OSC 133
+      rule: If cursor is at initial column, do nothing; otherwise perform CR then LF equivalent. Missing-newline marker is an
+        open proposal issue, not specified payload.
+    - id: start-command
+      section: Commands / A
+      level: defined
+      wire: OSC 133 ; A [ ; options ] BEL
+      dispatch:
+      - OSC 133
+      rule: Perform fresh-line first, start new command, enter initial prompt mode as if P;k=i followed. Subsequent prompt text
+        until B or I. Options aid,cl.
+      relations:
+      - kind: extends
+        clause: finalterm_shell.prompt-start
+      - kind: related
+        clause: bothner_semantic_prompts.fresh-line
+        role: precondition
+    - id: restart-command
+      section: Commands / N
+      level: defined
+      wire: OSC 133 ; N [ ; options ] BEL
+      dispatch:
+      - OSC 133
+      rule: Before A behavior, terminate innermost active command with matching aid and every more deeply nested command. Missing
+        aid equals empty string for this match. Options aid,cl.
+      relations:
+      - kind: extends
+        clause: bothner_semantic_prompts.start-command
+    - id: prompt
+      section: Commands / P; Standard options / k
+      level: defined
+      wire: OSC 133 ; P [ ; k=kind ] BEL
+      dispatch:
+      - OSC 133
+      rule: Explicit prompt start; optional after A/N. Default k=i initial, r right, c continuation allows editing earlier lines,
+        s secondary disallows returning to edit prior lines. Right prompt may optionally stay at right edge on reflow.
+      relations:
+      - kind: related
+        clause: kitty_shell_integration.secondary-prompt
+        role: alternate-prompt-profile
+      details:
+        k:
+          i: initial/default
+          r: right
+          c: continuation, editable previous lines
+          s: secondary, previous lines not editable
+    - id: input
+      section: Commands / B
+      level: defined
+      wire: OSC 133 ; B [ ; options ] BEL
+      dispatch:
+      - OSC 133
+      rule: End prompt/start user input, terminated by C or new P prompt. No additional applicable options enumerated for B.
+      relations:
+      - kind: extends
+        clause: finalterm_shell.prompt-end
+    - id: line-input
+      section: Commands / I
+      level: defined
+      wire: OSC 133 ; I [ ; options ] BEL
+      dispatch:
+      - OSC 133
+      rule: End prompt and start user input that terminates at end of line.
+      relations:
+      - kind: related
+        clause: bothner_semantic_prompts.input
+        role: input-termination
+    - id: output
+      section: Commands / C; Input lines / End of input
+      level: defined
+      wire: OSC 133 ; C [ ; options ] BEL
+      dispatch:
+      - OSC 133
+      rule: End input/start command output. Can also infer output start when at a fresh empty line and next data is neither
+        P nor I (multiple-input-line case). Source prose leaves precise treatment of intervening controls open.
+      relations:
+      - kind: extends
+        clause: finalterm_shell.command-executed
+    - id: finish
+      section: Commands / D
+      level: defined
+      wire: OSC 133 ; D [ ; exit-code [ ; options ] ] BEL
+      dispatch:
+      - OSC 133
+      rule: 'Finish current command. Exit code may be omitted when no options or command cancelled (no C); otherwise integer,0
+        success, nonzero failure. err string takes precedence for nonlegacy terminals: empty success, nonempty error even when
+        literal0. Options aid,err. Preserve internal D/Z documentation disagreement separately.'
+      relations:
+      - kind: extends
+        clause: finalterm_shell.command-finished
+    - id: options
+      section: General options syntax
+      level: defined
+      wire: ; option [ ; option ... ]
+      rule: Options semicolon-prefixed, generally name=value. Cannot include semicolon or control values below32. Terminal must
+        ignore unrecognized option name; alternative skip-all-subsequent policy and quoted escapes are open issues, not selected
+        syntax.
+    - id: application-id
+      section: Detail; Standard options / aid
+      level: defined
+      wire: aid=value
+      rule: Optional arbitrary application identifier enables nesting. Suggested PID or application name; exact identifier scope
+        in other operations and omitted defaults outside N not fully specified.
+    - id: error-option
+      section: Standard options / err; Commands / D
+      level: defined
+      wire: err=value
+      rule: Nonempty value signals error; empty signals success. Commands D section assigns err to D, but standard options text
+        says Z. No independent Z command defined. Missing err permits exit-code compatibility; do not resolve contradictory
+        selector from prose alone.
+    - id: click-move
+      section: Standard options / cl; Cursor motion from mouse clicks
+      level: defined
+      wire: OSC 133 ; A|N ; cl=line|m|v|w BEL
+      dispatch:
+      - OSC 133
+      rule: Request optional click-to-key movement. Terminal may ignore or treat any value as line. line restricts to input
+        line; m supports multi-line via left/right; v/w allow vertical arrows; w promises smart vertical movement/no spurious
+        trailing spaces, v uses conservative start-of-line then vertical then horizontal movement. Comma-list allowed for extensions.
+      relations:
+      - kind: related
+        clause: kitty_shell_integration.prompt-click-events
+        role: alternate-click-profile
+    - id: move-keys
+      section: Standard options / move-keys
+      level: defined
+      wire: move-keys=left,right[,up,down]
+      rule: Override click-motion key sequences; default arrows. Exact escaping for control-valued keys conflicts with general
+        options restrictions; proposal flags quoted strings as desirable, not defined.
+    - id: click-coordinates
+      section: Cursor motion from mouse clicks
+      level: defined
+      wire: cl=line left click without modifiers
+      rule: If supported, left click on input line containing cursor maps left prompt to first input character, right/background
+        to after input. Compute signed character-position delta (double-width scalar counts once), emit corresponding arrow
+        sequences. Not general mouse reporting; exact complex grapheme behavior not specified.
+    - id: input-regions
+      section: Input lines / Input vs background
+      level: defined
+      wire: CSI P / CSI K / CSI C in input region
+      dispatch:
+      - CSI P
+      - CSI K
+      - CSI C
+      rule: Input line comprises optional initial prompt, user input, background and optional final prompt. Preserve explicit
+        input spaces versus background. Delete via DCH or EL, not overwrite spaces; position right prompt using CUF rather than
+        text spaces. Input-region metadata enables selection and click mapping.
+      relations:
+      - kind: related
+        clause: ecma48.dch
+        role: editing
+      - kind: related
+        clause: ecma48.el
+        role: editing
+    - id: prompt-boundaries
+      section: Input lines / Prompts
+      level: defined
+      wire: A|N|P ... B|I or right-prompt EOL
+      rule: Prompt emitted as undivided sequence without cursor motion including CR/LF; A/N initial, P later. End B or I, or
+        EOL only final/right prompt. Initial indentation may be blank prompt or background written via cursor motion. Wrapped
+        right prompt should occupy final screen line; distinct indentation marker is open issue.
+    - id: cancel
+      section: Input lines / Canceling input
+      level: defined
+      wire: OSC 133 ; D [ ; exit-code ; err=CANCEL ] BEL
+      rule: On cancellation avoid C and emit D; err=CANCEL suggested not required. Preserve D option grammar and its published
+        contradiction with Z.
+    - id: reflow
+      section: Input lines / Window re-size
+      level: defined
+      wire: resize while cursor in current input area
+      rule: Recommendation not to reflow active input area while cursor there because application line editor usually redraws
+        it. Distinct from Kitty redraw=0 explicit option.
+      relations:
+      - kind: related
+        clause: kitty_shell_integration.prompt-redraw
+        role: reflow-profile
+    - id: missing-newline
+      section: Omitted-newline sequence
+      level: defined
+      wire: D or Z followed by omitted-newline marker before A/N
+      rule: Source describes shell omitted-newline strings before/after end-of-command but before next A/N. L avoids extra blank
+        line after reflow but has no marker specification. Reference to Z is unresolved, not a newly indexed command.
+  apple_terminal_location:
+    title: Apple Terminal Lion file and working-directory reporting (OSC 6/7)
+    author: Apple Terminal; contemporary account by Chris Page
+    authority: contemporary-source
+    revision: Mac OS X Lion 10.7, account dated 2011-08-11
+    url: https://superuser.com/a/321733
+    snapshot_sha256: 1a718364a53ea508ef9da2c52551d0f3d9fc983715eb0a65d300e14bf0762784
+    scope: Contemporary published account cited by VTE developers in 2012 adoption. Original Apple Help and bundled emitter
+      bytes not recovered; exact author identity/official vendor document not independently established. Retain attributed origin
+      and observed source boundary.
+    clauses:
+    - id: cwd
+      section: Chris Page answer 321733; Mac OS X Lion 10.7
+      level: defined
+      wire: OSC 7 ; file://hostname/percent-encoded-path BEL
+      dispatch:
+      - OSC 7
+      rule: Report working directory as file URI, percent-encoding path bytes to represent valid pathnames. Include hostname
+        to distinguish local and remote. Apple Terminal may reuse local reported directory for new windows/tabs and session
+        restoration; avoid applying foreign-host path as local cwd.
+      source_note: OSC framing described by author as same as title OSC. Exact ESC-backslash/raw C1 handling not established
+        by this contemporary account.
+      evidence:
+        additional_sources:
+        - url: https://api.stackexchange.com/2.3/answers/321733?site=superuser&filter=withbody
+          sha256: 1a718364a53ea508ef9da2c52551d0f3d9fc983715eb0a65d300e14bf0762784
+        historical_adopter:
+          url: https://gitlab.gnome.org/GNOME/vte/-/commit/9be0ee6968fbd9677c0eadca8df13ecffa6551b3.patch
+          sha256: ebdd0087164530d0a8ed25e1e9d78a42a633a954e1e012200328b419706e04bc
+          meaning: Actual 2012 VTE adoption dispatch confirms Apple-era OSC6 file/OSC7 directory mapping. This does not establish
+            official Apple vendor documentation.
+      relations:
+      - kind: related
+        clause: vte_location_2012.cwd
+        role: early-adopter-evidence
+    - id: file
+      section: Chris Page answer 321733 / represented file
+      level: defined
+      wire: OSC 6 ; file-URI BEL
+      dispatch:
+      - OSC 6
+      rule: Report represented document/file URI for window proxy icon, distinct from current directory. Source account identifies
+        selector6 and context; full grammar/clearing behavior not established. Later iTerm2 OSC6 chrome color is a different
+        dialect.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.cwd
+        role: location-metadata
+      - kind: related
+        clause: vte_location_2012.file
+        role: early-adopter-evidence
+      evidence:
+        historical_adopter:
+          url: https://gitlab.gnome.org/GNOME/vte/-/commit/9be0ee6968fbd9677c0eadca8df13ecffa6551b3.patch
+          sha256: ebdd0087164530d0a8ed25e1e9d78a42a633a954e1e012200328b419706e04bc
+          meaning: Actual 2012 VTE adoption dispatch confirms Apple-era OSC6 file/OSC7 directory mapping. This does not establish
+            official Apple vendor documentation.
+  konsole_profiles:
+    title: Konsole nonstandard OSC session/profile controls
+    author: KDE Konsole project
+    authority: author-implementation
+    revision: git a24c3d71be3684f24d030aa2dbe9bd723d985233
+    url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Vt102Emulation.cpp
+    snapshot_sha256: b6989c23740147588cbe43ab95d5144e9d5d8b9e28d5b2365ba70c846f452a54
+    scope: 'Pinned author implementation: OSC50 profile changes and nonstandard session attributes30/32/34. Original historical
+      release docs and all Profile command grammar not recovered. Other adopted OSC commands remain under their origins.'
+    clauses:
+    - id: profile
+      section: Vt102Emulation.cpp:1586-1670; Session.h:465-477; Session.cpp:719-722
+      level: defined
+      wire: OSC 50 ; property=value [ ; property=value ... ] ST
+      dispatch:
+      - OSC 50
+      rule: Change session profile properties. Pinned handler consumes cursor-specific properties, then forwards remaining semicolon-separated
+        items to profile change command. Author header explicitly identifies collision with xterm OSC50 font command. Full Profile
+        property grammar, validation and historic origin pending.
+      relations:
+      - kind: conflicts
+        clause: xterm_controls.font-operations
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: cursor-shape
+      section: Vt102Emulation.cpp:1604-1621; Enumeration.h:73-81
+      level: defined
+      wire: OSC 50 ; CursorShape=N ST
+      dispatch:
+      - OSC 50
+      rule: Cursor enum0 block,1 I-beam,2 underline; observed handler reads first digit and defaults nondigit to0. Out-of-range
+        enum/empty-value behavior not asserted. iTerm2 documents its OSC1337 CursorShape as derived from Konsole.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.cursor-shape
+        role: predecessor
+      details:
+        documented_enum:
+          0: block
+          1: I-beam
+          2: underline
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: cursor-blink
+      section: Vt102Emulation.cpp:1623-1638
+      level: defined
+      wire: OSC 50 ; BlinkingCursorEnabled=value ST
+      dispatch:
+      - OSC 50
+      rule: Observed case-insensitive true/false or integer converted to boolean; if parsing succeeds, request updated cursor
+        style. Other cursor properties and configured default involved in same dispatch.
+      relations:
+      - kind: related
+        clause: konsole_profiles.cursor-shape
+        role: cursor
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: cursor-animation
+      section: Vt102Emulation.cpp:1640-1654
+      level: defined
+      wire: OSC 50 ; AnimatingCursorEnabled=value ST
+      dispatch:
+      - OSC 50
+      rule: Observed case-insensitive true/false or integer converted to boolean; request cursor animation style. No animation
+        duration or visual policy selected.
+      relations:
+      - kind: related
+        clause: konsole_profiles.cursor-shape
+        role: cursor
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: cursor-color
+      section: Vt102Emulation.cpp:1656-1659
+      level: defined
+      wire: OSC 50 ; CustomCursorColor=value ST
+      dispatch:
+      - OSC 50
+      rule: Parse value as QColor and request cursor style change; exact Qt color syntax and invalid value behavior not independently
+        qualified.
+      relations:
+      - kind: related
+        clause: xterm_controls.dynamic-colors
+        role: alternative-cursor-color
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: session-name
+      section: Session.h:465-477; Session.cpp:684-690
+      level: defined
+      wire: OSC 30 ; value ST
+      dispatch:
+      - OSC 30
+      rule: Change local tab title format and displayed title.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: session-icon
+      section: Session.h:465-477; Session.cpp:692-702
+      level: defined
+      wire: OSC 32 ; value ST
+      dispatch:
+      - OSC 32
+      rule: Change session icon name. Author comment traces nonstandard selector to commit c20973eca8776f9b4f15bee5fdcb5a3205aa69de
+        (historical commit not yet fetched).
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+    - id: session-color
+      section: Session.h:465-477; Session.cpp:704-712
+      level: defined
+      wire: OSC 34 ; value ST
+      dispatch:
+      - OSC 34
+      rule: Parse first semicolon-separated field as QColor; if valid set session/tab color and mark user color.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.h
+          sha256: 424069f8fe21f038b570d47fdbb4eba47f5b4db3672a3cdc33c488630c6a5e30
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/session/Session.cpp
+          sha256: 5d3f14ad8a13e9d570400d50cbbc488adceddb84efdab836ff2f6027d28f20b6
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Enumeration.h
+          sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
+        - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
+          sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+  conemu_osc9:
+    title: ConEmu-specific OSC 9 operations
+    author: ConEmu project
+    authority: protocol-author
+    revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+    snapshot_sha256: efe3af81050d58c0eeb257178bf1b987c37381049d47efe2e292900110ad88fb
+    scope: All twelve numbered suboperations in preserved ConEmu-specific OSC table. Host-affecting operations are retained
+      as published protocol candidates, not authorization to execute them.
+    clauses:
+    - id: sleep
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 1 ; ms ST
+      dispatch:
+      - OSC 9
+      rule: Published sleep request with duration in milliseconds. Whether/how canonical processing may be delayed requires
+        ownership and bounds review.
+    - id: message-box
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 2 ; text ST
+      dispatch:
+      - OSC 9
+      rule: Request host GUI message box; no selected permission or modal scheduling behavior.
+    - id: tab-title
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 3 ; text ST
+      dispatch:
+      - OSC 9
+      rule: Set ConEmu tab text; empty restores original tab text.
+    - id: progress
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 4 ; state ; progress ST
+      dispatch:
+      - OSC 9
+      rule: 'Refer to original progress family: state0 clear,1 progress0..100,2 error optional progress,3 indeterminate,4 paused
+        optional progress. Preserve optional omission behavior.'
+      relations:
+      - kind: related
+        clause: conemu_progress.format
+        role: source
+    - id: wait-key
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 5 ST
+      dispatch:
+      - OSC 9
+      rule: Request wait for Enter, Space or Esc. Published side effect sets ConEmuWaitKey environment value identifying key.
+        No selected blocking or environment mutation policy.
+    - id: gui-macro
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 6 ; text ST
+      dispatch:
+      - OSC 9
+      rule: Historical host GUI macro request; result placed in ConEmuMacroResult environment variable. No execution or trust
+        policy selected.
+    - id: run-process
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 7 ; command ST
+      dispatch:
+      - OSC 9
+      rule: Historical request to run a process with arguments. Retain source definition without granting process launch capability.
+    - id: environment-output
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 8 ; name ST
+      dispatch:
+      - OSC 9
+      rule: Published request to output environment variable value. No host disclosure policy selected.
+    - id: cwd
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 9 ; path ST
+      dispatch:
+      - OSC 9
+      rule: Inform host of shell working directory. Source shows quoted cwd notation; literal quote admission and Windows path
+        encoding require precise source trace.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.cwd
+        role: alternative-location-report
+    - id: xterm-emulation
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 10 [ ; n ] ST
+      dispatch:
+      - OSC 9
+      rule: No n requests xterm keyboard and output emulation; 0 disables both,1 enables both,2 disables output only,3 enables
+        output only.
+    - id: comment
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 11 ; text ST
+      dispatch:
+      - OSC 9
+      rule: Ignore comment payload.
+    - id: prompt-mark
+      section: ConEmu specific OSC table, HTML lines 768-832
+      level: defined
+      wire: OSC 9 ; 12 ST
+      dispatch:
+      - OSC 9
+      rule: Treat current cursor position as prompt start.
+      relations:
+      - kind: related
+        clause: finalterm_shell.prompt-start
+        role: alternative-prompt-marker
+  vte_termprops:
+    title: VTE terminal properties protocol (OSC 666)
+    author: VTE project / Christian Persch and contributors
+    authority: protocol-author
+    revision: VTE 0.84.1 tag, observed 2026-11-25; introduced 0.78
+    url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vtegtk.cc
+    snapshot_sha256: 1a765807d0041ac6fcb60b0478687e268006f56f01f72b10b7fa3c5bf31348c3
+    scope: Author gtk-doc section vte-termprops and exact built-in registry, public header and parser code. Source tag and byte
+      digests pinned. Preserve documented typed-property semantics separately from observed implementation differences; no general
+      data transfer or host permissions selected.
+    clauses:
+    - id: envelope
+      section: vtegtk.cc:2764-2779; vteseq.cc:1957-2000
+      level: defined
+      wire: OSC 666 [ ; statement ... ] ST
+      dispatch:
+      - OSC 666
+      rule: Control string selector666 followed by zero or more semicolon-separated statements. Author grammar permits ESC ]
+        or U+009D introducer and ESC backslash or U+009C ST; pinned handler rejects BEL termination. Control string limit4096
+        Unicode codepoints excluding introducer and terminator. Do not interpret this as a byte cap.
+      details:
+        max_control_string_codepoints: 4096
+        terminator: ST only
+        grammar: set|reset|signal|query statements
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: set
+      section: vtegtk.cc:2781-2787; vteseq.cc:1862-1945
+      level: defined
+      wire: OSC 666 ; key=value ST
+      dispatch:
+      - OSC 666
+      rule: Set registered typed property; parse according to declared type. Invalid value behaves as reset; unknown key ignored.
+        Author code ignores set for valueless and NO_OSC properties.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: reset
+      section: vtegtk.cc:2788-2796; vteseq.cc:1879-1905
+      level: defined
+      wire: OSC 666 ; key ST / OSC 666 ; prefix. ST
+      dispatch:
+      - OSC 666
+      rule: Reset registered property to no value, unknown key ignored. Since0.80 a dotted suffix prefix resets every matching
+        registered property. Includes NO_OSC properties. Exact signal cancellation discrepancy preserved separately.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: signal
+      section: vtegtk.cc:2798-2802,2832-2839; vteseq.cc:1935-1945
+      level: defined
+      wire: OSC 666 ; key! ST
+      dispatch:
+      - OSC 666
+      rule: Raise registered valueless property event; ignore unknown or value-bearing types. Documentation permits reset to
+        cancel pending signal and set has no effect. Pinned parser suppresses repeat while dirty. Source-vs-code cancellation
+        requires review.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: query
+      section: vtegtk.cc:2804-2815; vteseq.cc:1920-1934,1990-1997
+      level: defined
+      wire: OSC 666 ; key? ST / OSC 666 ST
+      dispatch:
+      - OSC 666
+      rule: Query reserved for future value reporting. Author currently specifies exactly one empty OSC666 response for queried
+        properties, even unregistered names; multiple queries in a frame produce one empty response. Debug-only test flag may
+        enable detailed query response, not a production disclosure guarantee.
+      details:
+        reply: OSC 666 ST
+        future_reserved: set/reset statements in responses for some queried properties
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: key-grammar
+      section: vtegtk.cc:2817-2830
+      level: defined
+      wire: key-component[.key-component ...]
+      rule: Names use dot-separated components, each dash-separated identifiers consisting of lowercase ASCII letters followed
+        optionally by digits. EBNF permits one component, prose requires two or more; do not normalize discrepancy. Extension
+        registration requires at least four components and vte.ext. prefix, with terminal namespace recommended.
+      details:
+        grammar:
+          KEY: KEY_COMPONENT, { ".", KEY_COMPONENT }
+          KEY_COMPONENT: KEY_IDENTIFIER, { "-", KEY_IDENTIFIER }
+          KEY_IDENTIFIER: LETTER, { LETTER }, [ DIGIT, { DIGIT } ]
+          LETTER: a..z
+          DIGIT: 0..9
+        extension_prefix: vte.ext.
+        extension_min_components: 4
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: valueless-type
+      section: vtegtk.cc:2832-2839
+      level: defined
+      wire: VALUELESS property
+      rule: Event-only property has no readable value. Signal raises pending event; reset is documented to cancel it; set has
+        no effect. See signal/reset discrepancy.
+      relations:
+      - kind: related
+        clause: vte_termprops.signal
+        role: type
+      - kind: related
+        clause: vte_termprops.reset
+        role: type
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: scalar-types
+      section: vtegtk.cc:2841-2858
+      level: defined
+      wire: BOOL / INT / UINT / DOUBLE property values
+      rule: Bool accepts only documented 0,false,False,FALSE or 1,true,True,TRUE. Signed integer is decimal digits with optional
+        minus and signed64 range; unsigned digits within unsigned64. Double finite fixed/scientific representation with no surrounding
+        whitespace.
+      details:
+        bool:
+          'false':
+          - '0'
+          - 'false'
+          - 'False'
+          - 'FALSE'
+          'true':
+          - '1'
+          - 'true'
+          - 'True'
+          - 'TRUE'
+        int:
+          min: -9223372036854775808
+          max: 9223372036854775807
+        uint:
+          min: 0
+          max: 18446744073709551615
+        double: finite fixed/scientific; no leading/trailing whitespace
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: color-types
+      section: vtegtk.cc:2859-2868
+      level: defined
+      wire: RGB / RGBA property value
+      rule: CSS color syntax accepts hex, rgb, rgba, hsl, hsla and named colors. RGB property forces alpha1; RGBA retains specified
+        alpha. External CSS/XParseColor grammar linked, exact admitted subset still needs dependency/source review. Printed
+        doc repeats RGBA where discussing RGB/RGBA; following sentences distinguish the two.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: string-type
+      section: vtegtk.cc:2869-2877
+      level: defined
+      wire: STRING property value
+      rule: No literal semicolon or C0/C1 controls. Escape semicolon as \s, LF as \n and backslash as \\. Maximum1024 Unicode
+        codepoints after unescape.
+      details:
+        decoded_max_codepoints: 1024
+        escapes:
+          \s: semicolon
+          \n: LF
+          \\: backslash
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: data-type
+      section: vtegtk.cc:2879-2883
+      level: defined
+      wire: DATA property value
+      rule: Standard RFC4648 Base64 alphabet; at most2048 bytes after decoding. Exact omitted-padding treatment not asserted
+        beyond source reference. Not a general binary transfer channel.
+      details:
+        decoded_max_bytes: 2048
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: uuid-type
+      section: vtegtk.cc:2884-2887
+      level: defined
+      wire: UUID property value
+      rule: UUID in simple, braced or URN representation, referenced RFC4122. No added UUID generation or authentication semantics.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: uri-type
+      section: vtegtk.cc:2889-2908
+      level: defined
+      wire: URI property value
+      rule: 'No literal semicolon/C0/C1; percent-encode these and non-UTF8 bytes. Decoded bytes need not be UTF8. data: URIs
+        forbidden; source suggests DATA type. Bound by OSC control-string limit. In this version URI properties only built-in,
+        set by special OSC selectors, not via OSC666 or newly created through API.'
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: image-type
+      section: vtegtk.cc:2910-2914
+      level: defined
+      wire: IMAGE property value
+      rule: Since0.80, built-in image properties cannot be created through API or set via OSC666, but can be reset by OSC666.
+        Set via own special sequence in principle; icon-image public header says always unset in this version. Do not invent
+        image transport.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: notification-lifetime
+      section: vtegtk.cc:2735-2759
+      level: defined
+      wire: property mutation and host observation
+      rule: Host changes are asynchronously reported and may coalesce intermediate updates. Current-value retrieval sees current
+        state independently of deferred notification. All changes from one OSC are notified together; successive OSCs may coalesce.
+        Repeated equal values/reset already absent try to avoid redundant notification, not API guarantee.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: ephemeral
+      section: vtegtk.cc:2761-2767
+      level: defined
+      wire: ephemeral property flag
+      rule: Set/reset same as ordinary property but value only observable during corresponding change-signal emission, then
+        reset. Preserve ephemeral postexec behavior independently of ordinary retained properties.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: reset-lifetime
+      section: vtegtk.cc:2934-2937
+      level: defined
+      wire: RIS / DECSTR / DECSR
+      rule: Terminal resets named in source clear all properties to having no value. Do not infer unrelated bank-switch lifetime.
+      relations:
+      - kind: related
+        clause: ecma48.ris
+        role: reset
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: reset
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: trust
+      section: vtegtk.cc:2916-2933
+      level: defined
+      wire: property value consumption
+      rule: Treat all values as untrusted. STRING/DATA/URI must not be used for arbitrary binary transfer, image/file upload,
+        clipboard data, general free-form protocol or user text notifications. Do not feed received values or derivatives back
+        into terminal. If further strict parsing fails, treat value as reset. Use typed properties rather than encoding typed
+        data in STRING/DATA.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: directory
+      section: vteglobals.h:80-92; termpropsregistry.cc:198-210
+      level: defined
+      wire: OSC 7 ; URI ST
+      dispatch:
+      - OSC 7
+      rule: vte.cwd stores current directory URI set by OSC7, NO_OSC so not settable through OSC666; reset/query available under
+        general rules.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.cwd
+        role: adopted-location
+      details:
+        name: vte.cwd
+        type: URI
+        flags:
+        - NO_OSC
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: file
+      section: vteglobals.h:94-106; termpropsregistry.cc:211-216
+      level: defined
+      wire: OSC 6 ; URI ST
+      dispatch:
+      - OSC 6
+      rule: vte.cwf stores represented file URI set by OSC6, not settable through OSC666.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.file
+        role: adopted-location
+      details:
+        name: vte.cwf
+        type: URI
+        flags:
+        - NO_OSC
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: title
+      section: vteglobals.h:108-120; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 0 ; title ST / OSC 2 ; title ST
+      dispatch:
+      - OSC 0
+      - OSC 2
+      rule: xterm.title string populated by title OSC0/2, NO_OSC property. Does not redefine original title protocol.
+      relations:
+      - kind: related
+        clause: cde_dtterm.title-selector-0
+        role: adopted-title
+      - kind: related
+        clause: cde_dtterm.title-selector-2
+        role: adopted-title
+      details:
+        name: xterm.title
+        type: STRING
+        flags:
+        - NO_OSC
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: container-name
+      section: vteglobals.h:122-150; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.container.name=value ST
+      dispatch:
+      - OSC 666
+      rule: Container name; registered built-in typed property, ordinary set/reset/query rules. Metadata does not establish
+        real process or privilege identity.
+      details:
+        name: vte.container.name
+        type: STRING
+        flags: []
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: container-runtime
+      section: vteglobals.h:122-150; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.container.runtime=value ST
+      dispatch:
+      - OSC 666
+      rule: Container runtime; registered built-in typed property, ordinary set/reset/query rules. Metadata does not establish
+        real process or privilege identity.
+      details:
+        name: vte.container.runtime
+        type: STRING
+        flags: []
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: container-uid
+      section: vteglobals.h:122-150; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.container.uid=value ST
+      dispatch:
+      - OSC 666
+      rule: Container user ID; registered built-in typed property, ordinary set/reset/query rules. Metadata does not establish
+        real process or privilege identity.
+      details:
+        name: vte.container.uid
+        type: UINT
+        flags: []
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: precmd
+      section: vteglobals.h:152-170; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.shell.precmd! ST
+      dispatch:
+      - OSC 666
+      rule: Shell about to prompt; valueless signal property.
+      relations:
+      - kind: related
+        clause: finalterm_shell.prompt-start
+        role: alternative-shell-metadata
+      details:
+        name: vte.shell.precmd
+        type: VALUELESS
+        flags: []
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: preexec
+      section: vteglobals.h:152-170; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.shell.preexec! ST
+      dispatch:
+      - OSC 666
+      rule: Shell preparing to execute entered command; valueless signal property.
+      relations:
+      - kind: related
+        clause: finalterm_shell.command-executed
+        role: alternative-shell-metadata
+      details:
+        name: vte.shell.preexec
+        type: VALUELESS
+        flags: []
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: postexec
+      section: vteglobals.h:172-181; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.shell.postexec=exit-code ST
+      dispatch:
+      - OSC 666
+      rule: Shell completed commands; unsigned64 exit-code property, ephemeral after observation emission.
+      relations:
+      - kind: related
+        clause: finalterm_shell.command-finished
+        role: alternative-shell-metadata
+      details:
+        name: vte.shell.postexec
+        type: UINT
+        flags:
+        - EPHEMERAL
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: progress-hint
+      section: vteglobals.h:183-204; vteenums.h:323-342; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.progress.hint=n ST
+      dispatch:
+      - OSC 666
+      rule: 'Progress interpretation hint: inactive0,active1,error2,indeterminate3,paused4 enum. Public header says never value
+        inactive and ignore hint unless progress value set; unset hint with value means active. Registry parser accepts integral
+        range0..4, so zero claim requires reconciliation. Before0.82 only OSC9;4 could set it.'
+      relations:
+      - kind: related
+        clause: conemu_progress.states
+        role: alternative-progress
+      details:
+        name: vte.progress.hint
+        type: INT
+        registry_range:
+        - 0
+        - 4
+        enum:
+          0: inactive
+          1: active
+          2: error
+          3: indeterminate
+          4: paused
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: progress-value
+      section: vteglobals.h:206-217; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.progress.value=n ST
+      dispatch:
+      - OSC 666
+      rule: Unsigned progress percent0..100. Before0.82 only ConEmu progress set it. No positive value from missing property;
+        interpretation also depends on hint.
+      relations:
+      - kind: related
+        clause: vte_termprops.progress-hint
+        role: progress
+      details:
+        name: vte.progress.value
+        type: UINT
+        range:
+        - 0
+        - 100
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: icon-color
+      section: vteglobals.h:219-230; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.icon.color=color ST
+      dispatch:
+      - OSC 666
+      rule: RGB favicon/tab-highlight color; prefer icon image when set. No mandatory host presentation.
+      details:
+        name: vte.icon.color
+        type: RGB
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: icon-image
+      section: vteglobals.h:232-245; termpropsregistry.cc registry
+      level: defined
+      wire: OSC 666 ; vte.icon.image ST
+      dispatch:
+      - OSC 666
+      rule: Reset image property; author header says always unset in this version. No OSC666 image-setting payload admitted.
+      relations:
+      - kind: related
+        clause: vte_termprops.image-type
+        role: type
+      - kind: related
+        clause: vte_termprops.icon-color
+        role: presentation
+      details:
+        name: vte.icon.image
+        type: IMAGE
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: key-prose
+      section: vtegtk.cc:2826-2830
+      level: defined
+      wire: property key component count
+      rule: Prose says key consists of at least two components, while printed grammar permits one. Extension install separately
+        requires at least four.
+      relations:
+      - kind: conflicts
+        clause: vte_termprops.key-grammar
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: signal-reset-observation
+      section: vteseq.cc:1879-1905,1935-1945
+      level: defined
+      wire: OSC 666 ; key! ; key ST
+      rule: Pinned handler sets dirty on valueless signal without assigning value. Name/prefix reset only enters mutation path
+        if stored value is not monostate. This appears narrower than documented pending-signal cancellation; complete owner
+        lifetime and test trace required before concluding a behavior defect.
+      relations:
+      - kind: related
+        clause: vte_termprops.valueless-type
+        role: implementation-observation
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
+          sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+    - id: progress-hint-registry
+      section: termpropsregistry.cc:256-264; vteseq.cc:1906-1920
+      level: defined
+      wire: OSC 666 ; vte.progress.hint=0 ST
+      dispatch:
+      - OSC 666
+      rule: Registry passes bounds0 and4 to integral parser for hint; setter uses parsed property value if valid, with no visible
+        special-case exclusion of0 in that branch. Exact range helper and observer behavior remain to verify against public
+        header statement that inactive is never stored.
+      relations:
+      - kind: related
+        clause: vte_termprops.progress-hint
+        role: implementation-observation
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/termpropsregistry.cc
+          sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteglobals.h
+          sha256: d32f81f7a23d500eea247c41cbb2bbbc8132800d1b68f9b0a008d7cdb0acaad7
+  vte_legacy_osc777:
+    title: VTE legacy OSC 777 shell/container property compatibility
+    author: VTE project
+    authority: author-implementation
+    revision: VTE 0.84.1 tag, observed 2026-11-25
+    url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vteseq.cc
+    snapshot_sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+    scope: Author implementation of legacy urxvt-extension namespace compatibility; not original rxvt notification invention.
+      Exact originating old VTE proposal and older stack behavior still need discovery.
+    clauses:
+    - id: enable
+      section: vteseq.cc:2006-2019
+      level: defined
+      wire: OSC 777 ; subcommand ... ST
+      dispatch:
+      - OSC 777
+      rule: Pinned legacy handler gated by enable_legacy_osc777, empty command ignored. Separate from generic installed Perl
+        extension dispatch.
+      relations:
+      - kind: related
+        clause: urxvt_notify.perl-osc
+        role: adopted-namespace
+    - id: precmd
+      section: vteseq.cc:2053-2058
+      level: defined
+      wire: OSC 777 ; precmd ST
+      dispatch:
+      - OSC 777
+      rule: Legacy event raises shell precmd valueless termprop.
+      relations:
+      - kind: related
+        clause: vte_termprops.precmd
+        role: bridge
+    - id: preexec
+      section: vteseq.cc:2059-2060
+      level: defined
+      wire: OSC 777 ; preexec ST
+      dispatch:
+      - OSC 777
+      rule: Legacy event raises shell preexec valueless termprop.
+      relations:
+      - kind: related
+        clause: vte_termprops.preexec
+        role: bridge
+    - id: notify-completed
+      section: vteseq.cc:2062-2070
+      level: defined
+      wire: OSC 777 ; notify ; Command completed [ ; body ] ST
+      dispatch:
+      - OSC 777
+      rule: Handler recognizes exact notification title Command completed and calls valueless setter for postexec. Registered
+        postexec is now UINT/ephemeral, so call may not raise event; preserve as observed path, not verified success.
+      relations:
+      - kind: related
+        clause: vte_termprops.postexec
+        role: bridge
+      - kind: related
+        clause: urxvt_notify.notify-convention
+        role: adopted-namespace
+    - id: container-push
+      section: vteseq.cc:2072-2104
+      level: defined
+      wire: OSC 777 ; container ; push ; name ; runtime ; uid ST
+      dispatch:
+      - OSC 777
+      rule: Clear existing container metadata first; then set available name/runtime and parsed unsigned uid in order. Incomplete
+        input may leave partial metadata; no stack retained in pinned version, despite push name.
+      relations:
+      - kind: related
+        clause: vte_termprops.container-name
+        role: bridge
+      - kind: related
+        clause: vte_termprops.container-runtime
+        role: bridge
+      - kind: related
+        clause: vte_termprops.container-uid
+        role: bridge
+    - id: container-pop
+      section: vteseq.cc:2072-2104
+      level: defined
+      wire: OSC 777 ; container ; pop ST
+      dispatch:
+      - OSC 777
+      rule: Clear container name/runtime/uid, no restoration of prior nested container in this version.
+      relations:
+      - kind: related
+        clause: vte_legacy_osc777.container-push
+        role: lifetime
+  orca_agent_status:
+    title: Orca agent status OSC 9999 (internal author-code interface)
+    author: Stably AI / Orca project
+    authority: author-implementation
+    revision: git e705cac04a1db7e7e2184746e912142d34ca838b
+    url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-osc.ts
+    snapshot_sha256: fed8b4972a0f91c1523395e322de3c3f3e4aa38e0bf568c4d78db9995679584b
+    scope: Pinned private application PTY-stream interface, originating implementation observation, not a stable public specification.
+      Index only inspected incoming decoder and normalization. Outbound click/navigation protocol and consumer merging/lifetime
+      still open.
+    clauses:
+    - id: framing
+      section: agent-status-osc.ts:5-112
+      level: defined
+      wire: OSC 9999 ; JSON (BEL | ST)
+      dispatch:
+      - OSC 9999
+      rule: Pre-terminal PTY string processor recognizes exact 7-bit ESC ]9999; prefix, earliest BEL or ESC backslash terminator.
+        Removes complete recognized frames from rendered stream even if invalid JSON. Reports valid parsed payloads in order
+        and last cleaned offset. Fragmented prefix/body retained across chunks. No raw C1 admission established. No reply emitted
+        by this decoder, not proof no reverse protocol exists.
+      relations:
+      - kind: related
+        clause: rex_status.syntax
+        role: alternative-status-protocol
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: incomplete-frame-limit
+      section: agent-status-osc.ts:48-112
+      level: defined
+      wire: incomplete OSC9999 frame carry
+      rule: Pending unterminated frame retained up to65536 JavaScript string code units; larger incomplete candidate discarded.
+        This limit is on incomplete carry, not proven cap on complete frame or decoded UTF8 bytes.
+      details:
+        pending_max_utf16_code_units: 65536
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: json-limits
+      section: agent-status-types.ts:266-274,365-372; json-text-structure-limit.ts
+      level: defined
+      wire: JSON object payload
+      rule: Precheck structure caps4096 punctuation tokens outside strings and nesting16, then JSON.parse. Malformed JSON or
+        invalid required state rejects entire parsed report. Unknown fields omitted by explicit field projection. This is private
+        source behavior, not a protocol stability guarantee.
+      details:
+        structural_tokens_max: 4096
+        nesting_depth_max: 16
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: state
+      section: agent-status-types.ts:51-59,307-350
+      level: defined
+      wire: state=working|blocked|waiting|done (JSON field)
+      rule: Required state is string among exactly working,blocked,waiting,done. Invalid state or missing state rejects report.
+        workingMode=monitoring only while working. Distinct from Rex idle/error/clear roster.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: preview-fields
+      section: agent-status-types.ts:249-255,320-337; agent-status-field-normalization.ts:10-138,197-213
+      level: defined
+      wire: JSON prompt / agentType / model / toolName / toolInput / lastAssistantMessage
+      rule: Normalize single-line fields with trimmed leading whitespace, collapsed line breaks, bounded source scan and UTF16-safe
+        truncation at high surrogate. Missing/nonstring prompt becomes empty; optional empty/nonstring fields become undefined.
+        Last assistant message preserves normalized newlines with max two consecutive newlines. Prompt may compact Orca dispatch
+        preambles; exact compaction dependency not traced.
+      details:
+        limits_utf16_code_units:
+          prompt: 200
+          agentType: 40
+          model: 120
+          toolName: 60
+          toolInput: 160
+          lastAssistantMessage: 8000
+        single_line_scan_bound: maxLength*8+64
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: interactive-prompt
+      section: agent-status-types.ts:255,330-333; agent-status-field-normalization.ts:186-195
+      level: defined
+      wire: JSON interactivePrompt
+      rule: Optional raw JSON string field; preserve whitespace and line breaks, truncate at16000 UTF16 code units while dropping
+        trailing lone high surrogate. Nonstring/empty omitted. Does not guarantee truncated nested JSON remains parseable.
+      details:
+        max_utf16_code_units: 16000
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: completion-fields
+      section: agent-status-types.ts:325-350; agent-status-field-normalization.ts:217-225
+      level: defined
+      wire: JSON modelSwitchCommand / lastAssistantMessageIsToolOutput / interrupted / sessionBoundary / turnCompletedAt
+      rule: Recognize modelSwitchCommand only exact orca-model. Tool-output flag only true. interrupted and sessionBoundary
+        only true for done; sessionBoundary means not completed turn and completion consumers should ignore. turnCompletedAt
+        finite number retained only working/done. Other values omitted.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: subagents
+      section: agent-status-subagent-snapshot.ts:13-81
+      level: defined
+      wire: JSON subagents array
+      rule: Optional valid child snapshots, first32 valid items. Trim nonempty id of at most64 UTF16 code units; allowed states
+        working,blocked,waiting,idle,unverifiable. startedAt finite number else0. Optional agentType/model/description normalized
+        with respective limits40/120/160. Invalid entries skipped, empty result omitted.
+      details:
+        max_children: 32
+        max_id_utf16_code_units: 64
+        states:
+        - working
+        - blocked
+        - waiting
+        - idle
+        - unverifiable
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+    - id: main-agent
+      section: agent-status-types.ts:276-299; agent-turn-outcome.ts
+      level: defined
+      wire: JSON mainAgent object
+      rule: Optional main-agent fact requires recognized state and finite stateStartedAt. Outcome allowed success/failure/cancellation
+        only for done; invalid outcome omitted, malformed mainAgent omitted without rejecting parent report. Absence is unknown,
+        not success.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-types.ts
+          sha256: a26cf9e8c0046e913ceb0eef60cabd89ccbdfa6d3057e72f769af9131caf88f0
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-field-normalization.ts
+          sha256: a826255ed297b59483a7c27a6e4c4ad8c80a4e3811957613213a8b05b5e0bc79
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-status-subagent-snapshot.ts
+          sha256: 2fc24c86a59fc4dc758ca3609fa807d6de182688c0c05cd9b2c40f5a6a1dbc2a
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/json-text-structure-limit.ts
+          sha256: 29ded95f7e054d839dc82d118cb324d2144c70267f293d6b54f188159ada5eb9
+        - url: https://raw.githubusercontent.com/stablyai/orca/e705cac04a1db7e7e2184746e912142d34ca838b/src/shared/agent-turn-outcome.ts
+          sha256: 57e0ee5e3457ff73b7604a3b66eed400ec5b01fc74400686416bce986de6d57f
+  vte_location_2012:
+    title: VTE 2012 adoption of Apple file and working-directory OSCs
+    author: Christian Persch / VTE project
+    authority: author-implementation
+    revision: git 9be0ee6968fbd9677c0eadca8df13ecffa6551b3, 2012-06-01
+    url: https://gitlab.gnome.org/GNOME/vte/-/commit/9be0ee6968fbd9677c0eadca8df13ecffa6551b3.patch
+    snapshot_sha256: ebdd0087164530d0a8ed25e1e9d78a42a633a954e1e012200328b419706e04bc
+    scope: Exact historical introduction commit, emitter utility and handlers. Commit description swaps OSC6/7, but actual caps,
+      command utility and dispatch agree with Apple-era account. Preserve documented error as provenance, not competing target
+      semantics.
+    clauses:
+    - id: file
+      section: 2012 adoption patch src/caps.c and src/osc; src/vteseq.c:2570-2599
+      level: defined
+      wire: OSC 6 ; URI (BEL | ST)
+      dispatch:
+      - OSC 6
+      rule: 'Adopt Apple location convention: represented file URI. Both BEL and ST registered. First argument converted to
+        UTF8 if UCS4 or copied string; validate with g_filename_from_uri; invalid URI becomes absent. Replace pending URI property.
+        Exact foreign-host application policy not inferred from this parser.'
+      source_note: Commit message final sentence reverses numeric meanings; actual dispatch and shipped command utility identify
+        OSC6 file and OSC7 directory. Later VTE0.84.1 public header agrees.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.file
+        role: historical-adoption
+      - kind: related
+        clause: vte_termprops.file
+        role: later-property-owner
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/9be0ee6968fbd9677c0eadca8df13ecffa6551b3/src/osc
+          sha256: 9508664df5621dfe82416745d0c9739394abfbbc492cf4c3a8650d0b015c6e60
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/9be0ee6968fbd9677c0eadca8df13ecffa6551b3/src/vteseq.c
+          sha256: 68479090a486b1541620db3a727cb3c7c1ebcaec9495a7284b0cdd8cd1436d5b
+        - url: https://bugzilla.gnome.org/show_bug.cgi?id=675987
+          sha256: ec8cb20ed8dae88519252911230af6772f0387c6759ea77bcec208cf76e24f84
+    - id: cwd
+      section: 2012 adoption patch src/caps.c and src/osc; src/vteseq.c:2538-2567
+      level: defined
+      wire: OSC 7 ; URI (BEL | ST)
+      dispatch:
+      - OSC 7
+      rule: 'Adopt Apple location convention: working directory URI. Both BEL and ST registered. First argument converted to
+        UTF8 if UCS4 or copied string; validate with g_filename_from_uri; invalid URI becomes absent. Replace pending URI property.
+        Exact foreign-host application policy not inferred from this parser.'
+      source_note: Commit message final sentence reverses numeric meanings; actual dispatch and shipped command utility identify
+        OSC6 file and OSC7 directory. Later VTE0.84.1 public header agrees.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.cwd
+        role: historical-adoption
+      - kind: related
+        clause: vte_termprops.directory
+        role: later-property-owner
+      evidence:
+        additional_sources:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/9be0ee6968fbd9677c0eadca8df13ecffa6551b3/src/osc
+          sha256: 9508664df5621dfe82416745d0c9739394abfbbc492cf4c3a8650d0b015c6e60
+        - url: https://gitlab.gnome.org/GNOME/vte/-/raw/9be0ee6968fbd9677c0eadca8df13ecffa6551b3/src/vteseq.c
+          sha256: 68479090a486b1541620db3a727cb3c7c1ebcaec9495a7284b0cdd8cd1436d5b
+        - url: https://bugzilla.gnome.org/show_bug.cgi?id=675987
+          sha256: ec8cb20ed8dae88519252911230af6772f0387c6759ea77bcec208cf76e24f84
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -19501,3 +21426,124 @@ pending_reconciliation:
     - iterm2_feature_reporting.file
     - iterm2_feature_reporting.focus
     scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
+- id: finalterm-command-c-origin-vs-screen-capture
+  status: material-originating-extension-conflict
+  wire: OSC 133 ; C [ ; payload ] ST
+  original_author_sources:
+  - clause: finalterm_original.command-executed
+    meaning: Original C consumes parameter0 as command text, absent empty.
+  - clause: iterm2_osc1337.ftcs-capture-profile
+    meaning: Later C captures the screen region between B and C.
+  - clause: kitty_shell_integration.command-line
+    meaning: Kitty admits named cmdline and cmdline_url fields.
+  question: Preserve trailing-semicolon and parameter grammar differences; qualify overlap and selected handling of bare,
+    plain-text and named command-text fields before choosing. No implementation change.
+  decision: null
+  applies_to:
+    clauses:
+    - finalterm_original.command-executed
+    - iterm2_osc1337.ftcs-capture-profile
+    - kitty_shell_integration.command-line
+    scope: OSC 133 ; C [ ; payload ] ST
+- id: osc133-prompt-fresh-line-vs-marker
+  status: material-originating-extension-conflict
+  wire: OSC 133 ; A [ ; options ] ST
+  original_author_sources:
+  - clause: bothner_semantic_prompts.start-command
+    meaning: Proposal explicitly executes fresh-line before starting command.
+  - clause: finalterm_original.prompt
+    meaning: Original author handler marks current line without cursor motion.
+  - clause: finalterm_shell.prompt-start
+    meaning: Later reproduction describes marker just before prompt; no fresh-line operation stated.
+  question: Confirm exact grammar and active cursor behavior of original and modern profiles, including continuation options.
+    Select neither movement nor no-movement merely by alias.
+  decision: null
+  applies_to:
+    clauses:
+    - bothner_semantic_prompts.start-command
+    - finalterm_original.prompt
+    - finalterm_shell.prompt-start
+    scope: OSC 133 ; A [ ; options ] ST
+- id: semantic-prompt-err-d-vs-z
+  status: material-originating-extension-conflict
+  wire: OSC 133 ; D or Z ; err=value ST
+  original_author_sources:
+  - clause: bothner_semantic_prompts.finish
+    meaning: Command list defines D with err option.
+  - clause: bothner_semantic_prompts.error-option
+    meaning: Standard options assigns err to Z, which has no defined command in command list; omitted-newline prose also mentions
+      Z.
+  question: Originating proposal internal inconsistency. Preserve D syntax and textual Z reference without inventing a Z operation.
+  decision: null
+  applies_to:
+    clauses:
+    - bothner_semantic_prompts.error-option
+    - bothner_semantic_prompts.finish
+    scope: OSC 133 ; D or Z ; err=value ST
+- id: osc50-konsole-profile-vs-xterm-font
+  status: material-originating-extension-conflict
+  wire: OSC 50 ; text ST
+  original_author_sources:
+  - clause: konsole_profiles.profile
+    meaning: Konsole recognizes property=value profile changes including CursorShape.
+  - clause: xterm_controls.font-operations
+    meaning: xterm treats text as font selection/query.
+  question: Author explicitly acknowledges collision. Preserve historical iTerm2 OSC50 predecessor as further evidence obligation;
+    select neither host font nor profile operation yet.
+  decision: null
+  applies_to:
+    clauses:
+    - konsole_profiles.profile
+    - xterm_controls.font-operations
+    scope: OSC 50 ; text ST
+- id: osc9-iterm-notification-vs-conemu-dispatch
+  status: material-originating-extension-conflict
+  wire: OSC 9 ; numeric-subcommand [ ; payload ] ST
+  original_author_sources:
+  - clause: iterm2_osc1337.notification
+    meaning: iTerm2 simple notification text occupies whole OSC9 payload; later iTerm2 adopts special progress9;4.
+  - clause: conemu_osc9.tab-title
+    meaning: ConEmu interprets numeric subcommand3 as tab title, not notification.
+  - clause: conemu_osc9.comment
+    meaning: ConEmu interprets numeric subcommand11 as ignored comment.
+  question: Review full numeric subcommand admission and compatibility profiles, preserving host-effect boundaries. Existing
+    progress selection not changed; no arbitrary host operation selected.
+  decision: null
+  applies_to:
+    clauses:
+    - conemu_osc9.comment
+    - conemu_osc9.tab-title
+    - iterm2_osc1337.notification
+    scope: OSC 9 ; numeric-subcommand [ ; payload ] ST
+- id: vte-termprop-key-component-count
+  status: material-originating-extension-conflict
+  wire: OSC 666 property key
+  original_author_sources:
+  - clause: vte_termprops.key-grammar
+    meaning: EBNF permits one component.
+  - clause: vte_termprops.key-prose
+    meaning: Prose requires at least two components.
+  question: Trace registry validation and intended documented property namespace; preserve both until selected.
+  decision: null
+  applies_to:
+    clauses:
+    - vte_termprops.key-grammar
+    - vte_termprops.key-prose
+    scope: OSC 666 property key
+- id: vte-progress-hint-zero-doc-vs-registry
+  status: material-originating-extension-conflict
+  wire: OSC 666 ; vte.progress.hint=0 ST
+  original_author_sources:
+  - clause: vte_termprops.progress-hint
+    meaning: Public header states inactive0 is never stored.
+  - clause: vte_termprops.progress-hint-registry
+    meaning: Registry calls integral parser with range0..4; setter has no visible special exclusion of0. Exact helper needs
+      trace.
+  question: Trace public property setter and observer constraints to resolve whether direct OSC666 accepts zero despite documentation.
+    No inferred implementation requirement.
+  decision: null
+  applies_to:
+    clauses:
+    - vte_termprops.progress-hint
+    - vte_termprops.progress-hint-registry
+    scope: OSC 666 ; vte.progress.hint=0 ST
