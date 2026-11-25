@@ -3222,6 +3222,14 @@ specifications:
           key: '[a-z]+'
           value: '[A-Za-z0-9_.,+/=-]*'
         framing: 7-bit OSC; source does not define raw C1 acceptance here.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/osc/parsers/program_status.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: e127bf594febcef415f3e4c5004efc54f81a176df8d22451f5632d31fe328703
+          location: 309-342
+          meaning: Recognizes Rex status protocol as adopting parser; full field limits and lifecycle correspondence not established
+            by dispatch alone.
     - id: unknown-keys
       section: Syntax
       level: must
@@ -3642,6 +3650,14 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: ordinary OSC9 notifications remain distinct from bounded retained progress
         relation: protocol-family
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
+          location: 1082-1094
+          meaning: Pinned consumer maps parsed pause state4 to Progress::None, unlike source paused state. Parser defaults missing
+            error/percentage to0 and clamps successful u8 values to100; actual profile differs.
   iterm2_osc1337:
     title: iTerm2 proprietary OSC 1337 commands
     author: iTerm2
@@ -3962,6 +3978,14 @@ specifications:
         units: logical points; scale is pixels/point
       source_note: Correct prior index description of physical pixels. Existing VT-only code treats its caller-neutral geometry
         as scale1 and reports points=pixels; existing tests do not establish non-unit host scale conformance.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
+          location: 801-829
+          meaning: Consumer divides physical cell metrics by DPI/72 (or1 if zero) and supplies scale, corroborating logical-point
+            source units despite field names height_pixels/width_pixels.
     - id: session-status
       section: Session Status
       level: defined
@@ -4504,9 +4528,9 @@ specifications:
       dispatch:
       - OSC 4
       rule: 'Sets or queries one or more indexed colors. Each c/spec pair supplies the color number and XParseColor name or
-        RGB specification, or ? for a query. Color table: ANSI 0..7, bright 8..15, and remaining 88- or 256-color palette
-        if supported. Special colors may also be addressed as the maximum ANSI palette count plus the OSC 5 selector. Query
-        response uses OSC 4 ; c ; spec with the same final; multiple query pairs may yield multiple replies.'
+        RGB specification, or ? for a query. Color table: ANSI 0..7, bright 8..15, and remaining 88- or 256-color palette if
+        supported. Special colors may also be addressed as the maximum ANSI palette count plus the OSC 5 selector. Query response
+        uses OSC 4 ; c ; spec with the same final; multiple query pairs may yield multiple replies.'
       source_note: Pinned reply formats color components as four hex digits each (rgb:rrrr/gggg/bbbb). Parser uses atoi for
         c, bounds by MAXCOLORS, stops on invalid range/change, and can preserve earlier effects; do not infer strict atomic
         multi-pair semantics or exact malformed admission from this.
@@ -4527,11 +4551,10 @@ specifications:
       wire: OSC 104 [ ; c [ ; c ... ] ] (BEL | ST)
       dispatch:
       - OSC 104
-      rule: Resets any supplied indexed color numbers to their configured resource values. No supplied indices resets the
-        whole table. Same palette-dependent indexed domain as OSC 4; do not equate resource defaults with immutable factory
-        colors.
-      source_note: Pinned reset loop uses MAXCOLORS, including special color slots via start=0; exact overlap with OSC 105
-        and malformed-index behavior is retained as an implementation observation.
+      rule: Resets any supplied indexed color numbers to their configured resource values. No supplied indices resets the whole
+        table. Same palette-dependent indexed domain as OSC 4; do not equate resource defaults with immutable factory colors.
+      source_note: Pinned reset loop uses MAXCOLORS, including special color slots via start=0; exact overlap with OSC 105 and
+        malformed-index behavior is retained as an implementation observation.
       evidence:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -4553,15 +4576,14 @@ specifications:
       wire: OSC Ps ; spec [ ; spec ... ] (BEL | ST)
       dispatch:
       - OSC *
-      rule: For Ps=10..19, set or query the dynamic color at Ps and successive colors in the ordered list. At least one Pt
-        parameter is expected; each successive spec selects the next color, rather than another explicit index/spec pair.
-        Names or RGB specifications follow XParseColor; ? queries the corresponding color and may yield separate replies.
-        These are distinct from the ANSI palette; dynamic text foreground/background are used by SGR 39/49. Tektronix colors
-        start from VT100 colors but can change independently. Author documents allowColorOps gating.
+      rule: For Ps=10..19, set or query the dynamic color at Ps and successive colors in the ordered list. At least one Pt parameter
+        is expected; each successive spec selects the next color, rather than another explicit index/spec pair. Names or RGB
+        specifications follow XParseColor; ? queries the corresponding color and may yield separate replies. These are distinct
+        from the ANSI palette; dynamic text foreground/background are used by SGR 39/49. Tektronix colors start from VT100 colors
+        but can change independently. Author documents allowColorOps gating.
       source_note: Pinned code iterates up to OSC_NCOLORS, skips empty fields, resolves opposite colors under reverse video
-        and compile-gates Tektronix/highlight roles. Reply uses four hex digits per channel. Invalid or unsupported roles,
-        unavailable RGB and reverse-video interactions need separate qualification; this is not an assumed 10-role implementation
-        obligation.
+        and compile-gates Tektronix/highlight roles. Reply uses four hex digits per channel. Invalid or unsupported roles, unavailable
+        RGB and reverse-video interactions need separate qualification; this is not an assumed 10-role implementation obligation.
       details:
         selectors:
         - selector: 10
@@ -4683,8 +4705,8 @@ specifications:
       dispatch:
       - CSI ? 1006 h
       - CSI ? 1006 l
-      rule: 'Enable SGR mouse encoding: CSI < Cb ; Px ; Py M for press and motion, lowercase m for release. Decimal button
-        value excludes the legacy +32 offset; modifier bits stay the same. Distinguishes the released button rather than ambiguous
+      rule: 'Enable SGR mouse encoding: CSI < Cb ; Px ; Py M for press and motion, lowercase m for release. Decimal button value
+        excludes the legacy +32 offset; modifier bits stay the same. Distinguishes the released button rather than ambiguous
         legacy release code. Highlight-tracking responses also use an SGR-like format. RESET disables this encoding.'
       details:
         source_semantics:
@@ -4722,8 +4744,8 @@ specifications:
       dispatch:
       - CSI ? 1004 h
       - CSI ? 1004 l
-      rule: 'Enable independent focus enter/leave reports: CSI I when terminal gains focus, CSI O when it loses focus. May
-        coexist with any mouse tracking protocol. RESET disables focus reporting.'
+      rule: 'Enable independent focus enter/leave reports: CSI I when terminal gains focus, CSI O when it loses focus. May coexist
+        with any mouse tracking protocol. RESET disables focus reporting.'
       details:
         source_semantics:
           selector: 1004
@@ -4860,8 +4882,8 @@ specifications:
       wire: CSI ? Prow ; Pcol [ ; Ppage ] R
       dispatch:
       - CSI ? R
-      rule: Xterm responds to CSI ? 6 n with a private-prefixed cursor position. It includes page number 1 when emulating
-        VT420 or eligible VT330-level operation; older levels report only row and column.
+      rule: Xterm responds to CSI ? 6 n with a private-prefixed cursor position. It includes page number 1 when emulating VT420
+        or eligible VT330-level operation; older levels report only row and column.
       relations:
       - kind: conflicts
         note: DEC VT330/VT340 and VT420 source reply CSI Prow ; Pcol ; Ppage R (without ?).
@@ -4911,8 +4933,8 @@ specifications:
       - CSI ? 9 h
       - CSI ? 9 l
       rule: Enable button-press-only X10 xterm tracking. The legacy report is CSI M CbCxCy, with button 1..3 encoded as button
-        minus one then plus 32, and 1-based coordinates plus 32. RESET disables tracking. This is the historical X10 xterm
-        scheme, not DEC Locator.
+        minus one then plus 32, and 1-based coordinates plus 32. RESET disables tracking. This is the historical X10 xterm scheme,
+        not DEC Locator.
       details:
         source_semantics:
           selector: 9
@@ -4920,14 +4942,14 @@ specifications:
             2949-2960
           authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
         tracking_protocol_state: The five xterm tracking protocols (9,1000,1001,1002,1003) are mutually exclusive. Separate
-          encoding selection and focus events are not additional tracking protocols. Pinned charproc.c:7425-7435 sets the
-          selected protocol on SET and turns tracking off on RESET, even if another tracking protocol is active. This is an
-          observed xterm reset behavior, not a universal terminal requirement.
+          encoding selection and focus events are not additional tracking protocols. Pinned charproc.c:7425-7435 sets the selected
+          protocol on SET and turns tracking off on RESET, even if another tracking protocol is active. This is an observed
+          xterm reset behavior, not a universal terminal requirement.
         coordinate_encoding: Original X10 byte reports encode value+32, with top-left cell (1,1) and max coordinate 223 (255
           minus 32). Extended encodings change the representation; do not conflate a tracking mode with an encoding.
         pinned_coordinate_limit: button.c:212-279,5511-5517 preserves a NUL past-end marker for both legacy and UTF-8 coordinates.
-          The 223 and 2015 ordinary positions are not permission to silently wrap or saturate the next value. Exact marker
-          admission remains unassessed.
+          The 223 and 2015 ordinary positions are not permission to silently wrap or saturate the next value. Exact marker admission
+          remains unassessed.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -4955,10 +4977,10 @@ specifications:
       dispatch:
       - CSI ? 1000 h
       - CSI ? 1000 l
-      rule: Enable X11 xterm press and release reporting, including modifiers, no motion-only reports. Legacy CSI M CbCxCy
-        uses low bits 0/1/2 for buttons 1/2/3 and 3 for release; add Shift=4, Meta=8, Control=16, then byte offset 32. Wheel
-        buttons 4/5 add 64 to codes 0/1 and do not report release; buttons 6/7 add 64 to 2/3, buttons 8..11 use 128 plus 0..3.
-        Published legacy encoding becomes ambiguous past button 11. RESET disables tracking.
+      rule: Enable X11 xterm press and release reporting, including modifiers, no motion-only reports. Legacy CSI M CbCxCy uses
+        low bits 0/1/2 for buttons 1/2/3 and 3 for release; add Shift=4, Meta=8, Control=16, then byte offset 32. Wheel buttons
+        4/5 add 64 to codes 0/1 and do not report release; buttons 6/7 add 64 to 2/3, buttons 8..11 use 128 plus 0..3. Published
+        legacy encoding becomes ambiguous past button 11. RESET disables tracking.
       source_note: Published X11 xterm encoding; modifier mapping is subject to host keyboard and selection/menu policy. Extended
         formats and implementation-specific higher button admission are separate.
       relations:
@@ -5006,8 +5028,8 @@ specifications:
       - CSI ? 1001 l
       rule: 'Enable cooperative highlight tracking: normal button-press report, application-supplied row range via XTHIMOUSE,
         highlight until release, then report ending coordinates. Highlighting uses button 1; other button events can be received.
-        RESET disables tracking. The author warns that a noncooperating application can hang xterm; this is not permission
-        for Howl VT to block waiting on a host or application.'
+        RESET disables tracking. The author warns that a noncooperating application can hang xterm; this is not permission for
+        Howl VT to block waiting on a host or application.'
       relations:
       - kind: related
         role: tracking
@@ -5035,8 +5057,8 @@ specifications:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:7804-7807,4024-4050; button.c:TrackMouse (3088 onward)
     - id: mouse-button-motion
-      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Button-event
-        tracking, 3083-3106
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Button-event tracking,
+        3083-3106
       level: defined
       wire: CSI ? 1002 h / CSI ? 1002 l
       dispatch:
@@ -5132,13 +5154,13 @@ specifications:
       - CSI ? 1005 h
       - CSI ? 1005 l
       rule: Enable UTF-8 encoding of Cb, Cx and Cy under tracking modes. Coordinate capacity expands from 223 to 2015 (value+32
-        encoded in at most two UTF-8 bytes). Published source states identical output below position 95; larger positions
-        can produce extra bytes and break non-UTF-8 readers or luit conversion. RESET disables this encoding.
+        encoded in at most two UTF-8 bytes). Published source states identical output below position 95; larger positions can
+        produce extra bytes and break non-UTF-8 readers or luit conversion. RESET disables this encoding.
       details:
         source_semantics:
           selector: 1005
-          section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Extended
-            coordinates, 3125-3147
+          section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Extended coordinates,
+            3125-3147
           authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
         encoding_state: Independent of tracking selection; coordinate formats are mutually exclusive. Pinned charproc.c:7825-7842
           selects the encoding on SET and resets to the legacy format only when resetting the active matching encoding.
@@ -5202,8 +5224,7 @@ specifications:
         legacy_records:
         - iterm2.mode.alt_scroll
     - id: mouse-sgr-pixels
-      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / SGR-Pixels,
-        3193-3195
+      section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / SGR-Pixels, 3193-3195
       level: defined
       wire: CSI ? 1016 h / CSI ? 1016 l
       dispatch:
@@ -5223,8 +5244,8 @@ specifications:
         encoding_state: Independent of tracking selection; coordinate formats are mutually exclusive. Pinned charproc.c:7825-7842
           selects the encoding on SET and resets to the legacy format only when resetting the active matching encoding.
         coordinate_source: Pinned button.c subtracts OriginX/OriginY from event coordinates without dividing by cell dimensions,
-          emits decimal offset plus one, uses no legacy coordinate ceiling, and deduplicates motion by the resulting pixel
-          position. Exact event admission and clipping remain unassessed.
+          emits decimal offset plus one, uses no legacy coordinate ceiling, and deduplicates motion by the resulting pixel position.
+          Exact event admission and clipping remain unassessed.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -5251,9 +5272,9 @@ specifications:
       wire: CSI func ; startx ; starty ; firstrow ; lastrow T
       dispatch:
       - CSI T
-      rule: Nonzero func starts cooperative highlight tracking; zero aborts. startx/starty select the beginning. End stays
-        at or below firstrow and strictly above lastrow (top row=1). On release, equal endpoints report CSI t CxCy; otherwise
-        CSI T followed by six coordinates startx,starty,endx,endy,mousex,mousey. Mouse-up position need not lie over a character.
+      rule: Nonzero func starts cooperative highlight tracking; zero aborts. startx/starty select the beginning. End stays at
+        or below firstrow and strictly above lastrow (top row=1). On release, equal endpoints report CSI t CxCy; otherwise CSI
+        T followed by six coordinates startx,starty,endx,endy,mousex,mousey. Mouse-up position need not lie over a character.
         Legacy coordinates use value+32; SGR mode modifies highlight responses.
       relations:
       - kind: related
@@ -5309,8 +5330,8 @@ specifications:
       dispatch:
       - CSI ? 1047 h
       - CSI ? 1047 l
-      rule: SET selects alternate screen buffer without a specified entry clear; RESET clears the current alternate screen
-        if active, then selects normal buffer. Respect titeInhibit. Distinct from mode 47 and from save/restore modes.
+      rule: SET selects alternate screen buffer without a specified entry clear; RESET clears the current alternate screen if
+        active, then selects normal buffer. Respect titeInhibit. Distinct from mode 47 and from save/restore modes.
       details:
         source_semantics:
           selector: 1047
@@ -5442,8 +5463,8 @@ specifications:
       dispatch:
       - CSI ? 2001 h
       - CSI ? 2001 l
-      rule: 'SET enables same-row button-1 select-end/extend cursor adjustment: send left/right cursor controls to host to
-        match click; RESET disables. A host input/selection consequence, not direct mutation of canonical cursor.'
+      rule: 'SET enables same-row button-1 select-end/extend cursor adjustment: send left/right cursor controls to host to match
+        click; RESET disables. A host input/selection consequence, not direct mutation of canonical cursor.'
       details:
         source_semantics:
           selector: 2001
@@ -5579,8 +5600,8 @@ specifications:
       dispatch:
       - CSI ? 40 h
       - CSI ? 40 l
-      rule: SET permits the 80/132-column DECCOLM operation; RESET disallows it. Does not itself resize. The xterm DECCOLM
-        path separately gates requesting window resize on allowed window operations.
+      rule: SET permits the 80/132-column DECCOLM operation; RESET disallows it. Does not itself resize. The xterm DECCOLM path
+        separately gates requesting window resize on allowed window operations.
       relations:
       - kind: related
         role: command
@@ -5871,8 +5892,8 @@ specifications:
           section: DECSET/DECRST xterm extensions (parameter-specific resource/profile controls)
           authority: Pinned xterm extension publication; source code observations are separately qualified, not Howl conformance.
         pinned_detail: 'The source comment records the 2023 separation: 45 permits reverse movement within a wrapped logical
-          line, 1045 to any line. CursorBack requires WRAPAROUND as well, may cross to bottom at top margin with extended
-          mode, and uses margin-aware bounds. This is observed source behavior, not a complete target contract.'
+          line, 1045 to any line. CursorBack requires WRAPAROUND as well, may cross to bottom at top margin with extended mode,
+          and uses margin-aware bounds. This is observed source behavior, not a complete target contract.'
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -5929,9 +5950,9 @@ specifications:
       dispatch:
       - CSI ? 1051 h
       - CSI ? 1051 l
-      rule: SET selects Sun keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style).
-        The selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from
-        mode name.
+      rule: SET selects Sun keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style). The
+        selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from mode
+        name.
       details:
         source_semantics:
           selector: 1051
@@ -5960,9 +5981,9 @@ specifications:
       dispatch:
       - CSI ? 1052 h
       - CSI ? 1052 l
-      rule: SET selects HP keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style).
-        The selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from
-        mode name.
+      rule: SET selects HP keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style). The
+        selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from mode
+        name.
       details:
         source_semantics:
           selector: 1052
@@ -5991,9 +6012,9 @@ specifications:
       dispatch:
       - CSI ? 1053 h
       - CSI ? 1053 l
-      rule: SET selects SCO keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style).
-        The selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from
-        mode name.
+      rule: SET selects SCO keyboard emulation. RESET resets the keyboard profile (VT220 reset described as Sun/PC style). The
+        selector chooses a profile; exact function-key mappings remain in the author keyboard tables, not inferred from mode
+        name.
       details:
         source_semantics:
           selector: 1053
@@ -6083,9 +6104,9 @@ specifications:
       wire: CSI ? Pd $ p
       dispatch:
       - CSI ? $ p
-      rule: Read-only xterm mode report selectors 1020..1023 expose UTF-8 encoding, CJK width, emoji width and private-use
-        width configuration. DECSET and DECRST do not change them. Query one mode per DECRQM; DECRPM reports its current boolean
-        state. Do not invent permanently-set/reset status simply because the resource is read-only.
+      rule: Read-only xterm mode report selectors 1020..1023 expose UTF-8 encoding, CJK width, emoji width and private-use width
+        configuration. DECSET and DECRST do not change them. Query one mode per DECRQM; DECRPM reports its current boolean state.
+        Do not invent permanently-set/reset status simply because the resource is read-only.
       relations:
       - kind: related
         role: commands
@@ -6140,10 +6161,10 @@ specifications:
       - OSC *
       rule: Xterm accepts either BEL or ST as OSC terminator and uses the query terminator for corresponding replies. ST is
         the original ECMA-48 terminator; BEL is the xterm historical compatibility extension (publication dates it to X11R4,
-        December 1989). The semicolon/payload depends on the selected command; payloadless controls are not forced to have
-        a text parameter.
-      source_note: Pinned numeric selector parser rejects values above 65535 and nonprinting payload characters except in
-        title controls 0..2. This is observed implementation admission, not a general OSC standard requirement.
+        December 1989). The semicolon/payload depends on the selected command; payloadless controls are not forced to have a
+        text parameter.
+      source_note: Pinned numeric selector parser rejects values above 65535 and nonprinting payload characters except in title
+        controls 0..2. This is observed implementation admission, not a general OSC standard requirement.
       relations:
       - kind: extends
         clause: ecma48.c1-osc
@@ -6173,8 +6194,8 @@ specifications:
       rule: 'Sets or queries special color slots: c=0 bold, 1 underline, 2 blink, 3 reverse, 4 italic. Uses the same XParseColor
         name/RGB and ? query conventions and ordered pairs as OSC 4. The same special slots can be addressed with the palette-size
         offset in OSC 4. They are not extra ANSI indices independent of the configured palette size.'
-      source_note: OSC 5 uses first=NUM_ANSI_COLORS; available slot count depends on compile-time attributes. Pinned query
-        uses opcode 5 and reports relative slot number, with four hex digits per component.
+      source_note: OSC 5 uses first=NUM_ANSI_COLORS; available slot count depends on compile-time attributes. Pinned query uses
+        opcode 5 and reports relative slot number, with four hex digits per component.
       relations:
       - kind: related
         role: command
@@ -6197,11 +6218,11 @@ specifications:
       - OSC 6
       - OSC 106
       rule: 'Two spellings for enabling or disabling special-color modes: nonzero f enables, zero disables. The author table
-        lists 0 bold,1 underline,2 blink,3 reverse,4 italic,5 override ANSI. No parameters has no effect. This changes use
-        of a special color, not its RGB value or reset to the configured default.'
+        lists 0 bold,1 underline,2 blink,3 reverse,4 italic,5 override ANSI. No parameters has no effect. This changes use of
+        a special color, not its RGB value or reset to the configured default.'
       source_note: Pinned code processes successive c/f pairs and handles selectors 0..4 (4 compile-gated); selector 5 falls
-        through as unknown despite the published table. Keep that divergence, and do not infer the override-ANSI behavior
-        from this handler.
+        through as unknown despite the published table. Keep that divergence, and do not infer the override-ANSI behavior from
+        this handler.
       evidence:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -6241,9 +6262,9 @@ specifications:
       wire: OSC Ps (BEL | ST)
       dispatch:
       - OSC *
-      rule: Ps=110..119 resets exactly the corresponding dynamic color (Ps minus 100) to its configured resource value. No
-        color spec or index list is required. This is not an OSC 104 palette reset. Pinned parser rejects nonempty extra payload
-        and accepts an empty semicolon form.
+      rule: Ps=110..119 resets exactly the corresponding dynamic color (Ps minus 100) to its configured resource value. No color
+        spec or index list is required. This is not an OSC 104 palette reset. Pinned parser rejects nonempty extra payload and
+        accepts an empty semicolon form.
       source_note: Source conditions include dynamicColors, applicable compile gates, reverse-video index mapping and resource
         restoration. Empty trailing semicolon accepted by code is not a required wire parameter.
       relations:
@@ -6307,9 +6328,9 @@ specifications:
       wire: OSC 46 ; Pt (BEL | ST)
       dispatch:
       - OSC 46
-      rule: Requests changing xterm logFile resource to Pt. Logging and changing log-file names are compile-time-gated in
-        the pinned reference. This is source-only candidate behavior at the host filesystem boundary, not an authorization
-        to open or change arbitrary host paths.
+      rule: Requests changing xterm logFile resource to Pt. Logging and changing log-file names are compile-time-gated in the
+        pinned reference. This is source-only candidate behavior at the host filesystem boundary, not an authorization to open
+        or change arbitrary host paths.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -6331,13 +6352,13 @@ specifications:
       wire: OSC 50 ; Pt (BEL | ST)
       dispatch:
       - OSC 50
-      rule: 'Sets or queries font under allowFontOps. A # prefix specifies absolute font-menu index or relative index with
-        +/-, with optional number; author describes current entry for relative and zero for absolute omission. A space plus
-        font specifier can replace a menu entry. ? queries the font using corresponding index syntax, ignoring remaining text.
-        With renderFont TrueType selection, operation concerns faceName instead.'
-      source_note: Pinned ParseShiftedFont initializes to current menu entry and relative +/- to +/-1, while the published
-        omission wording is different. Query replies use OSC 50 with optional index/name or no value on failure, and same
-        final. Do not normalize omission/default or font-load behavior to the current VT.
+      rule: 'Sets or queries font under allowFontOps. A # prefix specifies absolute font-menu index or relative index with +/-,
+        with optional number; author describes current entry for relative and zero for absolute omission. A space plus font
+        specifier can replace a menu entry. ? queries the font using corresponding index syntax, ignoring remaining text. With
+        renderFont TrueType selection, operation concerns faceName instead.'
+      source_note: Pinned ParseShiftedFont initializes to current menu entry and relative +/- to +/-1, while the published omission
+        wording is different. Query replies use OSC 50 with optional index/name or no value on failure, and same final. Do not
+        normalize omission/default or font-load behavior to the current VT.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -6408,8 +6429,8 @@ specifications:
       - OSC 62
       rule: XTQALLOWABLE queries all optional subcategories corresponding to a main feature category that might be returned
         by OSC 60. Reply OSC 62 ; comma-separated-list ST. This does not change permissions.
-      source_note: Pinned category comparison is case-insensitive; response contains only list, with omitted semicolon for
-        empty/unknown category. Same final.
+      source_note: Pinned category comparison is case-insensitive; response contains only list, with omitted semicolon for empty/unknown
+        category. Same final.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -6429,8 +6450,8 @@ specifications:
         pushing; default zero pushes. The indexed and push forms are the same command family. The related Kitty OSC color-stack
         protocol has distinct wire encodings and is not merged.
       source_note: Pinned source has ten slots, treats omitted DEFAULT as push (increments used), but explicit 0 selects current
-        slot then assigns used=0, and positive slot sets used=value. This materially differs from published default-0 and
-        no-push wording; do not infer a resolved target stack position from command identity.
+        slot then assigns used=0, and positive slot sets used=value. This materially differs from published default-0 and no-push
+        wording; do not infer a resolved target stack position from command identity.
       relations:
       - kind: related
         role: protocol
@@ -6504,8 +6525,8 @@ specifications:
       dispatch:
       - 'CSI # R'
       rule: Reports current palette-stack entry and number of stored palettes using the XTPOPCOLORS-like response form.
-      source_note: Pinned implementation emits private ? prefix and used/last counters (last updated on default push), not
-        a count inferred from allocated slots. Preserve exact response shape and unresolved counter behavior.
+      source_note: Pinned implementation emits private ? prefix and used/last counters (last updated on default push), not a
+        count inferred from allocated slots. Preserve exact response shape and unresolved counter behavior.
       details:
         reply: 'CSI ? Pused ; Plast # Q'
       evidence:
@@ -6532,13 +6553,13 @@ specifications:
       - 'CSI # {'
       - 'CSI # p'
       rule: 'Push current video attributes or a selected subset. No parameters saves all. Selectors 1 bold,2 faint,3 italic,4
-        underline,5 blink,7 inverse,8 invisible,9 crossed-out,21 double underline,30 foreground color,31 background color.
-        The # p spelling is a documented alias for # { (C# language workaround). Published stack limited to ten levels. This
-        saves rendition, not dynamic palette entries.'
+        underline,5 blink,7 inverse,8 invisible,9 crossed-out,21 double underline,30 foreground color,31 background color. The
+        # p spelling is a documented alias for # { (C# language workaround). Published stack limited to ten levels. This saves
+        rendition, not dynamic palette entries.'
       source_note: Pinned code records entries only while used<10 but increments logical used even beyond storage; matching
         pops retire overflow levels before restoring saved entries. Deprecated selectors 10/11 map to foreground/background.
-        Exact explicit zero/invalid handling, overflow and combined-attribute interactions remain source observations, not
-        chosen target semantics.
+        Exact explicit zero/invalid handling, overflow and combined-attribute interactions remain source observations, not chosen
+        target semantics.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -6573,8 +6594,8 @@ specifications:
       dispatch:
       - 'CSI # }'
       - 'CSI # q'
-      rule: 'Restore saved rendition attributes selected by the top XTPUSHSGR entry. The # q spelling is an alias of # }.
-        Distinct from palette restoration.'
+      rule: 'Restore saved rendition attributes selected by the top XTPUSHSGR entry. The # q spelling is an alias of # }. Distinct
+        from palette restoration.'
       source_note: Pinned empty-stack pop no-op; overflow logical depth retires before restoration; selected attributes restored
         by mask rather than replacing every attribute.
       relations:
@@ -6608,9 +6629,9 @@ specifications:
       dispatch:
       - 'CSI # |'
       rule: Reports selected graphic rendition common to all cells of the requested rectangle, as an SGR sequence.
-      source_note: Pinned code parses rectangle, intersects cell attribute bits and retains foreground/background only if
-        values agree, formats result as SGR. Allocation failure returns without reply. Rectangle clipping, exact SGR formatting,
-        empty rectangle and colors require separate qualification.
+      source_note: Pinned code parses rectangle, intersects cell attribute bits and retains foreground/background only if values
+        agree, formats result as SGR. Allocation failure returns without reply. Rectangle clipping, exact SGR formatting, empty
+        rectangle and colors require separate qualification.
       details:
         reply: CSI Pm m
       evidence:
@@ -6646,9 +6667,8 @@ specifications:
       wire: CSI > Pm t
       dispatch:
       - CSI > t
-      rule: Each parameter enables one title/icon-label encoding feature. No parameters selects compiled-in initial title
-        mode defaults. UTF-8 title interpretation is distinct from current text encoding; hexadecimal encodes/decodes label
-        strings.
+      rule: Each parameter enables one title/icon-label encoding feature. No parameters selects compiled-in initial title mode
+        defaults. UTF-8 title interpretation is distinct from current text encoding; hexadecimal encodes/decodes label strings.
       details:
         selectors:
         - selector: 0
@@ -6703,11 +6723,11 @@ specifications:
       wire: CSI > Pp [ ; Pv ] f
       dispatch:
       - CSI > f
-      rule: Set or reset resource controlling modifier key sequence format. Pp selects resource, Pv assigns value; omitted
-        Pv resets that resource to its initial value. Published selector 5 reserved for input via string action. No parameters
+      rule: Set or reset resource controlling modifier key sequence format. Pp selects resource, Pv assigns value; omitted Pv
+        resets that resource to its initial value. Published selector 5 reserved for input via string action. No parameters
         published as reset all resources.
-      source_note: Pinned no-parameter branch iterates 1..5 only, not all published 0..7 resources. Setter reads first two
-        operands; source does not establish stricter complete grammar.
+      source_note: Pinned no-parameter branch iterates 1..5 only, not all published 0..7 resources. Setter reads first two operands;
+        source does not establish stricter complete grammar.
       details:
         selectors:
         - selector: 0
@@ -6743,8 +6763,8 @@ specifications:
       wire: CSI ? Pp g
       dispatch:
       - CSI ? g
-      rule: Query the named format resource. Author describes a restorable XTFMTKEYS-form response, with same selectors as
-        the setter.
+      rule: Query the named format resource. Author describes a restorable XTFMTKEYS-form response, with same selectors as the
+        setter.
       source_note: Author displayed reply omits Pv, but pinned code emits two parameters selector and current value. Pinned
         query iterates each operand; exact invalid/default/multi-query scope remains unassessed.
       relations:
@@ -6894,8 +6914,8 @@ specifications:
       wire: CSI > [ Ps ] s
       dispatch:
       - CSI > s
-      rule: 0 permits Shift to override mouse protocol; 1 conditionally allows Shift as mouse modifier. Resource values 2
-        and 3 (always/never allow modifier) cannot be set with this control. Published omitted value defaults to 0.
+      rule: 0 permits Shift to override mouse protocol; 1 conditionally allows Shift as mouse modifier. Resource values 2 and
+        3 (always/never allow modifier) cannot be set with this control. Published omitted value defaults to 0.
       source_note: Pinned handler accepts 0..1 only, absent nparam uses 0, otherwise one_if_default(0). Exact omitted parameter
         representation is not inferred.
       evidence:
@@ -6914,9 +6934,9 @@ specifications:
       dispatch:
       - DCS + Q
       rule: Query semicolon-separated xterm VT100 widget resource names encoded as two hex digits per byte. Published reply
-        DCS 1 + R hex-name=hex-value[;...] ST or DCS 0 + R Pt ST for invalid resource. Resource values are not necessarily
-        current protocol state; query runtime state using its own protocol. Only supported boolean, numeric and string resources.
-        No arbitrary filesystem, process or environment access is implied.
+        DCS 1 + R hex-name=hex-value[;...] ST or DCS 0 + R Pt ST for invalid resource. Resource values are not necessarily current
+        protocol state; query runtime state using its own protocol. Only supported boolean, numeric and string resources. No
+        arbitrary filesystem, process or environment access is implied.
       source_note: Pinned implementation serializes int/float/boolean/string, stops after invalid resource, status determined
         by first decoded name, echoes name and may retain trailing separator; malformed first token can yield no reply. AllowXResOps
         is unconditional in this snapshot. This is a source observation, not a Howl host-data disclosure policy.
@@ -6935,9 +6955,9 @@ specifications:
       wire: DCS + p hex-name ST
       dispatch:
       - DCS + p
-      rule: Decode a terminal description name and select database-backed key mappings on successful lookup; affects tcap
-        keyboard profile and capability lookup, not arbitrary writes to the terminal database. Published author describes
-        overriding termName.
+      rule: Decode a terminal description name and select database-backed key mappings on successful lookup; affects tcap keyboard
+        profile and capability lookup, not arbitrary writes to the terminal database. Published author describes overriding
+        termName.
       source_note: Pinned code requires full hex decode, nonempty legal graphic name shorter than 32 bytes excluding delimiter
         punctuation, successful TcapInit, and permission. It clears cached tcap key data; no assignment to resource.term_name
         is visible in this handler. Preserve discrepancy, do not assume TERM environment changes. Failure rings minor error
@@ -6966,9 +6986,9 @@ specifications:
       rule: Query special keyboard-key termcap/terminfo names; not a general terminfo database read. Also Co/colors, TN/name,
         RGB (terminfo only). Replies DCS 1 + r hex-name=hex-value[;...] ST for successful list, DCS 0 + r ST for invalid request.
         One response for multiple names; invalid name ends processing. Hex encodes each byte with two digits.
-      source_note: Pinned status is determined by first parsed capability; unknown names stop list, known but unavailable
-        may be echoed without value. Query capture encodes output bytes uppercase hex. Colors returns configured ANSI count;
-        RGB returns equal component width or r/g/b widths, or -1 when unsupported. TN uses resource.term_name. Query permission
+      source_note: Pinned status is determined by first parsed capability; unknown names stop list, known but unavailable may
+        be echoed without value. Query capture encodes output bytes uppercase hex. Colors returns configured ANSI count; RGB
+        returns equal component width or r/g/b widths, or -1 when unsupported. TN uses resource.term_name. Query permission
         and exact invalid-list framing must be qualified separately.
       evidence:
         also_documented:
@@ -6997,8 +7017,8 @@ specifications:
       dispatch:
       - CSI ? S
       rule: 'Pi=1 color-register count,2 sixel geometry,3 ReGIS geometry, in pixels for geometry. Pa=1 read,2 reset,3 set,4
-        read maximum. Pv is integer for color count or width;height for geometry when setting. Reply CSI ? Pi ; Ps [ ; Pv
-        ... ] S: 0 success,1 item error,2 action error,3 failure. Author explicitly distinguishes graphics geometry from window
+        read maximum. Pv is integer for color count or width;height for geometry when setting. Reply CSI ? Pi ; Ps [ ; Pv ...
+        ] S: 0 success,1 item error,2 action error,3 failure. Author explicitly distinguishes graphics geometry from window
         size and says geometry mutation unsupported. Runtime unavailable graphics report failure; configured implementations
         without maximum geometry should report zeros rather than fail.'
       source_note: Pinned request requires exactly 3 parameters; four-operand geometry set cannot enter handler. Success color
@@ -7030,8 +7050,8 @@ specifications:
       rule: Save only listed DEC-private settings in a one-level cache; each selected setting independently replaces its previous
         cached value. Not a stack or DECSC.
       source_note: Pinned code processes each selector in order, ignores status-line requests and unsupported/read-only selectors,
-        and shares cache slots for some mutually exclusive mode families (mouse tracking/encoding, keyboard type). Restore
-        invokes mode-specific side effects; unsaved-state behavior and each selector require separate qualification.
+        and shares cache slots for some mutually exclusive mode families (mouse tracking/encoding, keyboard type). Restore invokes
+        mode-specific side effects; unsaved-state behavior and each selector require separate qualification.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -7056,8 +7076,8 @@ specifications:
       rule: Restore previously saved settings selected by the listed DECSET parameters from the one-level cache. No implied
         restore-all, no cursor save/restore equivalence.
       source_note: Pinned code processes each selector in order, ignores status-line requests and unsupported/read-only selectors,
-        and shares cache slots for some mutually exclusive mode families (mouse tracking/encoding, keyboard type). Restore
-        invokes mode-specific side effects; unsaved-state behavior and each selector require separate qualification.
+        and shares cache slots for some mutually exclusive mode families (mouse tracking/encoding, keyboard type). Restore invokes
+        mode-specific side effects; unsaved-state behavior and each selector require separate qualification.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -7177,9 +7197,9 @@ specifications:
       - CSI ? 1037 l
       rule: Published SET sends DEL (0x7f) from editing-keypad Delete; RESET sends VT220 Remove (CSI 3 ~). Distinct from backarrow
         mode.
-      source_note: Pinned default/VT220 and legacy profiles honor explicitly set true/false for DEL/Remove; other keyboard
-        types return DEL independent of this bit. xterm.man wording for default/VT220 contradicts explicit code and ctlseqs;
-        do not generalize to all keyboard profiles.
+      source_note: Pinned default/VT220 and legacy profiles honor explicitly set true/false for DEL/Remove; other keyboard types
+        return DEL independent of this bit. xterm.man wording for default/VT220 contradicts explicit code and ctlseqs; do not
+        generalize to all keyboard profiles.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -7199,12 +7219,12 @@ specifications:
       wire: 'CSI Ps # y'
       dispatch:
       - 'CSI # y'
-      rule: Select DECRQCRA checksum variant as bit mask, not a checksum request. Published bit numbers 0 no negate,1 omit
-        video attributes,2 do not omit blanks,3 omit uninitialized cells,4 do not mask to eight bits or ignore combining characters.
+      rule: Select DECRQCRA checksum variant as bit mask, not a checksum request. Published bit numbers 0 no negate,1 omit video
+        attributes,2 do not omit blanks,3 omit uninitialized cells,4 do not mask to eight bits or ignore combining characters.
         Default mask zero.
-      source_note: 'Pinned bit3 csDRAWN does the opposite of published prose: include uninitialized cells as spaces (also
-        included with bit2); bit4 csBYTE chooses charData instead of DEC char mapping, while combining chars added when bit4
-        clear, and trimming changes totals. Exact arithmetic and flags are not accepted until reconciled.'
+      source_note: 'Pinned bit3 csDRAWN does the opposite of published prose: include uninitialized cells as spaces (also included
+        with bit2); bit4 csBYTE chooses charData instead of DEC char mapping, while combining chars added when bit4 clear, and
+        trimming changes totals. Exact arithmetic and flags are not accepted until reconciled.'
       relations:
       - kind: related
         role: command
@@ -7359,8 +7379,8 @@ specifications:
               under ewSetXprop permission.
             previous_review:
               classification: source-origin-or-semantic-review-required
-              reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets
-                working directory for next session. Obtain originating dtterm source before scope resolution.
+              reason: Xterm documents top-level X property set/delete, while the same publication says dtterm code 3 sets working
+                directory for next session. Obtain originating dtterm source before scope resolution.
               source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
       disposition: source-only
       disposition_reason: No terminal-controlled native property or restart-directory mutation in intended profile.
@@ -7416,8 +7436,8 @@ specifications:
       dispatch:
       - CSI ? 10 h
       - CSI ? 10 l
-      rule: Xterm published toolbar visibility adaptation of rxvt mode 10. Build-gated ShowToolbar; distinct from original
-        rxvt menu bar.
+      rule: Xterm published toolbar visibility adaptation of rxvt mode 10. Build-gated ShowToolbar; distinct from original rxvt
+        menu bar.
       relations:
       - kind: related
         role: original
@@ -7522,9 +7542,9 @@ specifications:
       dispatch:
       - CSI ? 45 h
       - CSI ? 45 l
-      rule: Current xterm mode 45 enables/disables reverse wrapping across the previous wrapped row within a logical line,
-        gated by autowrap. Mode 1045 separately enables extended reverse wrapping. Graphics printer mode is a competing original
-        DEC hardware interpretation.
+      rule: Current xterm mode 45 enables/disables reverse wrapping across the previous wrapped row within a logical line, gated
+        by autowrap. Mode 1045 separately enables extended reverse wrapping. Graphics printer mode is a competing original DEC
+        hardware interpretation.
       evidence:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -7631,9 +7651,9 @@ specifications:
           wire: OSC 22 ; Pt (BEL | ST)
           previous_review:
             classification: source-origin-or-semantic-review-required
-            reason: Xterm original proposal uses system cursor names and fallback; Kitty author explicitly extends it with
-              portable names, =, stack, queries and separate screen stacks. Pinned xterm rejects empty OSC 22 data before
-              handler despite published empty fallback. Retain both profiles, do not assume equivalence.
+            reason: Xterm original proposal uses system cursor names and fallback; Kitty author explicitly extends it with portable
+              names, =, stack, queries and separate screen stacks. Pinned xterm rejects empty OSC 22 data before handler despite
+              published empty fallback. Retain both profiles, do not assume equivalence.
             source: Pinned xterm ctlseqs lines 2009-2030,2117-2120,2143; misc.c:4140-4179,4288-4290,4343-4348
             related_source: kitty_pointer.set / stack / query; pinned kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/pointer-shapes.rst;
               xterm misc.c:991-1029
@@ -7715,9 +7735,9 @@ specifications:
       dispatch:
       - CSI ? 46 h
       - CSI ? 46 l
-      rule: Xterm non-printer profile can start/close session logging under compile-time and policy gates. Without logging
-        on/off support the handler can ring the bell instead. Original DEC print background and Contour debug-category logging
-        are distinct.
+      rule: Xterm non-printer profile can start/close session logging under compile-time and policy gates. Without logging on/off
+        support the handler can ring the bell instead. Original DEC print background and Contour debug-category logging are
+        distinct.
       evidence:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -7748,6 +7768,23 @@ specifications:
       disposition: source-only
       disposition_reason: Historical printer and host logging effects are not intended in this profile; terminal output must
         not silently initiate host capture.
+    - id: graphics-private-register-mode
+      section: Graphics / Sixel and ReGIS, pinned ctlseqs lines3213-3219,3248-3252
+      level: defined
+      wire: CSI ? 1070 h / CSI ? 1070 l
+      dispatch:
+      - CSI ? 1070 h
+      - CSI ? 1070 l
+      rule: SET uses private color registers per graphic; RESET uses shared registers. Published mode applies to Sixel and ReGIS.
+        Exact register initialization, retention and image ownership details require separate source trace, not inferred from
+        mode name.
+      relations:
+      - kind: related
+        clause: dec_sixel.color
+        role: palette-ownership
+      - kind: related
+        clause: dec_vt3xx_graphics.regis-envelope
+        role: graphics
   kitty_keyboard:
     title: Comprehensive keyboard handling in terminals
     author: Kovid Goyal / kitty
@@ -12486,6 +12523,14 @@ specifications:
       - kind: related
         clause: urxvt.perl-envelope
         role: exact-release-origin
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/docs/escape-sequences.md
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: a638eb52c8f9a11ba36a22c3a5773ced8d6a0c2d22f78914263c98f2264325c2
+          location: OSC table / 777
+          meaning: Documented host support only notify; generic RxvtExtension parser variant is not evidence of arbitrary extension
+            dispatch.
     - id: notify-convention
       section: Common notify Perl extension convention
       level: defined
@@ -12859,9 +12904,9 @@ specifications:
       dispatch:
       - CSI ? 2 h
       - CSI ? 2 l
-      rule: DECANM sets or resets the ANSI/VT52 control-code interpretation regime. Set selects ANSI-compatible sequences;
-        reset enters VT52 compatibility mode. In VT52 mode CSI controls cannot normally be used, so the separate ESC < exits
-        back to ANSI.
+      rule: DECANM sets or resets the ANSI/VT52 control-code interpretation regime. Set selects ANSI-compatible sequences; reset
+        enters VT52 compatibility mode. In VT52 mode CSI controls cannot normally be used, so the separate ESC < exits back
+        to ANSI.
       details:
         original_mode_semantics:
           name: DECANM
@@ -12872,8 +12917,8 @@ specifications:
           set_wire: CSI ? 2 h
           set_effect: Use ANSI-compatible escape and control sequences rather than VT52-only commands.
           reset_wire: CSI ? 2 l
-          reset_effect: Enter VT52 compatibility mode, where ANSI private controls, C1 controls, Latin-1 supplemental and
-            NRC sets are unavailable; G0 defaults to ASCII.
+          reset_effect: Enter VT52 compatibility mode, where ANSI private controls, C1 controls, Latin-1 supplemental and NRC
+            sets are unavailable; G0 defaults to ASCII.
           mode_boundaries: In VT52 mode, the terminal uses VT52-specific escape sequences; an ordinary ANSI CSI ? 2 h cannot
             be assumed usable to leave VT52 mode. ESC < is the author-defined exit.
           related_vt52_exit: dec_vt100.vt52-return-to-ansi
@@ -12892,11 +12937,11 @@ specifications:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:7507-7551, xterm ctlseqs lines 914-915 and 1065
-          behavior: xterm executes CSI ? 2 l by saving a subset of modes/charsets and entering VT52 parser mode. CSI ? 2 h
-            is a no-op when already in ANSI, since it cannot be reached from VT52. The xterm textual line claiming USASCII
-            G0-G3 designation should not be promoted over the concrete code without an explicit test.
-          limits: Xterm mode transition may resize to 80 columns if enabled by host policy; its own comment says some DEC
-            STD-070 VT52 transition mode restorations are undefined. Not proof of whole-hardware VT52 emulation.
+          behavior: xterm executes CSI ? 2 l by saving a subset of modes/charsets and entering VT52 parser mode. CSI ? 2 h is
+            a no-op when already in ANSI, since it cannot be reached from VT52. The xterm textual line claiming USASCII G0-G3
+            designation should not be promoted over the concrete code without an explicit test.
+          limits: Xterm mode transition may resize to 80 columns if enabled by host policy; its own comment says some DEC STD-070
+            VT52 transition mode restorations are undefined. Not proof of whole-hardware VT52 emulation.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: ignored and unknown DEC modes preserve pending wrap and grid state
@@ -12904,21 +12949,21 @@ specifications:
         legacy_records:
         - iterm2.mode.ansi_vt52
     - id: vt52-return-to-ansi
-      section: Chapter 3 / Valid VT52 Mode Control Sequences / Enter ANSI Mode (original VT100 User Guide, transcribed PDF
-        page 54)
+      section: Chapter 3 / Valid VT52 Mode Control Sequences / Enter ANSI Mode (original VT100 User Guide, transcribed PDF page
+        54)
       level: defined
       wire: ESC <
       dispatch:
       - ESC <
-      rule: While in VT52 mode, ESC < leaves VT52 compatibility mode and resumes ANSI interpretation of subsequent control
-        sequences. This is a distinct command from CSI ? 2 h/l.
+      rule: While in VT52 mode, ESC < leaves VT52 compatibility mode and resumes ANSI interpretation of subsequent control sequences.
+        This is a distinct command from CSI ? 2 h/l.
       details:
         original_source_variants:
           VT100: Enter ANSI mode; subsequent escape/control sequences are interpreted according to ANSI X3.64-1977 and X3.41-1974.
           VT330_VT340: 'May 1988 Text Programming, Appendix A printed pages 257-258: returns to the mode active before entry
             to VT52.'
-          VT420: 'February 1992 Programmer Reference, Appendix A printed pages 327-328: returns to the mode active before
-            entry to VT52, which may be VT400 rather than merely VT100.'
+          VT420: 'February 1992 Programmer Reference, Appendix A printed pages 327-328: returns to the mode active before entry
+            to VT52, which may be VT400 rather than merely VT100.'
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -12930,8 +12975,8 @@ specifications:
           source: charproc.c:5039-5059; xterm ctlseqs line 3388
           behavior: Exits VT52 and selects ANSI parser, explicitly invokes set_vtXX_level(screen,1), then restores selected
             saved flags and charsets. The xterm prose calls this Enter VT100 mode.
-          material_limit: The later DEC VT300/VT420 author text says return to prior mode, not necessarily VT100 level 1.
-            Reconcile this restoration-level difference before implementing a full VT420-compatible VT52 cycle.
+          material_limit: The later DEC VT300/VT420 author text says return to prior mode, not necessarily VT100 level 1. Reconcile
+            this restoration-level difference before implementing a full VT420-compatible VT52 cycle.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: VT52 exit escape is an exact fragmented no-op'
@@ -12946,9 +12991,9 @@ specifications:
       dispatch:
       - 'ESC # 3'
       - 'ESC # 4'
-      rule: Select the top or bottom half of a double-height, double-width line containing the active position. Use paired
-        adjacent lines and send identical character output to both to form full-height characters. Double width halves characters
-        per line. On conversion from single width and height, characters right of the screen center are lost. The cursor retains
+      rule: Select the top or bottom half of a double-height, double-width line containing the active position. Use paired adjacent
+        lines and send identical character output to both to form full-height characters. Double width halves characters per
+        line. On conversion from single width and height, characters right of the screen center are lost. The cursor retains
         its character position unless beyond the right margin, where it moves to that margin.
       relations:
       - kind: related
@@ -12980,9 +13025,9 @@ specifications:
       dispatch:
       - 'ESC # 6'
       rule: Select double width and single height for the active line, halving characters per line. Retain cursor character
-        position unless beyond the right margin, where it moves to that margin. On conversion from single width and height
-        the original transcription states characters to the right of the screen are lost; the exact wording is retained rather
-        than silently correcting it to center.
+        position unless beyond the right margin, where it moves to that margin. On conversion from single width and height the
+        original transcription states characters to the right of the screen are lost; the exact wording is retained rather than
+        silently correcting it to center.
       relations:
       - kind: related
         role: mode
@@ -13006,8 +13051,8 @@ specifications:
       wire: 'ESC # 5'
       dispatch:
       - 'ESC # 5'
-      rule: Select single width and single height for the active line, retaining the same cursor character position. This
-        is the default for every new screen line.
+      rule: Select single width and single height for the active line, retaining the same cursor character position. This is
+        the default for every new screen line.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -13141,8 +13186,8 @@ specifications:
       dispatch:
       - ESC F
       mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
-      rule: Use the special graphics character set. DEC notes VT100 special graphics differ from actual VT52 graphics. Not
-        ANSI HP lower-left extension.
+      rule: Use the special graphics character set. DEC notes VT100 special graphics differ from actual VT52 graphics. Not ANSI
+        HP lower-left extension.
       evidence:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -13252,8 +13297,8 @@ specifications:
       dispatch:
       - ESC Z
       mode_context: VT52 only; does not resolve the ANSI meaning of identical escape bytes.
-      rule: Respond ESC / Z for VT100 emulating VT52. Distinct from ANSI DECID and ECMA SCI. Actual VT52 identification is
-        a distinct hardware profile; do not infer its identifier from this VT100 guide.
+      rule: Respond ESC / Z for VT100 emulating VT52. Distinct from ANSI DECID and ECMA SCI. Actual VT52 identification is a
+        distinct hardware profile; do not infer its identifier from this VT100 guide.
       evidence:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -13264,9 +13309,9 @@ specifications:
       wire: CSI Ps x
       dispatch:
       - CSI x
-      rule: Ps=0 or omitted requests terminal parameters and permits unsolicited reports on leaving SET-UP. Ps=1 requests
-        parameters and permits reports only on request. At power-up/reset unsolicited reports inhibited. Report first parameter
-        2 (ordinary) or 3 (request-only). Original serial settings are not inferred from a modern PTY.
+      rule: Ps=0 or omitted requests terminal parameters and permits unsolicited reports on leaving SET-UP. Ps=1 requests parameters
+        and permits reports only on request. At power-up/reset unsolicited reports inhibited. Report first parameter 2 (ordinary)
+        or 3 (request-only). Original serial settings are not inferred from a modern PTY.
       source_note: Pinned xterm reports fixed CSI (Ps+2);1;1;128;128;1;0 x only if terminal_id<200; 128 represents 38.4k in
         this implementation, outside original VT100 speed table. No evidence that it implements unsolicited report state.
       details:
@@ -13318,9 +13363,9 @@ specifications:
       - CSI q
       rule: Default 0 clears all four programmable keyboard LEDs L1..L4; selectors 1..4 illuminate corresponding LED. Parameter
         list allowed. Physical hardware LEDs, not a generic cursor-style command.
-      source_note: Pinned xterm documents and implements a different LED profile (1 NumLock,2 CapsLock,3 ScrollLock,21..23
-        extinguish); does not implement original L4. Preserve these as implementation-specific observations, not replacement
-        of original selector meanings.
+      source_note: Pinned xterm documents and implements a different LED profile (1 NumLock,2 CapsLock,3 ScrollLock,21..23 extinguish);
+        does not implement original L4. Preserve these as implementation-specific observations, not replacement of original
+        selector meanings.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -13330,6 +13375,23 @@ specifications:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:5001-5027
+    - id: newline-mode
+      section: Chapter 3 / LNM; SM and RM standard mode table
+      level: defined
+      wire: CSI 20 h / CSI 20 l
+      dispatch:
+      - CSI 20 h
+      - CSI 20 l
+      rule: SET selects newline interpretation of LF (first position of following line) and RETURN sends CR LF. RESET selects
+        vertical-only LF and RETURN sends CR. Does not affect IND or NEL. Original DEC standard-selector extension, although
+        later ECMA-48 reserves20.
+      relations:
+      - kind: related
+        clause: ecma48.c0-lf
+        role: mode-dependent
+      - kind: related
+        clause: ecma48.sm
+        role: selector-assignment
   itu_t416:
     title: 'ITU-T Recommendation T.416 / ISO/IEC 8613-6: Character content architectures'
     author: International Telecommunication Union (ITU-T) / ISO-IEC
@@ -14772,8 +14834,8 @@ specifications:
       - CSI t
       rule: 'CDE dtterm published window profile: 1 restore,2 minimize,3;x;y move in pixels,4;height;width resize window in
         pixels,5 raise,6 lower,7 refresh,8;height;width resize text in characters; 11 state,13 position,14 window pixels,18
-        text characters,20 icon label,21 title reports. Earlier Sun shelltool origins for 1..8,11,13,14,18 are reported by
-        xterm historical notes, not independently pinned here.'
+        text characters,20 icon label,21 title reports. Earlier Sun shelltool origins for 1..8,11,13,14,18 are reported by xterm
+        historical notes, not independently pinned here.'
       source_note: dtterm 14 reports window pixels; xterm default 14 reports text-area pixels and 14;2 window pixels. Treat
         as explicit profile distinction, not identical query dimensions. Native window authorization and units are host-owned.
       details:
@@ -14793,6 +14855,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:8969-9309; ctlseqs 1616-1696,3687-3768
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/osc.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 8503a11fe722283ac38dfabf90cd14ee68b1e93ff2ac8273620935c1f580fd39
+          location: 305-320,502-507
+          meaning: WezTerm also admits Sun letter OSC l/L setters by removing first letter from payload; original CDE source
+            documents same strings as query responses. Earliest setter origin and exact semicolon grammar remain open.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences decline container geometry and window mutation without changing VT
@@ -17076,6 +17145,14 @@ specifications:
       rule: Colon-separated metadata; decimal signed/unsigned 32-bit integers. At most 4096 encoded payload bytes, standard
         Base64 with optional final padding. m=1 continues, m=0 ends. First chunk metadata governs, later chunks may omit all
         except m/i. No unrelated messages in chunked transfer except query; source mentions q|Q here but defines q only.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/apc.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: cec5429ad5e50c363f0b7a428c536887291d950de99da1ffb12334b77d428ac6
+          location: APC handler scope
+          meaning: No implication of DnD support from APC handler. OSC72 mapped through OSC parser, separate from APC graphics
+            and glyph protocols.
     - id: drop-enable
       section: lines 38-55
       level: defined
@@ -17128,19 +17205,18 @@ specifications:
       wire: OSC 72 ; t=a:x=1 ; machine-id ST
       dispatch:
       - OSC 72
-      rule: Versioned HMAC-SHA256-derived hexadecimal machine identity. Unknown version treated as remote; remote URI-list
-        response X=1.
+      rule: Versioned HMAC-SHA256-derived hexadecimal machine identity. Unknown version treated as remote; remote URI-list response
+        X=1.
     - id: remote-drop-entry
       section: lines 173-216
       level: defined
-      wire: OSC 72 ; t=r:x=idx:y=subidx ST / OSC 72 ; t=r:x=idx:y=subidx ; base64 ST / OSC 72 ; t=R:x=idx:y=subidx ; error
-        ST
+      wire: OSC 72 ; t=r:x=idx:y=subidx ST / OSC 72 ; t=r:x=idx:y=subidx ; base64 ST / OSC 72 ; t=R:x=idx:y=subidx ; error ST
       dispatch:
       - OSC 72
       rule: One-based URI-list entry, only after URI list retrieval. Regular files, symlinks, directories only. Same-window
-        source forbidden. Errors ENOENT,EINVAL,EUNKNOWN,EPERM,EIO,EMFILE. Correlate x,y,Y; FIFO recommended, interleaving
-        allowed. x identifies the one-based URI-list MIME type; y identifies the entry in that list. Source wording calls
-        the URI entries an array of MIME types; exact intent follows URI-list context, not an additional MIME index.
+        source forbidden. Errors ENOENT,EINVAL,EUNKNOWN,EPERM,EIO,EMFILE. Correlate x,y,Y; FIFO recommended, interleaving allowed.
+        x identifies the one-based URI-list MIME type; y identifies the entry in that list. Source wording calls the URI entries
+        an array of MIME types; exact intent follows URI-list context, not an additional MIME index.
     - id: remote-drop-directory
       section: lines 219-260
       level: defined
@@ -17529,6 +17605,13 @@ specifications:
       dispatch:
       - APC 25a1
       rule: Verbs s,q,r,c. Structured key/value metadata and Base64 payload where specified.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/apc/glyph/AGENTS.md
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: f4264a3e240fb12d241440bc341000c5175dbd6b11b310c6d6d00ebe7e45a83a
+          location: protocol origin
+          meaning: Ghostty repository credits Rio glyph protocol; no separate originating Ghostty namespace inferred.
     - id: support
       section: section 3
       level: defined
@@ -17564,8 +17647,7 @@ specifications:
     - id: clear
       section: sections 7.1-7.3
       level: defined
-      wire: APC 25a1 ; c [ ; cp=hex ] ST / APC 25a1 ; c ; status=0 ST / APC 25a1 ; c ; status=1 ; reason=out_of_namespace
-        ST
+      wire: APC 25a1 ; c [ ; cp=hex ] ST / APC 25a1 ; c ; status=0 ST / APC 25a1 ; c ; status=1 ; reason=out_of_namespace ST
       dispatch:
       - APC 25a1
       rule: Clear one PUA glyph or all when omitted; absent slot succeeds. Reject non-PUA. Invalidate cached rasters on clear,
@@ -19096,6 +19178,14 @@ specifications:
       relations:
       - kind: extends
         clause: finalterm_shell.command-finished
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/osc.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 8503a11fe722283ac38dfabf90cd14ee68b1e93ff2ac8273620935c1f580fd39
+          location: 749-838
+          meaning: Parser D status signed i32, absent/unparseable0, reads aid, does not project err= override. This is a narrower
+            adoption, not author correction.
     - id: options
       section: General options syntax
       level: defined
@@ -19467,6 +19557,14 @@ specifications:
       - kind: related
         clause: conemu_progress.format
         role: source
+      evidence:
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/osc/parsers/osc9.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: 6175870b19e2b74b894408b1014f2d7a765cfd3cd80e2d9adc6711ed0bc1e276
+          location: 121-189
+          meaning: Parser retains optional percent for paused/error; set default0, decimal parsed usize and clamp0..100, invalid
+            percent null. Distinguish parsed state from host consequence.
     - id: wait-key
       section: ConEmu specific OSC table, HTML lines 768-832
       level: defined
@@ -21686,6 +21784,14 @@ specifications:
       rule: Set fixed two-cell emoji width, reset locale wcwidth/wcswidth (author default configuration EmojiWidth=no). 7769
         deprecated alias; 2027 other-terminal setting with divergent width algorithms. Source explicitly says common Unicode
         width specification not agreed.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          location: 1624-1639
+          meaning: WezTerm uses same selector2027 for permanently enabled grapheme clustering; reset no-op, query reports3.
+            Not evidence of same Mintty width policy.
     - id: emoji-width-rules
       section: Emoji width mode
       level: defined
@@ -24644,6 +24750,443 @@ specifications:
         additional_sources:
         - url: https://api.github.com/repos/kmiya-culti/RLogin/issues/152/comments?per_page=100
           sha256: 5a5c144642bb4f71e291bf52fdb96252aea0da141dd6352616157e58b0cea7a5
+  rockorager_resize:
+    title: Private Mode for In-Band Window Resize Notifications
+    author: Rockorager
+    authority: protocol-author
+    revision: Gist a1e61ea1782326e975b6e4cfe0c538bac54c1f42; updated 2026-03-14T17:28:38Z
+    url: https://gist.githubusercontent.com/rockorager/e695fb2924d36b2bcf1fff4a3704bd83/raw/abca37a71844627772fb0b9528588fb768c48726/in-band-resize-notifications.md
+    snapshot_sha256: 30f0f454fb20bfc21b0d3ebeee989c02bffffcc9cf4cc19432ccefd2dfc7f1e8
+    scope: Exact author Markdown matches preserved Gist API revision content. Text-area geometry and ordered reporting, not
+      a resize architecture mandate.
+    clauses:
+    - id: mode
+      section: Detection and Enabling
+      level: defined
+      wire: CSI ? 2048 h / CSI ? 2048 l
+      dispatch:
+      - CSI ? 2048 h
+      - CSI ? 2048 l
+      rule: Set enables unsolicited text-area resize reports; reset disables. Every SET, including repeated SET while already
+        enabled, immediately reports current size.
+    - id: detection
+      section: Detection and Enabling
+      level: defined
+      wire: CSI ? 2048 $ p / CSI ? 2048 ; Ps $ y
+      dispatch:
+      - CSI ? 2048 $ p
+      - CSI ? 2048 $ y
+      rule: Use DECRQM and DECRPM. Response0 or4 indicates unsupported. Do not reproduce example missing $ intermediate; normative
+        report grammar includes it.
+      relations:
+      - kind: related
+        clause: dec_vt420.request-mode
+        role: query
+      - kind: related
+        clause: dec_vt420.report-mode
+        role: reply
+    - id: report
+      section: Reports
+      level: defined
+      wire: CSI 48 ; height_chars ; width_chars ; height_pix ; width_pix t
+      dispatch:
+      - CSI 48 t
+      rule: Report rows,columns,height pixels,width pixels in that order, text area excluding padding. Pixel sizes MUST be present
+        when available, otherwise0. Every field may carry colon subparameters; unknown subparameters ignored by receiving client,
+        none yet defined.
+      relations:
+      - kind: related
+        clause: xterm_controls.window-operation-extensions
+        role: geometry
+      details:
+        fields:
+        - rows
+        - columns
+        - text_height_pixels
+        - text_width_pixels
+        unknown_pixel_value: 0
+      evidence:
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/size_report.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: b728fb0270b99525e8a35536b54a70857d1b2ec8b6ae527219acba9b5ce49520
+          location: 44-60
+          meaning: Pinned encoder emits CSI48;rows;cols;rows*cell_height;cols*cell_width t, corroborating wire format. Host
+            lifecycle separately qualified.
+    - id: ordering
+      section: Implementation Notes
+      level: defined
+      wire: mode2048 resize report delivery
+      rule: Notify only after internal resize completed and TTY/application ready to use new geometry. Report changes due to
+        font size as well as window size. No fixed throttling or rate limit mandated. Repeated SET immediate current report;
+        no required report on RESET.
+      relations:
+      - kind: related
+        clause: rockorager_resize.mode
+        role: lifetime
+      - kind: related
+        clause: rockorager_resize.report
+        role: ordering
+  rockorager_visibility:
+    title: Private Mode for Terminal Visibility Reports
+    author: Rockorager
+    authority: protocol-author
+    revision: Published 2026-07-25; preserved 2026-11-25
+    url: https://rockorager.dev/misc/visibility-reports/
+    snapshot_sha256: cd0390480a086ae817fe5e410d8959a45069dd75462c8842357d7ab8e59a7c18
+    scope: Exact observed author HTML. Conservative per-session visibility reporting, independent of focus; not an OS occlusion-detection
+      algorithm.
+    clauses:
+    - id: mode
+      section: Detection and Enabling
+      level: defined
+      wire: CSI ? 2033 h / CSI ? 2033 l
+      dispatch:
+      - CSI ? 2033 h
+      - CSI ? 2033 l
+      rule: SET enables visibility notifications and immediately reports current state every time, even if already enabled.
+        While enabled MUST notify when effective visibility changes; SHOULD NOT send other duplicate reports. RESET disables
+        notifications.
+      relations:
+      - kind: related
+        clause: xterm_controls.focus
+        role: independent-mode
+    - id: detection
+      section: Detection and Enabling
+      level: defined
+      wire: CSI ? 2033 $ p / CSI ? 2033 ; Ps $ y
+      dispatch:
+      - CSI ? 2033 $ p
+      - CSI ? 2033 $ y
+      rule: Standard DECRQM/DECRPM,0 or4 unsupported,1 enabled,2 disabled.
+      relations:
+      - kind: related
+        clause: dec_vt420.request-mode
+        role: query
+      - kind: related
+        clause: dec_vt420.report-mode
+        role: reply
+    - id: query
+      section: Querying Visibility
+      level: defined
+      wire: CSI ? 998 n / CSI ? 999 ; Ps n
+      dispatch:
+      - CSI ? 998 n
+      - CSI ? 999 n
+      rule: One-shot query MUST reply regardless of notification mode; does not change mode2033.
+    - id: report
+      section: Visibility Report; Determining Visibility
+      level: defined
+      wire: CSI ? 999 ; Ps n
+      dispatch:
+      - CSI ? 999 n
+      rule: 1 potentially visible,2 not visible. Same form for query and notifications. Unknown values treated as1 by applications.
+        Determine for session view rather than top-level OS window; multiple views combine conservatively, any potentially observable
+        view yields1. Unknown visibility MUST yield1; report2 only with positive knowledge of invisibility. Host platform mechanisms
+        are examples.
+      details:
+        values:
+          1: potentially visible
+          2: not visible
+        unknown: potentially visible
+      evidence:
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/device_status.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: 57605f5dc22687b1926654664475d3d05c74e0bff12bfe8a9cc955596e8fae92
+          location: 46-55
+          meaning: Pinned encoder emits ?999;1n or ?999;2n, preserving advisory values.
+    - id: application-behavior
+      section: Application Behavior
+      level: defined
+      wire: visibility state 2 / 1
+      rule: Performance hint, not focus or execution suspension. Applications MAY coalesce or skip presentation when hidden,
+        SHOULD continue input and model processing, SHOULD render latest complete state on return to1, cannot assume minimum
+        hidden duration.
+      relations:
+      - kind: related
+        clause: rockorager_visibility.report
+        role: consumer
+  contour_unicode_core:
+    title: 'Terminal Unicode Core: Unicode in Terminals'
+    author: Christian Parpart / Contour
+    authority: protocol-author
+    revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+    snapshot_sha256: f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af
+    scope: Author draft, explicit mode2027 conformance. Unicode13-era proposal, not a commitment to use Unicode13 tables or
+      proof of current width behavior. No bidi requirements.
+    clauses:
+    - id: mode
+      section: Feature and Mode State Detection; Mode Switching
+      level: defined
+      wire: CSI ? 2027 h / CSI ? 2027 l
+      dispatch:
+      - CSI ? 2027 h
+      - CSI ? 2027 l
+      - CSI ? 2027 $ p
+      rule: SET enables guarantees specified by this draft; RESET leaves prior terminal behavior unspecified by this draft,
+        for compatibility. Query DECRQM2027 detects availability and current state. No new negotiation wire beyond standard
+        mode commands.
+      relations:
+      - kind: related
+        clause: dec_vt420.request-mode
+        role: query
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          location: 1505-1517,1624-1639
+          meaning: 'Pinned mode2027 permanently enabled: SET/RESET no-op and DECRPM3. Unlike draft reset disables guarantee;
+            preserve profile.'
+    - id: clusters
+      section: Semantics / Grapheme Cluster
+      level: defined
+      wire: consecutively written codepoints in mode2027
+      rule: Use UAX29 grapheme break rules. Consecutive nonbreaking input belongs to one cluster at same grid position; appending
+        nonbreaking codepoints does not move cursor except VS16 may widen. Exact Unicode version and terminal control-boundary
+        processing not specified fully.
+      relations:
+      - kind: related
+        clause: kitty_text_size.segmentation
+        role: adjacent-grapheme-profile
+    - id: overwrite
+      section: Semantics / Grapheme Cluster
+      level: defined
+      wire: cursor movement then write to existing cluster
+      rule: Write at a cell reached by cursor movement erases/overwrites complete or incomplete existing cluster rather than
+        concatenating. Existing cursor movement semantics unchanged. Distinguish stream continuation from addressing an existing
+        cell.
+      relations:
+      - kind: related
+        clause: contour_unicode_core.clusters
+        role: ownership
+      - kind: related
+        clause: kitty_text_size.overwrite-order
+        role: adjacent-profile
+    - id: emoji
+      section: Semantics / Emoji
+      level: defined
+      wire: emoji-presentation and ZWJ clusters
+      rule: Emoji in emoji presentation occupy two cells; ZWJ sequence must be one image of two cells, not decomposed fallback
+        of component images changing cursor movement. If glyph unavailable display appearance unspecified (replacement suggested);
+        SGR on emoji host meaning left to terminal. No extra-width policy inferred for all Unicode scalars.
+      relations:
+      - kind: related
+        clause: contour_unicode_core.clusters
+        role: width
+    - id: vs16
+      section: Semantics / Variation Selector16
+      level: defined
+      wire: U+FE0F
+      rule: Promote cluster to emoji presentation and force width2; may reflow symbol to next line at right margin with autowrap
+        enabled. Margin transaction and resize details not fully specified.
+      relations:
+      - kind: related
+        clause: kitty_text_size.variation-selectors
+        role: adjacent-profile
+    - id: vs15
+      section: Semantics / Variation Selector15
+      level: defined
+      wire: U+FE0E
+      rule: Text presentation without changing existing underlying width; do not narrow already wide cluster. Draft contains
+        awkward cursor sentence; preserve clear width rule. Mintty explicitly forces width1 in emoji mode, distinct semantics.
+      relations:
+      - kind: conflicts
+        clause: mintty_controls.emoji-width-rules
+    - id: margin
+      section: Semantics / Margins and AutoWrap with Emoji
+      level: defined
+      wire: wide emoji at right margin with DECAWM reset
+      rule: Draft leaves half-rendered or undisplayed behavior undefined; no selected default implied.
+      relations:
+      - kind: related
+        clause: dec_vt420.autowrap
+        role: margin
+    - id: reset
+      section: Semantics / Terminal Reset
+      level: defined
+      wire: RIS / DECSTR
+      rule: Both hard and soft reset return mode to unspecified legacy behavior, i.e. disable guarantees of enabled2027. No
+        other mode reset implied.
+      relations:
+      - kind: related
+        clause: contour_unicode_core.mode
+        role: lifetime
+      - kind: related
+        clause: ecma48.ris
+        role: reset
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: reset
+  microsoft_win32_input:
+    title: 'Improved keyboard handling in ConPTY: win32-input-mode'
+    author: Mike Griese / Microsoft
+    authority: protocol-author
+    revision: Created 2020-05-07, updated 2020-06-03; git 9853bc96076e811cef5eab4469095fc9be58201e
+    url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md
+    snapshot_sha256: d515d99c35859213f6f722e3efca8348db6d54c554a9fdfa888c5d9f45ba8118
+    scope: Originating proposal for input records, not Unix keyboard semantics. Exact current Windows encoder observation distinguished
+      from original field schema. No unsupported future mouse/input-record types assigned.
+    clauses:
+    - id: mode
+      section: Solution Design / Requesting win32-input-mode
+      level: defined
+      wire: CSI ? 9001 h / CSI ? 9001 l
+      dispatch:
+      - CSI ? 9001 h
+      - CSI ? 9001 l
+      - CSI ? 9001 $ p
+      rule: SET requests Win32 keyboard event encoding from terminal, RESET restores normal input format. Standard DECRQM mode
+        query envisaged; ConPTY requests mode on initialization, unsupported terminals ignore. Do not apply as general output
+        CSI input-event execution.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          location: 1571-1586
+          meaning: Pinned mode9001 SET sets Win32 encoding, RESET Xterm encoding, query checks encoding. Distinct from Microsoft
+            simultaneous flag precedence.
+    - id: key-record
+      section: Solution Design / win32-input-mode sequences
+      level: defined
+      wire: CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _
+      dispatch:
+      - CSI _
+      rule: 'Terminal-to-client key event: virtual key code, virtual scan code, decimal UnicodeChar (WCHAR field, not promised
+        Unicode scalar), key down0/1, control key state, repeat count. Omitted defaults0,0,0,0,0,1 respectively. Key up and
+        standalone modifier events represented. Wire has six decimal parameters; exact range and malformed admission not completely
+        specified in proposal.'
+      details:
+        fields:
+        - virtual_key
+        - scan_code
+        - unicode_char
+        - key_down
+        - control_key_state
+        - repeat_count
+        defaults:
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 1
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/input/terminalInput.cpp
+          sha256: 0f79204a7d3c70f5e8be12f1d9cb372234ecb3b841898a2491b994a2eebf0770
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: compatibility
+      section: Compatibility / SCO Compatibility; Remoting INPUT_RECORDs
+      level: defined
+      wire: CSI _ and Win32 input records
+      rule: Author identifies SCO Ctrl+Shift+F10 terminator conflict, no selected SCO coexistence rule; bare CSI _ hypothetical
+        compatibility not defined. Keyboard layout on remote host may differ from originating virtual/scan code mapping. Client
+        must account for remote key state.
+      relations:
+      - kind: related
+        clause: microsoft_win32_input.key-record
+        role: input-profile
+    - id: current-encoder
+      section: Pinned terminalInput.cpp:228-236,464-484
+      level: defined
+      wire: CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _
+      dispatch:
+      - CSI _
+      rule: Observed current Microsoft encoder explicitly emits six fields, casts values to uint16, Kd normalized0/1. Win32
+        used when mode enabled and not forcibly disabled and no Kitty flags; Kitty precedence necessary because ConPTY assumes
+        persistent Win32 mode. This later source observation does not establish original multi-protocol precedence.
+      relations:
+      - kind: related
+        clause: microsoft_win32_input.key-record
+        role: implementation-observation
+      - kind: related
+        clause: kitty_keyboard.flags
+        role: current-priority
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/input/terminalInput.cpp
+          sha256: 0f79204a7d3c70f5e8be12f1d9cb372234ecb3b841898a2491b994a2eebf0770
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+  tmux_wire:
+    title: tmux control-mode and passthrough framing
+    author: Nicholas Marriott / tmux project
+    authority: protocol-author
+    revision: git f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+    url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/tmux.1
+    snapshot_sha256: 7f8e0b8ada384b50c76ddf2bab26d18b8bbbec8e4c71c1fb76e51a08ffdf61f2
+    scope: Originating terminal-visible envelope and selected control-mode line grammar, with exact code supporting DCS framing.
+      Full command and notification API is separate internal protocol and not yet exhaustively accounted.
+    clauses:
+    - id: control-envelope
+      section: control.c:1024-1028; client.c:418-430; tmux.1 CONTROL MODE
+      level: defined
+      wire: DCS 1000 p control-mode-stream ST
+      dispatch:
+      - DCS 1000 p
+      rule: Double-control (-CC) client emits ESC P1000p on entry, ESC backslash at exit; line-oriented control protocol inside,
+        not ReGIS. Ordinary -C control mode is text without this envelope. WezTerm documentation prints1000q, but both tmux
+        source and WezTerm/Ghostty parser recognize1000p.
+      evidence:
+        additional_sources:
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/control.c
+          sha256: 3ce18b3db86af38845e982d5a0917676af1b81b805bb070629d919f3a3adcd43
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/client.c
+          sha256: 8a3a28da70c6a0d4a3662a28351b3e14eef81b99420fd2037cebb0f80f4dd459
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/docs/escape-sequences.md
+          sha256: a638eb52c8f9a11ba36a22c3a5773ced8d6a0c2d22f78914263c98f2264325c2
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/parser/mod.rs
+          sha256: 2a6d47a01c801ef9df5a60f49106917078d4894dd2b0593e3accfec217ef54e7
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/dcs.zig
+          sha256: b6e3220efbdc68001f72d193865723bcc634b1ae05d8e44f251aa137e4a18ef8
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    - id: control-block
+      section: tmux.1 CONTROL MODE
+      level: defined
+      wire: '%begin time command flags LF / output / %end or %error time command flags LF'
+      rule: Client sends newline-terminated commands. Response block delimited by %begin and matching %end/%error with epoch
+        seconds, command number, flags. Output may be empty. Async notifications never inside a response block. No full notification
+        roster claim.
+      relations:
+      - kind: related
+        clause: tmux_wire.control-envelope
+        role: payload
+    - id: pane-output
+      section: tmux.1 CONTROL MODE / %output
+      level: defined
+      wire: '%output pane-id value LF'
+      rule: Pane output notification. Nonprintable bytes and backslash escaped as backslash plus three octal digits. Extended
+        output variant includes age when pause-after flag set. Decode pane bytes separately from outer control stream.
+      relations:
+      - kind: related
+        clause: tmux_wire.control-block
+        role: payload
+    - id: passthrough
+      section: tmux.1 allow-passthrough; input.c:687-705,2640-2702
+      level: defined
+      wire: DCS tmux ; escaped-inner-wire ST
+      dispatch:
+      - DCS t
+      rule: Request forwarding raw inner terminal bytes bypassing tmux interpretation; literal inner ESC encoded as doubled
+        ESC (DCS escape state consumes first, appends second). Outer ESC backslash terminates. allow-passthrough off refuses,
+        on allows visible pane, all also invisible pane. Not a grant of host permissions; nested multiplexers and arbitrary
+        payload admission need separate qualification.
+      relations:
+      - kind: related
+        clause: ecma48.c1-dcs
+        role: extension
+      evidence:
+        additional_sources:
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/input.c
+          sha256: e39f0d288e87daa243262b09ff18f55f51748eab6495737bd8a1f288fccd28f6
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -27612,3 +28155,25 @@ pending_reconciliation:
     - mlterm_drcs_sixel_v3.mapping-code-observation
     - mlterm_drcs_sixel_v3.mapping-v3
     scope: DRCSMMv3 mapping domain and carry
+- id: unicode-core-vs-mintty-2027
+  status: material-originating-extension-conflict
+  wire: CSI ? 2027 h/l and U+FE0E
+  original_author_sources:
+  - clause: contour_unicode_core.mode
+    meaning: Author draft enables grapheme cluster guarantees; reset returns legacy.
+  - clause: contour_unicode_core.vs15
+    meaning: VS15 changes presentation without narrowing.
+  - clause: mintty_controls.emoji-width-mode
+    meaning: Mode2027 fixed emoji width; reset locale wcwidth.
+  - clause: mintty_controls.emoji-width-rules
+    meaning: VS15 forces single cell; VS16 double.
+  question: Select explicit supported width/cluster profile and reset/overwrite behavior; WezTerm permanently-enabled observation
+    also retained. Do not infer identical semantics from same mode number.
+  decision: null
+  applies_to:
+    clauses:
+    - contour_unicode_core.mode
+    - contour_unicode_core.vs15
+    - mintty_controls.emoji-width-mode
+    - mintty_controls.emoji-width-rules
+    scope: CSI ? 2027 h/l and U+FE0E
