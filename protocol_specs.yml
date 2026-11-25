@@ -8973,8 +8973,7 @@ specifications:
       wire: CSI Pn + T
       dispatch:
       - CSI + T
-      rule: Scrolls down and fills newly exposed lines from retained scrollback where available instead of inserting blank
-        lines.
+      rule: Scrolls down and fills newly exposed lines from retained scrollback where available instead of inserting blank lines.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty CSI plus T moves graphics after retained history runs out'
@@ -8987,6 +8986,13 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal Kitty unscroll fragments and preserves alternate history
         relation: protocol-family
+      evidence:
+        mintty_author_document:
+          url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+          revision: 951dd5cc92d88e930c8ff143d92a5aec6730413d
+          sha256: f20f67661df8f705059aeed7183db62e8171c6402d8ac3281d5ab82ce21fd28e
+          section: Unscroll
+          meaning: Same +T operation restoring history; Mintty page does not specify full Kitty fallback/bounds.
     - id: fallback
       section: Unscrolling the screen
       level: defined
@@ -13282,8 +13288,8 @@ specifications:
       wire: CSI Ps SP q
       dispatch:
       - CSI SP q
-      rule: Original selectors 0/1/omitted blinking block,2 steady block,3 blinking underline,4 steady underline. Applies
-        only when cursor is enabled; DECTCEM controls visibility.
+      rule: Original selectors 0/1/omitted blinking block,2 steady block,3 blinking underline,4 steady underline. Applies only
+        when cursor is enabled; DECTCEM controls visibility.
       details:
         parameter_extensions:
         - source: xterm ctlseqs lines 1546-1547; pinned charproc.c:4975-4982
@@ -13393,8 +13399,8 @@ specifications:
       wire: CSI Ps1 ; Ps2 ; Ps3 , }
       dispatch:
       - CSI , }
-      rule: Assign foreground/background indices 0..15 to one of sixteen attribute combinations. Selector is enumeration,
-        not the numeric SGR mask. DECRQSS may select that combination for reporting.
+      rule: Assign foreground/background indices 0..15 to one of sixteen attribute combinations. Selector is enumeration, not
+        the numeric SGR mask. DECRQSS may select that combination for reporting.
       source_note: Pinned xterm accepts and stores indexed pair for terminal_id>=525; actual display mapping is not established
         by storage alone.
       relations:
@@ -13434,10 +13440,10 @@ specifications:
       wire: CSI Ps ) {
       dispatch:
       - CSI ) {
-      rule: 'Select color mapping: 0 mono/gray,1 alternate colors from text attributes,2 alternate color (second profile;
-        table leaves description blank),3 ANSI SGR colors (default). Not an RGB setter.'
-      source_note: Original color lookup table gates relationship to DECATC; full distinction between modes 1 and 2 needs
-        SET-UP chapter review before implementation assessment.
+      rule: 'Select color mapping: 0 mono/gray,1 alternate colors from text attributes,2 alternate color (second profile; table
+        leaves description blank),3 ANSI SGR colors (default). Not an RGB setter.'
+      source_note: Original color lookup table gates relationship to DECATC; full distinction between modes 1 and 2 needs SET-UP
+        chapter review before implementation assessment.
     - id: warning-bell-volume
       section: 5-154 DECSWBV (PDF page 308, visually checked)
       level: defined
@@ -13445,8 +13451,8 @@ specifications:
       dispatch:
       - CSI SP t
       rule: 'Select warning bell volume for errors and Control-G. Original table: 1 off; 2,3,4 low; 5,5,7,8,0 or omitted high
-        (default). Duplicate 5 and missing 6 are present in the published table, not an extraction error. No inferred rule
-        for 6.'
+        (default). Duplicate 5 and missing 6 are present in the published table, not an extraction error. No inferred rule for
+        6.'
       evidence:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -13467,8 +13473,8 @@ specifications:
       wire: CSI Ps SP u
       dispatch:
       - CSI SP u
-      rule: 'Select margin bell volume near right margin. Original table: 0/1/omitted off (default); 2..4 low; 5..8 high.
-        Separate from warning bell.'
+      rule: 'Select margin bell volume near right margin. Original table: 0/1/omitted off (default); 2..4 low; 5..8 high. Separate
+        from warning bell.'
       evidence:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -13482,6 +13488,74 @@ specifications:
             classification: source-confirmed-material-semantic-difference
             decision: decsmbv-zero-volume-polarity
             reason: VT520/525 July 1994 p.5-138 gives 0/omitted off. Pinned xterm zero/default falls into high branch.
+    - id: repeat-rate
+      section: 5-20 DECARR
+      level: defined
+      wire: CSI Ps - p
+      dispatch:
+      - CSI - p
+      rule: 'Select repeat rate: 0..5 off,6..15 slow10 cps,16..30 fast30 cps. Default fast. Out-of-range values ignored; reportable
+        using DECRPSS.'
+      relations:
+      - kind: related
+        clause: dec_vt420.autorepeat-mode
+        role: enable
+      details:
+        ranges:
+          0..5: 'off'
+          6..15: 10
+          16..30: 30
+        default_cps: 30
+    - id: play-sound
+      section: 5-89 DECPS
+      level: defined
+      wire: CSI Pvolume ; Pduration ; Pnote , ~
+      dispatch:
+      - CSI , ~
+      rule: Play one note at a time. Volume0 off,1..3 low,4..7 high; duration in units of 1/32 second; note1..25 chromatic C5..C7.
+        Original sound buffer stores16 notes; further controls wait in communication input buffer under flow control. No TSI
+        report for played sound.
+      source_note: Source table has approximate frequencies printed separately; no inferred modern audio scheduling or duration
+        cap.
+      details:
+        note_range:
+        - 1
+        - 25
+        volume_range:
+        - 0
+        - 7
+        duration_unit: 1/32 second
+        sound_buffer_notes: 16
+    - id: communication-speed
+      section: 5-126 DECSCS
+      level: defined
+      wire: CSI Ps1 ; Ps2 * r
+      dispatch:
+      - CSI * r
+      rule: Select line and communication speed. Line0/1/omitted host transmit,2 receive,3 printer,4 modem high,5 modem low.
+        Speed0/omitted line default; selectors1..11 select published baud table. Default transmit9600, receive follows transmit,
+        printer4800, modem high/low ignored.
+      details:
+        line:
+          0: host transmit
+          1: host transmit
+          2: host receive
+          3: printer
+          4: modem high
+          5: modem low
+        speed_baud:
+          0: line default
+          1: 300
+          2: 600
+          3: 1200
+          4: 2400
+          5: 4800
+          6: 9600
+          7: 19200
+          8: 38400
+          9: 57600
+          10: 76800
+          11: 115200
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -18856,6 +18930,1311 @@ specifications:
           sha256: 68479090a486b1541620db3a727cb3c7c1ebcaec9495a7284b0cdd8cd1436d5b
         - url: https://bugzilla.gnome.org/show_bug.cgi?id=675987
           sha256: ec8cb20ed8dae88519252911230af6772f0387c6759ea77bcec208cf76e24f84
+  teraterm_ime:
+    title: Tera Term IME control functions
+    author: Tera Term project
+    authority: protocol-author
+    revision: Manual 4 English, observed 2026-11-25
+    url: https://teratermproject.github.io/manual/4/en/about/ctrlseq.html
+    snapshot_sha256: 2fd8b13e9f9bdc2a16a7662dacf2ebe9a47f3e6661ff99cad9127332b656d6b2
+    scope: Only explicitly published TTIMEST/TTIMESV/TTIMERS family; full Tera Term catalogue remains a discovery obligation.
+    clauses:
+    - id: set
+      section: Supported Control Functions / CSI / TTIMEST
+      level: defined
+      wire: CSI < Ps t
+      dispatch:
+      - CSI < t
+      rule: Set input-method open state:0 or omitted closes,1 opens.
+    - id: save
+      section: Supported Control Functions / CSI / TTIMESV
+      level: defined
+      wire: CSI < s
+      dispatch:
+      - CSI < s
+      rule: Save IME open state.
+    - id: restore
+      section: Supported Control Functions / CSI / TTIMERS
+      level: defined
+      wire: CSI < r
+      dispatch:
+      - CSI < r
+      rule: Restore IME open state. Original manual table does not establish stack depth, underflow or repeated-save behavior.
+  mintty_controls:
+    title: Mintty control sequences and extensions
+    author: Mintty project / Thomas Wolff and contributors
+    authority: protocol-author
+    revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+    snapshot_sha256: f20f67661df8f705059aeed7183db62e8171c6402d8ac3281d5ab82ce21fd28e
+    scope: Complete heading accounting of pinned CtrlSeqs page, source-specific profiles and experimental controls. Some controls
+      are adopted, not originated by Mintty. Later code revision b9a91900614414dd2a5db1c82cc4e1768955c434 separately identified
+      where consulted; no claim of full parser or historical-version closure.
+    clauses:
+    - id: secondary-da
+      section: Terminal identification
+      level: defined
+      wire: CSI > c / CSI > 77 ; version ; unicode c
+      dispatch:
+      - CSI > c
+      rule: Mintty secondary identification reply uses type77; version integer e.g.30105; Unicode version in third field when
+        built-in data used. Distinct original DEC hardware option field.
+      relations:
+      - kind: related
+        clause: dec_vt420.secondary-device-attributes
+        role: adopted-profile
+    - id: version-report
+      section: Terminal identification
+      level: defined
+      wire: CSI > q / DCS > | mintty version ST
+      dispatch:
+      - CSI > q
+      - DCS > |
+      rule: Name/version reply following xterm extension.
+      relations:
+      - kind: related
+        clause: xterm_controls.version-report
+        role: adopted-profile
+    - id: primary-da
+      section: Feature reporting
+      level: defined
+      wire: CSI c / CSI ? 65 ; feature-list c
+      dispatch:
+      - CSI c
+      - CSI ? c
+      rule: Published sample tags1,2,3,4,6,9,11,15,21,22,28,29,52. Tags1,22,52 conditional on features not suppressed. 11,21,28
+        omitted correspondingly for configured VT220/VT340 types; exact configuration mapping not stated.
+      relations:
+      - kind: related
+        clause: ecma48.da
+        role: adopted-profile
+      details:
+        sample:
+        - 65
+        - 1
+        - 2
+        - 3
+        - 4
+        - 6
+        - 9
+        - 11
+        - 15
+        - 21
+        - 22
+        - 28
+        - 29
+        - 52
+    - id: feature-report
+      section: Feature reporting
+      level: defined
+      wire: OSC 1337 ; Capabilities ST / OSC 1337 ; Capabilities=tags ST
+      dispatch:
+      - OSC 1337
+      rule: Adopts iTerm2 capability registry. Default UTF8 sample T3LrMSc7UUw17Ts3BFGsGoSyHSxF includes F twice; retain ambiguity,
+        not evidence of a unique code.
+      relations:
+      - kind: related
+        clause: iterm2_feature_reporting.query
+        role: adopted-profile
+      - kind: related
+        clause: iterm2_feature_reporting.encoding
+        role: adopted-profile
+    - id: escape-application
+      section: Escape keycode
+      level: defined
+      wire: CSI ? 7727 h / CSI ? 7727 l
+      dispatch:
+      - CSI ? 7727 h
+      - CSI ? 7727 l
+      rule: Set sends ESC O [ for Escape key; reset sends ordinary ESC or FS depending on mode7728. Also enables VT220 application
+        keypad encodings in non-VT220 keyboard mode when application keypad active; source notes this was default until3.8.2.
+      relations:
+      - kind: related
+        clause: dec_vt420.app-keypad
+        role: keyboard-interaction
+    - id: escape-fs
+      section: Escape keycode
+      level: defined
+      wire: CSI ? 7728 h / CSI ? 7728 l
+      dispatch:
+      - CSI ? 7728 h
+      - CSI ? 7728 l
+      rule: When application Escape mode off, set sends FS (0x1C), reset ESC (0x1B) for Escape key.
+    - id: control-key-mode
+      section: Control key codes
+      level: defined
+      wire: CSI ? 77000..77031 h/l; list of selectors
+      dispatch:
+      - CSI ? h
+      - CSI ? l
+      - CSI u
+      rule: Per-C0-control application mode, selector77000+n (n0..31). Set corresponding Ctrl key encoding CSI (64+n);5u, normalized
+        uppercase ASCII; reset clears corresponding setting. Multiple modes may be combined in one DECSET/DECRST list. Examples
+        n0→64,9→73,27→91,31→95.
+      relations:
+      - kind: related
+        clause: kitty_keyboard.event-envelope
+        role: alternative-key-encoding
+      details:
+        selector_range:
+        - 77000
+        - 77031
+        output_modifier: 5
+    - id: ime-stack
+      section: Input method
+      level: defined
+      wire: CSI < Ps t / CSI < s / CSI < r
+      dispatch:
+      - CSI < t
+      - CSI < s
+      - CSI < r
+      rule: Adopts Tera Term IME close0/default/open1; Mintty explicitly describes save push and restore pop, and code uses
+        push_mode/pop_mode. Stack depth and underflow still open.
+      relations:
+      - kind: related
+        clause: teraterm_ime.set
+        role: adopted
+      - kind: related
+        clause: teraterm_ime.save
+        role: adopted
+      - kind: related
+        clause: teraterm_ime.restore
+        role: adopted
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: shortcut-override
+      section: Shortcut override mode
+      level: defined
+      wire: CSI ? 7783 h / CSI ? 7783 l
+      dispatch:
+      - CSI ? 7783 h
+      - CSI ? 7783 l
+      rule: Set routes shortcut key combinations to application rather than host window commands. modifyOtherKeys encodings
+        remain in effect; user KeyFunctions assignments remain since3.8.3. Reset turns override off.
+    - id: repeat-rate
+      section: Keyboard auto repeat
+      level: defined
+      wire: CSI cps - p
+      dispatch:
+      - CSI - p
+      rule: Limit keyboard repeat directly to given cps up to30. Zero or omitted disables rate limitation, not repeat itself;
+        DECARM controls repeat enable. Distinct from original DECARR bands and off behavior. Pinned handler assigns arg0 if
+        <=30.
+      relations:
+      - kind: conflicts
+        clause: dec_vt520.repeat-rate
+      - kind: related
+        clause: dec_vt420.autorepeat-mode
+        role: enable
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: deccara
+      section: Area attributes change
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; attrs $ r
+      dispatch:
+      - CSI $ r
+      rule: Extends rectangle/stream attribute change to additional suitable attributes including italic,strikeout, palette
+        colors and fonts; no truecolor or setting underline color. Published examples use 3,38:5:20 and29. Do not replace the
+        earlier selected Kitty all-SGR behavior with this narrower profile.
+      source_note: Code has additional style selectors, font10..20, indexed foreground/background colon syntax, and 59 clears
+        underline color. Exact masks/precedence and geometry not claimed exhaustive.
+      relations:
+      - kind: extends
+        clause: dec_vt420.attr-change-rect
+      - kind: related
+        clause: kitty_deccara.all-sgr-attributes
+        role: different-extension-profile
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: decrara
+      section: Area attributes change
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr ; attrs $ t
+      dispatch:
+      - CSI $ t
+      rule: Extend reverse attributes to suitable additional styles (e.g.9 strikeout). No color or font change in reversal per
+        author. Source code reversal consumes constructed set-mask only; no broad shared-SGR equivalence claim.
+      relations:
+      - kind: extends
+        clause: dec_vt420.attr-reverse-rect
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: status-area
+      section: Status line / area
+      level: defined
+      wire: CSI 2 ; N $ ~
+      dispatch:
+      - CSI 2 $ ~
+      rule: Extend DECSSDT host-writable status area with N lines, limited smaller than half total screen height; one line with
+        omitted N. Source code caps at max(0,floor(total_rows/2)-1) for excessive nonzero N, retains window size by reallocating
+        main rows. Original indicator and active display selection remain distinct.
+      relations:
+      - kind: extends
+        clause: dec_vt420.status-display-type
+      - kind: related
+        clause: dec_vt420.active-status-display
+        role: write-destination
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: bidi-global-disable
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI ? 77096 h / CSI ? 77096 l
+      dispatch:
+      - CSI ? 77096 h
+      - CSI ? 77096 l
+      rule: Set disables bidirectional display globally; reset enables. Configuration Bidi0 off,1 disabled on alternate,2 enabled
+        default. Global mode distinct from per-line flags.
+    - id: bidi-line-disable
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI ? 7796 h / CSI ? 7796 l
+      dispatch:
+      - CSI ? 7796 h
+      - CSI ? 7796 l
+      rule: Set disables bidi for current line, reset removes disable. Author says other bidi modes apply to whole lines as
+        effective; exact propagation needs full source qualification.
+    - id: bidi-support-mode
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI 8 h / CSI 8 l
+      dispatch:
+      - CSI 8 h
+      - CSI 8 l
+      rule: 'Experimental BDSM: set implicit bidi-enabled lines, reset explicit bidi-disabled lines. Source credits terminal-wg
+        bidi recommendation; original ECMA mode separate.'
+      relations:
+      - kind: related
+        clause: ecma48.mode-bdsm
+        role: adopted-profile
+    - id: bidi-autodetect
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI ? 2501 h / CSI ? 2501 l
+      dispatch:
+      - CSI ? 2501 h
+      - CSI ? 2501 l
+      rule: Enable paragraph direction auto-detection on set (default); disable on reset, for predictable tables/box drawing.
+        Source credits terminal-wg recommendation; not independently attributed invention.
+    - id: bidi-box-mirror
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI ? 2500 h / CSI ? 2500 l
+      dispatch:
+      - CSI ? 2500 h
+      - CSI ? 2500 l
+      rule: Set enables mirroring additional asymmetric Box Drawing U+2500..257F and Block Elements U+2580..259F characters;
+        reset disables. Roster may extend. Related terminal-wg proposal requires own intake.
+    - id: bidi-scp
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI Ps SP k
+      dispatch:
+      - CSI SP k
+      rule: Experimental SCP selection:0 default auto direction with LTR fallback,1 LTR paragraph embedding,2 RTL. Applies to
+        lines; source code propagates direction flags at character write. Preserve original ECMA SCP separately.
+      relations:
+      - kind: related
+        clause: ecma48.scp
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: bidi-spd
+      section: Bidirectional rendering
+      level: defined
+      wire: CSI 0 SP S / CSI 3 SP S
+      dispatch:
+      - CSI 0 SP S
+      - CSI 3 SP S
+      rule: Deprecated experimental SPD selection of LTR/RTL presentation direction. Wiki table prints CSI 0 S / CSI 3 S without
+        intermediate; author parser explicitly matches SP S. Do not infer scroll-up collision from missing printed space.
+      relations:
+      - kind: related
+        clause: ecma48.spd
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: lam-alef
+      section: LAM/ALEF joining
+      level: defined
+      wire: CSI ? 2521 h / CSI ? 2521 l
+      dispatch:
+      - CSI ? 2521 h
+      - CSI ? 2521 l
+      rule: Set gives single-cell Arabic LAM followed by ALEF, ALEF WITH MADDA ABOVE, ALEF WITH HAMZA ABOVE or BELOW; reset
+        default two-cell ligature width.
+    - id: line-reflow
+      section: Reflow / Rewrap / Line rebreaking on resize
+      level: defined
+      wire: CSI ? 7723 h / CSI ? 7723 l
+      dispatch:
+      - CSI ? 7723 h
+      - CSI ? 7723 l
+      rule: Set enables (default) or reset disables line rewrap on resize for individual lines, under RewrapOnResize configuration.
+        Deprecated alternate2027 dropped; current2027 used for emoji width. Do not conflate with Contour global reflow2028.
+      relations:
+      - kind: related
+        clause: contour_line_reflow.mode
+        role: alternative-reflow-control
+    - id: inner-scrollbar
+      section: Scrollbar hiding
+      level: defined
+      wire: CSI ? 7766 h / CSI ? 7766 l
+      dispatch:
+      - CSI ? 7766 h
+      - CSI ? 7766 l
+      rule: Set shows, reset hides scrollbar by changing columns within fixed window size. If configuration disables scrollbar
+        it stays hidden. Contrast outer xterm-style scrollbar altering window width.
+    - id: application-scrollbar
+      section: Application scrollbar
+      level: defined
+      wire: 'CSI pos [ ; size [ ; height ] ] # t / CSI 0 # t'
+      dispatch:
+      - 'CSI # t'
+      rule: Experimental implicit enable by setting virtual document view. pos one-based top of viewport, range1..size-height+1.
+        size total virtual lines; height defaults terminal rows, difference to rows retained on resize. Forms update pos/size/height,
+        pos/size, or pos only. pos0 disables; exact invalid/missing value handling not stated.
+      details:
+        direction: application-to-terminal
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: taskbar-progress
+      section: Progress bar
+      level: defined
+      wire: CSI level [ ; percent ] % q / CSI ; percent % q
+      dispatch:
+      - CSI % q
+      rule: Experimental CSI progress. Level0 off,1 green,2 yellow,3 red,8 continuous busy,10 configured reset. For1..3 with
+        omitted percent enable detection scanning current cursor line for percent at later relative movement e.g.CR. With explicit
+        percent set value; omitted level with percent changes only value. Host taskbar presentation, not VT mutation mandate.
+      relations:
+      - kind: related
+        clause: conemu_progress.format
+        role: alternative-progress
+      details:
+        levels:
+          0: 'off'
+          1: green
+          2: yellow
+          3: red
+          8: busy
+          10: configured default
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: progress-mnemonic
+      section: Progress bar
+      level: defined
+      wire: OSC 9 ; progress ; state [ ; percent ] BEL
+      dispatch:
+      - OSC 9
+      rule: 'Mnemonic extension to OSC9;4: off,green,yellow,red,default or empty,busy,single,multiple. Numeric state mapping
+        in pinned code 0→off,1→green,4→yellow,2→red,3→busy. single/multiple switch scan mode. Exact state omission and percent
+        constraints beyond source still open.'
+      relations:
+      - kind: extends
+        clause: conemu_progress.format
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: wheel-reporting
+      section: Mousewheel reporting
+      level: defined
+      wire: CSI ? 7786 h / CSI ? 7786 l
+      dispatch:
+      - CSI ? 7786 h
+      - CSI ? 7786 l
+      rule: Enable Mintty alternate-screen wheel-to-key reporting (default set). Primary screen wheel scrolls retained history.
+        DEC mode1007 independent, default reset. Cursor keys default; private modes choose Alt or separate event codes.
+      relations:
+      - kind: related
+        clause: xterm_controls.mouse-alternate-scroll
+        role: alternative-mode
+    - id: wheel-alt
+      section: Mousewheel reporting
+      level: defined
+      wire: CSI ? 7765 h / CSI ? 7765 l
+      dispatch:
+      - CSI ? 7765 h
+      - CSI ? 7765 l
+      rule: Set exchanges plain and Alt-modified wheel cursor-key events; reset unmodified mode.
+    - id: wheel-application
+      section: Mousewheel reporting
+      level: defined
+      wire: CSI ? 7787 h / CSI ? 7787 l
+      dispatch:
+      - CSI ? 7787 h
+      - CSI ? 7787 l
+      rule: 'Set uses distinct application wheel codes: line up/down ESC O a/b, page up/down CSI 1;2a/b. Reset cursor-key mapping.'
+    - id: readline-mouse-profile
+      section: Readline mouse modes
+      level: defined
+      wire: CSI ? 2001|2002|2003 h/l
+      dispatch:
+      - CSI ? 2001 h
+      - CSI ? 2001 l
+      - CSI ? 2002 h
+      - CSI ? 2002 l
+      - CSI ? 2003 h
+      - CSI ? 2003 l
+      rule: 'Adopt xterm readline mouse modes, with host conditions: middle needs Paste config, right needs Extend selection
+        config. Modes initialized on startup/hard reset by ClicksPlaceCursor. Click translates to cursor or erase keystrokes,
+        not direct screen editing.'
+      relations:
+      - kind: related
+        clause: xterm_controls.readline-button1
+        role: adopted-profile
+      - kind: related
+        clause: xterm_controls.readline-button2
+        role: adopted-profile
+      - kind: related
+        clause: xterm_controls.readline-button3
+        role: adopted-profile
+    - id: ambiguous-width-report
+      section: Ambiguous width reporting
+      level: defined
+      wire: CSI ? 7700 h / CSI ? 7700 l
+      dispatch:
+      - CSI ? 7700 h
+      - CSI ? 7700 l
+      rule: When set, font change sends CSI 1 W for ambiguous narrow or CSI 2 W for ambiguous wide font; reset disables.
+    - id: font-change-report
+      section: Font change reporting
+      level: defined
+      wire: CSI ? 7767 h / CSI ? 7767 l
+      dispatch:
+      - CSI ? 7767 h
+      - CSI ? 7767 l
+      rule: When set, font change sends CSI 0 W unless ambiguous-width report also enabled, then only CSI 1 W or CSI 2 W. Reset
+        disables.
+    - id: font-coverage
+      section: Font glyph coverage enquiry
+      level: defined
+      wire: OSC 7771 ; ? ; decimal-codepoint [ ; decimal-codepoint ... ] BEL / OSC 7771 ; ! ; supported-codepoints BEL
+      dispatch:
+      - OSC 7771
+      rule: Query current font coverage for decimal Unicode codepoints, author permits any count and beyond BMP since3.8.3.
+        Reply replaces ? with ! and omits unsupported code values. Pinned loop emits separator for every input, including unsupported
+        entries (empty slots); exact response layout needs qualification against prose.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: wide-character-mode
+      section: Wide characters
+      level: defined
+      wire: OSC 77119 ; Ps BEL
+      dispatch:
+      - OSC 77119
+      rule: 0 neither,1 Indic glyphs wider than a cell use two cells,2 designated long Unicode characters use two cells. Pinned
+        code treats bits1 and2 independently, so3 sets both (not explicitly documented). Source list may change; no general
+        Unicode width authority claimed.
+      details:
+        long_codepoints:
+        - U+2001
+        - U+2003
+        - U+2014
+        - U+27DD..27DE
+        - U+27F5..27FF
+        - U+2910
+        - U+296A..296D
+        - U+2B33
+        - U+2E0E..2E11
+        - U+2E3A..2E3B
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: explicit-width
+      section: Explicit character width
+      level: defined
+      wire: CSI Ps SP Z / CSI 2 ; 2 SP Z
+      dispatch:
+      - CSI SP Z
+      rule: Experimental PEC repurposed as per-character cell-width attribute:0 natural single/double,1 force double,2 force
+        single,22 or2;2 single-cell zoom-down. Distinct from original ECMA presentation expand/contract semantics and Kitty
+        sizing protocol.
+      relations:
+      - kind: related
+        clause: ecma48.pec
+        role: extended-profile
+      - kind: related
+        clause: kitty_text_size.scale
+        role: alternative-sizing
+    - id: overstrike
+      section: Overstrike
+      level: defined
+      wire: 'CSI 8 : 7 m / CSI 28 m / CSI ? 20 h/l'
+      dispatch:
+      - CSI 8 m
+      - CSI 28 m
+      - CSI ? 20 h
+      - CSI ? 20 l
+      rule: Enable overstrike using SGR8:7 or VK100-compatible DECSET20; disable with SGR28 or DECRST20. Historical VK100 primary
+        source not recovered; no claim of Mintty origin for private mode20.
+    - id: font-size
+      section: Font size
+      level: defined
+      wire: OSC 7770 ; ?|N|+N|-N|empty (BEL | ST)
+      dispatch:
+      - OSC 7770
+      rule: Query/set absolute font size, plus/minus relative change, empty configured default. Reply is sequence that restores
+        current setting. Exact units/range and host sizing policy require qualification.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: font-window-size
+      section: Font and window size
+      level: defined
+      wire: OSC 7777 ; ?|N|+N|-N|empty (BEL | ST)
+      dispatch:
+      - OSC 7777
+      rule: Query/set absolute font and window size, retaining cell geometry if possible, plus/minus relative change, empty
+        configured default. Reply is sequence that restores current setting. Exact units/range and host sizing policy require
+        qualification.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: font-style
+      section: Font style
+      level: defined
+      wire: OSC 50 ; font-name (BEL | ST)
+      dispatch:
+      - OSC 50
+      rule: Extend OSC50 to currently selected alternate font or Tek font. Pinned non-Tek code queries current family with ?,
+        changes family index0..10; Tek branch sets font and reinitializes Tek. Distinct from Konsole profile mutation.
+      relations:
+      - kind: related
+        clause: xterm_controls.font-operations
+        role: extended-profile
+      - kind: related
+        clause: konsole_profiles.profile
+        role: alternative-dialect
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: emoji-style
+      section: Emojis style
+      level: defined
+      wire: OSC 7750 ; style BEL
+      dispatch:
+      - OSC 7750
+      rule: Set configured graphic emoji style. Pinned manual lists none,emojione,noto,apple,google,twitter,facebook,samsung,windows,zoom;
+        styles require corresponding resource repository. No implicit resource fetch.
+      details:
+        styles:
+        - none
+        - emojione
+        - noto
+        - apple
+        - google
+        - twitter
+        - facebook
+        - samsung
+        - windows
+        - zoom
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: emoji-width-mode
+      section: Emoji width mode
+      level: defined
+      wire: CSI ? 2027 h/l / CSI ? 7769 h/l
+      dispatch:
+      - CSI ? 2027 h
+      - CSI ? 2027 l
+      - CSI ? 7769 h
+      - CSI ? 7769 l
+      rule: Set fixed two-cell emoji width, reset locale wcwidth/wcswidth (author default configuration EmojiWidth=no). 7769
+        deprecated alias; 2027 other-terminal setting with divergent width algorithms. Source explicitly says common Unicode
+        width specification not agreed.
+    - id: emoji-width-rules
+      section: Emoji width mode
+      level: defined
+      wire: emoji scalar and sequence width under emoji mode
+      rule: For potential emoji base regardless of Unicode sequence listing/glyph availability, FE0F forces double width, FE0E
+        single; appended ZWJ, Fitzpatrick modifier or tag U+E0020..E007F enforces double width. Fitzpatrick zero width except
+        line beginning; ZWJ causes following character to combine without additional width. Source does not enumerate potential-base
+        roster.
+      relations:
+      - kind: related
+        clause: kitty_text_size.scalar-width
+        role: different-width-algorithm
+    - id: variation-selectors
+      section: Variation selectors
+      level: defined
+      wire: U+FE0E / U+FE0F
+      rule: Combining VS15 text presentation and VS16 graphic presentation; in emoji mode respectively enforce single/double
+        cell width. Separate Kitty explicit-width rules.
+      relations:
+      - kind: related
+        clause: kitty_text_size.variation-selectors
+        role: different-profile
+    - id: background-image
+      section: Background image
+      level: defined
+      wire: OSC 11 ; _image|%image|*image|+image|= BEL
+      dispatch:
+      - OSC 11
+      rule: 'Extend OSC11 with host background image: underscore terminal-size image; percent scale terminal to image aspect;
+        star tiled; plus aspect-scaled/tiled; equals desktop image if tiled. Filename comma numeric1..254 dims toward background;255
+        uses image alpha. Host permission/geometry unspecified.'
+      relations:
+      - kind: extends
+        clause: xterm_controls.dynamic-colors
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: locale
+      section: Locale
+      level: defined
+      wire: OSC 701 ; ?|locale|empty BEL
+      dispatch:
+      - OSC 701
+      rule: 'Adopts rxvt-unicode locale/charset operation: query returns restorable setting, nonempty locale same format as
+        LANG, empty configured/environment default. Terminal encoding and process locale not automatically synchronized. Original
+        rxvt-unicode spec remains discovery obligation.'
+    - id: title-copy
+      section: Window title copy
+      level: defined
+      wire: OSC 7721 BEL
+      dispatch:
+      - OSC 7721
+      rule: Copy window title to system clipboard, disabled by default AllowSetSelection=no; no permission or clipboard-disclosure
+        target selected.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: title-letter
+      section: Window title set
+      level: defined
+      wire: ESC ] l ; title BEL
+      rule: Alternative letter OSC l setting title. Pinned code credits dtterm/shelltool and maps to numeric2, not a Mintty
+        invention; original Sun/CDE grammar to trace.
+      relations:
+      - kind: related
+        clause: cde_dtterm.title-selector-2
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: window-icon
+      section: Window icon
+      level: defined
+      wire: ESC ] I ; icon-file [ , index ] BEL / OSC 7773 ; icon-file [ , index ] ST
+      dispatch:
+      - OSC 7773
+      rule: Host icon file and optional icon index. Code maps letter I to numeric7773, parses final comma suffix with strtoul
+        base0 if valid, else leaves filename and defaults index0. Credits dtterm/shelltool for letter form; no arbitrary file
+        access authorization.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: cwd-profile
+      section: Working directory
+      level: defined
+      wire: OSC 7 ; file-URL BEL
+      dispatch:
+      - OSC 7
+      rule: Liberal Mintty cwd form accepts file:///home/tmp, //localhost/home/tmp, /home/tmp; empty restores default clone-directory
+        behavior. Original Apple URI contract retained.
+      relations:
+      - kind: related
+        clause: apple_terminal_location.cwd
+        role: adopted-profile
+    - id: prompt-scroll-mark
+      section: Scroll markers
+      level: defined
+      wire: CSI ? 7711 h / CSI ? 7711 l
+      dispatch:
+      - CSI ? 7711 h
+      - CSI ? 7711 l
+      rule: Set marks prompt line (last line for multiline prompt); reset marks secondary/upper prompt line, not deletion. Marks
+        support history navigation and host selection of output between marks (MINED_OUTPUT).
+    - id: sync-duration
+      section: Synchronous update
+      level: defined
+      wire: CSI ? 2026 h / DCS = 1 [ ; N ] s ST / CSI ? 2026 l / DCS = 2 s ST
+      dispatch:
+      - CSI ? 2026 h
+      - CSI ? 2026 l
+      - DCS = 1 s
+      - DCS = 2 s
+      rule: Begin suspends screen updates150ms default; extra DCS header parameter N requests ms capped420. Pinned code treats
+        omitted or zero N as150. End flushes and ends hold. Distinct from iTerm2 reserved payload after final s; no implementation-wide
+        timeout choice selected.
+      relations:
+      - kind: extends
+        clause: iterm2_legacy_sync.begin
+      - kind: related
+        clause: iterm2_legacy_sync.end
+        role: end
+      - kind: related
+        clause: contour_sync.begin
+        role: adopted-mode
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: image-sizing
+      section: Image support
+      level: defined
+      wire: 'OSC 1337 ; File=metadata : image-base64 BEL'
+      dispatch:
+      - OSC 1337
+      rule: Adopts iTerm2 image frame; name Base64 ID unused. Width/height cell,px,percent of screen size at output; one dimension
+        preserves aspect, both with preserveAspectRatio=1 fit or0 stretch; neither uses inherent pixel size. Size persists across
+        terminal resize but scales when zooming cell size. Supports PNG,JPEG,GIF,TIFF,BMP,Exif. No inferred generic file download
+        support.
+      relations:
+      - kind: related
+        clause: iterm2_images.single
+        role: adopted-profile
+      - kind: related
+        clause: iterm2_images.dimensions
+        role: adopted-profile
+      details:
+        preserveAspectRatio_default: 1
+    - id: image-no-move
+      section: Image support
+      level: defined
+      wire: doNotMoveCursor=0|1 in OSC 1337 File metadata
+      rule: Default0. Value1 prevents scrolling at bottom margin, crops image and preserves initial cursor; per-image counterpart
+        of mode7780. Exact precedence when parameter0 and mode enabled remains open.
+      relations:
+      - kind: extends
+        clause: iterm2_images.metadata
+    - id: sixel-display-history
+      section: Graphics position
+      level: defined
+      wire: CSI ? 80 h/l
+      dispatch:
+      - CSI ? 80 h
+      - CSI ? 80 l
+      rule: Current Mintty set starts Sixel at screen top, reset anchors at cursor (scrolling default). Author records reversed
+        polarity in versions3.0.1..3.5.1 following older xterm. SuppressDEC=80 can disable setting. Preserve original DEC authority
+        and historical dialect, not a new choice.
+      relations:
+      - kind: related
+        clause: dec_vt3xx_graphics.sixel-display-mode
+        role: adopted-profile
+      - kind: related
+        clause: dec_vt382_thai.sixel-display-mode
+        role: adopted-profile
+    - id: graphics-exit-column
+      section: Graphics position
+      level: defined
+      wire: CSI ? 7730 h / CSI ? 7730 l
+      dispatch:
+      - CSI ? 7730 h
+      - CSI ? 7730 l
+      rule: Set exit at line beginning below image; reset below left bottom (default). Overridden by mode8452 which exits right
+        of bottom.
+    - id: graphics-exit-right
+      section: Graphics position
+      level: defined
+      wire: CSI ? 8452 h / CSI ? 8452 l
+      dispatch:
+      - CSI ? 8452 h
+      - CSI ? 8452 l
+      rule: Set leaves cursor next to lower right image; reset below image. Author credits xterm; local xterm docs additionally
+        attribute RLogin. Origin RLogin not recovered. Applies to Mintty Sixel/other image exit profile.
+    - id: graphics-no-scroll
+      section: Graphics position
+      level: defined
+      wire: CSI ? 7780 h / CSI ? 7780 l
+      dispatch:
+      - CSI ? 7780 h
+      - CSI ? 7780 l
+      rule: Set prevents image-induced scroll at bottom margin, crops there, keeps cursor initial position. Unlike display mode80
+        starts at current cursor. Reset scrolls as needed (default); affects Sixel and iTerm2 images.
+      relations:
+      - kind: related
+        clause: mintty_controls.image-no-move
+        role: per-image-option
+    - id: regis-anchor
+      section: ReGIS graphics position
+      level: defined
+      wire: CSI ? 80 h/l for ReGIS
+      dispatch:
+      - CSI ? 80 h
+      - CSI ? 80 l
+      rule: Unlike original DEC VT340, Mintty ReGIS defaults inline at cursor; SET80 switches to screen home, RESET80 returns
+        cursor anchor. Source credits existing graphics mode; no original DEC change.
+      relations:
+      - kind: related
+        clause: dec_vt3xx_graphics.regis-envelope
+        role: extended-profile
+    - id: audio
+      section: Audio support
+      level: defined
+      wire: 'OSC 440 ; sound [ : option ... ] BEL / OSC 440 ; BEL'
+      dispatch:
+      - OSC 440
+      rule: Experimental sound file request; .wav filename in configured sounds directory or path. async decouples playback
+        from control processing; nostop suppresses if async sound already playing; loop endless asynchronous playback. Empty
+        sound stops async playback. No host file access or playback authorization selected.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: sound-notes
+      section: Audio support
+      level: defined
+      wire: 'CSI volume [ : tone ] ; duration ; note [ ; note ... ] , ~ / CSI 0 : tone , ~'
+      dispatch:
+      - CSI , ~
+      rule: Extend DECPS to multiple notes (author16 supported), volume0..7,duration0..255 in 1/32 seconds, original1..25 C5..C7.
+        Extended note41..137 C0..C8,101..125 mirror1..25. Colon tone persists until changed/reset; tone1 sine,1..5 defined,0
+        fallback Windows Beep; other tones need libao. Code accepts volume8..100 as percent, observed rather than published
+        normative cap.
+      relations:
+      - kind: extends
+        clause: dec_vt520.play-sound
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: cursor-style
+      section: Cursor style
+      level: defined
+      wire: CSI Ps [ ; blink-ms ] SP q
+      dispatch:
+      - CSI SP q
+      rule: Mintty selectors0 configured default,1/2 blinking/steady block,3/4 underscore,5/6 vertical line,7/8 box. Optional
+        second parameter blink interval ms. Distinct DEC selector0 behavior already pending with iTerm2; exact interval bounds
+        not specified.
+      relations:
+      - kind: extends
+        clause: dec_vt520.cursor-style
+      - kind: related
+        clause: iterm2_osc1337.cursor-default
+        role: matching-default-profile
+      details:
+        shapes:
+          0: configured default
+          1: block blink
+          2: block steady
+          3: underscore blink
+          4: underscore steady
+          5: line blink
+          6: line steady
+          7: box blink
+          8: box steady
+    - id: cursor-size
+      section: Cursor size
+      level: defined
+      wire: CSI ? Ps c
+      dispatch:
+      - CSI ? c
+      rule: Adopt Linux console soft cursor:0 default,1 invisible,2 underscore,3 lower third,4 lower half,5 two thirds,6 block.
+        Also affects vertical line cursor. Linux second/third parameters unsupported, OSC12 color used. Original Linux cursor
+        grammar still to trace.
+    - id: pointer-profile
+      section: Mouse pointer style
+      level: defined
+      wire: OSC 22 ; pointer BEL
+      dispatch:
+      - OSC 22
+      rule: Adopts OSC22; uses three mouse-mode pointer shapes and Windows names or .cur/.ico/.ani resource file names in pointers
+        directory. Roster distinct from X11 and Kitty. Host resource access not authorized.
+      relations:
+      - kind: related
+        clause: xterm_controls.pointer-shape-x11
+        role: alternative-roster
+      - kind: related
+        clause: kitty_pointer.shape-roster
+        role: alternative-roster
+      details:
+        windows_names:
+        - appstarting
+        - arrow
+        - cross
+        - hand
+        - help
+        - ibeam
+        - icon
+        - 'no'
+        - size
+        - sizeall
+        - sizenesw
+        - sizens
+        - sizenwse
+        - sizewe
+        - uparrow
+        - wait
+    - id: ansi-colors
+      section: ANSI colours
+      level: defined
+      wire: OSC 7704 ; index ; color [ ; bg ] BEL / OSC 7704 ; index ; ? BEL
+      dispatch:
+      - OSC 7704
+      rule: 'Set/query independent ANSI foreground/background variants0..15, not indexed palette0..15. One value sets both;
+        two separate; empty resets configured value, invalid ignored. Accept decimal RGB triples, X11 names, hex RGB, rgb: 2/4
+        hex, decimal cmy/cmyk forms. Source says query returns corresponding one/two-value setting form. Code reply omits requested
+        index; retain discrepancy separately.'
+      relations:
+      - kind: related
+        clause: xterm_controls.palette-osc4
+        role: separate-color-storage
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: ansi-color-reply-observation
+      section: ANSI colours
+      level: defined
+      wire: OSC 7704 ; rgb:R/G/B [ ; rgb:R/G/B ] (BEL | ST)
+      dispatch:
+      - OSC 7704
+      rule: Pinned do_ansi_colour_osc at termout.c:4655-4663 emits OSC7704 then foreground rgb four-hex channels, optional differing
+        background, terminator. It does not print requested index, unlike published restorable set form. Do not silently choose
+        either.
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: screen-dump
+      section: Printing and screen dump
+      level: defined
+      wire: CSI 10 i / CSI 10 ; 8 i / CSI 12 i
+      dispatch:
+      - CSI 10 i
+      - CSI 12 i
+      rule: 'Mintty media-copy extensions: save screen HTML; selector10 with8 saves scrollback and screen HTML; selector12 saves
+        screen PNG. Existing print operations0,4,5 and private4,5 are adopted. Host filesystem and permission behavior not specified
+        by table.'
+      relations:
+      - kind: extends
+        clause: ecma48.mc
+      - kind: related
+        clause: dec_vt240.media-copy-dec-private
+        role: adopted-printing
+    - id: display-speed
+      section: Display speed
+      level: defined
+      wire: CSI 2 * r / CSI 2 ; Ps * r
+      dispatch:
+      - CSI 2 * r
+      rule: Extend DECSCS to simulated receive/display rate. Omitted second parameter uses configured Baud; explicit0 unlimited,1..11
+        match original baud table. Pinned code also admits line0/1; distinct from original DEC separate transmit/receive line
+        default0.
+      relations:
+      - kind: conflicts
+        clause: dec_vt520.communication-speed
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+  mintty_keycodes:
+    title: Mintty keycode and application scrollbar event profiles
+    author: Mintty project
+    authority: protocol-author
+    revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d
+    url: https://github.com/mintty/mintty/wiki/Keycodes
+    snapshot_sha256: 91696d9266d7db132d4341f46be9ffb093f6b944f93b91ec5337575cc633f77e
+    scope: 'Pinned Keycodes page: host keyboard translation profile, key tables and application scrollbar reports. Standard/adopted
+      keys remain linked to their sources; no implication all key mappings are Howl requirements.'
+    clauses:
+    - id: meta
+      section: Alt and Meta
+      level: defined
+      wire: ESC prefix + keycode
+      rule: Alt ordinarily adds ESC prefix; no high-bit meta encoding. Separate Meta/Super/Hyper modifiers in numeric encoding.
+      relations:
+      - kind: related
+        clause: xterm_controls.keyboard-meta-escape
+        role: alternative-key-profile
+    - id: altgr
+      section: AltGr
+      level: defined
+      wire: host keyboard layout and AltGr mapping
+      rule: AltGr layout translation may fall back to Alt; Ctrl+LeftAlt can act as AltGr if configured; AltGrIsAlsoAlt controls
+        fallback. Host policy, not separate incoming wire.
+    - id: control-translation
+      section: Ctrl
+      level: defined
+      wire: C0 byte or encoded C1 codepoint
+      rule: Use character from layout without Ctrl, else US-like virtual-key fallback. @.._ map0..31, / maps31, ? maps127. Extra
+        Shift sends corresponding C1 U+0080..009F unless different control character; if Shift already needed second Shift key.
+        C1 encode single-byte ISO8859, UTF8 C2 prefix, or ESC+C0 when encoding lacks it. Configured shortcuts override.
+      details:
+        c0: ASCII @.._ minus64
+        c1: U+0080+n
+    - id: special-keys
+      section: Special keys
+      level: defined
+      wire: legacy special keycodes
+      dispatch:
+      - CSI Z
+      - CSI 1 I
+      rule: Tab HT, Shift CSI Z, Ctrl CSI1;5I, CtrlShift CSI1;6I. Space plain/Shift SP, Ctrl NUL, CtrlShift U+0080. Backspace
+        plain/Shift DEL, Ctrl/CtrlShift BS, reversed under BackspaceSendsBS. Enter CR,Shift LF. Historical/deprecated Escape
+        ESC/Shift U+009B, Break FS/Shift U+009C, Pause GS/Shift U+009D; old CtrlBack/CtrlEnter US/RS restored by config. Ctrl
+        Enter mappings dropped3.2.1.
+      details:
+        historical_config: OldModifyKeys=33 or explicit KeyFunctions; shortcuts may override
+    - id: modifiers
+      section: Modifier key encodings
+      level: defined
+      wire: m = 1 + modifier bits
+      rule: Shift1 Alt2 Ctrl4 Meta8 Super16 Hyper32, add one, duplicate physical modifier keys count once. Win can provide Meta;
+        Super/Hyper configurable. Do not conflate Kitty modifier assignments.
+      details:
+        bits:
+          shift: 1
+          alt: 2
+          ctrl: 4
+          meta: 8
+          super: 16
+          hyper: 32
+    - id: application-keys
+      section: Application keys
+      level: defined
+      wire: application keypad normal/VT220 mode
+      rule: VT220 application keypad distinguishes numeric keypad from editing keypad; non-VT220 may also send VT220 forms under
+        configured/escape-key conditions.
+      relations:
+      - kind: related
+        clause: dec_vt420.app-keypad
+        role: adopted-profile
+      - kind: related
+        clause: mintty_controls.escape-application
+        role: interaction
+    - id: number-symbol
+      section: Number and symbol keys
+      level: defined
+      wire: CSI 1 ; m final / ESC O m final
+      rule: Fallback modified number/symbol keys use CSI1;m; application uses SS3 with m. Final letters /o,*j,-m,+k,Enter M
+        (application only),comma l (CSI only in table),decimal n,digits0..9 p..y. Layout/control translation takes precedence.
+      details:
+        finals:
+          /: o
+          '*': j
+          '-': m
+          +: k
+          Enter: M
+          ',': l
+          .: n
+          0..9: p..y
+    - id: cursor-keys
+      section: Cursor keys
+      level: defined
+      wire: CSI final / ESC O final / CSI 1 ; m final
+      rule: Arrow finals A/B/C/D, Home H,End F. Normal/app cursor modes choose CSI/SS3 when unmodified; modified always CSI1;m;
+        Home/End treated as editing keys in VT220 mode.
+      relations:
+      - kind: related
+        clause: dec_vt420.cursor-key-mode
+        role: adopted-profile
+    - id: editing-keys
+      section: Editing keys
+      level: defined
+      wire: CSI n [ ; m ] ~
+      dispatch:
+      - CSI ~
+      rule: Insert2,Delete3,PageUp5,PageDown6,VT220 Home1 End4; modifiers second field. No application mode for these keys.
+      details:
+        selectors:
+          insert: 2
+          delete: 3
+          page-up: 5
+          page-down: 6
+          home-vt220: 1
+          end-vt220: 4
+    - id: function-keys
+      section: Function keys
+      level: defined
+      wire: ESC O P|Q|R|S / CSI 1 ; m P|Q|R|S / CSI n [ ; m ] ~
+      dispatch:
+      - CSI ~
+      rule: F1..4 SS3 P..S or modified CSI1;m; F5..20 use irregular VT220 selector table. In VT220 keyboard mode Ctrl adds10
+        to function number (e.g.Ctrl+F3→F13).
+      details:
+        f5-through-f20:
+        - 15
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 23
+        - 24
+        - 25
+        - 26
+        - 28
+        - 29
+        - 31
+        - 32
+        - 33
+        - 34
+    - id: scrollbar-relative
+      section: Application scrollbar events
+      level: defined
+      wire: 'CSI event [ ; m ] # e'
+      dispatch:
+      - 'CSI # e'
+      rule: Page up5,down6,line scroll up65,down66; includes wheel on scrollbar. Optional modifier code as other function keys.
+      relations:
+      - kind: related
+        clause: mintty_controls.application-scrollbar
+        role: reply
+      details:
+        events:
+          5: page up
+          6: page down
+          65: line up
+          66: line down
+    - id: scrollbar-absolute
+      section: Application scrollbar events
+      level: defined
+      wire: 'CSI pos # d'
+      dispatch:
+      - 'CSI # d'
+      rule: 'Absolute position report: dragging range1..size-height+1; context-menu top0/bottom full size (distinct from dragged
+        positions). After release viewport snaps back pending app update, avoiding feedback loop. Position is top of viewport,
+        not center.'
+      relations:
+      - kind: related
+        clause: mintty_controls.application-scrollbar
+        role: reply
+    - id: wheel
+      section: Mousewheel
+      level: defined
+      wire: cursor up/down or page up/down / private wheel modes
+      rule: Without full mouse tracking, alternate screen uses cursor keys or page keys. Windows wheel setting determines events
+        per notch or whole screen; Shift requests page scroll. Explicit Mintty modes control separate codes.
+      relations:
+      - kind: related
+        clause: mintty_controls.wheel-reporting
+        role: profile
+      - kind: related
+        clause: mintty_controls.wheel-application
+        role: profile
+  mintty_regis:
+    title: Mintty ReGIS modifications and limitations
+    author: Mintty project
+    authority: protocol-author
+    revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d
+    url: https://github.com/mintty/mintty/wiki/ReGIS
+    snapshot_sha256: 8a67c0f91ec0528c349abd2b4a345b16ba3ee5e77e7280729c3cfeddd461b9b0
+    scope: Pinned linked ReGIS page. Author-specific deviations, extensions and explicit unsupported features, not original
+      DEC ReGIS grammar or coverage.
+    clauses:
+    - id: incremental-limit
+      section: Unsupported or limited features
+      level: defined
+      wire: DCS 0 p ReGIS-data ST
+      rule: Incremental rendering and combining multiple graphics not supported; subsequent cursor/color settings and macro
+        definitions persist. Later output properties may interlace with refreshed older graphics per modified-features note.
+      relations:
+      - kind: related
+        clause: dec_vt3xx_graphics.regis-envelope
+        role: different-profile
+    - id: unsupported
+      section: Unsupported or limited features
+      level: defined
+      wire: ReGIS S/W/P/T/L/R subcommands
+      rule: 'Author explicit limits: most S except I(),E,T; W(F) planes; W(C) complement; P(P) pages; T(A) character-set selection;
+        T(S[]) T(U) T(H) T(M) size; T[] spacing; T(I) angles except italic; T(...,D) character tilt; L loading; R reports/input
+        not supported. Distinguish character tilt from supported string tilt.'
+      details:
+        supported_screen_subcommands:
+        - I()
+        - E
+        - T
+    - id: anchor-scale
+      section: Modified or extended features
+      level: defined
+      wire: ReGIS image positioning and scaling
+      rule: Inline cursor default, mode80 home; scale graphic to terminal width at output, then with window zoom. Gaps possible
+        for adjacent rendered pixels/lines.
+      relations:
+      - kind: related
+        clause: mintty_controls.regis-anchor
+        role: profile
+    - id: rgb
+      section: Modified or extended features
+      level: defined
+      wire: I(RrGgBb)
+      rule: RGB color values supported in addition to HLS; author example I(R50G20B90). Numeric ranges not stated here.
+    - id: shading
+      section: Modified or extended features
+      level: defined
+      wire: W(S) / W(S'x') / W(Pn,S1)
+      rule: Shading approximated by fills, some boundary failures; character shading mapped to hatch patterns and pattern brush
+        approximated by hatch brush styles.
+    - id: text
+      section: Modified or extended features
+      level: defined
+      wire: T(I-angle) / T(D) / T(W(E|C)) / T"text"
+      rule: Negative italic angle uses italic font; string tilt not limited45-degree steps; T(W(E)) or T(W(C)) writes background
+        color. Text current encoding supports Unicode wide and combining chars; LF may acquire CR due to tty onlcr. Character
+        tilt limitation separately retained.
+    - id: delay
+      section: Modified or extended features
+      level: defined
+      wire: S(T)
+      rule: Time delay accelerated by factor4 like xterm.
+    - id: macro-comment
+      section: Modified or extended features
+      level: defined
+      wire: '@ macrograph / # comment'
+      rule: Macrographs supported; source prints escaped hash as comment initiator through end of line. Exact ReGIS syntax and
+        macro limits still original grammar review.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -21547,3 +22926,48 @@ pending_reconciliation:
     - vte_termprops.progress-hint
     - vte_termprops.progress-hint-registry
     scope: OSC 666 ; vte.progress.hint=0 ST
+- id: decarr-mintty-rate-vs-dec-bands
+  status: material-originating-extension-conflict
+  wire: CSI Ps - p
+  original_author_sources:
+  - clause: dec_vt520.repeat-rate
+    meaning: DEC0..5 off,6..15 ten cps,16..30 thirty cps.
+  - clause: mintty_controls.repeat-rate
+    meaning: Mintty direct cps1..30; zero unlimited, repeat enable separate.
+  question: Select exact repeat-rate meaning and scope after source comparison; no new input scheduling policy.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt520.repeat-rate
+    - mintty_controls.repeat-rate
+    scope: CSI Ps - p
+- id: decscs-mintty-zero-vs-dec-default
+  status: material-originating-extension-conflict
+  wire: CSI 2 ; 0 * r
+  original_author_sources:
+  - clause: dec_vt520.communication-speed
+    meaning: Original speed0/omitted means receive follows transmit.
+  - clause: mintty_controls.display-speed
+    meaning: Explicit0 unlimited, omitted configured speed.
+  question: Resolve original line semantics versus display throttling profile; no timing architecture selected.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt520.communication-speed
+    - mintty_controls.display-speed
+    scope: CSI 2 ; 0 * r
+- id: mintty-ansi-query-index-omission
+  status: material-originating-extension-conflict
+  wire: OSC 7704 ; index ; ? ST
+  original_author_sources:
+  - clause: mintty_controls.ansi-colors
+    meaning: Published query replies in corresponding one/two-value setting form (which includes index).
+  - clause: mintty_controls.ansi-color-reply-observation
+    meaning: Pinned code emits colors without index.
+  question: Determine exact author-intended reply or document observed defect; no selected response grammar.
+  decision: null
+  applies_to:
+    clauses:
+    - mintty_controls.ansi-color-reply-observation
+    - mintty_controls.ansi-colors
+    scope: OSC 7704 ; index ; ? ST
