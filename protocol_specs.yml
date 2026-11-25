@@ -4728,6 +4728,12 @@ specifications:
           sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
           location: Terminal::OSC ignored case list
           meaning: OSC52 named but grouped into explicit ignored branch. No clipboard command support inferred.
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/vt-parser.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
+          location: accumulate_st_terminated_esc_code; dispatch_osc
+          meaning: Long unterminated OSC52 split internally by synthetic 52;; prefix and negative callback code -52. This is
+            internal streaming adaptation, not new wire syntax.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences own latest clipboard, attention and typed reply FIFO
@@ -5037,6 +5043,12 @@ specifications:
           meaning: VTE routes CSI ? m to DECSGR collector, not xterm query. ?4 and ?5 unsupported (no mutation/reply); omitted/0
             resets SGR attributes,6 sets overline,26 clears overline. Existing printer-vs-keyboard decision retained; no new
             printer profile selected.
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/csi.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: a9e028dd0752210842d688abce4323d3ac118e1032e35305dbce13c3447b4d61
+          location: csi_dispatch ?m
+          meaning: Returns resource4 mode2 or1 (not0); resource0 returns0 and1/2 return1. Distinct from complete xterm resource
+            grammar.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm private DECSGR baseline collides with native modifyOtherKeys query
@@ -7139,6 +7151,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6359-6367,2377-2423
+        adopter_observations:
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/csi.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: a9e028dd0752210842d688abce4323d3ac118e1032e35305dbce13c3447b4d61
+          location: csi_dispatch >n
+          meaning: Resource4 disable reverts to mode1 rather than0.
     - id: version-report
       section: Functions using CSI / XTVERSION, lines 1525-1528
       level: defined
@@ -8235,6 +8253,11 @@ specifications:
           location: KEYBOARD_MODE_STACK_MAX_DEPTH; push_keyboard_mode; pop_keyboard_modes
           meaning: 4096 entry capacity, oldest eviction, excessive pop truncates empty; config gates. Full bank lifetime not
             qualified.
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/vt-parser.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
+          location: dispatch_csi u
+          meaning: Push accepts at most one flag parameter, pop at most one count; separate query/set.
     - id: disambiguate
       section: Disambiguate escape codes
       level: defined
@@ -8886,6 +8909,13 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.color_push
+      evidence:
+        adopter_observations:
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/vt-parser.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
+          location: dispatch_osc 30001
+          meaning: Already indexed original; pinned route calls screen_push_colors index0, payload not interpreted.
     - id: pop
       section: Saving and restoring colors
       level: defined
@@ -8899,6 +8929,13 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.color_pop
+      evidence:
+        adopter_observations:
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/vt-parser.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
+          location: dispatch_osc 30101
+          meaning: Pinned route calls screen_pop_colors index0; shared xterm color-stack backend, no extra protocol invented.
     - id: set
       section: Setting and querying colors
       level: defined
@@ -10466,6 +10503,18 @@ specifications:
           meaning: Shared SGR collector applied twice to unset/set attrs to obtain masks preserving nonvisual attrs. Missing
             all rendition selectors defaults to reset in collector. Existing accepted coordinate-only no-op not changed; no
             full geometry equivalence.
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/csi.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: a9e028dd0752210842d688abce4323d3ac118e1032e35305dbce13c3447b4d61
+          location: csi_dispatch $r
+          meaning: Explicit rendition operands only, subset0/1/4/5/7/22/24/25/27; coordinate-only loop changes no visual attribute.
+            Existing accepted selection retained, not full shared-SGR support.
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Functions.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 8447ed9fb649289a153e293bdb20768734bdbaa3a1bd70022110e96c3f6edf46
+          location: DECCARA registry
+          meaning: Minimum5 arguments; coordinate-only form not admitted by this registry. No complete selector or malformed
+            proof.
       test_locations:
       - file: howl-vt/src/screen/main_test.zig
         test: 'screen: DECCARA stream mode spans full middle rows'
@@ -12855,6 +12904,11 @@ specifications:
           location: set_current_shell_integration_mode
           meaning: A/B/C set prompt/command/normal insertion attrs; D deliberately ignored, no N/P/I branch. No full original
             or proposal adoption.
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/osc.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: 1da9ac70169898b99ffaad8a0db32b577eda504c63d129a60fc447155fe8f315
+          location: osc_dispatch133
+          meaning: A marks current row, B only logs, C/D record column starts/ends. Does not establish full original shell semantics.
     - id: prompt-end
       section: Shell Integration/FinalTerm / FTCS_COMMAND_START
       level: defined
@@ -18301,6 +18355,13 @@ specifications:
       dispatch:
       - CSI > t
       rule: Pl=1 logical lines,0 visual; Pr line count.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Functions.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 8447ed9fb649289a153e293bdb20768734bdbaa3a1bd70022110e96c3f6edf46
+          location: XTCAPTURE definition
+          meaning: Actual CSI >t registry0..2 args. No complete capture payload/lifetime proof.
     - id: response
       section: Response
       level: defined
@@ -18461,6 +18522,13 @@ specifications:
       dispatch:
       - CSI > M
       rule: Mark current line for terminal navigation; host presentation not specified here.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: dfc3a47c2b2182bf9da4187f9b09918df06f0bb5acf44bc7b1773c2ea2f8f64f
+          location: Screen::apply case SETMARK
+          meaning: CSI >M deprecated with instruction migrate OSC133, still calls setMark.
   foot_extensions:
     title: Foot-author extension definitions
     author: Foot project
@@ -18479,6 +18547,14 @@ specifications:
       - CSI ? 737769 h
       - CSI ? 737769 l
       rule: Input method editor enable/disable mode; exact lifetime/query semantics require further source qualification.
+      evidence:
+        adopter_observations:
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/csi.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: a9e028dd0752210842d688abce4323d3ac118e1032e35305dbce13c3447b4d61
+          location: decset_decrst/decrqm 737769
+          meaning: SET enables IME, RESET disables and clears URL-mode re-enable flag; DECRQM returns actual enabled state.
+            Host platform availability separate.
     - id: app-id
       section: lines 790-797
       level: defined
@@ -18486,6 +18562,14 @@ specifications:
       dispatch:
       - OSC 176
       rule: Set application ID; empty value restores default.
+      evidence:
+        adopter_observations:
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/osc.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: 1da9ac70169898b99ffaad8a0db32b577eda504c63d129a60fc447155fe8f315
+          location: osc_dispatch 176
+          meaning: Query ? is recognized but disabled (#1894); logs ignored. Set still calls term_set_app_id; do not infer query
+            support.
     - id: flash
       section: lines 790-797
       level: defined
@@ -18493,6 +18577,13 @@ specifications:
       dispatch:
       - OSC 555
       rule: Flash terminal.
+      evidence:
+        adopter_observations:
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/osc.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: 1da9ac70169898b99ffaad8a0db32b577eda504c63d129a60fc447155fe8f315
+          location: osc_dispatch 555
+          meaning: Routes to osc_flash. No duration or rendering promise inferred.
   rio_glyphs:
     title: Rio Glyph Protocol
     author: Raphael Amorim / Rio
@@ -19714,6 +19805,12 @@ specifications:
           url: https://gitlab.com/api/v4/projects/gnachman%2Fiterm2/wikis/synchronized-updates-spec
           sha256: dfbef594f71d893c37aa8b56c1480dc255d9ed94d49a5736e8fba000edfad17d
           meaning: API content is byte-identical to raw author wiki Markdown.
+        adopter_observations:
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/dcs.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: 4110904e6a7bac8faa8db6d7b9bb76fcd927a6cf2490dd95ad66478b2ecc3ef2
+          location: dcs_hook =1s
+          meaning: Unhook callback enables app sync; =2s disables. No new payload semantics.
     - id: end
       section: Control Sequence / End synchronized update (ESU)
       level: defined
@@ -25747,6 +25844,13 @@ specifications:
       - CSI ? 2048 l
       rule: Set enables unsolicited text-area resize reports; reset disables. Every SET, including repeated SET while already
         enabled, immediately reports current size.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/screen.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: de95ad6125e66849b37365234ec4399ace7b2bdb297b4067d5200b219a055341
+          location: set_mode_from_const INBAND_RESIZE_NOTIFICATION
+          meaning: Every SET invokes notify_child_of_resize callback, RESET only flag; actual report geometry/timing not proven.
     - id: detection
       section: Detection and Enabling
       level: defined
@@ -25829,6 +25933,18 @@ specifications:
       - kind: related
         clause: xterm_controls.focus
         role: independent-mode
+      evidence:
+        adopter_observations:
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/csi.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: a9e028dd0752210842d688abce4323d3ac118e1032e35305dbce13c3447b4d61
+          location: decset_decrst2033
+          meaning: Every SET enables and sends visibility report; RESET disables.
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/screen.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: de95ad6125e66849b37365234ec4399ace7b2bdb297b4067d5200b219a055341
+          location: set_mode_from_const VISIBILITY_REPORTS
+          meaning: Every SET calls send_visibility_report; RESET disables.
     - id: detection
       section: Detection and Enabling
       level: defined
@@ -25924,6 +26040,12 @@ specifications:
           location: _dec_private_mode_status selector2027
           meaning: Reports permanently reset4, explicitly says grapheme clustering unimplemented; no actual cluster support
             claim.
+        - url: https://codeberg.org/dnkl/foot/src/commit/cb2771788998f6a6288e2de8273c55a8214551e0/csi.c
+          revision: cb2771788998f6a6288e2de8273c55a8214551e0
+          sha256: a9e028dd0752210842d688abce4323d3ac118e1032e35305dbce13c3447b4d61
+          location: decset_decrst/decrqm2027
+          meaning: Build-gated grapheme shaping, mode report tied to configured width method; do not infer full Unicode Core
+            semantics.
     - id: clusters
       section: Semantics / Grapheme Cluster
       level: defined
@@ -27019,6 +27141,465 @@ specifications:
           sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
           location: attrs_from_sgr_parameters
           meaning: Maps selectors to NamedColor::BrightBlack through BrightWhite.
+  good_image_protocol:
+    title: VT Good Image Protocol, draft revision 0
+    author: Christian Parpart / Contour project
+    authority: protocol-author
+    revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+    snapshot_sha256: 5791c76fd0135a53bfbd2eedb57b88cabd8eaf02031f5fa1410121c5d8079c9c
+    scope: Author LaTeX proposal at exact git revision, still draft. Covers syntax, image pool, geometry, status and interoperability.
+      Earlier terminal-wg issue26 proposal chronology not recovered; README alternative spelling and pinned implementation observations
+      are separately qualified.
+    clauses:
+    - id: envelope
+      section: Syntax
+      level: defined
+      wire: DCS ! g o=operation[,headers][;body] ST
+      rule: Intermediate ! (0x21), final g (0x67). Operation header o=u upload,r render,s upload+render,d release,q resource
+        query. Unknown/missing operation silently ignored through entire ST; no response unless status requested as defined
+        for operation. Unknown future parameters should be safely ignored. No claim of existing assignments beyond author proposal.
+      dispatch:
+      - DCS ! g
+      details:
+        operations:
+          u: upload
+          r: render
+          s: oneshot
+          d: release
+          q: query
+    - id: message
+      section: Syntax / Message Format
+      level: defined
+      wire: headers [ ; body ]
+      rule: Comma-separated key=value entries; semicolon separates optional body, superfluous commas ignored. Duplicate names
+        last wins. Bare name is true flag. Prefix ! to value or body denotes Base64, mandatory for binary RGB/RGBA/PNG body
+        to avoid interpreting controls. OSC use of generic message format retains numeric selector and semicolon. Exact invalid
+        Base64 recovery not fully specified.
+      relations:
+      - kind: related
+        clause: good_image_protocol.envelope
+        role: payload
+    - id: message-limits
+      section: Syntax / Message Format / Resource Requirements
+      level: defined
+      wire: message parser resource minimums
+      rule: Parser must accommodate at least64 bytes key,512 bytes value,32 header pairs and16 megabyte body. Limits at least
+        these values; exact encoded-versus-decoded body accounting not explicitly stated. Bounds not unlimited allocation. Incremental
+        Base64 decoding recommended, not an architecture mandate.
+      details:
+        key_min_bytes: 64
+        value_min_bytes: 512
+        header_pairs_min: 32
+        body_min: 16 Megabyte
+    - id: detection
+      section: Syntax / Feature Detection
+      level: defined
+      wire: CSI c / CSI ? ... ; 90 ... c
+      rule: Advertise support in DA1 feature code90. Earlier reference to code60 superseded by exact April12 revision commit.
+        Feature availability not implied by other graphics protocol support.
+      relations:
+      - kind: extends
+        clause: ecma48.da
+      evidence:
+        additional_sources:
+        - url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/README.md
+          revision: 83e4827d024c227661077b502bdb88ed12706174
+          sha256: 4ef08e40ed96045751129f7994d0c15d20d0865d487804c31c2675c70e0daa9e
+    - id: resource-minimums
+      section: Terminal Emulator Requirements; Querying Resource Limits
+      level: defined
+      wire: GIP image pool resource requirements
+      rule: At least64 simultaneously stored images and4 MB uncompressed RGBA per image. Upper bounds required; author recommends128
+        images on desktop. Report limits at or above minima. Preserve exact unit wording rather than assert MiB. Not a requirement
+        for all memory to be allocated eagerly.
+      details:
+        minimum_images: 64
+        minimum_uncompressed_per_image: 4 MB
+        recommended_desktop_images: 128
+    - id: query
+      section: Syntax / Query Resource Limits
+      level: defined
+      wire: DCS ! g o=q ST / DCS ! g s=8,m=Pm,b=Pb,w=Pw,h=Ph ST
+      rule: 'Return all limits in one response: m concurrent images, b maximum uncompressed RGBA bytes per image, w/h max pixel
+        width/height. s=8 distinguishes resource report. No s flag required on query.'
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.resource-minimums
+        role: reply
+    - id: upload
+      section: Semantics / Upload Image; Syntax / Upload Image
+      level: defined
+      wire: DCS ! g o=u,n=name,f=format[,w=width,h=height][,s];!base64 ST
+      rule: Upload named resource without visible output. f required; omit silently ignored. w/h required if not self-describing;
+        name constraints separate. Empty body invalid, status2 if s present. Status0 success,2 bad format/corrupt/dimension
+        mismatch,3 resource limit. Source says invalid name silently ignored; exact interaction with s ambiguous. Upload does
+        not create placement.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.message
+        role: payload
+    - id: name
+      section: Semantics / Image Name Constraints
+      level: defined
+      wire: n=identifier
+      rule: Name1..512 ASCII letters/digits/underscore. Invalid names silently ignored in source paragraph. Names are lookup
+        associations not permanent identity of placed cells.
+      relations:
+      - kind: related
+        clause: good_image_protocol.upload
+        role: admission
+      details:
+        min_length: 1
+        max_length: 512
+        alphabet: ASCII A-Z a-z 0-9 underscore
+    - id: formats
+      section: Supported Image Formats; Data Validation
+      level: defined
+      wire: f=1|2|3|4
+      rule: 1 auto,2 raw RGB,3 raw RGBA,4 PNG. Channels8 bits. Raw data exactly width*height*3 or*4 bytes; positive dimensions
+        required. PNG self-describes width/height. Auto first tests PNG magic then uses declared dimensions and byte count to
+        distinguish RGB/RGBA; undetectable invalid. Future auto formats possible. Validate decoded resource bounds and format
+        rather than trust header dimensions.
+      details:
+        formats:
+          1: Auto
+          2: RGB
+          3: RGBA
+          4: PNG
+    - id: render
+      section: Semantics / Render Image; Syntax / Render Image
+      level: defined
+      wire: DCS ! g o=r,n=name[,r=rows,c=cols,a=alignment,z=resize,x=x,y=y,w=width,h=height,u,s,l,L=layer] ST
+      rule: Render named image at current cursor top-left. At least one of r/c >0, missing/zero other computed preserving aspect
+        ratio, both zero/omitted silently ignored for render. x/y default0 pixel offsets; w/h default full source dimensions;
+        subregion may clip. s requests status. No payload body needed. Unknown name not drawn; status1 if requested. Exact rounding
+        when deriving single dimension not specified.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.upload
+        role: resource
+    - id: resize-alignment
+      section: Semantics / Resize Policy; Alignment Policy
+      level: defined
+      wire: z=0..3 / a=1..9
+      rule: Resize0 noresize default;1 fit preserve aspect pad,2 fill preserve aspect crop,3 stretch ignore aspect and alignment.
+        Alignment numbered row-major top/middle/bottom × start/center/end, default5 middlecenter. Fill padding with current
+        SGR background (screen reverse changes padding, not image).
+      details:
+        resize:
+          0: no resize
+          1: fit
+          2: fill
+          3: stretch
+        alignment:
+          1: top-left
+          2: top-center
+          3: top-right
+          4: middle-left
+          5: middle-center
+          6: middle-right
+          7: bottom-left
+          8: bottom-center
+          9: bottom-right
+    - id: placement
+      section: Semantics / Render Image; Interoperability / Cursor and margin
+      level: defined
+      wire: L=0|1|2 / l / u
+      rule: Three layers:0 behind replaces SGR background,1 default replace glyphs,2 above overlay. l auto-scroll false by default;
+        clip to page/margins if off, otherwise scroll up as needed. u update cursor false by default; when on go to next row
+        below rendered image, col1 or DECOM left margin after scroll. Source states no rendering outside active horizontal/vertical
+        margins. Security section recommends clamping row/col requests to page size while scrolling prose allows taller than
+        page; keep scope distinction unresolved, no invented geometry algorithm.
+      relations:
+      - kind: related
+        clause: dec_vt420.origin-mode
+        role: placement
+      - kind: related
+        clause: dec_vt420.top-bottom-margins
+        role: clipping
+      - kind: related
+        clause: dec_vt420.left-right-margins
+        role: clipping
+    - id: oneshot
+      section: Semantics / Upload and Render Image; Syntax
+      level: defined
+      wire: DCS ! g o=s,f=format[,w=width,h=height,r=rows,c=cols,a=alignment,z=resize,u,s,l,L=layer];!base64 ST
+      rule: Upload and render in one command without reusable name or source-offset subregion fields. Same placement defaults;
+        if both r/c zero or omitted MAY derive both from pixel and cell sizes rounded up, otherwise ignore. If one given derive
+        other preserving aspect. With l and u position after all scroll. Rendered fragments retain resource, no name association.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.upload
+        role: payload
+      - kind: related
+        clause: good_image_protocol.render
+        role: placement
+    - id: release
+      section: Semantics / Release Image; Syntax
+      level: defined
+      wire: DCS ! g o=d,n=name ST
+      rule: Remove name association, decrement its reference; do not erase rendered cells. Name can be reused; existing placements
+        continue to refer to old image. Release syntax has no documented request-status parameter or success reply.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.upload
+        role: lifetime
+    - id: status
+      section: Syntax / Upload and Render response tables
+      level: defined
+      wire: DCS ! g s=0|1|2|3 ST
+      rule: Status0 success,1 named render resource missing,2 invalid image data,3 limit exceeded. Query separate s8 record.
+        No ordinary operation reply unless request-status enabled, query excepted. Parameter table says presence enables status,
+        prose also mentions false; source does not give explicit false token encoding. Preserve flag ambiguity.
+      dispatch:
+      - DCS ! g
+      details:
+        status:
+          0: success
+          1: name not found
+          2: invalid image
+          3: resource limit
+          8: resource query
+    - id: pool-lifetime
+      section: Semantics / Storage Management
+      level: defined
+      wire: upload/replacement/render/release lifetime
+      rule: Name and placed-cell references retain images. Reupload same name releases old association, preserves placed old
+        fragments; new renders use new resource. Optional content dedup by hash. Removing cell decrements reference, zero eligible
+        eviction. FIFO recommended, LRU acceptable; avoid evicting referenced images, if unavoidable show placeholder/empty.
+        Oversized image fails. Shared storage across primary/alternate screens; not shared across unrelated sessions by implication.
+      relations:
+      - kind: related
+        clause: good_image_protocol.release
+        role: lifetime
+      - kind: related
+        clause: good_image_protocol.resource-minimums
+        role: bounds
+    - id: cell-ownership
+      section: Interoperability with other VT sequences
+      level: defined
+      wire: rendered image fragments
+      rule: Fragments bound to cells, move with cell edits; deletion/erase clears references, insertion may split image. Text
+        written into ReplaceText layer replaces fragment; behind/above behavior distinguished, not all layers necessarily erased
+        by ordinary text replacement. Alpha blends into cell rendition background with reverse-video; active hyperlink applied
+        to entire rendered image. No defined special reflow algorithm; image cells follow text reflow behavior. Reset/erase
+        scope only as documented.
+      relations:
+      - kind: related
+        clause: good_image_protocol.placement
+        role: ownership
+      - kind: related
+        clause: osc8.open
+        role: hyperlink
+    - id: security
+      section: Security Considerations; Requirements
+      level: defined
+      wire: image data and limits
+      rule: Bound concurrent uploads, image pixels and page dimensions, reject or clip invalid geometry as source specifies.
+        Proxy can forward without decoding; endpoint validates image data. No local-file dependency. Draft wants synchronous
+        operations by default, future async explicitly requested; implementation guidance not a Howl architectural selection.
+    - id: readme-older-envelope
+      section: README Protocol Synopsis (same repository revision)
+      level: defined
+      wire: DCS u|r|s|d message ST
+      rule: README still lists four distinct DCS finals u/r/s/d and examples using old envelope without o header. Exact LaTeX
+        draft and pinned Contour registry use DCS ! g and o. Record stale published synopsis independently; do not claim either
+        alias accepted.
+      evidence:
+        additional_sources:
+        - url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/README.md
+          revision: 83e4827d024c227661077b502bdb88ed12706174
+          sha256: 4ef08e40ed96045751129f7994d0c15d20d0865d487804c31c2675c70e0daa9e
+  contour_dispatch_profiles:
+    title: Contour pinned implementation-specific dispatch observations
+    author: Contour project
+    authority: author-implementation
+    revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+    snapshot_sha256: dfc3a47c2b2182bf9da4187f9b09918df06f0bb5acf44bc7b1773c2ea2f8f64f
+    scope: Code-only profiles and experimental GIP adoption at exact Contour revision. No inferred separate originating normative
+      contract, host authorization or complete coverage.
+    clauses:
+    - id: terminal-profile
+      section: Functions.h STP; Screen::hookSTP; TerminalSession::setTerminalProfile; example vt-set-profile
+      level: defined
+      wire: DCS $ p name ST
+      rule: Experimental profile-name request collected from DCS payload; Terminal forwards name to event listener, GUI session
+        posts activation if display present, unknown profile logs and returns. Header collision with DEC DECRSTS when parameters
+        omitted; Contour registers zero-argument STP. No new host config permission or DEC state restore semantics inferred.
+      dispatch:
+      - DCS $ p
+      relations:
+      - kind: conflicts
+        clause: dec_vt420.terminal-state-restore
+      evidence:
+        additional_sources:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Functions.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 8447ed9fb649289a153e293bdb20768734bdbaa3a1bd70022110e96c3f6edf46
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/examples/vt-set-profile
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: a8f4e01b413122db2fab0ecacd13e2d5e2106ce762f442596f265dad14bfbc51
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Terminal.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 0efd601f8536b5a5fd722439de443d3457c9ef943521d9243b4ee942b207d237
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/contour/TerminalSession.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 7ecf7cd30ef9fdcff6b8a08c8b14c4fdf542bd877041f32cca6f813bcd7e78c5
+    - id: inspect-state
+      section: Functions.h DUMPSTATE; Screen::inspect; TerminalSession::inspect
+      level: defined
+      wire: OSC 888 ; payload ST
+      rule: Pinned route calls inspect() without interpreting payload, forwards to display inspection and may notify manager
+        of an already-closed session. Code observation only; exact host inspect output and empty-selector admission not established.
+        No PTY state-report reply promised.
+      dispatch:
+      - OSC 888
+      evidence:
+        additional_sources:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Functions.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 8447ed9fb649289a153e293bdb20768734bdbaa3a1bd70022110e96c3f6edf46
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Terminal.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 0efd601f8536b5a5fd722439de443d3457c9ef943521d9243b4ee942b207d237
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/contour/TerminalSession.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 7ecf7cd30ef9fdcff6b8a08c8b14c4fdf542bd877041f32cca6f813bcd7e78c5
+    - id: gip-parser-profile
+      section: MessageParser.cpp/h; Screen::hookGoodImageProtocol
+      level: defined
+      wire: DCS ! g message ST
+      rule: Experimental setting gate. Parses comma headers and optional body, duplicate keys overwrite. Fixed limits64/512/32/16*1024*1024,
+        excess key/value/body bytes are truncated by collectors; ! Base64 decoded at flush/finalize, no explicit binary-body
+        encoding rejection shown. First char of o selects operation rather than checking entire value. No full overlimit/cancellation
+        proof.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.message
+        role: implementation-observation
+      - kind: related
+        clause: good_image_protocol.message-limits
+        role: implementation-observation
+      details:
+        max_key: 64
+        max_value: 512
+        max_pairs: 32
+        max_body_encoded: 16777216
+      evidence:
+        additional_sources:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/MessageParser.cpp
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 79ce89bf6142786e4a1ca46736e21a5667530c753255c7877ecd4d70f5e3a882
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/MessageParser.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: c4b3dd73cc0699ca09404f68ce41b96e69ffb7e37eb16e4863ed2aaa9d6bc872
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Functions.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 8447ed9fb649289a153e293bdb20768734bdbaa3a1bd70022110e96c3f6edf46
+    - id: gip-upload-profile
+      section: Screen::handleGipUpload, toImageFormat, uploadImage
+      level: defined
+      wire: DCS ! g o=u ... ST
+      rule: Missing f defaults Auto, invalid name/format/raw length triggers status2 when s present, otherwise silently ignored.
+        Validated PNG path invokes decoder; uploadImage returns void and logs decode failure while caller sends status0 after
+        call. No explicit status3 path in handler. Observation of source control flow, not execution evidence or universal format
+        failure behavior.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.upload
+        role: implementation-observation
+      - kind: related
+        clause: good_image_protocol.formats
+        role: implementation-observation
+    - id: gip-render-query-profile
+      section: Screen::parseGipRenderParams, handleGipRender/Query/Oneshot
+      level: defined
+      wire: DCS ! g o=r|s|q ... ST
+      rule: r/c/w/h default0, offsets default0, alignment5/resize0/layer1 fallback; l/u/s tested by presence. Query emits s8,m100,b=maxWidth*maxHeight*4,w,h
+        then flushes. Named render status reflects name lookup; oneshot defaults RGB when invalid explicit format becomes nullopt
+        after auto-resolution branch, success flag determines0/2. Actual clipping/resize/margin/image lifetime and advertised
+        resource enforcement not proved by these entrypoints.
+      dispatch:
+      - DCS ! g
+      relations:
+      - kind: related
+        clause: good_image_protocol.query
+        role: implementation-observation
+      - kind: related
+        clause: good_image_protocol.render
+        role: implementation-observation
+      - kind: related
+        clause: good_image_protocol.oneshot
+        role: implementation-observation
+    - id: checksum-header-profile
+      section: Functions.h DECRQCRA; Screen::DECRQCRA
+      level: defined
+      wire: CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr $ y
+      rule: Pinned registry uses dollar intermediate rather than original star in DECRQCRA. Handler ignores page, sums UTF8
+        bytes in addressed cells modulo65536 and replies DCS Pid !~ four uppercase hex digits ST. Geometry bounds not independently
+        exercised. No new canonical alias selected.
+      dispatch:
+      - CSI $ y
+      relations:
+      - kind: related
+        clause: dec_vt420.request-rectangle-checksum
+        role: alternate-header-observation
+      evidence:
+        additional_sources:
+        - url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Functions.h
+          revision: 829ff29e1d19053e83952fa6ffd48679abd53e4a
+          sha256: 8447ed9fb649289a153e293bdb20768734bdbaa3a1bd70022110e96c3f6edf46
+  kitty_host_input_profile:
+    title: Kitty host-side termios signal-key mode observation
+    author: Kitty project
+    authority: author-implementation
+    revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/modes.h
+    snapshot_sha256: 1c89271ac0a220547b31d2cc909ade9e063384f81f5ae21eb8e6a776878217ac
+    scope: Pinned code-only private mode; no originating public specification recovered. Host/PTY behavior recorded separately
+      from VT semantics.
+    clauses:
+    - id: termios-signal-keys
+      section: modes.h HANDLE_TERMIOS_SIGNALS; screen.c set_mode_from_const; keys.c; child.py
+      level: defined
+      wire: CSI ? 19997 h / CSI ? 19997 l
+      rule: Set/reset enables special handling of single-byte encoded key events. When set, host callback examines actual child
+        termios ISIG and VINTR/VSUSP/VQUIT; matching key may cause signal to foreground process group instead of writing byte.
+        Nonmatching/unavailable callback falls through to normal input. No arbitrary signal selector, no host action performed
+        or authorized; exact reset, report, platform and other key-event boundaries remain open.
+      dispatch:
+      - CSI ? 19997 h
+      - CSI ? 19997 l
+      evidence:
+        additional_sources:
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/screen.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: de95ad6125e66849b37365234ec4399ace7b2bdb297b4067d5200b219a055341
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/keys.c
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: 26951ae86e6f2f34caf3342171ea576816f000a94335c8907b9e411fbf4711db
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/child.py
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: 23f9a1eba4e864f15140f787fda8f6abe169e4d1ba4a47c79581a1d360014972
+        - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/window.py
+          revision: a79f376b85fd95e3dfd0589877123996bacd4184
+          sha256: 91f5bbabcb55e0482b7f304a2803f5d33166fd271ba9a81caf73f4da512acb20
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -30125,3 +30706,70 @@ pending_reconciliation:
     - dec_vt520.secure-reset
     - dec_vt520.secure-reset-confirmation
     scope: Explicit zero Secure Reset token and response; no host reset policy selected.
+- id: gip-readme-vs-draft-envelope
+  status: material-originating-extension-conflict
+  wire: DCS u/r/s/d versus DCS ! g
+  original_author_sources:
+  - clause: good_image_protocol.readme-older-envelope
+    meaning: README lists separate DCS final bytes.
+  - clause: good_image_protocol.envelope
+    meaning: Exact draft uses !g and operation header.
+  - clause: contour_dispatch_profiles.gip-parser-profile
+    meaning: Pinned Contour route uses !g.
+  question: Trace earlier working-group proposal and revision chronology; do not assume legacy finals are accepted.
+  decision: null
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.gip-parser-profile
+    - good_image_protocol.envelope
+    - good_image_protocol.readme-older-envelope
+    scope: DCS u/r/s/d versus DCS ! g
+- id: gip-required-format-vs-default
+  status: material-originating-extension-conflict
+  wire: DCS ! g o=u without f
+  original_author_sources:
+  - clause: good_image_protocol.upload
+    meaning: Author draft explicitly requires f, missing silently ignored.
+  - clause: contour_dispatch_profiles.gip-upload-profile
+    meaning: Pinned toImageFormat defaults Auto if absent.
+  question: Select admission and response for omitted/invalid format, including oneshot, only after source reconciliation.
+  decision: null
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.gip-upload-profile
+    - good_image_protocol.upload
+    scope: DCS ! g o=u without f
+- id: gip-upload-status-validation
+  status: material-originating-extension-conflict
+  wire: DCS ! g o=u ... ,s;body ST
+  original_author_sources:
+  - clause: good_image_protocol.upload
+    meaning: Status0 requires upload success,2 invalid including corrupt data,3 resource limit.
+  - clause: good_image_protocol.name
+    meaning: Invalid names silently ignored in source paragraph.
+  - clause: contour_dispatch_profiles.gip-upload-profile
+    meaning: Invalid name with s returns2; PNG decode failure can log without preventing status0; no explicit limit status3.
+  question: Resolve invalid-name status and successful resource admission, preserving draft and pinned implementation distinction.
+    No policy choice.
+  decision: null
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.gip-upload-profile
+    - good_image_protocol.name
+    - good_image_protocol.upload
+    scope: DCS ! g o=u ... ,s;body ST
+- id: contour-stp-vs-dec-state-restore
+  status: material-originating-extension-conflict
+  wire: DCS $ p payload ST
+  original_author_sources:
+  - clause: dec_vt420.terminal-state-restore
+    meaning: Original DEC restores specified state, omitted/zero invalid.
+  - clause: contour_dispatch_profiles.terminal-profile
+    meaning: Contour zero-param header requests host profile name.
+  question: Determine exact grammar separation and profile scope; do not interpret malformed DEC restore as a host mutation.
+  decision: null
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.terminal-profile
+    - dec_vt420.terminal-state-restore
+    scope: DCS $ p payload ST
