@@ -3084,19 +3084,22 @@ specifications:
         - kitty.osc.hyperlink
   rex_status:
     title: Rex Program Status Protocol (OSC 7501)
-    author: Mitchell Hashimoto / Rex
+    author: Rex / Superlogical (publisher; individual authorship not established)
     authority: protocol-author
     revision: 0.4, 2026-10-10
     url: https://www.superlogical.com/rex/docs/build/program-status
-    scope: Complete numbered OSC 7501 protocol sections; host UI is intentionally unspecified
+    scope: Published revision 0.4, all wire syntax, record and presentation/security rules. Prior individual attribution Mitchell
+      Hashimoto was not substantiated by the preserved author page. Protocol presentation remains host-owned.
     clauses:
     - id: syntax
       section: Syntax
       level: defined
-      wire: OSC 7501 ; key=value[:key=value...] ST
+      wire: OSC 7501 ; pairs (BEL | ST)
       dispatch:
       - OSC 7501
-      rule: A report is colon-delimited lowercase key=value pairs using the specified value alphabet.
+      rule: Reports consist of colon-separated key=value pairs. Keys are lowercase ASCII letters; values use the source alphabet.
+        Trim whitespace around keys and values. OSC is ESC ], and termination is BEL or ESC backslash. Scope is one terminal
+        attached to one PTY.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3108,6 +3111,13 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      details:
+        grammar:
+          pairs: pair (":" pair)*
+          pair: key "=" value
+          key: '[a-z]+'
+          value: '[A-Za-z0-9_.,+/=-]*'
+        framing: 7-bit OSC; source does not define raw C1 acceptance here.
     - id: unknown-keys
       section: Syntax
       level: must
@@ -3128,7 +3138,8 @@ specifications:
       section: Syntax
       level: must
       wire: invalid/base64/control-text
-      rule: Discard a whole report if bounds, base64 decoding or decoded text control-character restrictions are violated.
+      rule: Reject the entire report without applying any state if it exceeds a source limit, contains invalid Base64 or forbidden
+        control characters in decoded text. Validate every pair before modifying a stored record.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3147,7 +3158,9 @@ specifications:
       section: Records and ids
       level: defined
       wire: id=segment[/segment...]
-      rule: One record per id, absent id addresses the root, and each accepted report replaces rather than merges that record.
+      rule: Each accepted report wholly replaces the addressed record, including removing fields absent from the new report.
+        Absent id addresses root. Slash-separated child records may exist without their ancestors; root and children coexist.
+        Use ancestry for clearing and app inheritance; grouping is optional.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3159,6 +3172,9 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      details:
+        id_grammar: segment ("/" segment)*
+        segment: '[A-Za-z0-9_.+-]{1,32}'
     - id: id-rejection
       section: Records and ids
       level: defined
@@ -3198,7 +3214,9 @@ specifications:
       section: States
       level: defined
       wire: state=idle|working|done|blocked|error
-      rule: The five states have distinct meanings; unknown or absent states invalidate the entire report.
+      rule: A report must contain a recognized state. Idle is at rest, working running, done finished with unseen result, blocked
+        needs user input, error failed and stopped. Clear is a separate deletion operation, not a retained state. Missing or
+        unknown state ignores the report.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3214,7 +3232,9 @@ specifications:
       section: States
       level: must
       wire: process-exited / OSC 133 A
-      rule: Drop working and blocked records on process exit or new shell prompt; preserve done and error records.
+      rule: On attached process exit or a new OSC 133 A shell prompt, working and blocked records MUST be dropped; idle MAY
+        be dropped; done and error survive. Idle/done/error otherwise persist until replaced or cleared; the host decides when
+        to stop displaying done/error.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3229,6 +3249,10 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 host consumer observes reset generation without claiming a UI
         relation: protocol-family
+      relations:
+      - kind: related
+        clause: finalterm_shell.prompt-start
+        role: lifecycle
     - id: no-heartbeat
       section: States
       level: must
@@ -3238,7 +3262,8 @@ specifications:
       section: Keys
       level: defined
       wire: kind=permission|question|auth
-      rule: Blocked records may describe which kind of user interaction is required; other states ignore kind.
+      rule: Only blocked records use kind; permission requests approval, question requests user input, auth requests authentication.
+        Other states ignore kind. Unrecognized kind is treated as absent.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3254,7 +3279,8 @@ specifications:
       section: Keys
       level: defined
       wire: progress=0..100
-      rule: Working and blocked records may carry bounded percentage; absence means indeterminate progress.
+      rule: Only working or blocked records use an integer 0 through 100. Missing or otherwise invalid progress is treated as
+        absent (indeterminate); other states ignore progress.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3270,7 +3296,8 @@ specifications:
       section: Keys
       level: must
       wire: app=name
-      rule: Use the nearest ancestor app identity when a child record has no app of its own.
+      rule: An app is a stable program identifier matching [A-Za-z0-9_.+-]{1,32}; invalid value treated as absent. A record
+        lacking app inherits the nearest ancestor app, if any. App is not a human label; title serves that purpose.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3286,7 +3313,9 @@ specifications:
       section: Keys
       level: must
       wire: title=base64 / msg=base64
-      rule: Validate decoded UTF-8 text and refuse embedded control characters; treat it as text rather than markup.
+      rule: Title and msg are standard RFC 4648 Base64 UTF-8 with optional padding. Decoded U+0000..001F, U+007F, U+0080..009F
+        are forbidden. Title is a human-readable label (root normally uses window title); msg is a one-line description, may
+        be shortened, and must not be interpreted semantically or as markup.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3304,10 +3333,13 @@ specifications:
     - id: query
       section: Feature detection
       level: must
-      wire: OSC 7501 ; ? ST
+      wire: OSC 7501 ; ? (BEL | ST) / OSC 7501 ; ?[:states=list][:kinds=list] (BEL | ST)
       dispatch:
       - OSC 7501
-      rule: A supporting terminal replies with ? and may enumerate accepted states/kinds, without exposing stored records.
+      rule: Feature detection is optional for clients; supporting terminals must reply with ?. Optional comma-separated states
+        excludes clear, and kinds lists supported blocked kinds. Absent lists mean the fixed revision-0.4 defaults, not a changing
+        roster. Clients ignore unknown response pairs, treat timeout as unsupported, and may use DA1 ordering to detect unsupported
+        terminals.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 opt-in status reports are typed FIFO and queries advertise only with a consumer
@@ -3318,11 +3350,25 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 feature query reply quota rolls back without changing pending statuses
         relation: protocol-family
+      details:
+        default_states:
+        - idle
+        - working
+        - done
+        - blocked
+        - error
+        default_kinds:
+        - permission
+        - question
+        - auth
+        detection: Send query followed by CSI c. DA1 arriving before feature response indicates unsupported.
     - id: bounded-sequence
       section: Limits
       level: defined
       wire: complete OSC through ST
-      rule: Maximum wire sequence is 4096 bytes; this is a ceiling, and lower bounds for individual report fields are specified.
+      rule: Hard source caps, not minimum field capacities. Terminal may choose lower limits subject to the record-count minimum.
+        Check every pair before mutating stored records; any exceeded limit rejects the entire report. Check encoded message
+        length before decoding.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3337,12 +3383,25 @@ specifications:
       - file: howl-vt/test/unit/program_status_test.zig
         test: OSC 7501 source field and UTF-8 bounds reject hostile reports atomically
         relation: protocol-family
+      details:
+        limits_bytes:
+          whole_sequence_including_OSC_and_ST: 4096
+          key: 16
+          msg_encoded: 2732
+          msg_decoded: 2048
+          title_encoded: 256
+          title_decoded: 192
+          app: 32
+          id_total: 128
+          id_segment: 32
+        id_max_depth: 8
+        source_note: Largest legal report under 3300 bytes. Preserve source 128-byte id cap distinct from Kitty profile 263.
     - id: record-capacity
       section: Limits
       level: must
       wire: status records
-      rule: Support at least 64 and at most 256 records per terminal; when full evict the least recently updated record to
-        admit a new one.
+      rule: At most 256 retained records per terminal and at least 64 supported. Insertion beyond selected capacity evicts the
+        least recently updated record; update of an existing id replaces it without needing an extra slot.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3358,7 +3417,10 @@ specifications:
       section: Security
       level: must
       wire: OSC 7501 status values
-      rule: Never interpret title or message as markup and never return any stored id, title or message in protocol replies.
+      rule: Reject report containing forbidden decoded text control characters. Never interpret title or msg as markup. Only
+        feature detection writes back to the application, never stored ids/titles/messages. Outside the terminal grid, SHOULD
+        neutralize direction overrides and invisible formatting; SHOULD identify source terminal in presentation and rate-limit
+        external notification/sound consequences.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 bounded status FIFO preserves exact head under pressure
@@ -3379,6 +3441,64 @@ specifications:
       wire: (host rendering)
       rule: The protocol reports facts; graphical presentation, notification style and tab adornments are not defined by the
         wire protocol.
+      relations:
+      - kind: related
+        clause: iterm2_session_status.update
+        role: alternative-status-protocol
+    - id: malformed-pair
+      section: Syntax
+      level: defined
+      wire: OSC 7501 report pairs
+      rule: Skip a pair that has no equals, an empty key or a value byte outside the specified alphabet; continue parsing the
+        rest. Distinguish pair-level rejection from report-wide rejection on limits, Base64 or decoded control characters.
+      relations:
+      - kind: related
+        clause: rex_status.invalid-report
+        role: validation
+    - id: screen-reset-lifetime
+      section: Records and ids
+      level: defined
+      wire: RIS / DECSTR / primary and alternate screen switches
+      rule: Records belong to the terminal rather than to a screen bank. Bank switches preserve them; RIS removes all; DECSTR
+        does not.
+      relations:
+      - kind: related
+        clause: ecma48.ris
+        role: reset
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: reset
+    - id: progress-bridge
+      section: Relationship to other sequences
+      level: defined
+      wire: OSC 9 ; 4 ... ST / OSC 7501 report / RIS
+      rule: Optional mapping of OSC 9;4 into the root status record is permitted. If mapping is used, terminal SHOULD stop it
+        after receiving an OSC 7501 report until next full reset, avoiding a legacy update overwriting real kind/msg. No mapping
+        requirement.
+      relations:
+      - kind: related
+        clause: conemu_progress.format
+        role: legacy-bridge
+      - kind: related
+        clause: rex_status.screen-reset-lifetime
+        role: lifetime
+    - id: notifications
+      section: Relationship to other sequences
+      level: defined
+      wire: OSC 7501 record changes
+      rule: A terminal MAY generate a notification on record change; not a mandatory OSC 9/99/777 translation. Notification
+        events and retained program facts remain separate.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.notification
+        role: notification
+      - kind: related
+        clause: kitty_notification.envelope
+        role: notification
+      - kind: related
+        clause: urxvt_notify.notify-convention
+        role: notification
+    snapshot_sha256: 16ebcbb8dae41b308de51a508988046688432ed9dc14e43ccc8d23298f78ebdf
   conemu_progress:
     title: ConEmu-specific OSC 9;4 progress report
     author: ConEmu
@@ -3424,7 +3544,10 @@ specifications:
     authority: protocol-author
     revision: iTerm2 documentation 3.6, observed 2026-11-23
     url: https://iterm2.com/3.6/documentation-escape-codes.html
-    scope: Selected documented product-host commands, not a universal VT specification
+    scope: Selected documented product-host commands, not a universal VT specification Exact preserved 3.6 document bytes observed
+      2026-11-24; prior 2026-11-23 observation had no byte hash. Includes documented host controls and adopted dialects, not
+      a claim of origination for each. The older session-status entry was from the unversioned author page, explicitly cross-referenced
+      below.
     clauses:
     - id: set-user-var
       section: iTerm2 Extensions / SetUserVar
@@ -3510,8 +3633,8 @@ specifications:
       wire: OSC 9 ; message ST
       dispatch:
       - OSC 9
-      rule: Requests a simple host notification from the iTerm2-specific OSC 9 family; OSC 9;4 is separately indexed under
-        its ConEmu origin.
+      rule: Requests a simple host notification from the iTerm2-specific OSC 9 family; OSC 9;4 is separately indexed under its
+        ConEmu origin.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: pinned iTerm2 OSC 9 notification retains a bounded host-neutral consequence
@@ -3526,10 +3649,17 @@ specifications:
     - id: cursor-guide
       section: Cursor Guide
       level: defined
-      wire: OSC 1337 ; CursorGuide=... ST
+      wire: OSC 1337 ; HighlightCursorLine=yes|no ST
       dispatch:
       - OSC 1337
-      rule: Changes presentation of the host cursor guide.
+      rule: Show or hide cursor guide using HighlightCursorLine. Prior index spelling CursorGuide was incorrect, not a documented
+        alias.
+      source_note: Versioned and unversioned author pages agree; pinned implementation also admits empty value as YES and uses
+        boolean conversion. Exact noncanonical boolean admission remains an observation.
+      evidence:
+        pinned_source_observation:
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          location: sources/VT100/VT100Terminal.m:4186-4187
     - id: steal-focus
       section: Steal Focus
       level: defined
@@ -3549,13 +3679,18 @@ specifications:
       wire: OSC 1337 ; CopyToClipboard=name ST
       dispatch:
       - OSC 1337
-      rule: Starts host-side clipboard capture under the declared destination.
+      rule: 'Begin capture of subsequent received text into a named pasteboard: rule, find, font, or empty for general pasteboard.
+        Capture ends at EndCopy. Host authorization and exact capture framing remain distinct.'
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: pinned iTerm2 OSC 1337 absent host actions have no native consequences
         relation: protocol-family
         legacy_records:
         - iterm2.osc1337.copy_to_clipboard
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.end-copy
+        role: lifetime
     - id: end-copy
       section: Copy to clipboard
       level: defined
@@ -3575,27 +3710,69 @@ specifications:
       wire: OSC 1337 ; SetColors=key=value ST
       dispatch:
       - OSC 1337
-      rule: Sets a named iTerm2 session color or palette value.
+      rule: 'Set a named session color or palette entry. Values are RGB or RRGGBB hex, optionally prefixed by srgb:, rgb: (device-specific),
+        or p3:. preset selects a named preset; tab=default restores system tab color. Published grammar shows a key/value pair;
+        multi-pair parsing is a separate implementation question.'
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: xterm OSC colors set query and reset palette and dynamic colors
         relation: protocol-family
         legacy_records:
         - iterm2.osc1337.set_colors
+      details:
+        color_keys:
+        - fg
+        - bg
+        - bold
+        - link
+        - selbg
+        - selfg
+        - curbg
+        - curfg
+        - underline
+        - tab
+        - black
+        - red
+        - green
+        - yellow
+        - blue
+        - magenta
+        - cyan
+        - white
+        - br_black
+        - br_red
+        - br_green
+        - br_yellow
+        - br_blue
+        - br_magenta
+        - br_cyan
+        - br_white
+        color_spaces:
+        - srgb
+        - rgb
+        - p3
+        hex_widths:
+        - 3
+        - 6
+        special_keys:
+          preset: named color preset
+          tab=default: restore tab color
     - id: tab-color
       section: Set window title and tab chrome background color
       level: defined
       wire: OSC 6 ; 1 ; bg ; channel ; brightness ; value ST
       dispatch:
       - OSC 6
-      rule: Sets a selected title/tab chrome background channel.
+      rule: Set red, green or blue channel of the window title and tab chrome background, decimal value0..255. Reset uses the
+        wildcard channel and default action.
     - id: shell-integration-version
       section: ShellIntegrationVersion
       level: defined
-      wire: OSC 1337 ; ShellIntegrationVersion=version;shell ST
+      wire: OSC 1337 ; ShellIntegrationVersion=version [ ; shell ] ST
       dispatch:
       - OSC 1337
-      rule: Reports shell-integration script version and shell identity.
+      rule: Report numeric shell-specific integration version and shell name. Older form with version alone accepted but deprecated.
+        Terminal compares version for its shell and may prompt user to upgrade.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm safe controls mutate presentation metadata and exact replies
@@ -3634,7 +3811,8 @@ specifications:
       wire: OSC 1337 ; UnicodeVersion=value ST
       dispatch:
       - OSC 1337
-      rule: Selects the Unicode version used for terminal width calculations.
+      rule: Select Unicode width table8 or9; source describes default9 with user option for8. Stack actions are separately defined.
+        This is the published legacy width-version control, not a claim about current supported Unicode releases.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: pinned iTerm2 OSC 1337 absent host actions have no native consequences
@@ -3649,39 +3827,59 @@ specifications:
       wire: OSC 1337 ; ReportVariable=base64(variable-name) ST
       dispatch:
       - OSC 1337
-      rule: Requests a named host-session variable using its base64-encoded name; response contains a base64-encoded value.
+      rule: Query session variable with Base64-encoded name; reply same ReportVariable key with Base64-encoded value. This queries
+        host session variables, not terminal output or arbitrary process environment.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: pinned iTerm2 OSC 1337 absent host actions have no native consequences
         relation: protocol-family
         legacy_records:
         - iterm2.osc1337.report_variable
+      details:
+        reply: OSC 1337 ; ReportVariable=base64(value) ST
     - id: report-cell-size
       section: Report Cell Size
       level: defined
       wire: OSC 1337 ; ReportCellSize ST
       dispatch:
       - OSC 1337
-      rule: Requests the current character cell pixel dimensions.
+      rule: Query cell dimensions in logical points. Reply height then width as floating point values, optionally followed by
+        physical pixels per logical point scale (1.0 non-retina,2.0 retina; other values allowed). This is not simply a physical-pixel
+        query.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: fragmented mixed report families preserve order and per-query rollback
         relation: protocol-family
         legacy_records:
         - iterm2.osc1337.report_cell_size
+      details:
+        reply: OSC 1337 ; ReportCellSize=height;width[;scale] ST
+        example: 17.50;8.00;2.0
+        units: logical points; scale is pixels/point
+      source_note: Correct prior index description of physical pixels. Existing VT-only code treats its caller-neutral geometry
+        as scale1 and reports points=pixels; existing tests do not establish non-unit host scale conformance.
     - id: session-status
       section: Session Status
       level: defined
       wire: OSC 21337 ; indicator=color ; status=text [ ; status-color=color ] ST
       dispatch:
       - OSC 21337
-      rule: Sets the host tab indicator and accompanying status subtitle.
+      rule: Earlier indexed summary of OSC21337. Omit fields to leave them unchanged, empty values clear independently. This
+        definition is not present on the retrieved versioned 3.6 escape-code page; linked current author document gives full
+        fields and colors.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: pinned iTerm2 OSC 6 134 and 21337 host controls are absent from Howl
         relation: wire-family
         legacy_records:
         - iterm2.osc.tab_status
+      source_locator: Unversioned proprietary escape-code page / Session Status; linked documentation-session-status.html (see
+        iterm2_session_status.update)
+      relations:
+      - kind: related
+        clause: iterm2_session_status.update
+        role: source
+      source_note: Stable old clause ID and test locator preserved; corrected document attribution. No new implementation target.
     - id: inline-file
       section: File Transfer
       level: defined
@@ -3695,13 +3893,21 @@ specifications:
         relation: protocol-family
         legacy_records:
         - iterm2.osc1337.file
+      relations:
+      - kind: related
+        clause: iterm2_images.single
+        role: source
+      - kind: related
+        clause: iterm2_images.multipart-start
+        role: extension
     - id: custom-buttons
       section: Buttons
       level: defined
-      wire: OSC 1337 ; Button=... ST
+      wire: OSC 1337 ; Button=type=custom ; code=positive-integer ; icon=sf-symbol ST
       dispatch:
       - OSC 1337
-      rule: Declares a host-owned custom control button.
+      rule: Since 3.6.9, define host button with positive integer action code and SF Symbol icon. User clicking it returns CSI
+        ? 1337 ; code ~.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: pinned iTerm2 OSC 1337 absent host actions have no native consequences
@@ -3709,6 +3915,367 @@ specifications:
         legacy_records:
         - iterm2.osc1337.button_copy
         - iterm2.osc1337.button_custom
+      details:
+        reply: CSI ? 1337 ; code ~
+    - id: default-color-query
+      section: Report Foreground/Background Colors (OSC 4)
+      level: defined
+      wire: OSC 4 ; -1|-2 ; ? ST / OSC 4 ; -1|-2 ; rgb:R/G/B ST
+      dispatch:
+      - OSC 4
+      rule: iTerm2 extends OSC4 query with signed selectors -1 foreground and -2 background. Reply uses the same selector, each
+        RGB component two or four hex digits; top two digits approximate the eight-bit value in four-digit form.
+      relations:
+      - kind: extends
+        clause: xterm_controls.palette-osc4
+    - id: hyperlink-file-fragment
+      section: Anchor (OSC 8)
+      level: defined
+      wire: OSC 8 ; params ; file://host/path#line[:column] ST
+      dispatch:
+      - OSC 8
+      rule: Since iTerm2 3.4, file URL fragments may select a line and optionally column, using semantic-history opening rules.
+        Host opening policy separate from hyperlink cell ownership.
+      relations:
+      - kind: extends
+        clause: osc8.file-host
+    - id: cursor-shape
+      section: Set cursor shape
+      level: defined
+      wire: OSC 1337 ; CursorShape=N ST
+      dispatch:
+      - OSC 1337
+      rule: Selectors0 block,1 vertical bar,2 underline. Source attributes the command to Konsole; original Konsole document/revision
+        remains a discovery obligation, not iTerm2 origination.
+      relations:
+      - kind: related
+        clause: dec_vt520.cursor-style
+        role: cursor
+    - id: progress-profile
+      section: Progress Bar
+      level: defined
+      wire: OSC 9 ; 4 ; state [ ; progress ] ST / OSC 9 ; 4 ST
+      dispatch:
+      - OSC 9
+      rule: Versioned 3.6 document defines 0 clear,1 percent,2 error with optional percent (absent indeterminate error),3 indeterminate,4
+        warning with required percent. Progress0..100; omitted state via OSC9;4 clears. Current unversioned page differs for
+        state4; preserve both.
+      relations:
+      - kind: related
+        clause: conemu_progress.format
+        role: profile
+      - kind: conflicts
+        clause: conemu_progress.states
+    - id: tab-color-reset
+      section: Set window title and tab chrome background color
+      level: defined
+      wire: OSC 6 ; 1 ; bg ; * ; default ST
+      dispatch:
+      - OSC 6
+      rule: Restore tab/window-title color to system default.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.tab-color
+        role: reset
+    - id: compact-palette
+      section: Change the color palette
+      level: defined
+      wire: OSC P n rrggbb ST
+      rule: Discouraged alternate compact palette syntax. n=0..f hexadecimal selects ANSI color; g foreground,h background,i
+        bold,j selection background,k selected text,l cursor,m cursor text. Each RGB component two hex digits. Origin of compact
+        OSC P spelling and compatibility with unterminated Linux console form must be traced separately.
+      details:
+        selectors:
+          0..f: ANSI color
+          g: foreground
+          h: background
+          i: bold
+          j: selection
+          k: selected text
+          l: cursor
+          m: cursor text
+    - id: annotation
+      section: Annotations
+      level: defined
+      wire: OSC 1337 ; AddAnnotation=message ST / OSC 1337 ; AddAnnotation=length|message ST / OSC 1337 ; AddAnnotation=message|length|x|y
+        ST
+      dispatch:
+      - OSC 1337
+      rule: Attach annotation text to a cell region and reveal annotation immediately. Default start is cursor; default length
+        extends from start to end of line. Source does not fully specify coordinate base, clipping or literal separator escaping.
+    - id: hidden-annotation
+      section: Annotations
+      level: defined
+      wire: OSC 1337 ; AddHiddenAnnotation=message ST / OSC 1337 ; AddHiddenAnnotation=length|message ST / OSC 1337 ; AddHiddenAnnotation=message|length|x|y
+        ST
+      dispatch:
+      - OSC 1337
+      rule: Same region forms and defaults as visible annotation, but do not reveal annotation window upon receipt.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.annotation
+        role: presentation
+    - id: annotation-legacy-aliases
+      section: Pinned VT100Terminal.m:4180-4185
+      level: defined
+      wire: OSC 1337 ; AddNote=value ST / OSC 1337 ; AddHiddenNote=value ST
+      dispatch:
+      - OSC 1337
+      rule: Pinned author implementation recognizes deprecated aliases for AddAnnotation and AddHiddenAnnotation; original historic
+        publication not yet recovered. Preserve as implementation-observed aliases, not additional published grammar.
+      relations:
+      - kind: alias
+        clause: iterm2_osc1337.annotation
+      - kind: alias
+        clause: iterm2_osc1337.hidden-annotation
+      evidence:
+        pinned_source_observation:
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          location: sources/VT100/VT100Terminal.m:4180-4185
+    - id: attention
+      section: Attention
+      level: defined
+      wire: OSC 1337 ; RequestAttention=yes|once|no|fireworks ST
+      dispatch:
+      - OSC 1337
+      rule: Request continuous dock attention, a single bounce, cancellation, or fireworks at cursor location, respectively.
+        These are host presentation requests, not mandatory platform-specific behavior.
+    - id: background-image
+      section: Background Image
+      level: defined
+      wire: OSC 1337 ; SetBackgroundImageFile=base64-filename ST
+      dispatch:
+      - OSC 1337
+      rule: Request local filename as background image. Empty value removes image. Author requires user confirmation; does not
+        authorize arbitrary file reads.
+    - id: copy-pasteboard
+      section: Copy to Pasteboard
+      level: defined
+      wire: OSC 1337 ; Copy=:base64 ST
+      dispatch:
+      - OSC 1337
+      rule: Copy Base64-encoded string directly to system pasteboard, distinct from text-stream capture.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.copy-to-clipboard
+        role: clipboard
+    - id: upload
+      section: Uploads
+      level: defined
+      wire: OSC 1337 ; RequestUpload=format=tgz ST
+      dispatch:
+      - OSC 1337
+      rule: Request user selection of one or more files. Only tgz format is currently defined. Terminal replies with ok or abort
+        plus newline; on ok follows Base64-encoded tar.gz archive. Multiple files placed in a directory inside archive. Consent
+        and exact transfer boundaries remain host qualification.
+    - id: key-label
+      section: Set Touch Bar Key Labels
+      level: defined
+      wire: OSC 1337 ; SetKeyLabel=key=value ST
+      dispatch:
+      - OSC 1337
+      rule: Change F1 through F24 or status key label.
+    - id: key-label-push
+      section: Set Touch Bar Key Labels
+      level: defined
+      wire: OSC 1337 ; PushKeyLabels[=label] ST
+      dispatch:
+      - OSC 1337
+      rule: Save current key labels on stack; optional ASCII label, preferably unique.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.key-label
+        role: stack
+    - id: key-label-pop
+      section: Set Touch Bar Key Labels
+      level: defined
+      wire: OSC 1337 ; PopKeyLabels[=label] ST
+      dispatch:
+      - OSC 1337
+      rule: Restore saved labels; labelled pop can retire multiple stack entries to the named entry. Source leaves absent-label
+        and overflow handling unqualified.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.key-label-push
+        role: stack
+    - id: unicode-push
+      section: Unicode Version
+      level: defined
+      wire: OSC 1337 ; UnicodeVersion=push[ SP label] ST
+      dispatch:
+      - OSC 1337
+      rule: Push current width-table version; optional label identifies saved entry.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.unicode-version
+        role: stack
+    - id: unicode-pop
+      section: Unicode Version
+      level: defined
+      wire: OSC 1337 ; UnicodeVersion=pop[ SP label] ST
+      dispatch:
+      - OSC 1337
+      rule: Restore previous version; labelled pop retires entries until matching label. Empty/missing-label behavior and maximum
+        stack depth not defined by this page.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.unicode-push
+        role: stack
+    - id: native-file-render
+      section: File Transfer
+      level: defined
+      wire: OSC 1337 ; File=...;type=MIME-or-extension;mode=regular|wide:base64 ST
+      dispatch:
+      - OSC 1337
+      rule: Author documents additional native rendering of nonimage documents (e.g. syntax-highlighted Markdown). type specifies
+        MIME or extension; mode wide permits horizontal scrolling, regular is the other named mode. Exact unsupported types/defaults
+        and multipart interaction open.
+      relations:
+      - kind: extends
+        clause: iterm2_osc1337.inline-file
+    - id: custom-control
+      section: Custom Control Sequences
+      level: defined
+      wire: OSC 1337 ; Custom=id=secret:pattern ST
+      dispatch:
+      - OSC 1337
+      rule: Host-registered custom script control; id carries shared secret intended to reduce unauthorized activation, pattern
+        identifies sequence and may carry parameters. No selected trust or execution policy.
+    - id: ftcs-capture-profile
+      section: Shell Integration/FinalTerm / FTCS_COMMAND_EXECUTED
+      level: defined
+      wire: OSC 133 ; C ST
+      dispatch:
+      - OSC 133
+      rule: iTerm2 captures current screen contents between command-start position and command-executed position, excluding
+        terminal whitespace, regardless of interactive edits. Cursor preceding command start yields empty command.
+      relations:
+      - kind: extends
+        clause: finalterm_shell.command-executed
+    - id: ftcs-finished-profile
+      section: Shell Integration/FinalTerm / FTCS_COMMAND_FINISHED
+      level: defined
+      wire: OSC 133 ; D [ ; Ps ] ST
+      dispatch:
+      - OSC 133
+      rule: 'If most recent marker B, command aborted: delete associated prompt and command state, optional Ps ignored. If most
+        recent marker C, command completed: use Ps as ASCII decimal exit status0..255, 0 success/nonzero failure; document says
+        only form with Ps should be used. Otherwise ignore. Original FinalTerm provenance of detailed behavior still open.'
+      relations:
+      - kind: related
+        clause: finalterm_shell.command-finished
+        role: profile
+    - id: directory-url
+      section: RemoteHost; CurrentDir
+      level: defined
+      wire: OSC 7 ; file://host/path ST
+      dispatch:
+      - OSC 7
+      rule: Combined RemoteHost and CurrentDir synonym, file URL contains host and path. One printed RemoteHost example omits
+        semicolon; CurrentDir section supplies it. Original OSC7 author lineage still open, this is iTerm2 documented adoption.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.remote-host
+        role: metadata
+      - kind: related
+        clause: iterm2_osc1337.current-dir
+        role: metadata
+    - id: cursor-default
+      section: DECSCUSR 0
+      level: defined
+      wire: CSI 0 SP q
+      dispatch:
+      - CSI 0 SP q
+      rule: Reset cursor to configured default appearance. Author explicitly identifies deviation from original DEC behavior
+        (blinking block). No additional omitted-parameter behavior inferred.
+      relations:
+      - kind: conflicts
+        clause: dec_vt520.cursor-style
+    - id: version-report-profile
+      section: Extended Device Attributes
+      level: defined
+      wire: CSI > q / DCS > | iTerm2 version ST
+      dispatch:
+      - CSI > q
+      - DCS > |
+      rule: iTerm2 name/version reply for the XTVERSION family. Published response uses product name and version; retain as
+        adopted profile, not new original wire.
+      relations:
+      - kind: related
+        clause: xterm_controls.version-report
+        role: profile
+    - id: open-url
+      section: Open URL
+      level: defined
+      wire: OSC 1337 ; OpenURL=:base64-url ST
+      dispatch:
+      - OSC 1337
+      rule: Request opening decoded Base64 URL. User must grant permission; feature may be disabled.
+    - id: disinter
+      section: Disinter
+      level: defined
+      wire: OSC 1337 ; Disinter ST
+      dispatch:
+      - OSC 1337
+      rule: Request restore of buried session.
+    - id: block
+      section: Blocks
+      level: defined
+      wire: OSC 1337 ; Block=id=identifier ; attr=start|end ST
+      dispatch:
+      - OSC 1337
+      rule: Mark code block start/end with matching identifier. Document display omits terminator; use document OSC convention.
+        Pinned author parser also reads start type and end render=1; those fields are code observations, not full published
+        block semantics.
+      evidence:
+        pinned_source_observation:
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          location: sources/VT100/VT100Terminal.m:4204-4212
+    - id: update-block
+      section: Update Block
+      level: defined
+      wire: OSC 1337 ; UpdateBlock=id=identifier ; action=fold|unfold ST
+      dispatch:
+      - OSC 1337
+      rule: Since iTerm2 3.6.9, fold existing block to single line or unfold to full contents.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.block
+        role: lifetime
+    - id: copy-button
+      section: Buttons
+      level: defined
+      wire: OSC 1337 ; Button=type=copy ; block=identifier ST
+      dispatch:
+      - OSC 1337
+      rule: Insert button that copies named existing code block when clicked. Identifier references prior Block definition.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.block
+        role: block
+    - id: custom-button-reply
+      section: Buttons
+      level: defined
+      wire: CSI ? 1337 ; code ~
+      dispatch:
+      - CSI ? 1337 ~
+      rule: Terminal-to-application event on user clicking the corresponding custom button; positive code from button definition.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.custom-buttons
+        role: reply
+    - id: custom-button-invalidate
+      section: Buttons
+      level: defined
+      wire: OSC 1337 ; Button=type=custom ST
+      dispatch:
+      - OSC 1337
+      rule: Invalidate all custom buttons; appear disabled and no longer interactive.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.custom-buttons
+        role: lifetime
+    snapshot_sha256: b297c4fcd7ea35908e145420d743fe98fc0ee5bbb5844ed4a1f35f2d547cac98
   xterm_controls:
     title: XTerm Control Sequences (XTerm-origin extensions only)
     author: Thomas E. Dickey / xterm
@@ -7722,6 +8289,9 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.paste_events
+      relations:
+      - kind: reaffirms
+        clause: rockorager_paste.enable
     - id: detection
       section: Detecting support for this protocol
       level: defined
@@ -7729,6 +8299,9 @@ specifications:
       dispatch:
       - CSI ? 5522 $ p
       rule: Uses standard mode-query reporting to discover whether paste event mode is supported.
+      relations:
+      - kind: reaffirms
+        clause: rockorager_paste.detect
     - id: mux-id
       section: Support for terminal multiplexers
       level: defined
@@ -7767,8 +8340,15 @@ specifications:
       section: docs/clipboard.rst:200-221,264-266
       level: defined
       wire: DECSET 5522 unsolicited paste-event MIME list
-      rule: One-time Base64 pw recommended with name Paste event; unsolicited event no mux id. Exact event wire requires linked
-        ancillary specification.
+      rule: Kitty adopts the linked Rockorager paste-event specification. Recommend a one-use Base64 pw and human name Paste
+        event. Unsolicited event has no multiplexer id. Full event envelope, scope and precedence now indexed in rockorager_paste.
+      relations:
+      - kind: related
+        clause: rockorager_paste.notify
+        role: event
+      - kind: related
+        clause: rockorager_paste.password
+        role: authorization
   kitty_color:
     title: Kitty color control and color stack
     author: Kovid Goyal / kitty
@@ -11101,7 +11681,9 @@ specifications:
     authority: preserved-origin-documentation
     revision: original FinalTerm A/B/C/D, cited in iTerm2 3.6
     url: https://iterm2.com/3.6/documentation-escape-codes.html
-    scope: Only original common OSC 133 semantic zones; iTerm2 is a preserving secondary documentation source
+    scope: Only original common OSC 133 semantic zones; iTerm2 is a preserving secondary documentation source Preserved iTerm2
+      reproduction, not the complete original FinalTerm specification; earlier FinalTerm-only sequences still require primary-source
+      recovery.
     clauses:
     - id: prompt-start
       section: Shell Integration/FinalTerm / FTCS_PROMPT
@@ -11159,6 +11741,7 @@ specifications:
         legacy_records:
         - iterm2.osc.shell_mark
         - kitty.osc.shell_mark
+    snapshot_sha256: b297c4fcd7ea35908e145420d743fe98fc0ee5bbb5844ed4a1f35f2d547cac98
   vscode_shell:
     title: VS Code shell integration protocol (OSC 633)
     author: Microsoft / Visual Studio Code
@@ -11251,8 +11834,7 @@ specifications:
     authority: extension-publisher
     revision: Contour documented extension, observed 2026-11-23
     url: https://contour-terminal.org/vt-extensions/synchronized-output/
-    scope: Cross-terminal private mode derived from the idea of iTerm2 synchronized output; timing and host policy can be
-      bounded
+    scope: Cross-terminal private mode derived from the idea of iTerm2 synchronized output; timing and host policy can be bounded
     clauses:
     - id: begin
       section: Semantics
@@ -11272,6 +11854,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.synchronized_output
+      relations:
+      - kind: related
+        clause: iterm2_legacy_sync.begin
+        role: predecessor
     - id: end
       section: Semantics
       level: defined
@@ -11290,6 +11876,10 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.synchronized_output
+      relations:
+      - kind: related
+        clause: iterm2_legacy_sync.end
+        role: predecessor
     - id: query
       section: Feature detection
       level: defined
@@ -11564,8 +12154,11 @@ specifications:
       wire: OSC 7501 ; status-metadata ST
       dispatch:
       - OSC 7501
-      rule: Adopted Rex rev0.4; Kitty id limit263 vs source128. Working/blocked/idle clear on shell prompt or held process
-        exit; done/error kept until focus/key; full reset clears. Retain profile, not a replacement for Rex original.
+      rule: Adopted Rex rev0.4; Kitty id limit263 vs source128. Working/blocked/idle clear on shell prompt or held process exit;
+        done/error kept until focus/key; full reset clears. Retain profile, not a replacement for Rex original.
+      relations:
+      - kind: conflicts
+        clause: rex_status.bounded-sequence
   linux_console:
     title: Linux virtual console control sequences (console_codes(4))
     author: Linux virtual console; documented by the Linux man-pages project
@@ -15131,6 +15724,1213 @@ specifications:
       wire: glyph render versus cell text
       rule: Registered visual glyph does not replace original cell codepoint in copying, selection or searching. No filesystem
         access through protocol. Source rationale is not a blanket security guarantee.
+  wezterm_rgba:
+    title: WezTerm RGBA SGR and OSC color extensions
+    author: WezTerm project
+    authority: protocol-author
+    revision: git cab25161054c50fd6c705db4ceefef0f1e5a9575
+    url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/docs/escape-sequences.md
+    snapshot_sha256: a638eb52c8f9a11ba36a22c3a5773ced8d6a0c2d22f78914263c98f2264325c2
+    scope: Author documentation for SGR color selector 6 and dynamic-color alpha support; adopted RGB/Kitty/iTerm controls retain
+      their original sources.
+    clauses:
+    - id: sgr-foreground
+      section: docs/escape-sequences.md:279-288
+      level: defined
+      wire: 'CSI 38 : 6 : : R : G : B : A m'
+      dispatch:
+      - CSI 38 m
+      rule: Set foreground color with independent RGB and alpha components using WezTerm color mode6. Published example leaves
+        color-space field empty. Preserve original RGB mode2 and indexed mode5 separately.
+      relations:
+      - kind: extends
+        clause: itu_t416.sgr-colour-subparameters
+      details:
+        format: RGBA
+        selector: 6
+      evidence:
+        pinned_source_observation:
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          location: wezterm-escape-parser/src/csi.rs:2429-2488
+          meaning: 'Three colon-only patterns: explicit numeric colorspace (ignored), omitted colorspace subfield, or no colorspace
+            field. Four channels converted via to_u8. Full malformed/surplus operand admission not inferred from the documentation.'
+    - id: sgr-background
+      section: docs/escape-sequences.md:307-316
+      level: defined
+      wire: 'CSI 48 : 6 : : R : G : B : A m'
+      dispatch:
+      - CSI 48 m
+      rule: Set background color with independent RGB and alpha components using WezTerm color mode6. Published example leaves
+        color-space field empty. Preserve original RGB mode2 and indexed mode5 separately.
+      relations:
+      - kind: extends
+        clause: itu_t416.sgr-colour-subparameters
+      details:
+        format: RGBA
+        selector: 6
+      evidence:
+        pinned_source_observation:
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          location: wezterm-escape-parser/src/csi.rs:2429-2488
+          meaning: 'Three colon-only patterns: explicit numeric colorspace (ignored), omitted colorspace subfield, or no colorspace
+            field. Four channels converted via to_u8. Full malformed/surplus operand admission not inferred from the documentation.'
+    - id: sgr-underline
+      section: docs/escape-sequences.md:335-344
+      level: defined
+      wire: 'CSI 58 : 6 : : R : G : B : A m'
+      dispatch:
+      - CSI 58 m
+      rule: Set underline color with independent RGB and alpha components using WezTerm color mode6. Published example leaves
+        color-space field empty. Preserve original RGB mode2 and indexed mode5 separately.
+      relations:
+      - kind: extends
+        clause: kitty_underlines.color
+      details:
+        format: RGBA
+        selector: 6
+      evidence:
+        pinned_source_observation:
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          location: wezterm-escape-parser/src/csi.rs:2429-2488
+          meaning: 'Three colon-only patterns: explicit numeric colorspace (ignored), omitted colorspace subfield, or no colorspace
+            field. Four channels converted via to_u8. Full malformed/surplus operand admission not inferred from the documentation.'
+    - id: sgr-admission
+      section: Pinned author parser; csi.rs:1732-1743,2429-2488
+      level: defined
+      wire: 'CSI 38|48|58 : 6 [: colorspace] : R : G : B : A m'
+      rule: Author parser admits numeric or empty color-space field and shortened form with no field, using colon syntax only.
+        Channel values use to_u8; parser conversion rejects nonnumeric and values above255. This is observed implementation
+        admission, not independently published full grammar.
+      source_note: Do not infer negative numeric token admission from the conversion helper in isolation.
+      relations:
+      - kind: related
+        clause: wezterm_rgba.sgr-foreground
+        role: grammar
+      - kind: related
+        clause: wezterm_rgba.sgr-background
+        role: grammar
+      - kind: related
+        clause: wezterm_rgba.sgr-underline
+        role: grammar
+    - id: dynamic-colors
+      section: Operating System Command Sequences / OSC 10,11,12; changelog.md:1533
+      level: defined
+      wire: OSC 10|11|12 ; rgba-color (BEL | ST)
+      dispatch:
+      - OSC 10
+      - OSC 11
+      - OSC 12
+      rule: WezTerm documents alpha-bearing values for default foreground, background and text cursor. Examples use CSS rgba(r,g,b,a)
+        and rgba:R/G/B/A. This extends color input without replacing xterm dynamic color selectors.
+      relations:
+      - kind: extends
+        clause: xterm_controls.dynamic-colors
+      details:
+        examples:
+        - rgba(127,127,127,0.4)
+        - rgba:efff/ecff/f4ff/d000
+      evidence:
+        pinned_source_observation:
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          location: wezterm-escape-parser/src/osc.rs:203-255; color-types/src/lib.rs:736-861
+          meaning: 'Same SrgbaTuple parser for indexed and dynamic colors. Slash rgba: requires four XParseColor components
+            1..4 hex digits; additionally accepts four ASCII-whitespace fields with percent or decimal components. Other admitted
+            CSS color grammar comes from color parser. Palette use, OSC13..19 applicability, replies and actual retained/rendered
+            alpha require separate review.'
+  uapi_context:
+    title: UAPI.15 OSC 3008 Hierarchical Context Signalling
+    author: UAPI Group
+    authority: protocol-author
+    revision: 1.0, preserved 2026-11-24
+    url: https://uapi-group.org/specifications/specs/osc_context/
+    snapshot_sha256: 2f70212ab9702bee72e5ea7e2732f1ac8b7b5c21335715bb4ffb66b5fba500b5
+    scope: Full source-defined context stack, metadata, encoding and limits; host use cases are advisory, not privileges.
+    clauses:
+    - id: framing
+      section: General Syntax
+      level: defined
+      wire: OSC 3008 ; start=id [ ; key=value ... ] ST / OSC 3008 ; end=id [ ; key=value ... ] ST
+      dispatch:
+      - OSC 3008
+      rule: Recommended 7-bit OSC/ST. Action field immediately follows OSC3008; optional metadata follows in arbitrary order.
+        Text fields UTF-8, escape literal semicolon as \x3b and backslash as \x5c. Disallow ASCII controls below32 and DEL.
+        Preserve source prose/ABNF disagreement separately.
+      relations:
+      - kind: extends
+        clause: ecma48.c1-osc
+    - id: identifier
+      section: Semantics; Syntax in ABNF
+      level: defined
+      wire: start=id / end=id
+      rule: Caller-chosen context ID, at most64 printable ASCII characters, recommended globally unique. ABNF CTXID=1*64SAFE,
+        so nonempty and escaped separators/backslash. ID not confidential, avoid collisions. Exact decoded-versus-encoded bound
+        is not independently resolved.
+      details:
+        abnf: CTXID = 1*64SAFE
+    - id: start
+      section: Semantics
+      level: defined
+      wire: OSC 3008 ; start=id [ ; metadata ] ST
+      dispatch:
+      - OSC 3008
+      rule: 'New id creates active child of previously active context. Existing id means return/update: remove all descendants,
+        reset previous metadata to defaults, then apply supplied new fields. Earlier contexts remain valid in background; one
+        active context; attribute other input/output to active context.'
+    - id: end
+      section: Semantics
+      level: defined
+      wire: OSC 3008 ; end=id [ ; metadata ] ST
+      dispatch:
+      - OSC 3008
+      rule: End a context previously initiated by start, optionally supplying end metadata. Source does not specify full unknown-id,
+        non-top closure or duplicate-end error behavior; do not invent outcomes.
+      relations:
+      - kind: related
+        clause: uapi_context.start
+        role: lifetime
+    - id: context-types
+      section: Context Types; Metadata Fields
+      level: defined
+      wire: type=name
+      rule: Type is optional. Defined context types identify boot, container, vm, privilege elevation, changed privilege, same-privilege
+        subcontext, remote, shell, command, app, service and login session.
+      details:
+        values:
+          boot: system boot
+          container: interactive container connection
+          vm: terminal connected to VM
+          elevate: higher privilege
+          chpriv: different privilege
+          subcontext: same privilege
+          remote: remote system
+          shell: interactive shell
+          command: shell invokes program
+          app: interactive application
+          service: interactive service
+          session: login session
+    - id: origin-metadata
+      section: Metadata Fields; Syntax in ABNF
+      level: defined
+      wire: user / hostname / machineid / bootid / pid / pidfdid / comm
+      rule: 'Optional origin information for every context type: username, hostname, machine ID, boot ID, decimal PID, decimal
+        64-bit pidfd inode, process name. Source recommends the first seven fields in its table (includes type; no mandatory
+        metadata).'
+      details:
+        abnf:
+          USER: 1*255SAFE
+          HOSTNAME: 1*255SAFE
+          MACHINEID: ID128 = 32*36(HEX / "-")
+          BOOTID: ID128
+          PID: UINT64 = 1*20DECIMAL
+          PIDFDID: UINT64
+          COMM: 1*255SAFE
+    - id: special-metadata
+      section: Metadata Fields; Syntax in ABNF
+      level: defined
+      wire: cwd / cmdline / vm / container / targetuser / targethost / sessionid
+      rule: Optional specialized fields. cwd for shell/command, cmdline for command, vm/container for respective type, targetuser
+        for elevate/chpriv/vm/container/remote/session, targethost remote, sessionid session. Metadata order undefined; type
+        can occur anywhere after action.
+      details:
+        abnf:
+          CWD: 1*255SAFE
+          CMDLINE: '*255SAFE'
+          VM: 1*255SAFE
+          CONTAINER: 1*255SAFE
+          TARGETUSER: 1*255SAFE
+          TARGETHOST: 1*255SAFE
+          SESSIONID: 1*255SAFE
+    - id: exit-metadata
+      section: Metadata Fields
+      level: defined
+      wire: exit=success|failure|crash|interrupt / status=0..255 / signal=symbol
+      rule: 'Optional end metadata for command contexts: outcome classification, decimal exit status0..255 and symbolic termination
+        signal. Preserve ABNF wider UINT64 status separately.'
+    - id: abnf
+      section: Syntax in ABNF
+      level: defined
+      wire: OSC 3008 STARTSEQ / ENDSEQ
+      rule: Printed ABNF SAFE allows ASCII printable ranges excluding raw semicolon/backslash plus escaped forms, unlike the
+        UTF-8 prose; CTXID is 1*64SAFE. Several fields use 1*255SAFE or *255SAFE, and STATUS=UINT64 instead of prose 0..255.
+      source_note: Retain discrepancy rather than making either grammar silently normative for Howl.
+      details:
+        safe: '%x20-3a / %x3c-5b / %x5d-7e / ESCSEMICOLON / ESCBACKSLASH'
+        status: UINT64
+        start: OSC "3008;start=" CTXID *(";" STARTFIELD) ST
+        end: OSC "3008;end=" CTXID *(";" ENDFIELD) ST
+    - id: limits
+      section: Processing, Limits, Security
+      level: defined
+      wire: context stack and metadata
+      rule: Recommend bounding depth; once full discard attempts to initiate additional contexts rather than evict older ancestors.
+        Overlong fields may be discarded or truncated depending on type. Prose does not recommend numeric stack/string limits;
+        printed ABNF has field-length syntax limits. Ignore invalid and unknown fields while retaining other valid fields.
+    - id: reset
+      section: Processing, Limits, Security
+      level: defined
+      wire: terminal resets / vhangup()
+      rule: Usual terminal resets SHOULD preserve context stack to prevent a nested program hiding ancestor contexts. A temporary
+        TTY hangup SHOULD fully reset it.
+      relations:
+      - kind: related
+        clause: ecma48.ris
+        role: reset
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: reset
+    - id: trust
+      section: Processing, Limits, Security
+      level: defined
+      wire: context metadata and host actions
+      rule: Metadata is auxiliary, not authenticated identity. Source says avoid sensitive information in fields and generate
+        sufficiently unique IDs. Bookmarks, visual indication and host context actions are use cases, not authority to execute
+        processes or disclose private state.
+  rockorager_paste:
+    title: Private Mode for Automatic Paste Notifications
+    author: rockorager.dev / Rockorager
+    authority: protocol-author
+    revision: Published 2025-11-04; revision history through 2026-08-04
+    url: https://rockorager.dev/misc/bracketed-paste-mime/
+    snapshot_sha256: 405a0f05d0c364c9aa9b5913943cb57c21b73d0f9d25d929d49f8de5fd42be0a
+    scope: Author specification of DEC private mode5522 and unsolicited MIME list/password extension to Kitty OSC5522.
+    clauses:
+    - id: enable
+      section: Detection and Enabling
+      level: defined
+      wire: CSI ? 5522 h / CSI ? 5522 l
+      dispatch:
+      - CSI ? 5522 h
+      - CSI ? 5522 l
+      rule: Enable or disable automatic MIME notifications on user paste. Conforming terminals MUST support the entirety of
+        underlying Kitty OSC5522.
+      relations:
+      - kind: extends
+        clause: kitty_clipboard.envelope
+    - id: detect
+      section: Detection and Enabling
+      level: defined
+      wire: CSI ? 5522 $ p / CSI ? 5522 ; Ps $ y
+      dispatch:
+      - CSI ? 5522 $ p
+      - CSI ? 5522 $ y
+      rule: Use DECRQM/DECRPM. Values 0 or4 mean unsupported.
+      relations:
+      - kind: related
+        clause: dec_vt420.request-mode
+        role: detection
+      - kind: related
+        clause: dec_vt420.report-mode
+        role: reply
+    - id: notify
+      section: Paste Notification Format; Paste Behavior
+      level: defined
+      wire: OSC 5522 ; type=read:status=OK[:loc=primary][:pw=token] ST / OSC 5522 ; type=read:status=DATA:mime=Lg==[:pw=token]
+        ; MIME-list-base64 ST / OSC 5522 ; type=read:status=DONE[:pw=token] ST
+      dispatch:
+      - OSC 5522
+      rule: On actual user paste with mode enabled, send unsolicited standard clipboard list response. Include every available
+        MIME type from the originating clipboard. OK includes loc=primary only for primary; absent loc means default system
+        clipboard. Recommended unique one-use Base64 password in OK, optionally repeated identically in DATA/DONE. MIME type
+        Lg== identifies period. ST may be BEL or ESC backslash.
+      relations:
+      - kind: extends
+        clause: kitty_clipboard.read-response
+    - id: mime-list
+      section: Paste Notification Format
+      level: defined
+      wire: MIME-list payload
+      rule: Decode Base64 MIME-list and split on ASCII whitespace, ignoring leading/trailing whitespace; never depend on final
+        newline.
+    - id: read
+      section: Paste Notification Format
+      level: defined
+      wire: OSC 5522 ; type=read[:loc=primary][:pw=token:name=base64-name] ; requested-MIME-list-base64 ST
+      dispatch:
+      - OSC 5522
+      rule: Request one or more desired MIME types from same clipboard location. Password must have a human-friendly Base64
+        UTF-8 name, recommended Paste event. If any requested MIME types are available, ignore unavailable ones without failing
+        request; return all available requested types. Standard OK/DATA/DONE response, data chunks at most4096 decoded bytes.
+      relations:
+      - kind: extends
+        clause: kitty_clipboard.read
+    - id: precedence
+      section: Paste Behavior; Implementation Notes
+      level: defined
+      wire: DEC mode 5522 and mode 2004
+      rule: Mode5522 wins if both enabled; never send both MIME event and ordinary bracketed paste for one paste.
+      relations:
+      - kind: related
+        clause: xterm_controls.bracketed-paste-mode
+        role: precedence
+    - id: password
+      section: Security Considerations
+      level: defined
+      wire: pw token + name + clipboard location
+      rule: Recommended unique cryptographic one-use token authorizes read only for paste-origin clipboard. Valid current token
+        with name MUST read without confirmation; invalidate after use or short timeout. Missing name means no password. Invalid/missing
+        token SHOULD fall back to standard permission policy. Token grants no access to other clipboard location.
+      relations:
+      - kind: extends
+        clause: kitty_clipboard.password
+    - id: security
+      section: Security Considerations
+      level: defined
+      wire: unsolicited MIME list versus explicit data request
+      rule: Listing available types need not prompt and does not include data. Actual clipboard contents transmitted only on
+        explicit read; apply ordinary Kitty security policy. Applications must validate MIME types and sanitize received data.
+  iterm2_current:
+    title: iTerm2 current proprietary escape-code additions and changed profiles
+    author: iTerm2 project
+    authority: protocol-author
+    revision: Unversioned author page, preserved 2026-11-24
+    url: https://iterm2.com/documentation-escape-codes.html
+    snapshot_sha256: c352db6de5823e1c0e612381dafe2d9795d698d90a3328a9e45cad0aeee3d6c4
+    scope: Only additions or differences relative to pinned 3.6 page; common definitions linked to existing iTerm2 records.
+    clauses:
+    - id: profile-property
+      section: Set profile property
+      level: defined
+      wire: OSC 1337 ; SetProfileProperty=key=base64-JSON [ ; key=base64-JSON ... ] ST
+      dispatch:
+      - OSC 1337
+      rule: Set one or more profile properties at runtime; each value is Base64-encoded JSON, pairs separated by semicolons.
+        Host policy, allowed keys and JSON schema not defined here.
+      relations:
+      - kind: extends
+        clause: iterm2_osc1337.set-profile
+    - id: progress-profile
+      section: Progress Bar
+      level: defined
+      wire: OSC 9 ; 4 ; state [ ; progress ] ST / OSC 9 ; 4 ST
+      dispatch:
+      - OSC 9
+      rule: Current page defines 4 paused, with optional percentage retaining current percent and recoloring if absent; 2 error
+        optionally indeterminate, 1 requires percent,3 indeterminate,0 clears. Abbreviated OSC9;4 clears. Distinct from 3.6
+        requirement for state4 percent.
+      relations:
+      - kind: conflicts
+        clause: iterm2_osc1337.progress-profile
+      - kind: reaffirms
+        clause: conemu_progress.states
+    - id: dual-rgb
+      section: Dual-mode Colors (light/dark variants)
+      level: defined
+      wire: 'CSI 38|48|58 : 12 : Rl : Gl : Bl : Rd : Gd : Bd m'
+      dispatch:
+      - CSI 38 m
+      - CSI 48 m
+      - CSI 58 m
+      rule: Store light RGB triple and dark RGB triple for foreground/background/underline. Display appropriate variant for
+        current appearance, including already written scrollback; do not flatten at write time. Source gives selector12 and
+        six channels without additional colorspace field; numeric/malformed admission not exhaustively specified.
+      relations:
+      - kind: extends
+        clause: itu_t416.sgr-colour-subparameters
+      - kind: related
+        clause: kitty_underlines.color
+        role: underline
+    - id: dual-indexed
+      section: Dual-mode Colors (light/dark variants)
+      level: defined
+      wire: 'CSI 38|48|58 : 13 : light-index : dark-index m'
+      dispatch:
+      - CSI 38 m
+      - CSI 48 m
+      - CSI 58 m
+      rule: Store paired 256-color palette indices; resolve appropriate appearance at display time, including scrollback. Foreground38/background48/underline58.
+      relations:
+      - kind: related
+        clause: iterm2_current.dual-rgb
+        role: appearance
+  iterm2_session_status:
+    title: iTerm2 Session Status (OSC 21337)
+    author: iTerm2 project
+    authority: protocol-author
+    revision: Unversioned linked author page, preserved 2026-11-25
+    url: https://iterm2.com/documentation-session-status.html
+    snapshot_sha256: 160f3050837c956ab3f3f23887c7a04bd93f360b3559f26a358a8459d19e2c21
+    scope: Published session-status update payload, with independent fields and additional detail text.
+    clauses:
+    - id: update
+      section: Control Sequence
+      level: defined
+      wire: OSC 21337 ; status=text ; indicator=color ; status-color=color ; detail=text ST
+      dispatch:
+      - OSC 21337
+      rule: 'Semicolon-separated key=value fields set independently. status subtitle, indicator dot color, status-color subtitle
+        color, detail additional text. Empty value clears just that field; omitted fields unchanged; unknown keys ignored. Color
+        syntax #RRGGBB or rgb:RR/GG/BB per linked document.'
+      details:
+        fields:
+          status: subtitle text
+          indicator: dot color
+          status-color: subtitle color
+          detail: additional tool/cockpit text
+        colors:
+        - '#RRGGBB'
+        - rgb:RR/GG/BB
+      evidence:
+        additional_author_document:
+          url: https://iterm2.com/documentation-escape-codes.html
+          sha256: c352db6de5823e1c0e612381dafe2d9795d698d90a3328a9e45cad0aeee3d6c4
+          section: Session Status
+          meaning: 'Unversioned proprietary page lists three fields and #rrggbb. Linked session-status page additionally specifies
+            detail and rgb: color form.'
+  iterm2_images:
+    title: iTerm2 Inline Images Protocol
+    author: iTerm2 project
+    authority: protocol-author
+    revision: Unversioned author page, preserved 2026-11-24; multipart introduced 3.5
+    url: https://iterm2.com/documentation-images.html
+    snapshot_sha256: a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+    scope: Author single and multipart file transfer and image rendering metadata. Download and host filesystem policy not selected.
+    clauses:
+    - id: single
+      section: Protocol
+      level: defined
+      wire: 'OSC 1337 ; File=[key=value;...] : base64-file (BEL | ST)'
+      dispatch:
+      - OSC 1337
+      rule: Original single-frame file transfer with optional semicolon-separated metadata preceding colon and Base64 file bytes.
+        OSC uses ESC ], BEL or ESC backslash terminates. inline flag determines display/download.
+    - id: multipart-start
+      section: Protocol
+      level: defined
+      wire: OSC 1337 ; MultipartFile=[key=value;...] (BEL | ST)
+      dispatch:
+      - OSC 1337
+      rule: Begin multipart file using same metadata. Introduced in iTerm2 3.5 to work through tmux integration.
+      relations:
+      - kind: extends
+        clause: iterm2_images.single
+    - id: multipart-part
+      section: Protocol
+      level: defined
+      wire: OSC 1337 ; FilePart=base64-file-part (BEL | ST)
+      dispatch:
+      - OSC 1337
+      rule: 'Send one or more chunks after MultipartFile. Published limit covers whole escape sequence, not decoded data: legacy
+        tmux256 bytes, newer tmux and iTerm2 1048576 bytes. Source does not fully state padding/admission across chunks.'
+      relations:
+      - kind: related
+        clause: iterm2_images.multipart-start
+        role: transfer
+      details:
+        max_sequence_bytes:
+          legacy_tmux: 256
+          modern_tmux: 1048576
+          iterm2: 1048576
+    - id: multipart-end
+      section: Protocol
+      level: defined
+      wire: OSC 1337 ; FileEnd (BEL | ST)
+      dispatch:
+      - OSC 1337
+      rule: Terminate multipart file transfer. Source shows no value after FileEnd.
+      relations:
+      - kind: related
+        clause: iterm2_images.multipart-part
+        role: transfer
+    - id: metadata
+      section: Protocol / optional arguments
+      level: defined
+      wire: name=base64 / size=bytes / width / height / preserveAspectRatio / inline
+      rule: name Base64 filename default Unnamed file; size optional progress hint only. Width/height dimensions use cell, px,
+        percentage of session extent or auto. preserveAspectRatio defaults1; 0 allows stretching. inline defaults0 (download
+        without terminal representation); 1 requests inline display.
+      details:
+        keys:
+          name: Base64 filename, default Unnamed file
+          size: byte count, optional progress indicator only
+          width: dimension
+          height: dimension
+          preserveAspectRatio: 0 stretch allowed, default1
+          inline: 0 download, 1 inline, default0
+    - id: dimensions
+      section: Protocol / width and height
+      level: defined
+      wire: width=N|Npx|N%|auto / height=N|Npx|N%|auto
+      rule: N unitless counts character cells, Npx pixels, N% percentage of session width/height, auto inherent image dimension.
+        Preserve original dimension semantics; exact rounding and absent-value defaults not separately specified.
+    - id: download
+      section: More on File Transfers
+      level: defined
+      wire: inline=0 or omitted / inline=1
+      rule: Download when inline absent/0, original iTerm2 stores in Downloads. Inline supports OS-supported image formats incl
+        PDF/PICT/bitmaps. Additional native document rendering described in proprietary escape page, not blanket arbitrary file
+        rendering.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.native-file-render
+        role: extension
+    - id: detection
+      section: Detection
+      level: defined
+      wire: Feature Reporting FILE capability
+      rule: Author points to Terminal Feature Reporting protocol for detection, not an implied positive response to arbitrary
+        OSC1337.
+      relations:
+      - kind: related
+        clause: iterm2_feature_reporting.file
+        role: detection
+  iterm2_badges:
+    title: iTerm2 Badges
+    author: iTerm2 project
+    authority: protocol-author
+    revision: 3.6 author page, preserved 2026-11-25
+    url: https://iterm2.com/3.6/documentation-badges.html
+    snapshot_sha256: 7dfa658f815ba6bb6bca19154bf8199570de02777cf6534c1f4fa41c0c210082
+    scope: Protocol setting of host badge format; rendering and configurable typography remain host concerns.
+    clauses:
+    - id: set
+      section: Escape Sequences
+      level: defined
+      wire: OSC 1337 ; SetBadgeFormat=base64-interpolated-string ST
+      dispatch:
+      - OSC 1337
+      rule: Set host badge format from Base64-encoded interpolated string, including session/user variables. Linked scripting
+        definition supplies interpretation, not a terminal text rendering command.
+      relations:
+      - kind: reaffirms
+        clause: iterm2_osc1337.badge-format
+      - kind: related
+        clause: iterm2_scripting.interpolation
+        role: payload
+  iterm2_scripting:
+    title: 'iTerm2 Scripting Fundamentals: terminal payloads'
+    author: iTerm2 project
+    authority: protocol-author
+    revision: 3.6 author page, preserved 2026-11-25
+    url: https://iterm2.com/3.6/documentation-scripting-fundamentals.html
+    snapshot_sha256: ef6509358cb52d184e8457fcf6034867f0d8f2c14aef4beffde258dd967d4d95
+    scope: Only wire-referenced user-variable and interpolation semantics; complete host scripting language/API is adjacent
+      and not an implementation obligation.
+    clauses:
+    - id: user-var
+      section: Control Sequence / Setting User-Defined Variables
+      level: defined
+      wire: OSC 1337 ; SetUserVar=name=base64-value ST
+      dispatch:
+      - OSC 1337
+      rule: Set user-defined session variable in user namespace; e.g. name foo addresses user.foo. Value is Base64 text. Scripts
+        can use variables in UI substitutions.
+      relations:
+      - kind: reaffirms
+        clause: iterm2_osc1337.set-user-var
+    - id: interpolation
+      section: Interpolated Strings; Expressions
+      level: defined
+      wire: badge format payload after Base64 decode
+      rule: Interpolated strings contain expressions inside \(...), including variable references and registered function calls;
+        source borrows Swift notation, not full Swift. Versioned 3.6.8 additions include arithmetic, comparison, logical and
+        ternary expressions. Complete host-expression grammar and authorization remain adjacent discovery scope.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.badge-format
+        role: payload
+  iterm2_feature_reporting:
+    title: Terminal Feature Reporting (TERM_FEATURES / OSC 1337 Capabilities)
+    author: iTerm2 project
+    authority: protocol-author
+    revision: Published author page, preserved 2026-11-24
+    url: https://iterm2.com/feature-reporting/
+    snapshot_sha256: cdc18081654a97cfa7c34111feb7aaf93031c3b09a2d1a83c179a0c68c8cfae9
+    scope: Author modification of earlier terminal-wg proposal. Registry, base requirements, advertised feature semantics and
+      encoding. Original terminal-wg proposal remains a distinct discovery obligation.
+    clauses:
+    - id: query
+      section: Publication
+      level: defined
+      wire: OSC 1337 ; Capabilities ST / OSC 1337 ; Capabilities=FeatureString ST
+      dispatch:
+      - OSC 1337
+      rule: Terminal exposes feature set through query response and TERM_FEATURES environment variable. This is a feature-set
+        report, not a substitute for every individual protocol query. Author page defines ST as ESC backslash; pinned iTerm2
+        output uses BEL.
+      details:
+        environment: TERM_FEATURES
+        reply: OSC 1337 ; Capabilities=FeatureString ST
+      evidence:
+        pinned_source_observation:
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          location: sources/VT100/VT100Output.m:1545-1548
+          meaning: Produces reply terminated by BEL.
+    - id: encoding
+      section: Types; Publication / Encoding
+      level: defined
+      wire: FeatureString
+      rule: Concatenate feature encodings without separator. Boolean code is uppercase ASCII followed by lowercase ASCII letters;
+        present means advertised, absent false. UInt appends decimal digits; omitted value means0. Ignore unrecognized future
+        bits beyond each defined width. Ignore all characters at and after first non-alphanumeric.
+      details:
+        boolean: ^[A-Z][a-z]*$
+        uint: ^[A-Z][a-z]*[0-9]+$
+        usable_prefix: ^[A-Za-z0-9]*
+        defaults:
+          boolean: false
+          uint: 0
+    - id: base-parsing
+      section: Table Stakes / Parsing
+      level: defined
+      wire: SGR / DECSET / DECRST / unknown CSI OSC DCS APC
+      rule: Conformance to this feature-reporting specification requires at least15 parameters including colon subparameters
+        for SGR/DECSET/DECRST. Process parameters in order (SHOULD). Well-formed unrecognized CSI/OSC/DCS/APC must parse and
+        be ignored; leader/intermediate combinations distinguish CSI controls. Source baseline is not a newly chosen Howl limit.
+      relations:
+      - kind: related
+        clause: ecma48.csi-syntax
+        role: base-contract
+      - kind: related
+        clause: ecma48.sgr
+        role: base-contract
+    - id: base64
+      section: Notation
+      level: defined
+      wire: RFC 4648 Base64 payloads
+      rule: Unless otherwise specified, standard RFC4648 section4 alphabet, no whitespace, required padding. Applies to this
+        source profile; not a universal change to other protocols.
+    - id: palette
+      section: Table Stakes / 256 Colors
+      level: defined
+      wire: CSI 38 ; 5 ; index m / CSI 48 ; 5 ; index m
+      dispatch:
+      - CSI 38 m
+      - CSI 48 m
+      rule: Requires indexed foreground/background colors. Initial table0..7 normal ANSI,8..15 bright ANSI,16..255 the exact
+        linked RGB table; color settings may change these values.
+      relations:
+      - kind: related
+        clause: itu_t416.sgr-colour-subparameters
+        role: base-contract
+      details:
+        indices: 0..255
+        palette_asset:
+          url: https://iterm2.com/feature-reporting/256_color_rgb.txt
+          sha256: 20bbe02cc31eb9a5c85debadaa2cff739c1fd805a597aeb5a3b626537404f42f
+          format: Published entries16..255; retain exact linked asset rather than substitute a guessed palette.
+    - id: rgb
+      section: Features / 24BIT
+      level: defined
+      wire: 'CSI 38|48 ; 2 ; R ; G ; B m / CSI 38|48 : 2 : colorspace : R : G : B [: more-subparameters] m'
+      dispatch:
+      - CSI 38 m
+      - CSI 48 m
+      rule: Two-bit mask:1 compatibility semicolon RGB;2 full colon RGB. RGB values0..255, sRGB. Full form SHOULD ignore additional
+        subparameters and colorspace; applications SHOULD leave colorspace empty.
+      relations:
+      - kind: related
+        clause: itu_t416.sgr-colour-subparameters
+        role: profile
+      details:
+        feature:
+          name: 24BIT
+          code: T
+          type: UInt
+          default: 0
+          bits: 2
+        bit_values:
+          1: compatibility RGB
+          2: full colon RGB
+    - id: clipboard
+      section: Features / CLIPBOARD_WRITABLE
+      level: defined
+      wire: OSC 52 ; clipboard ; base64-data ST
+      dispatch:
+      - OSC 52
+      rule: Advertises writable OSC52 clipboard; defined selectors empty or s0, UTF-8 data, other selectors out of scope. SHOULD
+        NOT advertise if user disabled; conditional authorization may be advertised.
+      relations:
+      - kind: related
+        clause: xterm_controls.clipboard-osc52
+        role: profile
+      details:
+        feature:
+          name: CLIPBOARD_WRITABLE
+          code: Cw
+          type: Boolean
+          default: false
+    - id: margins
+      section: Features / DECSLRM
+      level: defined
+      wire: CSI ? 69 h/l / CSI left ; right s
+      dispatch:
+      - CSI ? 69 h
+      - CSI ? 69 l
+      - CSI s
+      rule: Advertises horizontal margins set/reset and adjustment. Source enumerates esctest behavior checks; tests requiring
+        unsupported optional features may be optional. Does not imply title/report or other feature support.
+      relations:
+      - kind: related
+        clause: dec_vt420.left-right-margins
+        role: profile
+      details:
+        feature:
+          name: DECSLRM
+          code: Lr
+          type: Boolean
+          default: false
+    - id: mouse
+      section: Features / MOUSE
+      level: defined
+      wire: CSI ? 1000|1002|1003|1006 h/l / CSI < Cb ; X ; Y M|m
+      dispatch:
+      - CSI ? 1000 h
+      - CSI ? 1000 l
+      - CSI ? 1002 h
+      - CSI ? 1002 l
+      - CSI ? 1003 h
+      - CSI ? 1003 l
+      - CSI ? 1006 h
+      - CSI ? 1006 l
+      - CSI < M
+      - CSI < m
+      rule: Advertise normal/button-motion/all-motion tracking and SGR encoding. Reports one-based cell coordinates, decimal
+        button/modifiers, m release and M otherwise. Button motion only on changed cell. Source minimum left down/up/drag; multiple
+        simultaneous buttons platform-defined. Preserve its contradictory button table separately from xterm.
+      relations:
+      - kind: related
+        clause: xterm_controls.mouse-sgr
+        role: profile
+      details:
+        feature:
+          name: MOUSE
+          code: M
+          type: Boolean
+          default: false
+    - id: mouse-button-table
+      section: Features / MOUSE / DECSET(1006)
+      level: defined
+      wire: CSI < Cb ; X ; Y M|m
+      dispatch:
+      - CSI < M
+      - CSI < m
+      rule: Published table states 0 left;1 right without wheel interpretation;2 other (typically middle);3 with motion means
+        no button. Table row1 gives wheel up with64 and wheel down without64, in conflict with the original xterm wheel/button
+        scheme and with its own right-button entry. Record exact source issue rather than normalize silently.
+      relations:
+      - kind: conflicts
+        clause: xterm_controls.mouse-sgr
+      details:
+        source_values:
+          0: left
+          1: right; also stated wheel up if64 present/down if absent
+          2: other, typically middle
+          3: no button when32 and mode1003
+          4: shift
+          8: meta/alt
+          16: control
+          32: motion
+          64: wheel interpretation for1
+    - id: mouse-precedence
+      section: Features / MOUSE / Precedence
+      level: defined
+      wire: CSI ? 1000|1002|1003|1007 h/l
+      rule: 'Tracking modes1000,1002,1003 override alternate scroll1007. Most recently set tracking mode disables former tracking
+        mode; resetting selected mode leaves tracking disabled. 1007 causes cursor up/down on alternate bank wheel when tracking
+        not overriding. Application advice: set1006 before tracking and reset1006 after tracking to avoid races.'
+      relations:
+      - kind: related
+        clause: xterm_controls.mouse-alternate-scroll
+        role: profile
+      - kind: related
+        clause: iterm2_feature_reporting.mouse
+        role: mode
+    - id: cursor
+      section: Features / DECSCUSR
+      level: defined
+      wire: CSI mode SP q
+      dispatch:
+      - CSI SP q
+      rule: Three-bit mask:1 modes1..4,2 modes5..6,4 selector0 restores configured default. Without4, selector0 equals1. Selectors1
+        blinking block,2 steady block,3 blinking underline,4 steady underline,5 blinking bar,6 steady bar. Terminal may suppress
+        blinking. Interactions with modes12/13/14 and ANSI33/34 are implementation-defined.
+      relations:
+      - kind: related
+        clause: dec_vt520.cursor-style
+        role: profile
+      - kind: related
+        clause: iterm2_osc1337.cursor-default
+        role: profile
+      details:
+        feature:
+          name: DECSCUSR
+          code: Sc
+          type: UInt
+          default: 0
+          bits: 3
+        bit_values:
+          1: modes1..4
+          2: modes5..6
+          4: mode0 configured default
+    - id: unicode-basic
+      section: Features / UNICODE_BASIC
+      level: defined
+      wire: UTF-8 text and basic Unicode display
+      rule: Low baseline for Unicode display, not complete Unicode conformance. Source leaves embedded controls within UTF-8
+        or grapheme clusters unspecified, and acknowledges inconsistent wide-character edge/overwrite behaviors.
+      details:
+        feature:
+          name: UNICODE_BASIC
+          code: U
+          type: Boolean
+          default: false
+    - id: ambiguous-wide
+      section: Features / AMBIGUOUS_WIDE
+      level: defined
+      wire: Unicode East Asian Ambiguous width
+      rule: True uses two cells for ambiguous-width characters, false one. Width tables depend on advertised Unicode version.
+      relations:
+      - kind: related
+        clause: kitty_text_size.scalar-width
+        role: width-profile
+      details:
+        feature:
+          name: AMBIGUOUS_WIDE
+          code: Aw
+          type: Boolean
+          default: false
+    - id: unicode-widths
+      section: Features / UNICODE_WIDTHS
+      level: defined
+      wire: Unicode width table version
+      rule: Six-bit value:0 no Unicode claimed,8 Unicode8 or older,9 or greater represents specified version; special encoding-dependent
+        maximum denotes equal/greater than representable maximum. Source does not specify a meaning for1..7.
+      details:
+        feature:
+          name: UNICODE_WIDTHS
+          code: Uw
+          type: UInt
+          default: 0
+          bits: 6
+    - id: titles
+      section: Features / TITLES
+      level: defined
+      wire: CSI 22|23 ; 0|1|2 t / OSC 0|1|2 ; title ST
+      dispatch:
+      - CSI 22 t
+      - CSI 23 t
+      - OSC 0
+      - OSC 1
+      - OSC 2
+      rule: Two-bit mask:1 title-stack support,2 title setting. Push22/pop23 select both0,icon1,window2. OSC0 both,1 icon,2
+        window. Host can interpret icon title as tab title; one combined or separate stacks permitted. Title query not required
+        to advertise.
+      relations:
+      - kind: related
+        clause: xterm_controls.window-operation-extensions
+        role: profile
+      - kind: related
+        clause: cde_dtterm.title-selector-0
+        role: profile
+      details:
+        feature:
+          name: TITLES
+          code: Ts
+          type: UInt
+          default: 0
+          bits: 2
+        bit_values:
+          1: title stacks
+          2: title setting
+    - id: bracketed-paste
+      section: Features / BRACKETED_PASTE
+      level: defined
+      wire: CSI ? 2004 h/l / CSI 200 ~ text CSI 201 ~
+      dispatch:
+      - CSI ? 2004 h
+      - CSI ? 2004 l
+      - CSI 200 ~
+      - CSI 201 ~
+      rule: When enabled, bracket user paste. SHOULD strip ASCII controls0..8,11,12,14..31, preserving tab/CR/LF; MUST remove
+        or modify embedded CSI201~ to prevent forged end marker.
+      relations:
+      - kind: related
+        clause: xterm_controls.bracketed-paste-mode
+        role: profile
+      - kind: related
+        clause: xterm_controls.bracketed-paste-delimiters
+        role: profile
+      details:
+        feature:
+          name: BRACKETED_PASTE
+          code: B
+          type: Boolean
+          default: false
+    - id: focus
+      section: Features / FOCUS_REPORTING
+      level: defined
+      wire: CSI ? 1004 h/l / CSI I / CSI O
+      dispatch:
+      - CSI ? 1004 h
+      - CSI ? 1004 l
+      - CSI I
+      - CSI O
+      rule: Advertises focus enter I and leave O reports while mode1004 enabled. Registry also assigns F to FILE, creating ambiguity.
+      relations:
+      - kind: related
+        clause: xterm_controls.focus
+        role: profile
+      details:
+        feature:
+          name: FOCUS_REPORTING
+          code: F
+          type: Boolean
+          default: false
+    - id: strikethrough
+      section: Features / STRIKETHROUGH
+      level: defined
+      wire: CSI 9 m / CSI 29 m
+      dispatch:
+      - CSI 9 m
+      - CSI 29 m
+      rule: Advertises parsing and rendering strikethrough; may coexist with underline.
+      relations:
+      - kind: related
+        clause: ecma48.sgr
+        role: profile
+      details:
+        feature:
+          name: STRIKETHROUGH
+          code: Gs
+          type: Boolean
+          default: false
+    - id: overline
+      section: Features / OVERLINE
+      level: defined
+      wire: CSI 53 m / CSI 55 m
+      dispatch:
+      - CSI 53 m
+      - CSI 55 m
+      rule: Advertises parsing and rendering overline enable53/disable55.
+      relations:
+      - kind: related
+        clause: ecma48.sgr
+        role: profile
+      details:
+        feature:
+          name: OVERLINE
+          code: Go
+          type: Boolean
+          default: false
+    - id: sync
+      section: Features / SYNC
+      level: defined
+      wire: synchronized output support
+      rule: Advertises synchronized output; author links terminal-wg merge request2. Linked proposal not recovered, do not infer
+        exact timeout or dialect from this flag.
+      relations:
+      - kind: related
+        clause: contour_sync.begin
+        role: profile
+      details:
+        feature:
+          name: SYNC
+          code: Sy
+          type: Boolean
+          default: false
+    - id: hyperlinks
+      section: Features / HYPERLINKS
+      level: defined
+      wire: OSC 8 hyperlink
+      dispatch:
+      - OSC 8
+      rule: Advertises OSC8 hyperlinks; document links hyperlink spec.
+      relations:
+      - kind: related
+        clause: osc8.open
+        role: profile
+      details:
+        feature:
+          name: HYPERLINKS
+          code: H
+          type: Boolean
+          default: false
+    - id: notifications
+      section: Features / NOTIFICATIONS
+      level: defined
+      wire: OSC 9 ; text ST
+      dispatch:
+      - OSC 9
+      rule: Advertises OSC9 host notification shown outside normal terminal UI.
+      relations:
+      - kind: related
+        clause: iterm2_osc1337.notification
+        role: profile
+      details:
+        feature:
+          name: NOTIFICATIONS
+          code: 'No'
+          type: Boolean
+          default: false
+    - id: sixel
+      section: Features / SIXEL
+      level: defined
+      wire: DCS sixel graphics
+      rule: Advertises Sixel display at cursor, with linked example as feature test. This is not complete Sixel semantic coverage.
+      relations:
+      - kind: related
+        clause: dec_sixel.envelope
+        role: profile
+      details:
+        feature:
+          name: SIXEL
+          code: Sx
+          type: Boolean
+          default: false
+    - id: file
+      section: Features / FILE
+      level: defined
+      wire: 'OSC 1337 ; File=metadata : base64 ST'
+      dispatch:
+      - OSC 1337
+      rule: Advertises iTerm2 file protocol including file transfer/display of images or video, lossy compression. Linked inline-images
+        author document governs file details. Duplicate F code conflicts with focus reporting.
+      relations:
+      - kind: related
+        clause: iterm2_images.single
+        role: profile
+      - kind: conflicts
+        clause: iterm2_feature_reporting.focus
+      details:
+        feature:
+          name: FILE
+          code: F
+          type: Boolean
+          default: false
+    - id: progress
+      section: Features / PROGRESS
+      level: defined
+      wire: OSC 9 ; 4 ; state ; progress ST
+      dispatch:
+      - OSC 9
+      rule: Advertises progress state0 hide,1 default,2 error,3 indeterminate ignores progress,4 warning. Progress0..100. Printed
+        introduction says OSC4;9 but actual wire is OSC9;4; preserve typo as source note, not extra command.
+      relations:
+      - kind: related
+        clause: conemu_progress.format
+        role: profile
+      - kind: related
+        clause: iterm2_osc1337.progress-profile
+        role: profile
+      details:
+        feature:
+          name: PROGRESS
+          code: P
+          type: Boolean
+          default: false
+  iterm2_legacy_sync:
+    title: iTerm2 Synchronized Updates (legacy DCS and private mode 2026)
+    author: iTerm2 project
+    authority: protocol-author
+    revision: Author wiki, preserved 2026-11-25; historical discussion July 2018
+    url: https://gitlab.com/gnachman/iterm2/-/wikis/synchronized-updates-spec.md
+    snapshot_sha256: 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85
+    scope: Author specification recovered as identical Markdown through raw wiki and API. Original BSU/ESU DCS dialect and preferred
+      private mode2026 dialect; exact presentation and timeout conditions. Preserve implementation observations separately.
+    clauses:
+    - id: begin
+      section: Control Sequence / Begin synchronized update (BSU)
+      level: defined
+      wire: DCS = 1 s [ parameters ] ST
+      dispatch:
+      - DCS = 1 s
+      rule: Begin synchronized update. Hold new visible content until update ends, then apply accumulated changes atomically.
+        Optional payload parameters after final s are reserved; ignore them.
+      relations:
+      - kind: related
+        clause: contour_sync.begin
+        role: historical-dialect
+      evidence:
+        pinned_source_observation:
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          location: sources/VT100/VT100DCSParser.m:631-637; sources/VT100/VT100Terminal.m:3082-3088
+          meaning: Author implementation exact parameter-string match1/2, with synchronizedUpdates YES/NO dispatch. Full payload
+            acceptance and timing not inferred from parser alone.
+        historical_document: https://gitlab.com/gnachman/iterm2/-/wikis/synchronized-updates-spec
+        additional_reference: Foot pinned dcs.c:487-495 cites the original wiki and recognizes DCS =1s/=2s at unhook.
+        additional_author_document:
+          url: https://gitlab.com/api/v4/projects/gnachman%2Fiterm2/wikis/synchronized-updates-spec
+          sha256: dfbef594f71d893c37aa8b56c1480dc255d9ed94d49a5736e8fba000edfad17d
+          meaning: API content is byte-identical to raw author wiki Markdown.
+    - id: end
+      section: Control Sequence / End synchronized update (ESU)
+      level: defined
+      wire: DCS = 2 s [ parameters ] ST
+      dispatch:
+      - DCS = 2 s
+      rule: End synchronized update and present accumulated changes atomically. Ignore end when no update active. Optional payload
+        parameters after final s are reserved; ignore them.
+      relations:
+      - kind: related
+        clause: contour_sync.end
+        role: historical-dialect
+      evidence:
+        pinned_source_observation:
+          revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+          location: sources/VT100/VT100DCSParser.m:631-637; sources/VT100/VT100Terminal.m:3082-3088
+          meaning: Author implementation exact parameter-string match1/2, with synchronizedUpdates YES/NO dispatch. Full payload
+            acceptance and timing not inferred from parser alone.
+        historical_document: https://gitlab.com/gnachman/iterm2/-/wikis/synchronized-updates-spec
+        additional_reference: Foot pinned dcs.c:487-495 cites the original wiki and recognizes DCS =1s/=2s at unhook.
+        additional_author_document:
+          url: https://gitlab.com/api/v4/projects/gnachman%2Fiterm2/wikis/synchronized-updates-spec
+          sha256: dfbef594f71d893c37aa8b56c1480dc255d9ed94d49a5736e8fba000edfad17d
+          meaning: API content is byte-identical to raw author wiki Markdown.
+    - id: mode-begin
+      section: Control Sequence / DECSET/DECRESET
+      level: defined
+      wire: CSI ? 2026 h
+      dispatch:
+      - CSI ? 2026 h
+      rule: Preferred alternate syntax equivalent to BSU; source states no parameters may be passed (beyond mode selector2026).
+        No extension to general DECSET list admission inferred.
+      relations:
+      - kind: equivalent
+        clause: iterm2_legacy_sync.begin
+      - kind: reaffirms
+        clause: contour_sync.begin
+    - id: mode-end
+      section: Control Sequence / DECSET/DECRESET
+      level: defined
+      wire: CSI ? 2026 l
+      dispatch:
+      - CSI ? 2026 l
+      rule: Preferred alternate syntax equivalent to ESU, no additional parameters specified.
+      relations:
+      - kind: equivalent
+        clause: iterm2_legacy_sync.end
+      - kind: reaffirms
+        clause: contour_sync.end
+    - id: presentation
+      section: What is Synchronized?
+      level: defined
+      wire: synchronized update interval
+      rule: SHOULD defer presentation of characters, character attributes, cursor blink/position/style and palette changes until
+        end. Window title and icon title changes MAY be deferred or not. Hint can be ignored when particular input makes atomicity
+        impracticable; source does not require a second canonical screen or input-buffering architecture.
+    - id: timeout
+      section: Premature Termination / Timeout
+      level: defined
+      wire: synchronized update timeout
+      rule: SHOULD end update after implementation-chosen, possibly configurable timeout. Clock starts when BSU handled. No
+        fixed default specified; balance quick recovery after crash with slow-network tolerance.
+    - id: early-end
+      section: Premature Termination / Optional Conditions
+      level: defined
+      wire: synchronized update early termination
+      rule: MAY end atomic update after byte-count threshold, window size change or modal UI appearance. These are optional
+        conditions, not mandatory protocol transitions.
+    - id: repeat-begin
+      section: Premature Termination / Unexpected Codes
+      level: defined
+      wire: BSU while update active
+      rule: Source says timeout SHOULD be extended by its original duration on repeated begin. Preserve original wording; whether
+        to add to prior deadline or restart from present time remains a source clarification issue. Ignore ESU when no update
+        active.
+      relations:
+      - kind: related
+        role: lifetime
+        clause: iterm2_legacy_sync.timeout
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -17599,3 +19399,105 @@ pending_reconciliation:
     - xterm_controls.sgr-stack-pop
     - xterm_controls.sgr-stack-push
     scope: 'CSI # { / CSI # }'
+- id: rex-id-limit-kitty-profile
+  status: material-originating-extension-conflict
+  wire: OSC 7501 id total length
+  original_author_sources:
+  - clause: rex_status.bounded-sequence
+    meaning: Original rev0.4 hard maximum 128 total bytes.
+  - clause: kitty_misc.rex-status-profile
+    meaning: Kitty explicitly uses 263 total bytes, derived from 8 segments of up to32 plus separators.
+  question: Retain both original and adopting profile. Select whether to preserve original cap or explicitly admit the extended
+    profile; do not reinterpret the source limit.
+  decision: null
+  applies_to:
+    clauses:
+    - kitty_misc.rex-status-profile
+    - rex_status.bounded-sequence
+    scope: OSC 7501 id total length
+- id: uapi-context-prose-vs-abnf
+  status: material-originating-extension-conflict
+  wire: OSC 3008 textual metadata and numeric exit status
+  original_author_sources:
+  - clause: uapi_context.framing
+    meaning: Prose permits UTF-8, forbids ASCII controls and escapes separators.
+  - clause: uapi_context.exit-metadata
+    meaning: Metadata table limits command exit status to 0..255.
+  - clause: uapi_context.abnf
+    meaning: SAFE lists only ASCII ranges plus escapes, STATUS accepts UINT64; field lengths also defined.
+  question: Resolve prose/ABNF inconsistency using originating clarification; retain both exact definitions until selection.
+  decision: null
+  applies_to:
+    clauses:
+    - uapi_context.abnf
+    - uapi_context.exit-metadata
+    - uapi_context.framing
+    scope: OSC 3008 textual metadata and numeric exit status
+- id: decscusr-zero-configured-vs-dec
+  status: material-originating-extension-conflict
+  wire: CSI 0 SP q
+  original_author_sources:
+  - clause: dec_vt520.cursor-style
+    meaning: Original DEC selector0,1 or omitted selects blinking block.
+  - clause: iterm2_osc1337.cursor-default
+    meaning: Selector0 restores terminal-configured appearance; explicit authored deviation.
+  question: Determine intended selector0 and separately omitted-selector profile; existing implementation cannot settle author
+    conflict.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt520.cursor-style
+    - iterm2_osc1337.cursor-default
+    scope: CSI 0 SP q
+- id: iterm2-progress-state4-revision
+  status: material-originating-extension-conflict
+  wire: OSC 9 ; 4 ; 4 [ ; progress ] ST
+  original_author_sources:
+  - clause: iterm2_osc1337.progress-profile
+    meaning: Versioned 3.6 warning, percentage required.
+  - clause: iterm2_current.progress-profile
+    meaning: Current author page paused, absent percentage retains existing value.
+  - clause: conemu_progress.states
+    meaning: Original ConEmu profile paused, permits omission.
+  question: Preserve revision divergence; select exact state4 omission and presentation-neutral state semantics after reviewing
+    originating ConEmu definition.
+  decision: null
+  applies_to:
+    clauses:
+    - conemu_progress.states
+    - iterm2_current.progress-profile
+    - iterm2_osc1337.progress-profile
+    scope: OSC 9 ; 4 ; 4 [ ; progress ] ST
+- id: iterm-feature-mouse-button-table
+  status: material-originating-extension-conflict
+  wire: CSI < Cb ; X ; Y M|m
+  original_author_sources:
+  - clause: iterm2_feature_reporting.mouse-button-table
+    meaning: Published feature-reporting table maps1 right/2 other and has inconsistent wheel interpretation.
+  - clause: xterm_controls.mouse-sgr
+    meaning: 'Original SGR reports retain normal button values: buttons1,2,3 as0,1,2 and wheel buttons4,5 as64,65, no wheel
+      release (ctlseqs Mouse Tracking / Normal tracking and Wheel mice).'
+  question: Treat source table as possible documentation error; retain both definitions and trace author implementation before
+    selecting or editing a test.
+  decision: null
+  applies_to:
+    clauses:
+    - iterm2_feature_reporting.mouse-button-table
+    - xterm_controls.mouse-sgr
+    scope: CSI < Cb ; X ; Y M|m
+- id: iterm-feature-registry-f-collision
+  status: material-originating-extension-conflict
+  wire: OSC 1337 ; Capabilities=FeatureString ST (feature F)
+  original_author_sources:
+  - clause: iterm2_feature_reporting.focus
+    meaning: Registry F means FOCUS_REPORTING.
+  - clause: iterm2_feature_reporting.file
+    meaning: Same F means FILE. Pinned VT100Output.m:1569,1576 emits F for both independently.
+  question: No distinct code can be inferred from same character. Retain source ambiguity; recover author clarification or
+    explicit selected response policy before claiming truthful advertisement.
+  decision: null
+  applies_to:
+    clauses:
+    - iterm2_feature_reporting.file
+    - iterm2_feature_reporting.focus
+    scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
