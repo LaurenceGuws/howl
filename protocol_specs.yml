@@ -9535,8 +9535,7 @@ specifications:
       rule: DECCOLM switches between 80 and 132 terminal columns under the configured terminal mode.
       details:
         original_mode_semantics:
-          source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 130-131; xterm ctlseqs set/reset lines
-            916/1066
+          source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 130-131; xterm ctlseqs set/reset lines 916/1066
           selector: 3
           name: DECCOLM
           set_wire: CSI ? 3 h
@@ -9662,8 +9661,8 @@ specifications:
           original_default: origin addressing relative to the whole page, not margins
           set_effect: Origin-relative cursor addressing is restricted to the scrolling margins.
           reset_effect: Addressing uses page origin, independent of scrolling margins.
-          source_specific_constraints: The original defines home relative to margins when set and page when reset. Do not
-            conflate the page coordinate system with VT scrollback.
+          source_specific_constraints: The original defines home relative to margins when set and page when reset. Do not conflate
+            the page coordinate system with VT scrollback.
           conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements
             all defaults, side effects, sizing or response semantics.
       evidence:
@@ -9894,10 +9893,9 @@ specifications:
       details:
         original_constraints:
           source: VT420 Programmer Reference Manual, pages 162-163
-          behavior: Use the current SGR attributes for the fill character; page-bounded coordinates respect DECOM, not the
-            margins; cursor unchanged.
-          status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl
-            conformance.
+          behavior: Use the current SGR attributes for the fill character; page-bounded coordinates respect DECOM, not the margins;
+            cursor unchanged.
+          status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl conformance.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -9920,10 +9918,9 @@ specifications:
       details:
         original_constraints:
           source: VT420 Programmer Reference Manual, page 164
-          behavior: Erase characters and visual attributes within the requested rectangle, constrained to the active page;
-            cursor unchanged.
-          status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl
-            conformance.
+          behavior: Erase characters and visual attributes within the requested rectangle, constrained to the active page; cursor
+            unchanged.
+          status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl conformance.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -9948,8 +9945,7 @@ specifications:
           source: VT420 Programmer Reference Manual, page 165
           behavior: Erase only characters allowed by DECSCA, retaining protected characters and current rendition/protection
             state; cursor unchanged.
-          status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl
-            conformance.
+          status: Source-specified constraints for eventual implementation and test mapping; not evidence of existing Howl conformance.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -10213,8 +10209,7 @@ specifications:
       rule: DECBKM selects Backspace versus Delete input encoding for the backarrow key.
       details:
         original_mode_semantics:
-          source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 188-189; xterm ctlseqs set/reset lines
-            957/1103
+          source: DEC VT420 Programmer Reference Manual (Feb 1992), printed page(s) 188-189; xterm ctlseqs set/reset lines 957/1103
           selector: 67
           name: DECBKM
           set_wire: CSI ? 67 h
@@ -10255,8 +10250,8 @@ specifications:
           set_wire: CSI ? 7 h
           reset_wire: CSI ? 7 l
           original_default: no autowrap in the original VT420 reference
-          set_effect: At the right page border, subsequent graphic characters wrap to the next line, scrolling the region
-            when appropriate.
+          set_effect: At the right page border, subsequent graphic characters wrap to the next line, scrolling the region when
+            appropriate.
           reset_effect: At the right page border, subsequent graphics replace the border cell rather than wrapping.
           source_specific_constraints: The DEC VT420 source explicitly says default no autowrap; do not silently substitute
             an independently configured modern emulator startup default. This is source history, not Howl runtime conformance.
@@ -10302,8 +10297,7 @@ specifications:
           original_default: normal cursor-key sequences
           set_effect: Arrow keys send application cursor sequences.
           reset_effect: Arrow keys send normal ANSI cursor sequences.
-          source_specific_constraints: Input-encoding behavior; not a cursor-movement command and not proof of Host input
-            mapping.
+          source_specific_constraints: Input-encoding behavior; not a cursor-movement command and not proof of Host input mapping.
           conformance_note: Original-author meaning and equivalent xterm command identity, not a claim that Howl already implements
             all defaults, side effects, sizing or response semantics.
       evidence:
@@ -10485,8 +10479,8 @@ specifications:
           - '> Pm f (XTQFMTKEYS)'
           - '> Pm m (XTQMODKEYS)'
           - '> Pm t (XTSMTITLE)'
-          source_note: The xterm selector set differs from original DEC Table 12-4. Merge the request-family identity, not
-            the sets of valid descriptors or guaranteed responses.
+          source_note: The xterm selector set differs from original DEC Table 12-4. Merge the request-family identity, not the
+            sets of valid descriptors or guaranteed responses.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -10636,11 +10630,17 @@ specifications:
       wire: CSI ? Ps [ ; Pid ] n
       dispatch:
       - CSI ? n
-      rule: VT420 extends the DEC private DSR family with macro memory, data integrity and multiple-session queries, while
-        preserving older printer and keyboard status requests. Reply fields and values are source-defined.
+      rule: VT420 extends the DEC private DSR family with macro memory, data integrity and multiple-session queries, while preserving
+        older printer and keyboard status requests. Reply fields and values are source-defined.
       relations:
       - kind: extends
         clause: dec_vt3xx_text.dsr-dec-private
+      - kind: related
+        clause: dec_vt420.macro-space-report
+        role: specific-report
+      - kind: related
+        clause: dec_vt420.macro-checksum-report
+        role: specific-report
       details:
         parameters:
         - selector: 62
@@ -10676,14 +10676,13 @@ specifications:
         - 26
         response_extension:
           selector: 26
-          response: CSI ? 27 ; Pdialect ; Pstatus ; Pkeyboard_type n in VT400 mode; Pkeyboard_type identifies the keyboard
-            model.
+          response: CSI ? 27 ; Pdialect ; Pstatus ; Pkeyboard_type n in VT400 mode; Pkeyboard_type identifies the keyboard model.
           source: VT420 Chapter 12, printed page 238
-        original_decxcpr: VT420 printed pages 236-237 independently repeat the DECXCPR response CSI Prow ; Pcol ; Ppage R
-          without a private ? prefix.
+        original_decxcpr: VT420 printed pages 236-237 independently repeat the DECXCPR response CSI Prow ; Pcol ; Ppage R without
+          a private ? prefix.
         competing_reply_format: xterm_controls.decxcpr-xterm-reply
-        scope_note: The DEC printer and keyboard response sets include states omitted from xterm examples. Omission alone
-          is not conflicting semantics.
+        scope_note: The DEC printer and keyboard response sets include states omitted from xterm examples. Omission alone is
+          not conflicting semantics.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -10717,8 +10716,8 @@ specifications:
       wire: CSI Pa $ p
       dispatch:
       - CSI $ p
-      rule: Requests the state of exactly one ANSI mode Pa. Distinct from CSI ? Pd $ p for a DEC-private mode; the report
-        is CSI Pa ; Ps $ y.
+      rule: Requests the state of exactly one ANSI mode Pa. Distinct from CSI ? Pd $ p for a DEC-private mode; the report is
+        CSI Pa ; Ps $ y.
       details:
         source_parameters:
           request_count: Exactly one numeric ANSI mode per DECRQM request; no list.
@@ -10859,12 +10858,11 @@ specifications:
           - doublechr.c:48-82
           - doublechr.c:144-173
           verified_behavior: For VT420-level emulation, mode set enables LEFT_RIGHT and calls xterm_ResetDouble; reset clears
-            the mode and resets horizontal margins. The repaint_line double-size gate denies DECDWL and DECDHL while mode
-            enabled.
+            the mode and resets horizontal margins. The repaint_line double-size gate denies DECDWL and DECDHL while mode enabled.
           important_coverage_limit: xterm_ResetDouble loops row < screen->max_row, whereas ptyx.h defines MaxRows=max_row+1,
             so it appears to skip the last visible line. It also resets the visible screen rather than proving DEC all-page-memory
-            coverage. This possible source implementation defect must not be normalized into the canonical DEC requirement
-            or treated as FULL.
+            coverage. This possible source implementation defect must not be normalized into the canonical DEC requirement or
+            treated as FULL.
           modern_subset_observations: Ghostty, WezTerm and GNOME VTE mode-69 handlers explicitly gate margins/reset borders;
             this bounded check does not establish DEC line-size reset/suppression in those implementations.
       test_locations:
@@ -10953,8 +10951,8 @@ specifications:
           reset_effect: Do not append an FF after a printing function.
           scope: Printer I/O behavior, not an in-band VT grid form feed or page-memory addressing mechanism; no printer-connected
             behavior is unselected by this indexing.
-        implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not
-          yet triaged.
+        implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not yet
+          triaged.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -10995,8 +10993,8 @@ specifications:
           reset_wire: CSI ? 19 l
           reset_effect: Limit print-page output to the scrolling region inside the margins.
           scope: A printer output selection, not display paging, VT scrollback, or TUI history.
-        implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not
-          yet triaged.
+        implementation_assessment_scope: Author source only. Printer output ownership/scope and implementation status not yet
+          triaged.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -11046,8 +11044,8 @@ specifications:
       wire: CSI ? Pd [ ; Pd ... ] l
       dispatch:
       - CSI ? l
-      rule: Reset one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their
-        own unprefixed SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions
+      rule: Reset one or more DEC-private modes selected by numeric Pd, separated by semicolons. ANSI modes require their own
+        unprefixed SM/RM sequence; cannot mix ANSI and DEC-private selectors in one sequence. Per-selector state transitions
         and supported defaults belong to their specific original mode clauses.
       evidence:
         also_documented:
@@ -11250,8 +11248,8 @@ specifications:
       wire: CSI ! p
       dispatch:
       - CSI ! p
-      rule: VT400-mode soft reset changes only the functions listed in Table 13-1 to the stated defaults. Do not conflate
-        with RIS hard reset or silently reset unrelated modes. SET-UP Reset differs by not resetting DECNRCM.
+      rule: VT400-mode soft reset changes only the functions listed in Table 13-1 to the stated defaults. Do not conflate with
+        RIS hard reset or silently reset unrelated modes. SET-UP Reset differs by not resetting DECNRCM.
       source_note: Pinned xterm invokes its soft reset path; it additionally calls ResetAnsiColorRequest and uses configured
         defaults for cursor/keypad. The original exact reset scope remains preserved, not claimed equivalent.
       details:
@@ -11300,9 +11298,9 @@ specifications:
       wire: CSI Ps $ |
       dispatch:
       - CSI $ |
-      rule: Omitted/0/80 selects 80 columns per page; 132 selects 132. Default 80. Sets every page width and matching font
-        without clearing page memory or resetting scrolling regions (unlike DECCOLM). Cursor remains unless beyond new right
-        edge, then clamps. Columns lost when shrinking 132 to 80 are destructive. Page geometry is not a host-pixel size.
+      rule: Omitted/0/80 selects 80 columns per page; 132 selects 132. Default 80. Sets every page width and matching font without
+        clearing page memory or resetting scrolling regions (unlike DECCOLM). Cursor remains unless beyond new right edge, then
+        clamps. Columns lost when shrinking 132 to 80 are destructive. Page geometry is not a host-pixel size.
       source_note: Pinned xterm uses a resize request and cursor clamp. Multi-page memory and font consequences are not established.
       evidence:
         also_documented:
@@ -11327,8 +11325,8 @@ specifications:
       - CSI * |
       rule: Pn=1..255 requests maximum display lines. Original VT420 supports 24,39,49 screen lines plus status line via three
         font heights; choose next higher supported value or highest if above maximum. Active session space and current page
-        size further limit displayed lines; e.g. page 36 with display 39 leaves 3 blank lines. Do not reinterpret these as
-        pixel dimensions or arbitrary page-resize quotas.
+        size further limit displayed lines; e.g. page 36 with display 39 leaves 3 blank lines. Do not reinterpret these as pixel
+        dimensions or arbitrary page-resize quotas.
       source_note: Pinned xterm directly requests host resize for 1..255 under window policy; not original discrete font/viewport
         behavior.
       evidence:
@@ -11352,9 +11350,9 @@ specifications:
       wire: CSI " v
       dispatch:
       - CSI " v
-      rule: 'Requests how much of the current page is displayed in the active session window, excluding status line. Reply
-        fields: displayed line count, displayed column count, leftmost page column, top page line, page number. Session windows
-        may display only part of a page.'
+      rule: 'Requests how much of the current page is displayed in the active session window, excluding status line. Reply fields:
+        displayed line count, displayed column count, leftmost page column, top page line, page number. Session windows may
+        display only part of a page.'
       source_note: Pinned xterm reports MaxRows,MaxCols,1,1,1; single-page subset, not a multipage display contract.
       details:
         reply: CSI Ph ; Pw ; Pml ; Pmt ; Pmp " w
@@ -11375,11 +11373,11 @@ specifications:
       - CSI * y
       rule: VT400-mode request labels checksum by Pid. Page Pp=0 or omitted means all pages and ignores rectangle operands;
         above available page count means last page. For a specified page, rectangle coordinates obey DECOM, top<=bottom and
-        left<=right; defaults printed top=1,bottom=page length,right=page width (left default not explicitly listed in the
-        checked text). Omitted rectangle reports whole selected page. Response exactly four uppercase hexadecimal digits;
-        this section does not specify the complete checksum arithmetic.
-      source_note: Pinned xterm uses window permission, computes a rectangular checksum and masks to 16 bits. Do not infer
-        original arithmetic, page semantics or admissible checksum extensions from that code.
+        left<=right; defaults printed top=1,bottom=page length,right=page width (left default not explicitly listed in the checked
+        text). Omitted rectangle reports whole selected page. Response exactly four uppercase hexadecimal digits; this section
+        does not specify the complete checksum arithmetic.
+      source_note: Pinned xterm uses window permission, computes a rectangular checksum and masks to 16 bits. Do not infer original
+        arithmetic, page semantics or admissible checksum extensions from that code.
       details:
         reply: DCS Pid ! ~ HHHH ST
       evidence:
@@ -11445,10 +11443,10 @@ specifications:
       wire: CSI Ps $ ~
       dispatch:
       - CSI $ ~
-      rule: VT400 mode. Ps=0 no status line (parameter default; line becomes extra user-window line), 1 indicator (factory
-        display default), 2 host-writable. Switching indicator to host-writable starts empty. Main/status share character
-        sets, scroll mode, insert mode, tabs and autowrap; only column cursor operands act on status line; DECANM ignored
-        there, DECSCL/DECSTR exit it, RIS erases and exits. SET-UP always shows indicator.
+      rule: VT400 mode. Ps=0 no status line (parameter default; line becomes extra user-window line), 1 indicator (factory display
+        default), 2 host-writable. Switching indicator to host-writable starts empty. Main/status share character sets, scroll
+        mode, insert mode, tabs and autowrap; only column cursor operands act on status line; DECANM ignored there, DECSCL/DECSTR
+        exit it, RIS erases and exits. SET-UP always shows indicator.
       source_note: VT420 summary p.227 appears to print a different final character; detailed format p.220 and report query
         table identify $ ~. Preserve detailed form, do not normalize parameter default to factory state.
       evidence:
@@ -11533,12 +11531,12 @@ specifications:
       wire: DCS Ps ! u designator ST
       dispatch:
       - DCS ! u
-      rule: 'Assign standby supplemental set; original VT420 default DEC Supplemental Graphic. Chapter 5 prints DCS 0 ! u
-        % 5 ST for DEC Supplemental and DCS 0 ! u A ST for ISO Latin-1; Chapter 12 prints DCS 1 ! u A ST for ISO Latin-1 report.
+      rule: 'Assign standby supplemental set; original VT420 default DEC Supplemental Graphic. Chapter 5 prints DCS 0 ! u %
+        5 ST for DEC Supplemental and DCS 0 ! u A ST for ISO Latin-1; Chapter 12 prints DCS 1 ! u A ST for ISO Latin-1 report.
         Assignment is not designation/mapping: designate G1/G2/G3 and map GR before use. Preserve literal conflicting selector
         values.'
-      source_note: Pinned xterm table uses selector 1 with A for ISO Latin-1, selector 0 with A for an undocumented ASCII
-        variant, and ignores assignment in UTF-8 mode. Other later hardware sets require their own original source.
+      source_note: Pinned xterm table uses selector 1 with A for ISO Latin-1, selector 0 with A for an undocumented ASCII variant,
+        and ignores assignment in UTF-8 mode. Other later hardware sets require their own original source.
       evidence:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -11580,16 +11578,15 @@ specifications:
       wire: DCS Pc ; Pl [ ; Pm ] | Ky/St[;Ky/St...] ST
       dispatch:
       - DCS |
-      rule: VT420 VT400/PC TERM only, 48 UDKs sharing 768 bytes. Pc=0/omitted clears all before loading; 1 clears/reloads
-        selected keys in sequence with current free space. Pl=0/omitted locks after loading;1 leaves unlocked, cannot unlock
-        already locked keys except SET-UP. Pm=0/2/omitted shifted,1 unshifted,3/4 alternate unshifted/shifted PC only. Key
-        selector uses original tables; data consists of ASCII hex pairs encoding any 8-bit byte, semicolon between definitions.
-        Invalid pair stops load, keeps earlier definitions and sends rest to screen. RIS clears all UDKs. Do not confuse this
-        with arbitrary host input injection or modern key profiles.
+      rule: VT420 VT400/PC TERM only, 48 UDKs sharing 768 bytes. Pc=0/omitted clears all before loading; 1 clears/reloads selected
+        keys in sequence with current free space. Pl=0/omitted locks after loading;1 leaves unlocked, cannot unlock already
+        locked keys except SET-UP. Pm=0/2/omitted shifted,1 unshifted,3/4 alternate unshifted/shifted PC only. Key selector
+        uses original tables; data consists of ASCII hex pairs encoding any 8-bit byte, semicolon between definitions. Invalid
+        pair stops load, keeps earlier definitions and sends rest to screen. RIS clears all UDKs. Do not confuse this with arbitrary
+        host input injection or modern key profiles.
       source_note: Pinned xterm two-parameter discovery documents a narrower form, and describes Pc=1 as Erase Below; actual
-        code clears all only for Pc=0, then parses key/hex data, accepts nonempty definitions within MAX_UDK. It does not
-        establish original 768-byte quota, lock or modifier semantics. These are original hardware requirements, not target
-        choices.
+        code clears all only for Pc=0, then parses key/hex data, accepts nonempty definitions within MAX_UDK. It does not establish
+        original 768-byte quota, lock or modifier semantics. These are original hardware requirements, not target choices.
       details:
         original_key_selectors:
           ANSI_F1_F20:
@@ -11651,10 +11648,10 @@ specifications:
       section: Chapter 5 / Selecting and Designating Character Sets, printed pp.91-95, Tables 5-2/5-3
       level: defined
       wire: ESC I1 [ I ... ] F
-      rule: VT420 designates a hard set into G0..G3 independently of mapping into GL/GR. The only 96-character hard set is
-        ISO Latin-1 supplemental. The 94-character designators in Table 5-3 include ASCII B, DEC supplemental %5, special
-        graphics 0, technical >, and user-preferred <. Initial G0/G1 ASCII; G2/G3 DEC Supplemental Graphic. NRC sets require
-        national mode and the applicable worldwide hardware profile.
+      rule: VT420 designates a hard set into G0..G3 independently of mapping into GL/GR. The only 96-character hard set is ISO
+        Latin-1 supplemental. The 94-character designators in Table 5-3 include ASCII B, DEC supplemental %5, special graphics
+        0, technical >, and user-preferred <. Initial G0/G1 ASCII; G2/G3 DEC Supplemental Graphic. NRC sets require national
+        mode and the applicable worldwide hardware profile.
       source_note: The size prefix distinguishes 94-set A (UK) from 96-set A (Latin-1). Xterm documents additional profile-specific
         sets; they are not added to the VT420 table. Individual registered glyph maps require separate source verification.
       relations:
@@ -11712,8 +11709,8 @@ specifications:
       rule: Request terminal identification, firmware level and hardware options. VT420 reply CSI > 41 ; Pv ; Po c; firmware
         examples 10 and 20, option 0 no options and 1 PC keyboard/interface. Do not infer a universal third parameter of zero
         from the reference table.
-      source_note: Pinned xterm chooses emulation type, patch number and options=0, also permits nonstandard VT100 type 0.
-        Hardware values are profile data, not mandatory Howl identity.
+      source_note: Pinned xterm chooses emulation type, patch number and options=0, also permits nonstandard VT100 type 0. Hardware
+        values are profile data, not mandatory Howl identity.
       details:
         reply: CSI > Ptype ; Pv ; Po c
         later_profile: 'DEC VT520/525 July 1994 p.5-11: type 64 mono,65 color; option 0 standard VT keyboard,1 PC keyboard.'
@@ -11771,8 +11768,8 @@ specifications:
       dispatch:
       - ESC Z
       rule: Original DEC manual identifies legacy primary DA request, advises using DA instead and says VT400 ignores DECID,
-        then states response is the primary DA response for all operating levels. Preserve source ambiguity. ANSI DECID is
-        not ECMA SCI or VT52 identification.
+        then states response is the primary DA response for all operating levels. Preserve source ambiguity. ANSI DECID is not
+        ECMA SCI or VT52 identification.
       evidence:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
@@ -11797,6 +11794,443 @@ specifications:
         relation: wire-family
         legacy_records:
         - iterm2.esc.decid
+    - id: macro-define
+      section: Chapter 2 pp44-46 / DECDMAC
+      level: defined
+      wire: DCS Pid ; Pdt ; Pen ! z data ST
+      dispatch:
+      - DCS ! z
+      rule: VT400 only. Define ANSI text/control macro processed as normal input when invoked. Pid0..63; out-of-range ignore.
+        Pdt0/omitted deletes old macro at same ID before defining,1 deletes all current macros before defining, other ignore.
+        Pen0/omitted graphic text,1 hex pairs, other ignore. Source does not establish atomic rollback when a replacement later
+        fails.
+      details:
+        id_range:
+        - 0
+        - 63
+        delete:
+          0: same ID
+          1: all
+        encoding:
+          0: graphic text
+          1: hex pairs
+    - id: macro-text
+      section: Chapter 2 pp45-46 / DECDMAC
+      level: defined
+      wire: Pen=0 or omitted in DECDMAC
+      rule: Store only graphic bytes0x20..0x7E or0xA0..0xFF. C0 bytes0x08..0x0D may format DCS but are not stored. No repeat
+        syntax in text encoding; ! is ordinary graphic text.
+      relations:
+      - kind: related
+        clause: dec_vt420.macro-define
+        role: encoding
+      details:
+        stored_ranges:
+        - 20..7E
+        - A0..FF
+        format_only: 08..0D
+    - id: macro-hex
+      section: Chapter 2 pp45-46 / DECDMAC
+      level: defined
+      wire: Pen=1 in DECDMAC
+      rule: Pairs of hex digits represent individual bytes; hex form permits encoded controls and repeat introducer. Do not
+        interpret encoded control bytes while defining macro.
+      relations:
+      - kind: related
+        clause: dec_vt420.macro-define
+        role: encoding
+    - id: macro-repeat
+      section: Chapter 2 p46 / DECDMAC
+      level: defined
+      wire: '! Pn ; hex-pairs ;'
+      rule: Only hex mode. Repeat sequence of pairs Pn times, omitted count1. First semicolon separates count, second terminates;
+        ST before final semicolon ends repeat normally. Public text says characters before first semicolon invalidate, context
+        indicates non-count characters; STD070 clarifies nonparameter characters. No nested repeat syntax or zero-count special
+        case invented.
+      relations:
+      - kind: related
+        clause: dec_vt420.macro-hex
+        role: subgrammar
+    - id: macro-storage
+      section: Chapter 2 p46 / DECDMAC
+      level: defined
+      wire: macro definition storage
+      rule: 6 Kbytes shared macro-definition memory, ignore definitions not fitting. RIS and secure reset DECSR clear definitions,
+        DECSTR preserves. No per-bank capacity or memory accounting overhead inferred.
+      relations:
+      - kind: related
+        clause: dec_vt420.macro-define
+        role: capacity
+      - kind: related
+        clause: ecma48.ris
+        role: reset
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: reset
+      details:
+        source_capacity: 6 Kbytes
+    - id: macro-invoke
+      section: Chapter 2 pp47-48 / DECINVM
+      level: defined
+      wire: CSI Pid * z
+      dispatch:
+      - CSI * z
+      rule: VT400 only. Substitute defined macro contents for invocation control and execute as ordinary terminal input. Undefined
+        ID ignored. Effects remain active after invocation; no saved-state restoration.
+      relations:
+      - kind: related
+        clause: dec_vt420.macro-define
+        role: invocation
+    - id: macro-space-report
+      section: Chapter 12 p240 / DSR DECMSR
+      level: defined
+      wire: CSI ? 62 n / CSI Pn * {
+      dispatch:
+      - CSI ? 62 n
+      - CSI * {
+      rule: Request remaining macro-definition space. Reply integer floor(available bytes/16); report unit16 bytes, not number
+        of macros or actual raw bytes.
+      relations:
+      - kind: related
+        clause: dec_vt420.device-status-reports-extended
+        role: specific-report
+      - kind: related
+        clause: dec_vt420.macro-storage
+        role: capacity
+    - id: macro-checksum-report
+      section: Chapter 12 pp240-241 / DSR DECCKSR
+      level: defined
+      wire: CSI ? 63 [ ; Pid ] n / DCS Pid ! ~ HHHH ST
+      dispatch:
+      - CSI ? 63 n
+      - DCS ! ~
+      rule: Request checksum of current text macro definitions, optional request label echoed. Four hex digits in reply. Public
+        text extraction lists hex code positions including4/0; STD070 specifies4/1..4/6. No checksum arithmetic or omitted-label
+        behavior established here. Distinct from rectangle checksum despite shared response.
+      relations:
+      - kind: related
+        clause: dec_vt420.device-status-reports-extended
+        role: specific-report
+      - kind: related
+        clause: dec_vt420.request-rectangle-checksum
+        role: shared-reply-family
+    - id: drcs-envelope
+      section: Chapter 5 pp114-115;5-8,5-9
+      level: defined
+      wire: DCS Pfn ; Pcn ; Pe ; Pcmw ; Pss ; Pt ; Pcmh ; Pcss { Dscs glyphs ST
+      dispatch:
+      - DCS {
+      rule: Load DRCS soft character set then designate it for use. 7/8-bit DCS/ST. Eight semicolon-separated parameters; exact
+        supported width/height/usage combinations model-specific; illegal combinations ignored. Source example says unavailable
+        in VT100 mode. This is monochrome font bitmap data, not Sixel graphics image transfer.
+      relations:
+      - kind: related
+        clause: ecma35.drcs-designation
+        role: designation
+    - id: drcs-name
+      section: Chapter 5 pp114-115,122 / Dscs
+      level: defined
+      wire: Dscs = [ I [ I ] ] F
+      rule: Zero to two intermediates0x20..0x2F, final0x30..0x7E; name used in subsequent designation. Recommended SP @ for
+        unregistered soft set, A with Pcss0 UK replacement or1 ISO Latin1. Matching94/96 selector family required.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: payload
+      - kind: related
+        clause: ecma35.drcs-designation
+        role: designation
+      details:
+        intermediate_count:
+        - 0
+        - 2
+        intermediate_range: 20..2F
+        final_range: 30..7E
+    - id: drcs-glyph-bits
+      section: Chapter 5 pp107-115 / Coding and loading
+      level: defined
+      wire: sixel-columns [ / sixel-columns ... ] [ ; next-glyph ... ]
+      rule: Each glyph encoded as columns of six vertical bits, LSB top, code byte0x3F+mask. Slash moves to next six-row group
+        in same glyph; semicolon separates glyphs. Pixel bit1 on,0 off; bits beyond height do not affect appearance. Source
+        page115 illustrates two groups, p108 illustrates three for16px height. No generic Sixel palette/repeat syntax inferred.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: payload
+      - kind: related
+        clause: dec_sixel.six-dots
+        role: shared-bit-encoding
+    - id: drcs-buffer
+      section: Chapter 5 p116 / Pfn
+      level: defined
+      wire: Pfn=0|1
+      rule: VT420 one DRCS buffer per session,0 and1 both designate buffer1. Do not use one shared global font buffer or VT520
+        automatic two-slot policy.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: parameter
+    - id: drcs-character-range
+      section: Chapter 5 pp116,120 / Pcn and Pcss
+      level: defined
+      wire: Pcn ; ... ; Pcss
+      rule: 'Pcn selects position0x20+Pcn. Pcss0/default94: positions1..94 valid, ignore loading positions0/95; Pcss1 96: positions0..95
+        valid. Data may encode1..94 or1..96 glyph patterns by set size. No cross-set carry specified by original model.'
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: parameter
+      details:
+        '94':
+        - 1
+        - 94
+        '96':
+        - 0
+        - 95
+    - id: drcs-erase
+      section: Chapter 5 p116 / Pe
+      level: defined
+      wire: Pe=0|1|2
+      rule: Before loading,0 erases all glyphs in specified buffer number,width,rendition;1 erases only reloaded positions;2
+        erases all renditions of soft set (normal,bold,80/132). Erased glyphs undefined, not blank, show reverse question mark.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: parameter
+    - id: drcs-matrix-width
+      section: Chapter 5 pp117-118 / Pcmw
+      level: defined
+      wire: Pcmw
+      rule: 0/omitted device default width10 for80 columns,6 for132. 1 illegal;2,3,4 map5x10,6x10,7x10 VT220 compatibility,
+        double height in VT420 memory and ignore Pcmh;5..10 direct pixel width. Pe0 requires Pcmw<10; values>10 illegal, ignore
+        rest. Further Pt/Pss combinations constrain admissible values.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: parameter
+    - id: drcs-screen-profile
+      section: Chapter 5 pp118-119 / Pss
+      level: defined
+      wire: Pss
+      rule: Select geometry0/1 default80x24,2 132x24,11 80x36,12 132x36,21 80x48,22 132x48. Invalid ignores rest. Resize selects
+        matching rendition; missing matching geometry displays error character. Six renditions of one set, not six independently
+        named sets.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: parameter
+      details:
+        geometry:
+          0:
+          - 80
+          - 24
+          1:
+          - 80
+          - 24
+          2:
+          - 132
+          - 24
+          11:
+          - 80
+          - 36
+          12:
+          - 132
+          - 36
+          21:
+          - 80
+          - 48
+          22:
+          - 132
+          - 48
+    - id: drcs-usage-height
+      section: Chapter 5 p119 / Pt Pcmh
+      level: defined
+      wire: Pt ; Pcmh
+      rule: Pt0/1 text (automatic spacing/centering),2 full cell (address every pixel). Height0/omitted16;1..16 direct height,
+        over16 illegal; ignore height for legacy matrix width2..4. Valid combinations restricted by Table5-9.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: parameter
+    - id: drcs-valid-matrix
+      section: Chapter 5 p121 / Table5-9
+      level: defined
+      wire: Pcmw ; Pss ; Pt ; Pcmh
+      rule: Admit only documented combinations; table bounds below intersect individual parameter legality (e.g. width1 illegal).
+        Defaults maximum legal values in each case per table footnote; explicit zero semantics elsewhere in table preserved,
+        not reconciled into invented uniform default. 132x24 full-cell row uniquely lists height1..16. Illegal combination ignores
+        rest.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-matrix-width
+        role: admission
+      - kind: related
+        clause: dec_vt420.drcs-usage-height
+        role: admission
+      - kind: related
+        clause: dec_vt420.drcs-screen-profile
+        role: admission
+      details:
+        table_rows:
+        - Pss:
+          - 0
+          - 1
+          Pt:
+          - 0
+          - 1
+          Pcmw:
+          - 0
+          - 8
+          Pcmh:
+          - 0
+          - 16
+        - Pss:
+          - 0
+          - 1
+          Pt:
+          - 2
+          Pcmw:
+          - 0
+          - 10
+          Pcmh:
+          - 0
+          - 16
+        - Pss:
+          - 2
+          Pt:
+          - 0
+          - 1
+          Pcmw:
+          - 0
+          - 5
+          Pcmh:
+          - 0
+          - 16
+        - Pss:
+          - 2
+          Pt:
+          - 2
+          Pcmw:
+          - 0
+          - 6
+          Pcmh:
+          - 1
+          - 16
+        - Pss:
+          - 11
+          Pt:
+          - 0
+          - 1
+          Pcmw:
+          - 0
+          - 8
+          Pcmh:
+          - 0
+          - 10
+        - Pss:
+          - 11
+          Pt:
+          - 2
+          Pcmw:
+          - 0
+          - 10
+          Pcmh:
+          - 0
+          - 10
+        - Pss:
+          - 12
+          Pt:
+          - 0
+          - 1
+          Pcmw:
+          - 0
+          - 5
+          Pcmh:
+          - 0
+          - 10
+        - Pss:
+          - 12
+          Pt:
+          - 2
+          Pcmw:
+          - 0
+          - 6
+          Pcmh:
+          - 0
+          - 10
+        - Pss:
+          - 21
+          Pt:
+          - 0
+          - 1
+          Pcmw:
+          - 0
+          - 8
+          Pcmh:
+          - 0
+          - 8
+        - Pss:
+          - 21
+          Pt:
+          - 2
+          Pcmw:
+          - 0
+          - 10
+          Pcmh:
+          - 0
+          - 8
+        - Pss:
+          - 22
+          Pt:
+          - 0
+          - 1
+          Pcmw:
+          - 0
+          - 5
+          Pcmh:
+          - 0
+          - 8
+        - Pss:
+          - 22
+          Pt:
+          - 2
+          Pcmw:
+          - 0
+          - 6
+          Pcmh:
+          - 0
+          - 8
+    - id: drcs-redefinition
+      section: Chapter 5 pp122-123
+      level: defined
+      wire: load replacement and designate soft set
+      rule: Replacing with different Dscs makes old characters and old G0..G3 designations/in-use table undefined. Existing
+        displayed glyphs may change; source elsewhere says previous soft set characters become reverse question marks. Redefinition
+        may replace hard set, including ASCII, until soft set cleared or redefined. Re-designate after loading; use matching94/96
+        type.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-name
+        role: lifetime
+    - id: drcs-reset
+      section: Chapter 5 p125; Chapter13 pp285-287,289 / clearing
+      level: defined
+      wire: DCS 1 ; 1 ; 2 { SP @ ST / RIS / DECSR / DECSTR
+      dispatch:
+      - DCS {
+      rule: Published clear example; self-test, Recall/Default setup and RIS clear soft set; secure reset clears too. DECSTR
+        affects only table13-1 (designation defaults but no font-store erasure). Under SSU active-session RIS special case acts
+        as soft reset plus screen erase/home; do not infer unconditional hard erase for that case.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-erase
+        role: clear
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: reset
+      - kind: related
+        clause: ecma48.ris
+        role: reset
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -13679,6 +14113,97 @@ specifications:
       - kind: related
         clause: dec_vt420.tertiary-device-attributes
         role: query
+    - id: macro-profile
+      section: ANSI Control Functions pp5-45..46,5-61 / DECDMAC DECINVM
+      level: defined
+      wire: DCS Pid ; Pdt ; Pen ! z data ST / CSI Pid * z
+      dispatch:
+      - DCS ! z
+      - CSI * z
+      rule: VT level4 or higher, retains0..63 IDs, delete controls0/1, text/hex encodings0/1, repeat grammar and6 Kbyte store.
+        RIS/DECSR clear; DECSTR preserves. Unassociated ID ignored; macro effects persist. Public summary does not restate internal
+        nesting/print routing requirements.
+      relations:
+      - kind: reaffirms
+        clause: dec_vt420.macro-define
+      - kind: reaffirms
+        clause: dec_vt420.macro-invoke
+      - kind: reaffirms
+        clause: dec_vt420.macro-storage
+    - id: drcs-buffer-profile
+      section: ANSI Control Functions pp5-39..41 / DECDLD
+      level: defined
+      wire: DCS Pfn ; Pcn ; Pe ; Pcmw ; Pss ; Pu ; Pcmh ; Pcss { Dscs glyphs ST
+      dispatch:
+      - DCS {
+      rule: VT520 supports two soft sets per session when configured, each with80/132-column font buffers; Pfn0 first empty
+        or slot1 if full,1/2 select font number, other ignore. Most recently loaded matching Dscs wins. Same font number with
+        differing Dscs,height or set size erases prior set in both width modes. Format extraction prints f but final-character
+        definition and Chapter7 example give {; no alternate wire inferred.
+      relations:
+      - kind: extends
+        clause: dec_vt420.drcs-buffer
+      - kind: related
+        clause: dec_vt420.drcs-envelope
+        role: profile
+    - id: drcs-matrix-profile
+      section: ANSI Control Functions pp5-42..44 / Table5-2
+      level: defined
+      wire: Pcmw ; Pss ; Pu ; Pcmh
+      rule: Width0 defaults10/6 for80/132; legacy2..4 5/6/7x10; full cell80 admits widths5..10, text80 5..9, full132 5..6, text132
+        5. Pe0 width<10; >10 illegal. Pss table retains0/1 80x24 family,2 132x24,11 80x36 family,12 132x36,21 80x48 family;
+        extraction repeats11 for132x48 while VT420 uses22. Record unresolved table discrepancy; do not manufacture corrected
+        selector. Pu0/1 text,2 full cell; height default16, legacy2..4 ignore. Exact height omissions and expanded row variants
+        remain qualified.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-valid-matrix
+        role: model-variant
+      details:
+        matrix_width_direct:
+          80_full:
+          - 5
+          - 10
+          80_text:
+          - 5
+          - 9
+          132_full:
+          - 5
+          - 6
+          132_text:
+          - 5
+          - 5
+        source_ambiguity: Pss 11 printed twice in extraction; selector22 requires visual verification
+    - id: drcs-geometry-lifetime
+      section: Chapter7 pp7-13..16 / 7.6
+      level: defined
+      wire: soft-set geometry selection and clear
+      rule: Each set may have six width/height renditions; widths10/6 for80/132, heights16/10/8 for24/36/48 rows. Changing geometry
+        selects appropriate loaded rendition; absent compatible rendition displays reverse question mark. Replacing named set
+        may invalidate designations/display; no NVR storage, power off loses soft sets. RIS/setup/self-test or documented DECDLD
+        clear form removes set.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-redefinition
+        role: profile
+      - kind: related
+        clause: dec_vt420.drcs-reset
+        role: clear
+    - id: drcs-allocation
+      section: ANSI Control Functions p5-47 / DECDLDA
+      level: defined
+      wire: CSI Ps , z
+      dispatch:
+      - CSI , z
+      rule: Monochrome terminals select soft sets allowed per session:1 one (VT420-compatible),2 two (default). Color terminal
+        does not use command; supports two per each of four sessions. Can report via DECRPSS. No selected Howl allocator policy.
+      relations:
+      - kind: related
+        clause: dec_vt520.drcs-buffer-profile
+        role: capacity
+      - kind: related
+        clause: dec_vt420.request-status-string
+        role: report
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -13924,8 +14449,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -13960,8 +14485,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -13996,8 +14521,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -14027,8 +14552,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -14058,8 +14583,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -14079,8 +14604,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -14100,8 +14625,8 @@ specifications:
         already invoked, new set becomes active immediately; otherwise it is invoked by corresponding shift. A 96-character
         set cannot be designated G0. A 94-set excludes the outer SPACE/DELETE positions; a 96-set uses the full six columns.
       details:
-        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte
-          designation, DRCS, or an old DEC character mapping.
+        source_scope: ECMA-35 designation function, not a blanket obligation to implement every registered set, multibyte designation,
+          DRCS, or an old DEC character mapping.
         dec_profile: dec_vt420.character-set-designation-profile
       evidence:
         also_documented:
@@ -14119,8 +14644,8 @@ specifications:
       dispatch:
       - ESC SP L
       rule: 'Announce ECMA-43 level 1 for subsequent information interchange (facility 12). Elementary 8-bit structure: C0,
-        G0 in GL, SPACE/DELETE, G1 in GR and optional C1; initial designation only. This announces code structure, not DEC
-        terminal operating level or a generic reset.'
+        G0 in GL, SPACE/DELETE, G1 in GR and optional C1; initial designation only. This announces code structure, not DEC terminal
+        operating level or a generic reset.'
       source_note: Pinned xterm sets ansi_level only when vtXX_level>=3. Full ECMA-43 conformance and DEC-specific designation
         side effects are not established by that assignment.
       details:
@@ -14211,6 +14736,24 @@ specifications:
         legacy_records:
         - iterm2.esc.latin1
         - kitty.esc.latin1
+    - id: drcs-designation
+      section: 13.3.3;14.4.1-14.4.2; Tables5-6
+      level: defined
+      wire: ESC designation-I SP [ I ... ] F
+      rule: DRCS graphic set appearance specified and transmitted before use, explicitly or by reference. Designate as G0..G3
+        with SELECT-DRCS indicator0x20 in second I byte for single-byte designation GnDm, third for multibyte GnDMm. F and associated
+        I bytes privately assigned by user, not ISO2375 registration. Recommend successive F from0x40, up to63 sets of each94/96
+        single- or multibyte type without extra I bytes.
+      relations:
+      - kind: extends
+        clause: ecma35.designate-g0-94
+      - kind: extends
+        clause: ecma35.designate-g1-96
+      details:
+        select_drcs: 32
+        single_byte_indicator_position: 2
+        multibyte_indicator_position: 3
+        recommended_first_final: 64
   cde_dtterm:
     title: dtterm(5) terminal escape sequences
     author: Common Desktop Environment / Digital UNIX vendor documentation
@@ -16159,8 +16702,8 @@ specifications:
       review
     url: https://bitsavers.trailing-edge.com/pdf/dec/standards/EL-SM070-00_DEC_STD_070_Video_Systems_Reference_Manual_Dec91.pdf
     snapshot_sha256: d30c2ace1cebdd5a28454177d4d9610d9661110bbeb4b97773259313042962f2
-    scope: Selected original internal standard clauses from published archival scan; chapter-specific review/date markings
-      preserved. Text extraction read; no new visual page verification or claim of whole standard coverage.
+    scope: Selected original internal standard clauses from published archival scan; chapter-specific review/date markings preserved.
+      Text extraction read; no new visual page verification or claim of whole standard coverage.
     clauses:
     - id: request-status-string
       section: EL-00070-05 p.5-196
@@ -16168,8 +16711,8 @@ specifications:
       wire: DCS $ q Pt ST
       dispatch:
       - DCS $ q
-      rule: Requests the state of one setting not encoded as SM/RM; Pt consists of its identifying intermediates and final
-        byte. Reports DECRPSS. Only one setting per request.
+      rule: Requests the state of one setting not encoded as SM/RM; Pt consists of its identifying intermediates and final byte.
+        Reports DECRPSS. Only one setting per request.
       relations:
       - kind: related
         role: command
@@ -16270,12 +16813,12 @@ specifications:
       wire: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ r
       dispatch:
       - CSI $ r
-      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition.
-        Bounds depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last
-        page position, exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors
-        0 reset four video attributes, 1/4/5/7 set bold/underline/blink/reverse, 22/24/25/27 clear; other values ignored except
-        defined extensions. If no valid subsequent selector received, default 0 clears video attributes. Double-width row
-        columns refer to character positions.
+      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition. Bounds
+        depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last page position,
+        exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors 0 reset four
+        video attributes, 1/4/5/7 set bold/underline/blink/reverse, 22/24/25/27 clear; other values ignored except defined extensions.
+        If no valid subsequent selector received, default 0 clears video attributes. Double-width row columns refer to character
+        positions.
       relations:
       - kind: related
         role: command
@@ -16308,12 +16851,11 @@ specifications:
       wire: CSI Pt ; Pl ; Pb ; Pr ; Ps1 ; ... ; Psn $ t
       dispatch:
       - CSI $ t
-      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition.
-        Bounds depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last
-        page position, exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors
-        0 toggles all four video attributes, 1/4/5/7 toggle individual attributes; others ignored except defined extensions
-        (color values ignored). No default; command ignored when no valid selector received. Double-width row columns refer
-        to character positions.
+      rule: Changes only specified video attributes, never character values, cursor position or current graphic rendition. Bounds
+        depend on DECOM, not otherwise page margins; DECSACE selects extent. Top/left defaults1, bottom/right last page position,
+        exceeding dimensions clamp; inverted bounds ignored. Ordered selectors are cumulative. Original selectors 0 toggles
+        all four video attributes, 1/4/5/7 toggle individual attributes; others ignored except defined extensions (color values
+        ignored). No default; command ignored when no valid selector received. Double-width row columns refer to character positions.
       relations:
       - kind: related
         role: command
@@ -16327,6 +16869,103 @@ specifications:
         test: 'terminal: rectangle reverse zero toggles original four in selector order'
         relation: protocol-family
         note: Selected default and original-four zero-selector regression; not full rectangle conformance.
+    - id: macro-define
+      section: Character Cell Display pp5-182..183 / DECDMAC
+      level: defined
+      wire: DCS Pid ; Pdt ; Pen ! z data ST
+      dispatch:
+      - DCS ! z
+      rule: Level4; all omitted parameters default0. Pid0..63, Pdt0/1, Pen0/1; other values ignore. Text byte range20..7E,A0..FF,
+        formatting08..0D excluded. Hex pairs represent bytes, invalid pair outside valid repeat rejects entire definition. Repeat
+        ! count ; pairs ;, absent count1; nonparameter count characters or nonhex repeat payload reject entire definition; ST
+        may end repeat normally. Cannot include a nested DECDMAC. No atomic erase/replacement failure rule inferred.
+      relations:
+      - kind: related
+        clause: dec_vt420.macro-define
+        role: internal-reference
+      - kind: related
+        clause: dec_vt420.macro-repeat
+        role: grammar
+    - id: macro-nesting
+      section: Character Cell Display p5-182 / DECDMAC
+      level: defined
+      wire: stored macro invocation graph
+      rule: Macros may invoke other macros up to16 nesting levels but not themselves recursively. Definitions cannot contain
+        DECDMAC. Source does not state exact counting convention for root invocation or response to depth violation, indirect
+        cycles or rejected definitions; keep these admission/recovery qualifications open.
+      relations:
+      - kind: related
+        clause: dec_std070.macro-define
+        role: admission
+      - kind: related
+        clause: dec_vt420.macro-invoke
+        role: lifetime
+      details:
+        max_nesting_levels: 16
+        recursive_invocation: prohibited
+        nested_definition: prohibited
+    - id: macro-invoke
+      section: Character Cell Display p5-184 / DECINVM
+      level: defined
+      wire: CSI Pid * z
+      dispatch:
+      - CSI * z
+      rule: Level4; replace invocation with definition, missing ID ignored, no machine-state save/restore. In Printer Controller
+        mode pass invocation itself to printer instead of expanding at terminal. Original print routing requirement independent
+        of macro contents.
+      relations:
+      - kind: reaffirms
+        clause: dec_vt420.macro-invoke
+      - kind: related
+        clause: dec_vt420.media-copy-dec-private-extended
+        role: routing
+    - id: macro-storage
+      section: Character Cell Display p5-183 / DECDMAC
+      level: defined
+      wire: macro-definition capacity and reset
+      rule: 6k bytes RAM for all definitions, ignore those not fitting remaining space. RIS/DECSR clear; DECSTR preserves. Keep
+        actual resource policy and storage-accounting proof unselected.
+      relations:
+      - kind: reaffirms
+        clause: dec_vt420.macro-storage
+    - id: macro-space-report
+      section: Character Cell Display p5-185 / DECMSR
+      level: defined
+      wire: CSI ? 62 n / CSI Pn * {
+      dispatch:
+      - CSI ? 62 n
+      - CSI * {
+      rule: Level4, report remaining bytes divided by16 rounded down.
+      relations:
+      - kind: reaffirms
+        clause: dec_vt420.macro-space-report
+    - id: macro-checksum-report
+      section: Character Cell Display pp5-180..181 / DSR DECCKSR
+      level: defined
+      wire: CSI ? 63 [ ; Pid ] n / DCS Pid ! ~ HHHH ST
+      dispatch:
+      - CSI ? 63 n
+      - DCS ! ~
+      rule: Level4, checksum of current text macro definitions, optional request label returned, four hex digits0..9,A..F. Same
+        DECCKSR reply family as DECRQCRA. No checksum algorithm supplied in these sections.
+      relations:
+      - kind: reaffirms
+        clause: dec_vt420.macro-checksum-report
+    - id: drcs-soft-reset
+      section: Terminal Management EL-00070-G4 pp30-31, 04-Oct-1990 / DECSTR
+      level: defined
+      wire: CSI ! p
+      dispatch:
+      - CSI ! p
+      rule: Explicit list of state unaffected by soft reset includes DRCS, UDK and macro definitions. Designated/in-use sets
+        reset to current level defaults, so preserving downloaded glyph storage is not preserving invocation/designation state.
+        Printer Controller forwards DECSTR rather than executing. Level1 ignores.
+      relations:
+      - kind: reaffirms
+        clause: dec_vt420.drcs-reset
+      - kind: related
+        clause: dec_vt420.soft-terminal-reset
+        role: storage-preservation
   kitty_deccara:
     title: Kitty extension to rectangular rendition (DECCARA)
     author: Kovid Goyal / kitty
@@ -23465,6 +24104,10 @@ specifications:
         selector: 8453
         documented_alias: 8800
         source_classification: 8800 DRCSMMv1
+      relations:
+      - kind: related
+        clause: drcsterm_mapping_v1.mode
+        role: origin
     - id: mode-erase-scroll
       section: DECOPT table line5005
       level: defined
@@ -23559,6 +24202,10 @@ specifications:
         selector: 8461
         documented_alias: 8801
         source_classification: 8801 DRCSMMv3
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v3.mode
+        role: author-revision
     - id: sixel-header
       section: DCS table / DECSIXEL lines3381-3591
       level: defined
@@ -23656,6 +24303,12 @@ specifications:
           1: hex-repeat
           2: escaped text
           3: Base64 optional gzip
+      relations:
+      - kind: extends
+        clause: dec_vt420.macro-define
+      - kind: related
+        clause: dec_std070.macro-nesting
+        role: original-admission
     - id: terminal-id-profile
       section: DCS table / DECSTUI line4148
       level: defined
@@ -23668,6 +24321,329 @@ specifications:
       - kind: related
         clause: dec_vt520.set-terminal-unit-id
         role: profile
+  drcsterm_mapping_v1:
+    title: DRCSTerm Unicode DRCS mapping version 1
+    author: Hayaki Saito / DRCSTerm
+    authority: protocol-author
+    revision: git 4253ebd706300bcea349a1e46af4a245dcd2868e, 2014-02-11
+    url: https://raw.githubusercontent.com/saitoha/drcsterm/4253ebd706300bcea349a1e46af4a245dcd2868e/README.rst
+    snapshot_sha256: 0b68d49ab0ff3ed5563fd3158033ba9908da97b5f62af9930d70af498a61ed0f
+    scope: 'Originating author README: private modes and PUA-to-ISO2022 mapping. DRCSTerm is a filtering service; not full terminal
+      storage, reset or glyph loading specification.'
+    clauses:
+    - id: mode
+      section: Enable/Disable Mapping
+      level: defined
+      wire: CSI ? 8800 h / CSI ? 8800 l
+      dispatch:
+      - CSI ? 8800 h
+      - CSI ? 8800 l
+      rule: Enable/disable DRCSMMv1 mapping service. Author reserves private modes8800..8804, defines only8800 in this version.
+        Do not assign meanings to the other reserved selectors.
+      details:
+        reserved_modes:
+        - 8800
+        - 8801
+        - 8802
+        - 8803
+        - 8804
+    - id: mapping
+      section: Mapping Rule Version 1
+      level: defined
+      wire: U+10XXYY -> ESC ( SP XX YY ESC ( B
+      rule: Mapped Plane16 subset XX0x40..0x7E, YY0x20..0x7F. Convert scalar into G0 DRCS designation SP XX, byte YY, then ASCII
+        G0 designation ESC(B. Source supplies this exact sequence, not a general save/restore of preceding designation or preservation
+        of arbitrary GL state. Other codepoints not specified by mapping.
+      relations:
+      - kind: related
+        clause: ecma35.drcs-designation
+        role: designation
+      details:
+        F_range: 40..7E
+        character_range: 20..7F
+        formula: U=0x100000 + (F<<8) + C
+  mlterm_drcs_sixel_v2:
+    title: DRCS-SIXEL version 2
+    author: mlterm project
+    authority: protocol-author
+    revision: git d774c4245ffd1b69a7551392b1ee386090829dc0
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v2
+    snapshot_sha256: 26af80ad8421f2f1c1a04a25298cc1b7052fb2d6d5d74c70916cee1879877a5e
+    scope: Exact author DRCS-SIXEL-v2 document; old website path unavailable. Image tiling and v2 mapping, historical RLogin
+      compatibility appendix; original v1 separate. Supporting current implementation observations not normative amendments.
+    clauses:
+    - id: envelope
+      section: DRCS-SIXEL version 2
+      level: defined
+      wire: DCS Pfn ; Pcn ; Pe ; Pcmw ; Pss ; 3 ; Pcmh ; Pcss { SP F [ P1 ; P2 ; P3 q ] sixels ST
+      dispatch:
+      - DCS {
+      rule: Extend DECDLD font usage3 to image tiles. Sixel header P1;P2;P3 q optional, raster attributes optional. Exactly
+        one outer DCS/ST, no nested complete DCS needed. Pt3 new image form, not DEC text/full-cell values. Document prints
+        SP Dscs; emitter drcssixel.c:156 emits exactly one SP then final F, so Dscs in that spelling is the final rather than
+        an additional SP F.
+      relations:
+      - kind: extends
+        clause: dec_vt420.drcs-envelope
+      - kind: related
+        clause: dec_sixel.envelope
+        role: payload
+      evidence:
+        additional_sources:
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/drcssixel.c
+          sha256: 9727dbf614f618ba8364f0596ea0546041b020cc0483566c9d09b68665ad31ec
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+    - id: tiles
+      section: DRCS-SIXEL version 2 / notes 1-2
+      level: defined
+      wire: Pt=3 image payload and Pcn
+      rule: Divide image into cell-size pieces in order from upper-left. Columns=ceil(image width/cell width),rows=ceil(image
+        height/cell height), include transparent pixels in dimensions. Glyph allocation begins at Pcn+0x20; sequential tiles
+        across character sets. Exact padding/resampling not fully defined.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v2.envelope
+        role: geometry
+      details:
+        rounding: ceil
+        include_transparent_pixels: true
+        order: row order from upper left (document wording)
+    - id: carry
+      section: DRCS-SIXEL version 2 / note2
+      level: defined
+      wire: glyph allocation across Dscs
+      rule: After0x7F of Dscs next0x20 of Dscs+1. After final0x7E of94-set roster switch to0x30 of96-set roster. Includes0x20
+        and0x7F in94-character mapping, unlike original DEC excludes these load positions. Pinned mlterm code wraps end of96
+        roster back to94 0x30; document v2 note only describes forward crossover.
+      relations:
+      - kind: related
+        clause: dec_vt420.drcs-character-range
+        role: incompatible-range-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/vtemu/vt_parser.c
+          sha256: ef28e8acd207be94b4c9124fad3f60f3707a02ee7211ed1a21ea5187105ca557
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+    - id: background
+      section: DRCS-SIXEL version 2 / note3
+      level: defined
+      wire: Sixel P2=1 inside DECDLD Pt3
+      rule: Preserving prior pixel color for zero bits is explicitly unsupported for now. This does not mean arbitrary other
+        P2 values supported or transparent pixels excluded from size.
+      relations:
+      - kind: related
+        clause: dec_sixel.background
+        role: unsupported-profile
+    - id: legacy-rlogin
+      section: Appendix / Original DRCS-SIXEL (RLogin2.23.0 or before)
+      level: defined
+      wire: legacy Pt3 tiling
+      rule: 'Author describes older RLogin tiling: floor width/cell width and height/cell height, exclude transparent pixels
+        from dimensions, allocate only Pcn+0x20 through0x7F in single Dscs. This is later author comparative evidence, not recovered
+        exact RLogin2.23.0 specification.'
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v2.tiles
+        role: historical-profile
+    - id: mapping
+      section: Appendix / DRCS mapping rule version 2
+      level: defined
+      wire: U+10XXYY or U+10XXZZ
+      rule: XX0x30..0x7E. YY0x20..0x7F maps ESC ( SP XX YY ESC ( B. ZZ0xA0..0xFF maps ESC - SP XX ZZ. Distinguish94 and96 repertoire
+        by low-byte high bit; latter printed form does not explicitly restore designation or issue LS1R. PUA width ambiguous
+        in EastAsianWidth; author requires mapped glyphs treated one cell by terminals and console apps for correct display.
+      relations:
+      - kind: extends
+        clause: drcsterm_mapping_v1.mapping
+      - kind: related
+        clause: ecma35.drcs-designation
+        role: designation
+      details:
+        F_range: 30..7E
+        94_low_byte: 20..7F
+        96_low_byte: A0..FF
+        cell_width: 1
+  mlterm_drcs_sixel_v3:
+    title: DRCS-SIXEL mapping version 3 and v2 selection
+    author: mlterm project; Hayaki Saito and RLogin author discussion
+    authority: protocol-author
+    revision: git d774c4245ffd1b69a7551392b1ee386090829dc0; author discussion 2025-11-27..2025-12-01
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v3
+    snapshot_sha256: 552493b1fdc64e2ecffd92da53dbb21314d5225556bf7b0560e4c229a10247cf
+    scope: Exact author v3 document links RLogin issue152 comment3594152181; preserve initial draft separately from later published
+      equations and observed code. Common Pt3 payload retained, changed mapping deliberately incompatible.
+    clauses:
+    - id: envelope
+      section: DRCS-SIXEL version 3
+      level: defined
+      wire: DCS Pfn ; Pcn ; Pe ; Pcmw ; Pss ; 3 ; Pcmh ; 0 { SP X F [ P1 ; P2 ; P3 q ] sixels ST
+      dispatch:
+      - DCS {
+      rule: Same published outer Pt3 header and optional Sixel header/raster fields as v2; v3 mapping requires Pcss0. Document
+        prints SP Dscs while mapping section defines Dscs=IXF with I=SP; pinned emitter drcssixel-v3.c:151 emits exactly SP
+        X F, not SP SP X F. Parser consumes one initial SP then X and F. V3 document concentrates on mapping; do not infer new
+        tiling algorithm from formula alone. Pinned mlterm picture path retains ceil rounding except old compatibility flag.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v2.envelope
+        role: shared-envelope
+      - kind: related
+        clause: mlterm_drcs_sixel_v2.tiles
+        role: shared-geometry
+      evidence:
+        additional_sources:
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/vtemu/vt_parser.c
+          sha256: ef28e8acd207be94b4c9124fad3f60f3707a02ee7211ed1a21ea5187105ca557
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/drcssixel-v3.c
+          sha256: 3016ed4a11883c1a50cc84f907258be5ab8c944dab46b38e93061ce9a7e21a72
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+    - id: mode
+      section: DRCSMMv3 and DRCSMMv2
+      level: defined
+      wire: CSI ? 8800 h/l / CSI ? 8801 h/l
+      dispatch:
+      - CSI ? 8800 h
+      - CSI ? 8800 l
+      - CSI ? 8801 h
+      - CSI ? 8801 l
+      rule: 8800 enables mapping, reset disables; when enabled,8801 set selects v3, reset v2. Authors intentionally incompatible
+        version switch; v1 service defined earlier on same8800. Current mlterm implementation uses per-parser Unicode-policy
+        bit for8800, vt_drcs_set_version global static variable for8801 (default2); scope is observed code, not required shared
+        state.
+      relations:
+      - kind: extends
+        clause: drcsterm_mapping_v1.mode
+      - kind: related
+        clause: rlogin_extensions.mode-drcs-mapping
+        role: adopted-profile
+      - kind: related
+        clause: rlogin_extensions.mode-drcs-v3
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/vtemu/vt_parser.c
+          sha256: ef28e8acd207be94b4c9124fad3f60f3707a02ee7211ed1a21ea5187105ca557
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/vtemu/vt_drcs.c
+          sha256: c7f15a5457f0b80f56850c5a1322acc7e87f47963c50e4cd4f69c9fc458c6479
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+    - id: mapping-v2
+      section: DRCSMMv2
+      level: defined
+      wire: U=0x100000+(F<<8)|(Dcss==0?0:0x80)|C
+      rule: When8800 set,8801 reset, Dscs=IF, I0x20,F0x30..0x7E,C0x20..0x7F,Dcss0/1. Low byte high bit encodes set size. Inverse
+        F=(U>>8)&255,C=U&127,Dcss=(U&128)?1:0. Published outer range U+103020..U+107EFF contains gaps; only valid low-byte ranges
+        map.
+      relations:
+      - kind: reaffirms
+        clause: mlterm_drcs_sixel_v2.mapping
+      details:
+        formula: '0x100000 + (F << 8) | (Dcss == 0 ? 0x00 : 0x80) | C'
+        published_range: 103020..107EFF
+        carry: increment F, wrap to30 and toggle Dcss after7E
+    - id: mapping-v3
+      section: DRCSMMv3
+      level: defined
+      wire: U=0x100000+((X-0x20)*63+(F-0x40))*94+(C-0x21)
+      rule: When both modes set, 94-set only Dscs=IXF,I0x20,X0x20..0x2F,F0x40..0x7E,C0x21..0x7E. Declared U+100000..U+10FFFF.
+        Inverse X=floor(floor((U-base)/94)/63)+32,F=floor((U-base)/94)%63+64,C=(U-base)%94+33. Increment F; wrap to40 and increment
+        X, after2F wrap X to20. Combined declared X/F domain mathematically extends beyond plane16; do not accept all combinations
+        as valid mapped Unicode. The source does not explicitly specify exhaustion/partial final set handling.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v2.mapping
+        role: incompatible-successor
+      - kind: related
+        clause: ecma35.drcs-designation
+        role: designation
+      details:
+        I: 32
+        X_range:
+        - 32
+        - 47
+        F_range:
+        - 64
+        - 126
+        C_range:
+        - 33
+        - 126
+        U_declared_range:
+        - '100000'
+        - 10FFFF
+        formula: 0x100000 + ((X-0x20)*63 + (F-0x40))*94 + (C-0x21)
+      evidence:
+        additional_sources:
+        - url: https://api.github.com/repos/kmiya-culti/RLogin/issues/152/comments?per_page=100
+          sha256: 5a5c144642bb4f71e291bf52fdb96252aea0da141dd6352616157e58b0cea7a5
+    - id: draft-v3-domain
+      section: RLogin issue152 original draft, 2025-11-27; followup 2025-11-28
+      level: defined
+      wire: DRCSMMv3 draft PUA range
+      rule: Earlier Hayaki Saito draft limited mapping to697 complete94-character sets (65518 characters), U+100000..U+10FFED,
+        first SP SP @ through SP + C. Followup says next SP + D may receive glyphs while Unicode mapping undefined. Later RLogin
+        author summary and mlterm v3 document use full plane range with X through2F. Preserve actual revision evolution; do
+        not silently select wrap or map beyond Unicode.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v3.mapping-v3
+        role: earlier-draft
+      evidence:
+        additional_sources:
+        - url: https://api.github.com/repos/kmiya-culti/RLogin/issues/152
+          sha256: a0a39d0834078db28e10c3099093c894d57c11b8b71ba9cb4046632a8d19f438
+        - url: https://api.github.com/repos/kmiya-culti/RLogin/issues/152/comments?per_page=100
+          sha256: 5a5c144642bb4f71e291bf52fdb96252aea0da141dd6352616157e58b0cea7a5
+    - id: mapping-code-observation
+      section: vt_drcs.c:181-275; vt_parser.c:2385-2436
+      level: defined
+      wire: DRCSMMv3 conversion and tile carry
+      rule: Pinned mlterm forward conversion accepts DRCS 94-set with two-byte internal character, intermediate index1..16,
+        character21..7E; applies v3 formula without explicit U<=10FFFF check in function. Inverse accepts plane16 byte prefix
+        and computes fields. Picture allocator advances in94-tile pages for v3, wraps F and intermediate index at full16 range;
+        v2 uses96-tile pages. Downstream validity and end-of-plane behavior need owner trace. Observation only.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v3.mapping-v3
+        role: implementation-observation
+      evidence:
+        additional_sources:
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/vtemu/vt_drcs.c
+          sha256: c7f15a5457f0b80f56850c5a1322acc7e87f47963c50e4cd4f69c9fc458c6479
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+        - url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/vtemu/vt_parser.c
+          sha256: ef28e8acd207be94b4c9124fad3f60f3707a02ee7211ed1a21ea5187105ca557
+          revision: d774c4245ffd1b69a7551392b1ee386090829dc0
+    - id: rlogin-mapping-disabled
+      section: RLogin issue152 comment3594152181, 2025-12-01
+      level: defined
+      wire: 8800 RESET / Dscs carry
+      rule: RLogin author reports mapping disabled uses private Dscs IXF, I and X0x20..0x2F,F0x30..0x7E,94 range21..7E or96
+        range20..7F, full carry F then X then I, wrapping each. No Unicode conversion in this profile. This is reported RLogin
+        behavior, not shared mlterm requirement.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v3.mode
+        role: disabled-profile
+      evidence:
+        additional_sources:
+        - url: https://api.github.com/repos/kmiya-culti/RLogin/issues/152/comments?per_page=100
+          sha256: 5a5c144642bb4f71e291bf52fdb96252aea0da141dd6352616157e58b0cea7a5
+    - id: rlogin-conversion-lifetime
+      section: RLogin issue152 comment3604407319, 2025-12-02
+      level: defined
+      wire: Unicode-to-DRCS input and DRCS-to-Unicode selection
+      rule: RLogin author moved Unicode->DRCS conversion to UTF8 input into console buffer, DRCS->Unicode to clipboard copy
+        rather than display insertion. Intended mode changes8800/8801 not to mutate previously displayed content; copy result
+        may change with current8801. Author reports intention, not independently proven state transitions.
+      relations:
+      - kind: related
+        clause: mlterm_drcs_sixel_v3.mode
+        role: lifetime
+      evidence:
+        additional_sources:
+        - url: https://api.github.com/repos/kmiya-culti/RLogin/issues/152/comments?per_page=100
+          sha256: 5a5c144642bb4f71e291bf52fdb96252aea0da141dd6352616157e58b0cea7a5
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -26583,3 +27559,56 @@ pending_reconciliation:
     - dec_sixel.background
     - rlogin_extensions.sixel-background-profile
     scope: DCS P1 ; P2 ; P3 q sixels ST
+- id: drcs-font-buffer-vt420-vt520
+  status: material-originating-extension-conflict
+  wire: DECDLD Pfn=0/1/2
+  original_author_sources:
+  - clause: dec_vt420.drcs-buffer
+    meaning: 0/1 alias one buffer per session.
+  - clause: dec_vt520.drcs-buffer-profile
+    meaning: 0 first empty or1;1/2 select buffer.
+  question: Select explicitly supported model profile and replacement rules; do not merge allocator semantics.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt420.drcs-buffer
+    - dec_vt520.drcs-buffer-profile
+    scope: DECDLD Pfn=0/1/2
+- id: drcs-94-endpoints-vs-unicode-mapping-v2
+  status: material-originating-extension-conflict
+  wire: DECDLD Pcss=0, Pcn=0/95
+  original_author_sources:
+  - clause: dec_vt420.drcs-character-range
+    meaning: Original94 set excludes 20/7F positions.
+  - clause: mlterm_drcs_sixel_v2.carry
+    meaning: Version2 uses all96 tile positions including20/7F even for94 set.
+  - clause: mlterm_drcs_sixel_v3.mapping-v3
+    meaning: Version3 deliberately changes to94 positions21..7E.
+  question: Keep Pt3 extension geometry distinct from original monochrome font loading, and determine version-specific endpoint
+    admission.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt420.drcs-character-range
+    - mlterm_drcs_sixel_v2.carry
+    - mlterm_drcs_sixel_v3.mapping-v3
+    scope: DECDLD Pcss=0, Pcn=0/95
+- id: drcs-v3-plane-boundary
+  status: material-originating-extension-conflict
+  wire: DRCSMMv3 mapping domain and carry
+  original_author_sources:
+  - clause: mlterm_drcs_sixel_v3.draft-v3-domain
+    meaning: Earlier draft697 full sets ending10FFED, later glyph allocation outside mapping unspecified.
+  - clause: mlterm_drcs_sixel_v3.mapping-v3
+    meaning: Later published U range100000..10FFFF, X through2F yields additional designation combinations.
+  - clause: mlterm_drcs_sixel_v3.mapping-code-observation
+    meaning: Forward formula does not show plane upper-bound check; carry through full X roster.
+  question: Resolve source revision applicability, final partial repertoire, noncharacters U+10FFFE/10FFFF and overflow/exhaustion
+    behavior without assuming all X/F/C tuples map to valid Unicode.
+  decision: null
+  applies_to:
+    clauses:
+    - mlterm_drcs_sixel_v3.draft-v3-domain
+    - mlterm_drcs_sixel_v3.mapping-code-observation
+    - mlterm_drcs_sixel_v3.mapping-v3
+    scope: DRCSMMv3 mapping domain and carry
