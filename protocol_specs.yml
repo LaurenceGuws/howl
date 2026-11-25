@@ -628,6 +628,13 @@ specifications:
           entry_id: csi-eefbb0a47d
           source_line: 621
           wire: CSI Ps K
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/stream.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: e2b3b39458af262cf40ff8eec4e39f157606c42b4d2cdc9b815c156c47a623af
+          location: 1935-1971
+          meaning: Ghostty defines EL4 right-unless-pending-wrap enum/action, but parser guard only accepts single parameter
+            <3; EL4 is not reachable by this dispatch. No originating EL4 specification established.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: erase families retain exact ranges protection geometry and mutation'
@@ -884,6 +891,10 @@ specifications:
           catalogue: xterm_ctlseqs
           entry_id: csi-754afe63c9
           source_line: 1245
+        framing_selectors:
+          51: framed
+          52: encircled
+          54: not framed, not encircled
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -1449,6 +1460,32 @@ specifications:
       dispatch:
       - CSI W
       rule: CURSOR TABULATION CONTROL (CTC); ECMA-48 standardized control function, CSI form (source page 36).
+      details:
+        original_selectors:
+          default: 0
+          values:
+            0: set character stop at active presentation position
+            1: set line stop at active line
+            2: clear character stop at active presentation position
+            3: clear line stop at active line
+            4: clear all character stops in active line
+            5: clear all character stops
+            6: clear all line stops
+          multiple: one or more parameters
+          tsm: number of lines affected by 0,2,4 depends on TSM
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          location: '2517'
+          meaning: WezTerm parses CTC selectors but terminal consumer explicitly does nothing.
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/stream.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: e2b3b39458af262cf40ff8eec4e39f157606c42b4d2cdc9b815c156c47a623af
+          location: 2060-2095
+          meaning: Ghostty routes omitted/0 current tab set,2 current tab clear,5 all character tab stops clear; other original
+            selectors not routed. Private ?5 W is DEC reset tabs, separate.
     - id: cvt
       section: 8.3.23
       level: defined
@@ -1456,6 +1493,17 @@ specifications:
       dispatch:
       - CSI Y
       rule: CURSOR LINE TABULATION (CVT); ECMA-48 standardized control function, CSI form (source page 37).
+      details:
+        original_semantics:
+          default: 1
+          effect: corresponding character position of line at nth following line tabulation stop in presentation component
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          location: '2518'
+          meaning: WezTerm parses CVT but terminal consumer explicitly does nothing.
     - id: da
       section: 8.3.24
       level: defined
@@ -2698,12 +2746,23 @@ specifications:
           entry_id: esc-25192095af
           source_line: 173
           wire: ESC N
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/Terminal.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: 03ef3a999a2b195746195933ce3cd945b4a9f188e53198b073a4de581d6096ef
+          location: 1908-1915,2497-2513
+          meaning: Ghostty uses one-shot single_shift slot, consumes on next print including combining scalar. Stream routes
+            SS2 and SS3; WezTerm EscCode labels do not establish execution, performer fallback has no corresponding cases.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: pinned libvterm SS2 C1 UTF8 gate and ESC N alias differ from Howl'
         relation: protocol-family
         legacy_records:
         - libvterm.c1.ss2
+      relations:
+      - kind: related
+        clause: ecma35.single-shift
+        role: original-invocation-rule
     - id: ss3
       section: 8.3.142
       level: defined
@@ -2730,6 +2789,10 @@ specifications:
         relation: protocol-family
         legacy_records:
         - libvterm.c1.ss3
+      relations:
+      - kind: related
+        clause: ecma35.single-shift
+        role: original-invocation-rule
     - id: stab
       section: 8.3.144
       level: defined
@@ -6927,6 +6990,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6302-6310
+        adopter_observations:
+        - url: https://github.com/ghostty-org/ghostty/blob/5813c9461d5af78b6307a1254d00b1bc190eaccd/src/terminal/stream.zig
+          revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+          sha256: e2b3b39458af262cf40ff8eec4e39f157606c42b4d2cdc9b815c156c47a623af
+          location: 2629-2646
+          meaning: Ghostty routes omitted/0 false,1 true, rejects other selectors; source action captures Shift for application
+            mouse reporting. Exact host precedence remains separate.
     - id: resource-value-query
       section: XTGETXRES, ctlseqs 506-528
       level: defined
@@ -7850,8 +7920,8 @@ specifications:
       dispatch:
       - CSI > u
       - CSI < u
-      rule: Push omitted flags default0, pop omitted count default1; empty resets flags; full push evicts oldest. Separate
-        primary/alternate stacks; bounded capacity.
+      rule: Push omitted flags default0, pop omitted count default1; empty resets flags; full push evicts oldest. Separate primary/alternate
+        stacks; bounded capacity.
       source_locator: docs/keyboard-protocol.rst:321-340
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
@@ -7872,6 +7942,14 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard flags stay separate across alternate screen
         relation: protocol-family
+      evidence:
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
+          location: 526-565
+          meaning: WezTerm push admits optional mode1/2/3 for assign/or/clear, keeps up to128 entries per screen. Original Kitty
+            push wire specifies flags only; no extension selected.
     - id: disambiguate
       section: Disambiguate escape codes
       level: defined
@@ -10186,6 +10264,13 @@ specifications:
           entry_id: private-mode-25-l-line-1082
           source_line: 1082
           wire: CSI ? 25 l
+        adopter_observations:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          location: 1872-1877
+          meaning: WezTerm also executes nonprivate ANSI mode25 set/reset as cursor visibility; attribution to MS not corroborated
+            by pinned Microsoft source. No new origin or equivalence asserted.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm screen and cursor property changes have no host veto in native mode policy
@@ -14816,6 +14901,71 @@ specifications:
         single_byte_indicator_position: 2
         multibyte_indicator_position: 3
         recommended_first_final: 64
+    - id: locking-shift-gl
+      section: 8.3.1 and 8.3.3
+      level: defined
+      wire: SI / SO / ESC n / ESC o
+      dispatch:
+      - BYTE 0F
+      - BYTE 0E
+      - ESC n
+      - ESC o
+      rule: LS0/LS1/LS2/LS3 invoke the most recently designated G0/G1/G2/G3 set into GL. For 94/94n sets map graphic positions21..7E,
+        SPACE20 and DELETE7F separately; 96/96n sets map20..7F, no separate SPACE or DELETE. Only one G set has GL shift status
+        at a time. Original code structure, not blanket UTF8 terminal interpretation.
+      relations:
+      - kind: related
+        clause: ecma48.ls0
+        role: invocation
+      - kind: related
+        clause: ecma48.ls1
+        role: invocation
+      - kind: related
+        clause: ecma48.ls2
+        role: invocation
+      - kind: related
+        clause: ecma48.ls3
+        role: invocation
+    - id: locking-shift-gr
+      section: 8.3.2 and 8.3.3
+      level: defined
+      wire: ESC ~ / ESC } / ESC |
+      dispatch:
+      - ESC ~
+      - ESC }
+      - ESC |
+      rule: LS1R/LS2R/LS3R invoke the designated G1/G2/G3 set into GR. 94/94n set positions A1..FE, A0/FF unused; 96/96n positions
+        A0..FF. Only one GR set active, independent of GL. Same set in GL and GR is permitted but discouraged.
+      relations:
+      - kind: related
+        clause: ecma48.ls1r
+        role: invocation
+      - kind: related
+        clause: ecma48.ls2r
+        role: invocation
+      - kind: related
+        clause: ecma48.ls3r
+        role: invocation
+    - id: single-shift
+      section: 8.4; ECMA-48 8.3.141-142
+      level: defined
+      wire: SS2 / SS3
+      dispatch:
+      - BYTE 8E
+      - BYTE 8F
+      - ESC N
+      - ESC O
+      rule: Invoke exactly one graphic character from latest G2/G3 designation in declared single-shift area (GL or GR). Immediately
+        following one or n bytes of multibyte set encode that character; previous shift status resumes afterwards. 94 set GL21..7E
+        or GRA1..FE; 96 set GL20..7F or GRA0..FF. Does not mean next rendered cell or arbitrary next control sequence. Version
+        and malformed stream boundary handling separate.
+      relations:
+      - kind: related
+        clause: ecma48.ss2
+        role: invocation
+      - kind: related
+        clause: ecma48.ss3
+        role: invocation
   cde_dtterm:
     title: dtterm(5) terminal escape sequences
     author: Common Desktop Environment / Digital UNIX vendor documentation
@@ -25187,6 +25337,195 @@ specifications:
         - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/input.c
           sha256: e39f0d288e87daa243262b09ff18f55f51748eab6495737bd8a1f288fccd28f6
           revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+    - id: screen-rename-profile
+      section: tmux.1 window naming; input.c:48,2859 onward
+      level: defined
+      wire: ESC k name ST
+      dispatch:
+      - ESC k
+      rule: Adopts Screen title-string for renaming tmux window, gated by allow-rename. Distinguish pane title and window name.
+        Pinned WezTerm consumes ESC k by accumulating text until ESC backslash and routes to ordinary title handling. This is
+        adoption, not tmux origin.
+      relations:
+      - kind: related
+        clause: gnu_screen_title.set-title
+        role: origin
+      evidence:
+        additional_sources:
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/input.c
+          sha256: e39f0d288e87daa243262b09ff18f55f51748eab6495737bd8a1f288fccd28f6
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+        - url: https://github.com/tmux/tmux/blob/f8426e7d9db19a76aa2b1835dad294e3fcb6547b/tmux.1
+          sha256: 7f8e0b8ada384b50c76ddf2bab26d18b8bbbec8e4c71c1fb76e51a08ffdf61f2
+          revision: f8426e7d9db19a76aa2b1835dad294e3fcb6547b
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
+          sha256: ed835157c98df179fe0dc1ac5fa86dd007f49bc4dcb56cdcd87f33b76b915ce3
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+  mintty_rendition:
+    title: Mintty additional character rendition attributes
+    author: Thomas Wolff / Mintty
+    authority: protocol-author
+    revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d; introduction 3.0.1 (2019-05-28)
+    url: https://github.com/mintty/mintty/wiki/Tips
+    snapshot_sha256: 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1
+    scope: Scoped author SGR table and release history for baseline alignment, shadow and emoji-style variants. Does not assert
+      that every selector originated in Mintty; printer private SGR lineage separately retained.
+    clauses:
+    - id: vertical-align
+      section: Tips / Text attributes; Changelog 3.0.1
+      level: defined
+      wire: CSI 73 m / CSI 74 m / CSI 75 m
+      dispatch:
+      - CSI 73 m
+      - CSI 74 m
+      - CSI 75 m
+      rule: 73 enables superscript;74 enables subscript;75 clears both. Current author table says combined73;74 renders smaller
+        characters at normal baseline. This is separate bits rather than a single last-wins enumeration. Exact geometry and
+        reset interaction beyond documented SGR0/75 not inferred.
+      relations:
+      - kind: extends
+        clause: ecma48.sgr
+      evidence:
+        additional_sources:
+        - url: https://github.com/mintty/mintty/wiki/Changelog
+          sha256: 2b10c8ba091f73055257869924158a57d2a5ac596b0b561edf39061443d8c117
+          revision: 951dd5cc92d88e930c8ff143d92a5aec6730413d
+        - url: https://cygwin.com/pipermail/cygwin-announce/2019-May/009167.html
+          sha256: 43712216c8e819a90a6eefa7f62ef0b6e3f043d149a41a4a12fdcb36240cbfbb
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+    - id: private-vertical-align
+      section: Tips / Text attributes
+      level: defined
+      wire: CSI ? 4 m / CSI ? 5 m / CSI ? 24 m
+      dispatch:
+      - CSI ? 4 m
+      - CSI ? 5 m
+      - CSI ? 24 m
+      rule: Documented alternate DEC-private selectors for superscript/subscript and clear. Author explicitly says combined
+        small-baseline behavior does not apply to private alternatives. Historical DEC PPL2 origin and exact admission remain
+        separate; ?4 overlaps xterm XTQMODKEYS. Existing accepted reconciliation retains priority; do not silently change it.
+      relations:
+      - kind: related
+        clause: mintty_rendition.vertical-align
+        role: alternative-wire
+      - kind: conflicts
+        clause: xterm_controls.xtqmodkeys
+    - id: shadow
+      section: Tips / Text attributes; Changelog 3.0.1
+      level: defined
+      wire: 'CSI 1 : 2 m / CSI 22 m'
+      dispatch:
+      - CSI 1 m
+      - CSI 22 m
+      rule: Mintty shadowed display attribute, colon form distinct from SGR1;2 bold and dim sequence. SGR22 clears. No fixed
+        raster effect, shading algorithm or other intensity interaction inferred.
+      relations:
+      - kind: extends
+        clause: ecma48.sgr
+      evidence:
+        additional_sources:
+        - url: https://github.com/mintty/mintty/wiki/Changelog
+          sha256: 2b10c8ba091f73055257869924158a57d2a5ac596b0b561edf39061443d8c117
+          revision: 951dd5cc92d88e930c8ff143d92a5aec6730413d
+    - id: emoji-style
+      section: Tips / Text attributes
+      level: defined
+      wire: CSI 51 m / CSI 52 m / CSI 54 m
+      dispatch:
+      - CSI 51 m
+      - CSI 52 m
+      - CSI 54 m
+      rule: Mintty author table assigns51 or52 to emoji style and54 to clear; display preference for characters ordinarily text
+        presentation, e.g. decimal digits. Unlike ECMA48 framed/encircled rendition assignment. Exact variation-selector and
+        cell-width interactions not established in this section.
+      source_note: Pinned parser uses common ATTR_FRAMED bit for both51 and52, clears with54. Author Tips describes display
+        preference for emoji; no original framed/encircled equivalence inferred.
+      relations:
+      - kind: conflicts
+        clause: ecma48.sgr
+      - kind: related
+        clause: mintty_controls.emoji-width-rules
+        role: presentation
+      evidence:
+        additional_sources:
+        - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
+          sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+          revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+  wezterm_rendition_profile:
+    title: WezTerm adopting vertical-alignment profile
+    author: WezTerm project
+    authority: protocol-author
+    revision: git cab25161054c50fd6c705db4ceefef0f1e5a9575; docs since 20221119-145034-49b9839f
+    url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/docs/escape-sequences.md
+    snapshot_sha256: a638eb52c8f9a11ba36a22c3a5773ced8d6a0c2d22f78914263c98f2264325c2
+    scope: Published adoption of SGR73/74/75; pinned parser and consumer confirm independent vertical-align enum. Not a claim
+      of original invention or a selected Howl profile.
+    clauses:
+    - id: vertical-align
+      section: docs/escape-sequences.md SGR table; csi.rs:94-98,2765-2773; terminalstate/mod.rs:2791-2793
+      level: defined
+      wire: CSI 73 m / CSI 74 m / CSI 75 m
+      dispatch:
+      - CSI 73 m
+      - CSI 74 m
+      - CSI 75 m
+      rule: Adjust baseline for superscript or subscript,75 normal baseline. Pinned parser produces one VerticalAlign enum,
+        consumer assigns it to pen; sequential73;74 therefore last alignment replaces former rather than Mintty two-bit small-baseline
+        combination. Private ?m alternatives are commented out in current parser explicitly due to xterm collision.
+      relations:
+      - kind: related
+        clause: mintty_rendition.vertical-align
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/wezterm-escape-parser/src/csi.rs
+          sha256: db1494003f9e389a42c0cc4e3b46b8673fd6401af467b450f8e4092c3d18727f
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+        - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/mod.rs
+          sha256: 992c928614b915740036c0fcd7a7f0e59d35618d6d453b1c05f7dec6f106dd51
+          revision: cab25161054c50fd6c705db4ceefef0f1e5a9575
+  gnu_screen_title:
+    title: GNU Screen window title-string protocol
+    author: GNU Screen project
+    authority: protocol-author
+    revision: Author manual observed 2026-11-25
+    url: https://www.gnu.org/software/screen/manual/html_node/Naming-Windows.html
+    snapshot_sha256: ee3c6ac726bf538e95f53d7ee80df5e08d3fb118a826c3016a79372761bfc1df
+    scope: Official HTML sections10.1 and10.1.2. Original manual lineage for legacy ESC k, not full GNU Screen emulation or
+      historical first release attribution.
+    clauses:
+    - id: set-title
+      section: 10.1 Naming Windows
+      level: defined
+      wire: ESC k name ST
+      dispatch:
+      - ESC k
+      rule: Application-emitted title string sets Screen window name. Published terminator is ESC backslash. Distinct from ordinary
+        OSC0/2 top-level title semantics. Raw C1 ST, BEL and malformed recovery not specified by this paragraph.
+      relations:
+      - kind: related
+        clause: cde_dtterm.title-selector-2
+        role: alternative-title-wire
+    - id: dynamic-title
+      section: 10.1.2 Dynamic Titles
+      level: defined
+      wire: ESC k ST
+      dispatch:
+      - ESC k
+      rule: In dynamic title mode configured search|name, null title clears previous command name and prepares next command.
+        After newline find end-of-prompt search string and take following first word. If word begins !, % or ^, prefer first
+        word on next line if present. Default shell name used between commands; trailing colon in configured name prepends it
+        to command name. Do not infer universal empty-title behavior.
+      relations:
+      - kind: related
+        clause: gnu_screen_title.set-title
+        role: context
+      evidence:
+        additional_sources:
+        - url: https://www.gnu.org/software/screen/manual/html_node/Dynamic-Titles.html
+          sha256: 41e1cad83f6b93fdb4a685bc0693e81cde4d4a5ca64d84b6d9a84f73dd916655
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -28177,3 +28516,34 @@ pending_reconciliation:
     - mintty_controls.emoji-width-mode
     - mintty_controls.emoji-width-rules
     scope: CSI ? 2027 h/l and U+FE0E
+- id: sgr-framed-encircled-vs-mintty-emoji
+  status: material-originating-extension-conflict
+  wire: CSI 51/52/54 m
+  original_author_sources:
+  - clause: ecma48.sgr
+    meaning: ECMA-48 section8.3.117:51 framed,52 encircled,54 clears framing and encircling.
+  - clause: mintty_rendition.emoji-style
+    meaning: Mintty reuses both51/52 for emoji-style display preference,54 clears.
+  question: Select original rendition or explicitly scoped alternative profile, not both by matching selector. No semantic
+    choice.
+  decision: null
+  applies_to:
+    clauses:
+    - ecma48.sgr
+    - mintty_rendition.emoji-style
+    scope: CSI 51/52/54 m
+- id: sgr-super-sub-combination
+  status: material-originating-extension-conflict
+  wire: CSI 73 ; 74 m
+  original_author_sources:
+  - clause: mintty_rendition.vertical-align
+    meaning: Mintty both flags give small baseline characters.
+  - clause: wezterm_rendition_profile.vertical-align
+    meaning: WezTerm single enum means last setting replaces previous.
+  question: Select combined attribute semantics explicitly, preserving separate SGR75 reset. No new selected rendition behavior.
+  decision: null
+  applies_to:
+    clauses:
+    - mintty_rendition.vertical-align
+    - wezterm_rendition_profile.vertical-align
+    scope: CSI 73 ; 74 m
