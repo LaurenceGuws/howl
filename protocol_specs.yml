@@ -921,6 +921,12 @@ specifications:
           location: attrs_from_sgr_parameters; Alacritty terminal_attribute
           meaning: SGR21 CancelBold, not double underline. SGR5/6/25 parsed but Alacritty Term rendition fallback unhandled
             for blink attributes. Existing selection unchanged.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/sgr.hh
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 051f6bda4bb940aee9bfc3284071125da6daf3b585c5b12c1af2b8f22824eec7
+          location: collect_sgr
+          meaning: SGR21 sets double underline,5/6 share blink bit; bright ranges mapped independently; overline53/55. Distinct
+            from Alacritty SGR21 cancel-bold. Prior selection retained.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rendition protection and rectangle owners report exact mutation'
@@ -1513,6 +1519,12 @@ specifications:
           location: 2060-2095
           meaning: Ghostty routes omitted/0 current tab set,2 current tab clear,5 all character tab stops clear; other original
             selectors not routed. Private ?5 W is DEC reset tabs, separate.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::CTC
+          meaning: Only first selector collected;0 current tab set,2 unset,4/5 clear all;1/3/6 no-op. Does not implement all
+            original multi-operand/tabulation scope semantics.
     - id: cvt
       section: 8.3.23
       level: defined
@@ -1865,6 +1877,17 @@ specifications:
       - BYTE 89
       - ESC I
       rule: CHARACTER TABULATION WITH JUSTIFICATION (HTJ); ECMA-48 standardized control function, C1 form (source page 46).
+      details:
+        original_semantics:
+          effect: Shift contents of active presentation field forward to end immediately before next character tab stop; move
+            active position to that stop; erase positions preceding shifted string. Not simply HT.
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::HTJ
+          meaning: Calls move_cursor_tab_forward only, no field justification in this handler.
     - id: hvp
       section: 8.3.63
       level: defined
@@ -2528,6 +2551,19 @@ specifications:
           entry_id: csi-84d0e5591c
           source_line: 583
           wire: CSI Ps SP @
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::SL
+          meaning: Pinned VTE horizontal grid scroll applies only when cursor lies inside DECSTBM/DECSLRM region; count defaults/clamps
+            to at least1; preserves cursor and pending wrap. Different scope from full ECMA presentation model.
+      details:
+        original_semantics:
+          default: 1
+          component: presentation
+          effect: Move data by n character positions for horizontal lines, or n line positions for vertical lines, so data appear
+            to move left. Active presentation position unaffected.
     - id: slh
       section: 8.3.122
       level: defined
@@ -2724,6 +2760,19 @@ specifications:
           entry_id: csi-86ca1360de
           source_line: 588
           wire: CSI Ps SP A
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::SR
+          meaning: Pinned VTE horizontal grid scroll applies only when cursor lies inside DECSTBM/DECSLRM region; count defaults/clamps
+            to at least1; preserves cursor and pending wrap. Different scope from full ECMA presentation model.
+      details:
+        original_semantics:
+          default: 1
+          component: presentation
+          effect: Move data by n character positions for horizontal lines, or n line positions for vertical lines, so data appear
+            to move right. Active presentation position unaffected.
     - id: srcs
       section: 8.3.136
       level: defined
@@ -2905,6 +2954,23 @@ specifications:
       dispatch:
       - CSI SP c
       rule: TABULATION CENTRED ON CHARACTER (TCC); ECMA-48 standardized control function, CSI form (source page 73).
+      details:
+        original_semantics:
+          position_default: none
+          target_default: 32
+          extent: active and subsequent lines in presentation component
+          effect: Replace tab stop at n to center first occurrence of target character; if absent, trailing edge of first character
+            aligned to stop. Other stops unchanged.
+          target_code_ranges:
+          - 32..127 (7-bit or 8-bit)
+          - 160..255 (8-bit)
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::TCC
+          meaning: Comment-only stub; named dispatch is not execution.
     - id: tsr
       section: 8.3.156
       level: defined
@@ -2926,6 +2992,11 @@ specifications:
           location: _handle_esc_csi_uts; CSI d intermediate SP
           meaning: Terminology uses parsed field as TAB_UNSET index after restriction, apparently zero-based host column; exact
             TAB macro and omitted field still need qualification. This is not a new opcode.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::TSR
+          meaning: Checks position1..column count then unsets index pos-1; corroborates one-based absolute column use.
     - id: tss
       section: 8.3.157
       level: defined
@@ -4652,6 +4723,11 @@ specifications:
           location: clipboard_store/clipboard_load
           meaning: Config gates copy/paste; first selection c/p/s, valid Base64 UTF8 writes; denied/invalid read handler emits
             no reply.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::OSC ignored case list
+          meaning: OSC52 named but grouped into explicit ignored branch. No clipboard command support inferred.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences own latest clipboard, attention and typed reply FIFO
@@ -4954,6 +5030,13 @@ specifications:
           sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
           location: csi_dispatch ?m; Handler::report_modify_other_keys
           meaning: Exact first parameter [4] routes default no-op; no Alacritty override.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/sgr.hh
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 051f6bda4bb940aee9bfc3284071125da6daf3b585c5b12c1af2b8f22824eec7
+          location: collect_decsgr; vteseq.cc Terminal::DECSGR
+          meaning: VTE routes CSI ? m to DECSGR collector, not xterm query. ?4 and ?5 unsupported (no mutation/reply); omitted/0
+            resets SGR attributes,6 sets overline,26 clears overline. Existing printer-vs-keyboard decision retained; no new
+            printer profile selected.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm private DECSGR baseline collides with native modifyOtherKeys query
@@ -6823,6 +6906,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6072-6077; misc.c:8140-8185
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::XTERM_REPORTSGR
+          meaning: Production body excluded by VTE_DEBUG; debug normally dummy SGR, test flag permits one-cell report only;
+            larger regions dummy. Not full rectangle common-attribute support.
     - id: title-stack-position
       section: Functions using CSI / XTTITLEPOS, lines 658-663
       level: defined
@@ -7125,6 +7215,11 @@ specifications:
           location: 2629-2646
           meaning: Ghostty routes omitted/0 false,1 true, rejects other selectors; source action captures Shift for application
             mouse reporting. Exact host precedence remains separate.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::XTERM_SHIFTESCAPE
+          meaning: Comment-only body despite registered route.
     - id: resource-value-query
       section: XTGETXRES, ctlseqs 506-528
       level: defined
@@ -7205,6 +7300,12 @@ specifications:
           meaning: Processes each semicolon-separated hex name separately; emits separate DCS reply per name. Failure includes
             original name; odd length logged without reply; malformed hex pair skipped during decode. Different from xterm one
             multi-name response and stop-on-error.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::XTERM_RQTCAP
+          meaning: Aggregates successful capability pairs in one response; skips unknown or malformed names and continues, valid1
+            if any successful else0. Explicit comment distinguishes xterm stop-on-unknown behavior.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: XTGETTCAP replies preserve ordered names values failures and C1 serialization
@@ -7241,6 +7342,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:5153-5277; graphics.c:628-665; graphics.h:50
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::XTERM_SMGRAPHICS
+          meaning: Replies error status1; no actual graphics attributes exposed by handler. Comment labels item indices0..2,
+            not original xterm1..3. Prior original definition unchanged.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: 'terminal: XTSMGRAPHICS reads only its owned Sixel register count'
@@ -9892,6 +10000,13 @@ specifications:
           entry_id: csi-c4ca9bb4cf
           source_line: 1586
           wire: CSI Pl ; Pr s
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECSLRM_OR_SCOSC
+          meaning: Uses DECLRMM to disambiguate CSI s (set margins if set, SCO save if reset). Margins clamped and require at
+            least two columns.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: cursor origin margins own exact aliases geometry wrap and resize'
@@ -10344,6 +10459,13 @@ specifications:
           location: ESC_CSI_DOLLAR r/t
           meaning: Only explicit selector operands from fifth parameter; coordinates-only does nothing. Supported flags subset;
             geometry not verified.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECCARA; sgr.hh collect_sgr
+          meaning: Shared SGR collector applied twice to unset/set attrs to obtain masks preserving nonvisual attrs. Missing
+            all rendition selectors defaults to reset in collector. Existing accepted coordinate-only no-op not changed; no
+            full geometry equivalence.
       test_locations:
       - file: howl-vt/src/screen/main_test.zig
         test: 'screen: DECCARA stream mode spans full middle rows'
@@ -10811,6 +10933,12 @@ specifications:
           location: doDeviceControl $q
           meaning: Only exact DECSCL descriptor double quote p gets successful response 64;1 double quote p. Other descriptors
             logged without canonical failure reply.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECRQSS
+          meaning: ASCII descriptor parsed in CSI subparser; request must end as CSI with no parameters; selected settings handled,
+            unsupported returns invalid. Includes private DECSGR descriptor. Full valid descriptor roster not claimed.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DECRQSS replies for owned state and invalid requests
@@ -11689,6 +11817,12 @@ specifications:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:5751-5766
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECRQDE
+          meaning: Reports grid rows and columns, first displayed column/line1, page1. Single-page adopting profile.
     - id: request-rectangle-checksum
       section: Chapter 12 / DECRQCRA and DECCKSR, printed pp.243-244
       level: defined
@@ -11713,6 +11847,13 @@ specifications:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:5619-5639; screen.c:xtermCheckRect
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECRQCRA
+          meaning: Normally replies dummy0000 for requested ID; actual computation only VTE_DEBUG and test flag, with explicit
+            screen-readback concern. Not a proof of canonical checksum conformance.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: checksum extension affects rectangular checksum reply
@@ -12191,6 +12332,9 @@ specifications:
       - kind: related
         clause: dec_vt420.soft-terminal-reset
         role: reset
+      - kind: related
+        clause: dec_std070.secure-reset
+        role: reset-lifetime
       details:
         source_capacity: 6 Kbytes
     - id: macro-invoke
@@ -12555,6 +12699,9 @@ specifications:
       - kind: related
         clause: ecma48.ris
         role: reset
+      - kind: related
+        clause: dec_std070.secure-reset
+        role: reset-lifetime
     - id: next-page
       section: Chapter6 pp136-139 / Moving to Another Page
       level: defined
@@ -12639,6 +12786,14 @@ specifications:
       dispatch:
       - CSI $ u
       rule: VT400 mode only; 0 or omitted ignored,1 requests DECTSR. Report format specific to model and revision.
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECRQTSR
+          meaning: Recognized selectors1/2 return DECTSR parameter0 (error report); omitted/0/others no report. No full-state
+            or color-table export support.
     - id: terminal-state-report
       section: Chapter12 pp245-246 / DECTSR
       level: defined
@@ -12692,6 +12847,14 @@ specifications:
       - kind: related
         clause: finalterm_original.prompt
         role: original-code
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: set_current_shell_integration_mode
+          meaning: A/B/C set prompt/command/normal insertion attrs; D deliberately ignored, no N/P/I branch. No full original
+            or proposal adoption.
     - id: prompt-end
       section: Shell Integration/FinalTerm / FTCS_COMMAND_START
       level: defined
@@ -14402,6 +14565,11 @@ specifications:
           sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
           location: csi_dispatch ?5W; Handler::set_tabs
           meaning: Calls set_tabs(8); no Alacritty Term override.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECST8C
+          meaning: Only selector5 admitted; resets interval8 and unsets column0.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: tab stops remain bank local and Kitty DECST8C resets only the active bank'
@@ -14714,6 +14882,12 @@ specifications:
         - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
           sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
           revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECRQTSR selector2
+          meaning: Error-only handler; not actual color export.
     - id: color-state-report
       section: 5-161 DECTSR color table report
       level: defined
@@ -14824,6 +14998,51 @@ specifications:
       - CSI ? 109 l
       rule: SET locks CapsLock, RESET unlocks, equivalent to physical key state request on original terminal. No host keyboard
         mutation authorization selected.
+    - id: secure-reset
+      section: 5-144..145 DECSR
+      level: defined
+      wire: CSI [ Pr ] + p
+      dispatch:
+      - CSI + p
+      rule: Restore terminal to power-up or saved SET-UP state, like RIS without disconnecting host. Clear UDKs, DRCS, screen/offscreen
+        page memory, macros, paste and keyboard input buffers; home first page; reset margins, absolute origin, rendition, DECSCA
+        protection, charset designations/invocations and keyboard state. Pr optional random value0..16383; public guide says
+        if included return DECSRC with value, including zero. Recognized at all ANSI levels and in CRM (exits CRM); not recognized
+        in VT52 or printer-controller mode (forwarded to printer there). Buffered like ordinary input. This historical operation
+        does not itself specify a host session or process termination policy.
+      relations:
+      - kind: related
+        clause: ecma48.ris
+        role: reset
+      - kind: related
+        clause: dec_vt520.secure-reset-confirmation
+        role: reply
+      details:
+        token_range:
+        - 0
+        - 16383
+        token_omitted: no confirmation
+        source_note: Explicit zero inclusion differs from internal STD070 rule; do not infer reply above range from guide.
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECSR lines5671-5697
+          meaning: Collects first parameter before reset(true,true), then unconditionally calls send of DECSRC with token; no
+            explicit upper-bound or zero suppression in handler. Exact omitted-token encoding and reset ownership not inferred.
+    - id: secure-reset-confirmation
+      section: 5-146 DECSRC
+      level: defined
+      wire: CSI Pr * q
+      dispatch:
+      - CSI * q
+      rule: Terminal-to-host confirmation after successful Secure Reset, echoes supplied Pr in0..16383. Published guide requires
+        Pr included in preceding DECSR. Distinguish request final +p from reply *q; no new mutation on received reply.
+      relations:
+      - kind: related
+        clause: dec_vt520.secure-reset
+        role: reply
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -17454,6 +17673,14 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.dcs.decrqss
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::DECRQSS
+          meaning: Comment explicitly follows internal STD070 valid1/invalid0 instead of reversed VT525 documentation. Invalid
+            request rejected with0.
     - id: request-rectangle-checksum
       section: EL-00070-05 pp.5-179,5-181
       level: defined
@@ -17658,6 +17885,35 @@ specifications:
       - kind: related
         clause: dec_vt420.soft-terminal-reset
         role: storage-preservation
+    - id: secure-reset
+      section: Terminal Management EL-00070-G4 pp29-30, 04-Oct-1990 / DECSR and DECSRC
+      level: defined
+      wire: CSI [ Pn ] + p / CSI Pn * q
+      dispatch:
+      - CSI + p
+      - CSI * q
+      rule: Initialize host-settable state to power-up state; erase host data. Nonzero Pn1..16383 produces confirmation with
+        same value after successful reset; omitted or zero performs reset without reply; above16383 ignores entire sequence.
+        Works at all ANSI levels, in CRM displays sequence before execution then exits CRM. Not recognized in VT52, Tek or printer-controller
+        mode (printer routing retained). Only receiving session affected; host receive buffers and session management preserved.
+        Clear UDK even locked (may restore saved non-host-writable NVM definitions), DRCS, macros, keyboard input silo, paste/capture
+        and local host-data buffers. Non-host-writable NVM need not be erased; host-writable NVM SHOULD be erased, DECSTUI exception
+        in normal hardware operation. This is not a promise to reset arbitrary host or OS state.
+      relations:
+      - kind: related
+        clause: dec_vt520.secure-reset
+        role: internal-reference
+      - kind: related
+        clause: dec_vt520.secure-reset-confirmation
+        role: reply-profile
+      details:
+        max_token: 16383
+        default_token: 0
+        confirm_range:
+        - 1
+        - 16383
+        zero_confirmation: false
+        over_limit: ignore-whole-sequence
   kitty_deccara:
     title: Kitty extension to rectangular rendition (DECCARA)
     author: Kovid Goyal / kitty
@@ -17729,6 +17985,11 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: selectGraphicRendition 4
           meaning: Nonzero colon styles collapse to ordinary underline; zero clears.
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/sgr.hh
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 051f6bda4bb940aee9bfc3284071125da6daf3b585c5b12c1af2b8f22824eec7
+          location: collect_sgr underline
+          meaning: Subparameter admitted0..5; invalid range skipped; default1. Not full rendering proof.
     - id: color
       section: lines 22-27
       level: defined
@@ -19735,6 +19996,14 @@ specifications:
       - OSC 133
       rule: If cursor is at initial column, do nothing; otherwise perform CR then LF equivalent. Missing-newline marker is an
         open proposal issue, not specified payload.
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: set_current_shell_integration_mode OSC133 L
+          meaning: While cursor column>0 OR preceding line soft-wrapped, move to col0 and down with scrolling; ensures prompt
+            at paragraph start, not simply initial column.
     - id: start-command
       section: Commands / A
       level: defined
@@ -20332,6 +20601,12 @@ specifications:
           sha256: 6be4279ce569ba05cc38648c4e967a54b5dc61b0a447a280ae6beb696851e866
         - url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vte/vteenums.h
           sha256: 883e33e66afb7643802a0652558ee1241db614be8e624d7a972ad8934a2007c8
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::OSC case VTE_TERMPROP
+          meaning: Prior 0.84.1 source bytes independently matched to exact tag commit f2223e45d7f04c5383c59e76772501f0ed4215bc.
     - id: set
       section: vtegtk.cc:2781-2787; vteseq.cc:1862-1945
       level: defined
@@ -23425,6 +23700,13 @@ specifications:
         - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
           sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
           revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/modes.py
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: fc84bc48e3ff4dbe07f8a71c76864e2fe7bc6894d625ebf34076b51d1771060c
+          location: ECMA BDSM mode8
+          meaning: Writable, default set implicit; DCSM9 default set and fixed. Matches proposal rather than original ECMA initial
+            reset recommendation.
     - id: scp
       section: 90-escape-sequences / LTR vs. RTL
       level: defined
@@ -23454,6 +23736,13 @@ specifications:
         - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
           sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
           revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::SCP
+          meaning: 'Reads first selector only: omitted/0 LTR (default restoration FIXME),1 LTR,2 RTL, others ignored; applies
+            bidi flags. Effect parameter not independently enforced here.'
     - id: spd-alias
       section: 90-escape-sequences / LTR vs. RTL
       level: defined
@@ -23475,6 +23764,12 @@ specifications:
         - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
           sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
           revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/vteseq.cc
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 903a7ff3e42c1d6061e3bf757161b2837b2add1acba892582677e784a326a60b
+          location: Terminal::SPD
+          meaning: Only omitted/0 LTR and3 RTL routed; no whole-canvas or vertical orientation support.
     - id: box-mode
       section: 90-escape-sequences / Other output modes
       level: defined
@@ -23494,6 +23789,12 @@ specifications:
         - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
           sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
           revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/modes.py
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: fc84bc48e3ff4dbe07f8a71c76864e2fe7bc6894d625ebf34076b51d1771060c
+          location: VTE_BIDI_BOX_MIRROR2500
+          meaning: Writable default reset per registry.
     - id: auto-mode
       section: 90-escape-sequences / Other output modes
       level: defined
@@ -23516,6 +23817,12 @@ specifications:
         - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
           sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
           revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/modes.py
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: fc84bc48e3ff4dbe07f8a71c76864e2fe7bc6894d625ebf34076b51d1771060c
+          location: VTE_BIDI_AUTO2501
+          meaning: Writable default reset per registry.
     - id: arrow-mode
       section: 90-escape-sequences / Keyboard arrow swapping
       level: defined
@@ -23534,6 +23841,12 @@ specifications:
         - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
           sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
           revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/modes.py
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: fc84bc48e3ff4dbe07f8a71c76864e2fe7bc6894d625ebf34076b51d1771060c
+          location: VTE_BIDI_SWAP_ARROW_KEYS1243
+          meaning: Writable default set per registry.
     - id: levels
       section: 90-escape-sequences / Levels
       level: defined
@@ -25933,6 +26246,14 @@ specifications:
         role: alternative-wire
       - kind: conflicts
         clause: xterm_controls.xtqmodkeys
+      evidence:
+        adopter_observations:
+        - url: https://gitlab.gnome.org/GNOME/vte/-/blob/f2223e45d7f04c5383c59e76772501f0ed4215bc/src/sgr.hh
+          revision: f2223e45d7f04c5383c59e76772501f0ed4215bc
+          sha256: 051f6bda4bb940aee9bfc3284071125da6daf3b585c5b12c1af2b8f22824eec7
+          location: collect_decsgr
+          meaning: Private super/subscript aliases4/5/24 are named NGR (not implemented) in parser-decsgr.hh, ignored by actual
+            collector. Only reset and overline routes observed.
     - id: shadow
       section: Tips / Text attributes; Changelog 3.0.1
       level: defined
@@ -29787,3 +30108,20 @@ pending_reconciliation:
     - ecma48.mode-gatm
     - terminology_extensions.cursor-keys-standard-profile
     scope: CSI 1 h/l
+- id: decsr-zero-confirmation-vt520-vs-std070
+  status: material-originating-extension-conflict
+  wire: CSI 0 + p
+  original_author_sources:
+  - clause: dec_vt520.secure-reset
+    meaning: Public guide includes optional token0..16383 and says if supplied send confirmation.
+  - clause: dec_std070.secure-reset
+    meaning: Internal standard explicitly omits confirmation for zero or omitted token.
+  question: Choose explicit-zero response semantics and exact admission; preserve successful-reset ordering and distinction
+    from RIS. Existing reset choices unchanged.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_std070.secure-reset
+    - dec_vt520.secure-reset
+    - dec_vt520.secure-reset-confirmation
+    scope: Explicit zero Secure Reset token and response; no host reset policy selected.
