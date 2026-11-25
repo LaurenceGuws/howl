@@ -901,6 +901,13 @@ specifications:
           entry_id: csi-754afe63c9
           source_line: 1183
           wire: CSI Pm m
+        adopter_observations:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+          location: _handle_esc_csi_color_set selector21
+          meaning: Pinned Terminology clears bold/bright on SGR21, not double underline. Existing ECMA/Linux SGR21 reconciliation
+            unchanged; no new selection.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rendition protection and rectangle owners report exact mutation'
@@ -2871,6 +2878,20 @@ specifications:
       dispatch:
       - CSI SP d
       rule: TABULATION STOP REMOVE (TSR); ECMA-48 standardized control function, CSI form (source page 73).
+      details:
+        original_semantics:
+          default: none
+          position: nth character position
+          extent: active line and subsequent text in presentation component
+          effect: clear only matching tabulation stop
+      evidence:
+        adopter_observations:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+          location: _handle_esc_csi_uts; CSI d intermediate SP
+          meaning: Terminology uses parsed field as TAB_UNSET index after restriction, apparently zero-based host column; exact
+            TAB macro and omitted field still need qualification. This is not a new opcode.
     - id: tss
       section: 8.3.157
       level: defined
@@ -3040,6 +3061,12 @@ specifications:
       - CSI h
       - CSI l
       rule: GUARDED AREA TRANSFER MODE (GATM); standard mode selection; see section for exact mode value and effects.
+      details:
+        original_semantics:
+          selector: 1
+          set: ALL, eligible guarded and unguarded content transmitted/transferred
+          reset: GUARD, only unguarded eligible content transmitted/transferred
+          section: 7.2.7; 7.3.1; 8.3.106; 8.3.125
     - id: mode-grcm
       section: 7.2.8
       level: defined
@@ -3721,6 +3748,12 @@ specifications:
           location: 1082-1094
           meaning: Pinned consumer maps parsed pause state4 to Progress::None, unlike source paused state. Parser defaults missing
             error/percentage to0 and clamps successful u8 values to100; actual profile differs.
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+          location: DoConEmuAction subParam4
+          meaning: Missing/empty state or progress starts at0; malformed nonempty field rejects; state>4 rejects and progress>100
+            clamps. Distinct optional paused retention semantics in other profiles.
   iterm2_osc1337:
     title: iTerm2 proprietary OSC 1337 commands
     author: iTerm2
@@ -4567,6 +4600,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:3320-3422,4323-4327
+        adopter_observations:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/man/terminology.1
+          sha256: 6b4336a33e1f07c178633ff0a2d93fb89e09757da4c03b5b8e08f803db0791fc
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+          location: CLIPBOARD AND SELECTION ACCESS FROM PROGRAMS
+          meaning: Author manpage describes opt-out writes and ask-by-default read, refusal returns empty response; host policy
+            not mandated for Howl.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences own latest clipboard, attention and typed reply FIFO
@@ -12353,6 +12393,114 @@ specifications:
       - kind: related
         clause: ecma48.ris
         role: reset
+    - id: next-page
+      section: Chapter6 pp136-139 / Moving to Another Page
+      level: defined
+      wire: CSI Pn U
+      dispatch:
+      - CSI U
+      rule: Move to home position on nth following page. Omitted or0 or1 moves one page. Clamp at last page; single-page format
+        ignores.
+      relations:
+      - kind: related
+        clause: ecma48.np
+        role: model-profile
+    - id: previous-page
+      section: Chapter6 pp136-139 / Moving to Another Page
+      level: defined
+      wire: CSI Pn V
+      dispatch:
+      - CSI V
+      rule: Move to home position on nth preceding page. Omitted or0 or1 moves one page. Clamp at first page; single-page format
+        ignores.
+      relations:
+      - kind: related
+        clause: ecma48.pp
+        role: model-profile
+    - id: page-absolute
+      section: Chapter6 pp136-139 / Moving to Another Page
+      level: defined
+      wire: CSI Pn SP P
+      dispatch:
+      - CSI SP P
+      rule: Move to corresponding row and column on selected page, default page1. Clamp page selection to available range; ignore
+        in single-page format.
+      relations:
+      - kind: related
+        clause: ecma48.ppa
+        role: model-profile
+    - id: page-backward
+      section: Chapter6 pp136-139 / Moving to Another Page
+      level: defined
+      wire: CSI Pn SP R
+      dispatch:
+      - CSI SP R
+      rule: Move backward to corresponding row and column on nth preceding page, default one page; clamp first page; ignore
+        single-page format.
+      relations:
+      - kind: related
+        clause: ecma48.ppb
+        role: model-profile
+    - id: page-forward
+      section: Chapter6 pp136-139 / Moving to Another Page
+      level: defined
+      wire: CSI Pn SP Q
+      dispatch:
+      - CSI SP Q
+      rule: Move forward to corresponding row and column on nth following page, default one page; clamp last page; ignore single-page
+        format.
+      relations:
+      - kind: related
+        clause: ecma48.ppr
+        role: model-profile
+    - id: page-coupling
+      section: Chapter10 p184 and summary p185; DEC STD070 p5-87
+      level: defined
+      wire: CSI ? 64 h / CSI ? 64 l
+      dispatch:
+      - CSI ? 64 h
+      - CSI ? 64 l
+      rule: Default coupled. SET makes new active page visible on page movement, RESET permits active page to differ from displayed
+        page, cursor then hidden. SET while active page hidden refreshes it onto main display per internal reference. Public
+        p184 reset diagram extraction prints61, summary and internal reference identify64; preserve extraction discrepancy.
+      relations:
+      - kind: related
+        clause: dec_vt420.page-absolute
+        role: interaction
+      - kind: related
+        clause: dec_vt420.request-displayed-extent
+        role: geometry
+    - id: terminal-state-request
+      section: Chapter12 p245 / DECRQTSR
+      level: defined
+      wire: CSI Ps $ u
+      dispatch:
+      - CSI $ u
+      rule: VT400 mode only; 0 or omitted ignored,1 requests DECTSR. Report format specific to model and revision.
+    - id: terminal-state-report
+      section: Chapter12 pp245-246 / DECTSR
+      level: defined
+      wire: DCS 1 $ s data ST
+      dispatch:
+      - DCS 1 $ s
+      rule: Report operating feature settings except user-defined keys and current soft character set. Payload intentionally
+        model/revision-specific; no portable data schema or complete screen snapshot promised.
+      relations:
+      - kind: related
+        clause: dec_vt420.terminal-state-request
+        role: reply
+    - id: terminal-state-restore
+      section: Chapter12 pp246-247 / DECRSTS
+      level: defined
+      wire: DCS Ps $ p data ST
+      dispatch:
+      - DCS $ p
+      rule: VT400 mode only;0 error/ignored,1 consumes identical payload to previous state report. Invalid value ignores remaining
+        sequence and may leave partially restored state. No atomic rollback requirement; never assume compatibility across models.
+      relations:
+      - kind: related
+        clause: dec_vt420.terminal-state-report
+        role: restore
   finalterm_shell:
     title: FinalTerm semantic prompt markers (OSC 133)
     author: FinalTerm; surviving documentation maintained by iTerm2
@@ -12436,6 +12584,14 @@ specifications:
       - kind: related
         clause: finalterm_original.command-finished
         role: original-code
+      evidence:
+        adopter_observations:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+          location: DoFinalTermAction D
+          meaning: Feature-gated. Missing field nullopt; nonnumeric/negative error converted UINT_MAX, unsigned accepted otherwise;
+            no explicit original B-abort or 0..255 restriction in handler.
     snapshot_sha256: b297c4fcd7ea35908e145420d743fe98fc0ee5bbb5844ed4a1f35f2d547cac98
   vscode_shell:
     title: VS Code shell integration protocol (OSC 633)
@@ -14351,6 +14507,133 @@ specifications:
       - kind: related
         clause: dec_vt420.request-status-string
         role: report
+    - id: color-state-request
+      section: 5-114 DECCTR
+      level: defined
+      wire: CSI 2 ; Pu $ u
+      dispatch:
+      - CSI 2 $ u
+      rule: Request color-table entries using Pu1 HLS (H0..360,L/S0..100) or2 RGB (channels0..100);0 illegal. Request page prints
+        response final p, dedicated DECTSR section5-161 specifies s, current Windows code emits s. Preserve printed discrepancy;
+        do not interpret p as additional report type.
+      relations:
+      - kind: extends
+        clause: dec_vt420.terminal-state-request
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: color-state-report
+      section: 5-161 DECTSR color table report
+      level: defined
+      wire: DCS 2 $ s Pc;Pu;Px;Py;Pz [ / ... ] ST
+      dispatch:
+      - DCS 2 $ s
+      rule: 'Each slash-separated entry has exactly five documented fields: index0..255, model1 HLS or2 RGB and three components
+        in requested model. Response to color request. Source5-114 prints p instead; restore command separately uses p.'
+      relations:
+      - kind: related
+        clause: dec_vt520.color-state-request
+        role: reply
+    - id: color-state-restore
+      section: 5-118 DECRSTS color table
+      level: defined
+      wire: DCS 2 $ p Pc;Pu;Px;Py;Pz [ / ... ] ST
+      dispatch:
+      - DCS 2 $ p
+      rule: Restore color map using same slash-separated five-field entries as report. Only supplied indices changed. Original
+        source does not define every malformed group, duplicate-index or partial failure case. Current Windows restore consumes
+        groups at slash/ESC, not evidence of universal validity policy.
+      relations:
+      - kind: related
+        clause: dec_vt520.color-state-report
+        role: restore
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: erase-color-mode
+      section: 5-48 DECECM
+      level: defined
+      wire: CSI ? 117 h / CSI ? 117 l
+      dispatch:
+      - CSI ? 117 h
+      - CSI ? 117 l
+      rule: SET uses screen background when erasing text or scrolling new text on screen; RESET uses text background (default).
+        Reportable mode; original distinct background roles not assumed same as arbitrary modern palette entry.
+    - id: session-title
+      section: 5-156 DECSWT; summary Appendix
+      level: defined
+      wire: OSC 21 ; name ST
+      dispatch:
+      - OSC 21
+      rule: Session descriptive name at most30 characters; title in framed-window mode, fallback icon name first12 characters,
+        and TD/SMP session application parameter. No TSI title report. Windows adopts selector21 as window title; Kitty assigns
+        same namespace to named color operations.
+      relations:
+      - kind: conflicts
+        clause: kitty_color.set
+      - kind: related
+        clause: cde_dtterm.title-selector-2
+        role: title-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/parser/OutputStateMachineEngine.hpp
+          sha256: cbd7807d570b0fb455b7c52f5be1fb801425938f5357fb366f17d98fed44c4a0
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/parser/OutputStateMachineEngine.cpp
+          sha256: d45d4c91d2fde46895d48c37bd839e5be315fd6e8ddd842415b25875f31d521b
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: auto-resize
+      section: 5-21 DECARSM
+      level: defined
+      wire: CSI ? 98 h / CSI ? 98 l
+      dispatch:
+      - CSI ? 98 h
+      - CSI ? 98 l
+      rule: SET enables automatic lines-per-screen adjustment on page arrangement change; reset disables (default). User Feature
+        Lock may prevent host setting. Exact geometry table retained in original manual, not arbitrary host-window resize.
+      details:
+        page_size_to_lines_per_screen:
+          24: 26
+          25: 26
+          36: 42
+          41: 42
+          42: 42
+          48: 53
+          52: 53
+          53: 53
+          72: 53
+        source: 5-21 table; host User Feature Lock
+    - id: auto-answerback
+      section: 5-15 DECAAM
+      level: defined
+      wire: CSI ? 100 h / CSI ? 100 l
+      dispatch:
+      - CSI ? 100 h
+      - CSI ? 100 l
+      rule: SET automatically sends configured answerback after communication line connection, RESET disables (default); with
+        modem control delay500ms. Not a general PTY-opening requirement.
+    - id: conceal-answerback
+      section: 5-27 DECCANSM
+      level: defined
+      wire: CSI ? 101 h / CSI ? 101 l
+      dispatch:
+      - CSI ? 101 h
+      - CSI ? 101 l
+      rule: SET hides answerback in Setup. Despite reset spelling in format, once concealed cannot unhide by host or Setup;
+        entering new message returns visible. Default not concealed. Not an instruction to disclose hidden value.
+    - id: caps-lock
+      section: 5-28 DECCAPSLK
+      level: defined
+      wire: CSI ? 109 h / CSI ? 109 l
+      dispatch:
+      - CSI ? 109 h
+      - CSI ? 109 l
+      rule: SET locks CapsLock, RESET unlocks, equivalent to physical key state request on original terminal. No host keyboard
+        mutation authorization selected.
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -19715,6 +19998,13 @@ specifications:
           location: 121-189
           meaning: Parser retains optional percent for paused/error; set default0, decimal parsed usize and clamp0..100, invalid
             percent null. Distinguish parsed state from host consequence.
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+          location: _handle_osc_9 and _handle_osc_9_4_progress
+          meaning: Pure leading digit prefix ending or followed by semicolon is ConEmu subcommand, never notification; only4
+            dispatched. Once applied Rex report seen, suppress legacy progress until RIS. This is a concrete adopting disambiguation,
+            not proof all OSC9 dialects agree.
     - id: wait-key
       section: ConEmu specific OSC table, HTML lines 768-832
       level: defined
@@ -19783,6 +20073,14 @@ specifications:
       - kind: related
         clause: finalterm_shell.prompt-start
         role: alternative-prompt-marker
+      evidence:
+        adopter_observations:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+          location: DoConEmuAction subParam12
+          meaning: Windows treats prompt-mark as StartCommand (prompt end), not original ConEmu wording prompt start. Source
+            comment explicitly describes this adoption. No decision selected.
   vte_termprops:
     title: VTE terminal properties protocol (OSC 666)
     author: VTE project / Christian Persch and contributors
@@ -25090,6 +25388,12 @@ specifications:
           location: 1505-1517,1624-1639
           meaning: 'Pinned mode2027 permanently enabled: SET/RESET no-op and DECRPM3. Unlike draft reset disables guarantee;
             preserve profile.'
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+          location: _dec_private_mode_status selector2027
+          meaning: Reports permanently reset4, explicitly says grapheme clustering unimplemented; no actual cluster support
+            claim.
     - id: clusters
       section: Semantics / Grapheme Cluster
       level: defined
@@ -25526,6 +25830,558 @@ specifications:
         additional_sources:
         - url: https://www.gnu.org/software/screen/manual/html_node/Dynamic-Titles.html
           sha256: 41e1cad83f6b93fdb4a685bc0693e81cde4d4a5ca64d84b6d9a84f73dd916655
+  microsoft_quick_fix:
+    title: Windows Terminal Quick Fix protocol (OSC 9001)
+    author: Carlos Zamora / Microsoft
+    authority: protocol-author
+    revision: 2024-04-01, updated 2024-05-08; git 9853bc96076e811cef5eab4469095fc9be58201e
+    url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/doc/specs/%2316599%20-%20Quick%20Fix/%2316599%20-%20Quick%20Fix.md
+    snapshot_sha256: c9784fa09eeeb79603860c6162ea75e599964611468986e8c6db3ef9d1b87e26
+    scope: Author design and pinned consumer. Host suggestions are advisory and user-mediated; no implementation disposition
+      or execution authorization.
+    clauses:
+    - id: command-not-found
+      section: Solution Design / WinGet Command Not Found
+      level: defined
+      wire: OSC 9001 ; CmdNotFound ; missing-command ST
+      dispatch:
+      - OSC 9001
+      rule: Report unresolved command name; host may search package metadata asynchronously and offer suggestions at latest
+        prompt. Pinned consumer splits semicolons and forwards second field when present, without general payload escaping specified.
+        Separate from DEC mode9001 Win32 input. Receipt itself is not command execution authorization.
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: suggest-input-proposal
+      section: Future considerations
+      level: defined
+      wire: OSC 9001 ; SuggestInput ; command [ ; description ] ST
+      dispatch:
+      - OSC 9001
+      rule: Future proposal for application-supplied suggestion with optional description. Not recognized by pinned DoWTAction;
+        proposed wire, not an implemented operation. No action execution selected.
+      source_note: Proposal only; documented in Future considerations.
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+  microsoft_shell_completion:
+    title: Windows Terminal experimental shell completion protocol
+    author: Microsoft Windows Terminal project
+    authority: protocol-author
+    revision: 1.19 Preview author wiki; observed 2026-11-25; pinned consumer 9853bc96076e811cef5eab4469095fc9be58201e
+    url: https://github.com/microsoft/terminal/wiki/Experimental-Shell-Completion-Menu
+    snapshot_sha256: 909311efee11d00cb7a354f670d3acd81d41d1b90ee96a38602f94dc138405aa
+    scope: Author wiki example and exact Windows source for experimental OSC633 Completions. VS Code original broader completion
+      protocol/revision not fully recovered; not a claim of stable interoperable schema.
+    clauses:
+    - id: completions
+      section: Experimental Shell Completion Menu; DoVsCodeAction
+      level: defined
+      wire: OSC 633 ; Completions ; replacement-index ; replacement-length ; cursor-index ; JSON (BEL | ST)
+      dispatch:
+      - OSC 633
+      rule: Author example sends PowerShell completion matches as JSON. Pinned consumer is feature-gated, parses all three indexes
+        as unsigned integers and preserves remainder including semicolons. Only replacement length and remainder forwarded to
+        current menu API; cursor/replacement indexes not used. Bare no-data Completions emitted by example is not forwarded
+        by pinned consumer. Exact JSON item schema and current VS Code implementation remain separate discovery obligations.
+      relations:
+      - kind: related
+        clause: vscode_shell.property
+        role: shared-namespace
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+  microsoft_terminal_profiles:
+    title: Windows Terminal adopting output-dispatch profiles
+    author: Microsoft Windows Terminal project
+    authority: author-implementation
+    revision: git 9853bc96076e811cef5eab4469095fc9be58201e
+    url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/parser/OutputStateMachineEngine.hpp
+    snapshot_sha256: cbd7807d570b0fb455b7c52f5be1fb801425938f5357fb366f17d98fed44c4a0
+    scope: Selected source-code observations at pinned revision, not original DEC or xterm semantics. No unverified original
+      attribution or conformance claims.
+    clauses:
+    - id: accept-c1
+      section: OutputStateMachineEngine.hpp EscActionCodes; cpp:261; adaptDispatch.cpp:2906
+      level: defined
+      wire: ESC SP 7
+      dispatch:
+      - ESC SP 7
+      rule: Named DECAC1 branch calls AcceptC1Controls(true), enabling parser AcceptC1 mode. Separate from S7C1T/S8C1T reply
+        encoding. Original DECAC1 publication not recovered; no claim Microsoft invented the wire or universal raw UTF8 C1 acceptance.
+      relations:
+      - kind: related
+        clause: dec_vt420.send-eight-bit-c1
+        role: different-direction
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/parser/OutputStateMachineEngine.cpp
+          sha256: d45d4c91d2fde46895d48c37bd839e5be315fd6e8ddd842415b25875f31d521b
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: color-report-profile
+      section: AdaptDispatch::RequestTerminalStateReport/RestoreTerminalState/_ReportColorTable
+      level: defined
+      wire: CSI 2 ; Pu $ u / DCS 2 $ s data ST / DCS 2 $ p data ST
+      dispatch:
+      - CSI 2 $ u
+      - DCS 2 $ s
+      - DCS 2 $ p
+      rule: Only report format2 routed to color-table handlers; format1 full-state ignored/unsupported. Current response uses
+        final s; emits valid table entries with HLS/RGB100 conversion. Restore accepts groups with known models and index within
+        TextColor table; exact size, component bounds and malformed trailing fields not fully traced.
+      relations:
+      - kind: related
+        clause: dec_vt520.color-state-report
+        role: adopted-profile
+      - kind: related
+        clause: dec_vt520.color-state-restore
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+    - id: session-title-profile
+      section: OutputStateMachineEngine OSC dispatch
+      level: defined
+      wire: OSC 21 ; title (BEL | ST)
+      dispatch:
+      - OSC 21
+      rule: DECSWT is grouped with OSC0,1,2 and calls SetWindowTitle. No 30-character limit established in this branch. Actual
+        common window-title route differs from original DEC session-specific effects and conflicts with Kitty OSC21 color syntax.
+      relations:
+      - kind: related
+        clause: dec_vt520.session-title
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/parser/OutputStateMachineEngine.cpp
+          sha256: d45d4c91d2fde46895d48c37bd839e5be315fd6e8ddd842415b25875f31d521b
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+        - url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/adapter/adaptDispatch.cpp
+          sha256: 1169ef758456021635c6b1d4aa450e9de0994a740361831c11f32896330c1f06
+          revision: 9853bc96076e811cef5eab4469095fc9be58201e
+  terminology_extensions:
+    title: Terminology extended escapes
+    author: Terminology project / Enlightenment contributors
+    authority: protocol-author
+    revision: git 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/README.md
+    snapshot_sha256: 691c64a597774201884551ef0a86b5b2f91fcdceabbf41070aa2df109c0c7bad
+    scope: All README Available commands plus manpage and selected author consumer observations. ESC } NUL-framed protocol,
+      independent media/Edje and file-transfer operations. Exact host rendering, permission, nested Edje grammar and malformed
+      transfer recovery remain open.
+    clauses:
+    - id: envelope
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } UTF-8-command NUL
+      dispatch:
+      - ESC }
+      rule: ESC then right brace introduces UTF8 command, NUL ends it. Not ST/BEL framing. Pinned parser waits for complete
+        NUL and discards through NUL when command reaches 131072 codepoints (payload length must be less). Non-query operations
+        host-gated via ty_escapes. Original ESC } also means LS2R; no cross-profile framing discrimination documented.
+      relations:
+      - kind: conflicts
+        clause: ecma35.locking-shift-gr
+      details:
+        command_codepoint_limit_exclusive: 131072
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: popup
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } pn|pq path-or-URL NUL
+      dispatch:
+      - ESC }
+      rule: pn request immediate popup media; pq enqueue after current popup. Local or URL media source. Host media access and
+        presentation authorization separate.
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/win.c
+          sha256: 27b6a744789c70e0044d52cb49b4cdc093ee9a349bd0e988428b2136095ed66b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: background
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } bt|bp path-or-URL NUL
+      dispatch:
+      - ESC }
+      rule: bt temporary, bp persistent background media request. Pinned callback bt forks temporary config, bp saves configured
+        background; empty path clears. Do not select config persistence or resource access policy.
+      relations:
+      - kind: related
+        clause: mintty_controls.background-image
+        role: alternative-profile
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/win.c
+          sha256: 27b6a744789c70e0044d52cb49b4cdc093ee9a349bd0e988428b2136095ed66b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: alpha
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } at|ap boolean NUL
+      dispatch:
+      - ESC }
+      rule: at temporary, ap persistent alpha state. Documented on/true/yes or off/false/no. Exact opacity or alpha channel
+        composition not implied.
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/win.c
+          sha256: 27b6a744789c70e0044d52cb49b4cdc093ee9a349bd0e988428b2136095ed66b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: size-query
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } qs NUL / width;height;cell-width;cell-height LF
+      dispatch:
+      - ESC }
+      rule: Request grid columns, rows, cell width pixels and cell height pixels. Reply plain semicolon decimal fields and LF,
+        not CSI or OSC. Current query dispatched before general ty_escapes gate; no selected disclosure policy.
+      relations:
+      - kind: related
+        clause: rockorager_resize.report
+        role: alternative-metrics
+      details:
+        reply_order:
+        - columns
+        - rows
+        - cell_width_px
+        - cell_height_px
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: media-define
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } is|ic|if|it Cwidth;height;path-or-URL NUL
+      dispatch:
+      - ESC }
+      rule: Define future media block, C placeholder character, W/H cell counts up to511. is stretch, ic centered aspect-preserving
+        padding, if aspect-preserving fill/crop, it cached thumbnail. Definition alone does not display grid; matching placeholders
+        in subsequent ib/ie runs provide cells. Path may be prefixed with link URI and LF. Current code takes first placeholder
+        byte and tests dimensions<512; exact UTF8/invalid dimension behavior not fully qualified.
+      relations:
+      - kind: related
+        clause: iterm2_images.dimensions
+        role: alternative-media-geometry
+      details:
+        max_documented_cells_per_dimension: 511
+        selectors:
+          is: stretch
+          ic: center
+          if: fill
+          it: thumbnail
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: media-run
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } ib NUL placeholders ESC } ie NUL
+      dispatch:
+      - ESC }
+      rule: Enable replacement of placeholder characters by defined media for run; end disables. Author example emits W placeholders
+        per each of H rows, delimited each run; exact wrap, overwriting and partial grid completion not fully stated.
+      relations:
+      - kind: related
+        clause: terminology_extensions.media-define
+        role: lifetime
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: edje-object
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } ij Cwidth;height;file LF group [ LF commands ] NUL
+      dispatch:
+      - ESC }
+      rule: Define Edje object in media block, optional initial commands parsed before object displayed. Same placeholder geometry
+        as media. Object file/group and host object execution policy not selected.
+      relations:
+      - kind: related
+        clause: terminology_extensions.media-define
+        role: extension
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: edje-command
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } iC channel-id LF commands NUL
+      dispatch:
+      - ESC }
+      rule: Address existing named Edje channel. Commands use nonempty CR/LF-separated fields, text(part,text), emit(signal,source),
+        drag(part,value|size|step|page,x,y), chid(id) setup only, message(id,type,data). Source documents ten typed message
+        data forms. Missing channel and precise command/field admission require consumer trace.
+      relations:
+      - kind: related
+        clause: terminology_extensions.edje-object
+        role: lifetime
+      details:
+        operations:
+        - text
+        - emit
+        - drag
+        - chid
+        - message
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: edje-message-types
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } iC ... message LF opcode LF type LF data NUL
+      dispatch:
+      - ESC }
+      rule: Integer opcode; type string/int/float, corresponding sets, or string_int/string_float/string_int_set/string_float_set.
+        Data items newline-separated; mixed starts string then numeric item(s). Source code and docs not full grammar for escaped
+        newlines, counts or malformed data.
+      relations:
+      - kind: related
+        clause: terminology_extensions.edje-command
+        role: payload
+      details:
+        types:
+        - string
+        - int
+        - float
+        - string_set
+        - int_set
+        - float_set
+        - string_int
+        - string_float
+        - string_int_set
+        - string_float_set
+    - id: edje-events
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } signal;channel LF signal LF source NUL / ESC } message;channel LF opcode LF type LF data NUL / ESC } ;channel
+        LF drag-event LF part LF x LF y NUL
+      dispatch:
+      - ESC }
+      rule: Object with assigned channel may return signals/messages/drag events on input stream. Pinned callbacks require channel
+        on current channel-ID list (qj family). Drag event names drag,drag,start,drag,stop,drag,step,drag,set. Callback emits
+        x/y as truncated integer 1000 times drag value, confirming LF separators including drag,set despite README typo. Same
+        typed message payload as command family; individual message bounds remain open.
+      relations:
+      - kind: related
+        clause: terminology_extensions.edje-message-types
+        role: reply
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: edje-stop
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } ix channel-id NUL
+      dispatch:
+      - ESC }
+      rule: Stop image/Edje channel listening for signals/messages; not specified as deletion of displayed media. Unknown-channel
+        and callback lifetime require qualification.
+      relations:
+      - kind: related
+        clause: terminology_extensions.edje-object
+        role: lifetime
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: file-request
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } fr path/name NUL
+      dispatch:
+      - ESC }
+      rule: Begin file-send request to receiving terminal. Pinned callback opens user-mediated receive flow; accepted destination
+        successfully opened yields k LF, cancel/open failure n LF. Name is proposal, not permission to access supplied path.
+      relations:
+      - kind: related
+        clause: kitty_file_transfer.envelope
+        role: alternative-transfer
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/win.c
+          sha256: 27b6a744789c70e0044d52cb49b4cdc093ee9a349bd0e988428b2136095ed66b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: file-size
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } fs decimal-byte-size NUL
+      dispatch:
+      - ESC }
+      rule: Set transfer size in bytes and reset progress total; current consumer uses numeric conversion, not proof of strict
+        validation or a guarantee that declared size bounds accepted data.
+      relations:
+      - kind: related
+        clause: terminology_extensions.file-request
+        role: transfer
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: file-data
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } fd decimal-checksum SP encoded-data NUL
+      dispatch:
+      - ESC }
+      rule: Each byte encoded high then low nibble as ASCII @ through O. Checksum signed32-bit decimal sum of encoded byte values,
+        not decoded data. Pinned sender chunks at37268 decoded bytes; receiver tests even pairs/checksum/active transfer, but
+        masks nibble values and does not prove strict alphabet admission. No transfer performed.
+      relations:
+      - kind: related
+        clause: terminology_extensions.file-size
+        role: transfer
+      details:
+        sender_chunk_decoded_bytes: 37268
+        encoding: two ASCII nibbles 0x40..0x4F
+        checksum: sum encoded bytes
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/tysend.c
+          sha256: eea2c79cf3f13a2dd1f7861fe5cf6b8c4ca2ce12aa21dff4d5ba87e7f93015ed
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: file-ack
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: k LF / n LF
+      rule: Pinned receiver sends k LF after accepted packet write, n LF on validation/cancel failure. Failure branch closes/removes
+        partial destination and deactivates; I/O short-write and allocation failures not fully verified. Sender waits for ack
+        between packets; no authenticated integrity or durability implied.
+      relations:
+      - kind: related
+        clause: terminology_extensions.file-data
+        role: reply
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/tysend.c
+          sha256: eea2c79cf3f13a2dd1f7861fe5cf6b8c4ca2ce12aa21dff4d5ba87e7f93015ed
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: file-end
+      section: README / Extended escapes / Available commands
+      level: defined
+      wire: ESC } fx NUL
+      dispatch:
+      - ESC }
+      rule: End active transfer, close file and clear active state. No source guarantee total equals declared size or final
+        checksum verified. User cancel removes partial file. Not host filesystem authority.
+      relations:
+      - kind: related
+        clause: terminology_extensions.file-data
+        role: lifetime
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: channel-query-profile
+      section: termio.c:_handle_query_esc
+      level: defined
+      wire: ESC } qj[+|-]channel NUL
+      dispatch:
+      - ESC }
+      rule: Observed qj empty clears current channel-ID list; plus appends named ID, minus removes first match. No wire response
+        shown in handler. Signal and message callbacks check membership of current channel list before emitting. Operation absent
+        from README; exact list reset/lifetime and duplicate handling remain open.
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termio.c
+          sha256: 3bd8092ba21b4711bb25b04906926aaded630158cd9281611f63061b9f835a5b
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: test-only-controls
+      section: termptyext.c / compile gates
+      level: defined
+      wire: ESC } t... NUL
+      dispatch:
+      - ESC }
+      rule: Reserved test harness operations appear only under BINARY_TYTEST or ENABLE_TEST_UI. Pointer events, corner flags,
+        selection/link assertions and render hook are test/internal, not production VT protocol support or an implementation
+        requirement.
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyext.c
+          sha256: 1f5f355a9196fea4f8a7588ff705be6d7ed7d7fef8531262aac1e43e60c03458
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: newline-private-profile
+      section: termptyesc.c:_handle_esc_csi_reset_mode
+      level: defined
+      wire: CSI ? 20 h / CSI ? 20 l
+      dispatch:
+      - CSI ? 20 h
+      - CSI ? 20 l
+      rule: Pinned private20 modifies crlf mode; unlike original standard LNM20, same private selector is documented for Mintty/VK100
+        overstrike. No claim of original Terminology assignment or alias equivalence.
+      relations:
+      - kind: related
+        clause: dec_vt100.newline-mode
+        role: private-alias-observation
+      - kind: conflicts
+        clause: mintty_controls.overstrike
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    - id: cursor-keys-standard-profile
+      section: termptyesc.c:_handle_esc_csi_reset_mode
+      level: defined
+      wire: CSI 1 h / CSI 1 l
+      dispatch:
+      - CSI 1 h
+      - CSI 1 l
+      rule: Pinned non-private selector1 sets/resets application cursor-key state. Original DEC uses private1; ECMA standard
+        selector1 GATM guarded area transfer mode. Earliest origin unresolved; not assigned to ECMA.
+      relations:
+      - kind: related
+        clause: dec_vt420.cursor-key-mode
+        role: alias-observation
+      - kind: conflicts
+        clause: ecma48.mode-gatm
+      evidence:
+        additional_sources:
+        - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
+          sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
+          revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -28547,3 +29403,71 @@ pending_reconciliation:
     - mintty_rendition.vertical-align
     - wezterm_rendition_profile.vertical-align
     scope: CSI 73 ; 74 m
+- id: osc21-dec-title-vs-kitty-colors
+  status: material-originating-extension-conflict
+  wire: OSC 21 ; payload ST
+  original_author_sources:
+  - clause: dec_vt520.session-title
+    meaning: DEC session title unrestricted descriptive text within length30.
+  - clause: microsoft_terminal_profiles.session-title-profile
+    meaning: Windows dispatches title setting.
+  - clause: kitty_color.set
+    meaning: Kitty named color key=value operations.
+  - clause: kitty_color.query
+    meaning: Kitty named color queries.
+  question: Resolve overlapping payload grammar explicitly; no assumption that color-looking title can be disambiguated without
+    policy.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt520.session-title
+    - kitty_color.query
+    - kitty_color.set
+    - microsoft_terminal_profiles.session-title-profile
+    scope: OSC 21 ; payload ST
+- id: esc-right-brace-terminology-vs-ls2r
+  status: material-originating-extension-conflict
+  wire: ESC }
+  original_author_sources:
+  - clause: terminology_extensions.envelope
+    meaning: Starts UTF8 command extending until NUL.
+  - clause: ecma35.locking-shift-gr
+    meaning: Complete LS2R locking shift into GR at right brace.
+  question: Resolve framing/profile selection before consuming subsequent text. Do not assume delayed NUL is safe in original
+    ISO2022 profile.
+  decision: null
+  applies_to:
+    clauses:
+    - ecma35.locking-shift-gr
+    - terminology_extensions.envelope
+    scope: ESC }
+- id: private20-terminology-newline-vs-overstrike
+  status: material-originating-extension-conflict
+  wire: CSI ? 20 h/l
+  original_author_sources:
+  - clause: terminology_extensions.newline-private-profile
+    meaning: Private20 selects CRLF mode in pinned code.
+  - clause: mintty_controls.overstrike
+    meaning: Private20 controls overstrike, VK100 lineage.
+  question: Trace original private assignments and choose scope explicitly; standard LNM20 unaffected.
+  decision: null
+  applies_to:
+    clauses:
+    - mintty_controls.overstrike
+    - terminology_extensions.newline-private-profile
+    scope: CSI ? 20 h/l
+- id: standard1-terminology-cursor-vs-gatm
+  status: material-originating-extension-conflict
+  wire: CSI 1 h/l
+  original_author_sources:
+  - clause: terminology_extensions.cursor-keys-standard-profile
+    meaning: Pinned nonprivate1 selects application cursor keys.
+  - clause: ecma48.mode-gatm
+    meaning: Standard GATM guarded area transfer mode.
+  question: Verify originating mode1 assignment and possible adopting alias; no selected behavior.
+  decision: null
+  applies_to:
+    clauses:
+    - ecma48.mode-gatm
+    - terminology_extensions.cursor-keys-standard-profile
+    scope: CSI 1 h/l
