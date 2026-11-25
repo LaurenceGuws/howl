@@ -864,8 +864,8 @@ specifications:
           - 48
           original_ecma48: Reserved in ECMA-48 fifth edition (1991) for intended foreground/background colour standardization.
           originating_specification: itu_t416.sgr-colour-subparameters
-          xterm: Supports ISO/IEC 8613-6 colon-separated indexed colour (:5:index) and direct RGB (:2:colourspace:R:G:B);
-            also supports semicolon-separated legacy forms such as ;2;R;G;B for KDE Konsole compatibility.
+          xterm: Supports ISO/IEC 8613-6 colon-separated indexed colour (:5:index) and direct RGB (:2:colourspace:R:G:B); also
+            supports semicolon-separated legacy forms such as ;2;R;G;B for KDE Konsole compatibility.
           classification: formal colour selector standard plus separately documented legacy syntax; xterm is not the originating
             ISO authority
           catalogue: xterm_ctlseqs
@@ -875,12 +875,12 @@ specifications:
           - 90..97
           - 100..107
           origin_attribution: aixterm (credited by xterm; original aixterm source not independently pinned)
-          xterm: When 16-colour support is compiled, 90..97 select bright foreground and 100..107 select bright background
-            palette entries.
+          xterm: When 16-colour support is compiled, 90..97 select bright foreground and 100..107 select bright background palette
+            entries.
           conditional_alternative: If built without 16-colour support, xterm documents rxvt-style SGR 100 as reset of foreground
             and background to defaults, not bright-black background.
-          classification: attributed bright-colour extension with explicit build-dependent legacy alternative; not ECMA-48
-            fifth-edition selectors
+          classification: attributed bright-colour extension with explicit build-dependent legacy alternative; not ECMA-48 fifth-edition
+            selectors
           catalogue: xterm_ctlseqs
           entry_id: csi-754afe63c9
           source_line: 1245
@@ -1276,13 +1276,13 @@ specifications:
           eight_bit: '0x9F'
           seven_bit: ESC _
           equivalence: Both forms encode the same original C1 control, not two separate Howl command requirements.
-        original_string_semantics: Opening delimiter for application program use; command bytes 0x08..0x0d or 0x20..0x7e,
-          closed by ST. Interpretation depends on application/privacy discipline.
+        original_string_semantics: Opening delimiter for application program use; command bytes 0x08..0x0d or 0x20..0x7e, closed
+          by ST. Interpretation depends on application/privacy discipline.
         xterm_string_profile:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:5281-5358,2323-2325; ctlseqs line 428
-          behavior: Accepted string payload ignored, not a universal assertion that the protocol has no defined extension.
-            Parser admission depends on ParseSOS; other implementations may define payloads.
+          behavior: Accepted string payload ignored, not a universal assertion that the protocol has no defined extension. Parser
+            admission depends on ParseSOS; other implementations may define payloads.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -1842,8 +1842,8 @@ specifications:
       wire: '0x1F'
       dispatch:
       - BYTE 1F
-      rule: INFORMATION SEPARATOR ONE (US - UNIT SEPARATOR) (IS1); ECMA-48 standardized control function, C0 form (source
-        page 48).
+      rule: INFORMATION SEPARATOR ONE (US - UNIT SEPARATOR) (IS1); ECMA-48 standardized control function, C0 form (source page
+        48).
     - id: is2
       section: 8.3.70
       level: defined
@@ -1866,8 +1866,8 @@ specifications:
       wire: '0x1C'
       dispatch:
       - BYTE 1C
-      rule: INFORMATION SEPARATOR FOUR (FS - FILE SEPARATOR) (IS4); ECMA-48 standardized control function, C0 form (source
-        page 48).
+      rule: INFORMATION SEPARATOR FOUR (FS - FILE SEPARATOR) (IS4); ECMA-48 standardized control function, C0 form (source page
+        48).
     - id: jfy
       section: 8.3.73
       level: defined
@@ -2021,8 +2021,8 @@ specifications:
           - 0
           - 4
           - 5
-          ecma48: Ps=0 initiates transfer to a primary auxiliary device; Ps=4 stops and Ps=5 starts relaying received data
-            to that device.
+          ecma48: Ps=0 initiates transfer to a primary auxiliary device; Ps=4 stops and Ps=5 starts relaying received data to
+            that device.
           xterm: Ps=0 prints the screen; Ps=4 disables and Ps=5 enables printer-controller mode.
           classification: same Media Copy family with xterm printer-oriented auxiliary-device realization
           catalogue: xterm_ctlseqs
@@ -2034,8 +2034,8 @@ specifications:
           - 3
           - 6
           - 7
-          ecma48: 'Respectively: initiate transfer from primary; transfer to/from secondary; stop/start relay to secondary
-            auxiliary device.'
+          ecma48: 'Respectively: initiate transfer from primary; transfer to/from secondary; stop/start relay to secondary auxiliary
+            device.'
           xterm: Not documented in the pinned xterm MC entry; omission is not evidence of a particular no-op effect.
           classification: ECMA-48 parameter coverage retained without inventing xterm behavior
           catalogue: xterm_ctlseqs
@@ -2194,8 +2194,8 @@ specifications:
         xterm_string_profile:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:5281-5358,2323-2325; ctlseqs line 2267
-          behavior: Accepted string payload ignored, not a universal assertion that the protocol has no defined extension.
-            Parser admission depends on ParseSOS; other implementations may define payloads.
+          behavior: Accepted string payload ignored, not a universal assertion that the protocol has no defined extension. Parser
+            admission depends on ParseSOS; other implementations may define payloads.
       evidence:
         also_documented:
         - catalogue: xterm_ctlseqs
@@ -2324,8 +2324,7 @@ specifications:
       wire: CSI Ps... SP ]
       dispatch:
       - CSI SP ]
-      rule: SELECT ALTERNATIVE PRESENTATION VARIANTS (SAPV); ECMA-48 standardized control function, CSI form (source page
-        57).
+      rule: SELECT ALTERNATIVE PRESENTATION VARIANTS (SAPV); ECMA-48 standardized control function, CSI form (source page 57).
     - id: sci
       section: 8.3.109
       level: defined
@@ -2353,7 +2352,20 @@ specifications:
       wire: CSI Ps1;Ps2 SP k
       dispatch:
       - CSI SP k
-      rule: SELECT CHARACTER PATH (SCP); ECMA-48 standardized control function, CSI form (source page 58).
+      rule: Select character path relative to line orientation for active and subsequent presentation lines; update active line
+        of presentation/data components immediately. Both parameters have no default. Ps1=1 LTR for horizontal or top-to-bottom
+        vertical,2 opposite. Ps2=0 implementation-dependent update (may defer until CR/NEL/absolute positioning);1 update presentation
+        from data and move active data position to first character of active line, map presentation position;2 update data from
+        presentation and move active presentation position to first character of active line, map data position.
+      details:
+        defaults: none
+        path:
+          1: LTR or top-to-bottom
+          2: RTL or bottom-to-top
+        update:
+          0: implementation-dependent
+          1: data to presentation; reset active data column
+          2: presentation to data; reset active presentation column
     - id: scs
       section: 8.3.112
       level: defined
@@ -2544,7 +2556,51 @@ specifications:
       wire: CSI Ps1;Ps2 SP S
       dispatch:
       - CSI SP S
-      rule: SELECT PRESENTATION DIRECTIONS (SPD); ECMA-48 standardized control function, CSI form (source page 66).
+      rule: Select line orientation, line progression and character path for presentation component; update whole presentation/data
+        components. Both parameters default0. Ps2=0 implementation-dependent update, may defer until CR/FF/absolute positioning;1
+        update presentation from data and move active data position to first character of first line, map presentation;2 update
+        data from presentation and move active presentation position to first character of first line, map data.
+      details:
+        defaults:
+        - 0
+        - 0
+        orientations:
+          0:
+          - horizontal
+          - top-to-bottom
+          - left-to-right
+          1:
+          - vertical
+          - right-to-left
+          - top-to-bottom
+          2:
+          - vertical
+          - left-to-right
+          - top-to-bottom
+          3:
+          - horizontal
+          - top-to-bottom
+          - right-to-left
+          4:
+          - vertical
+          - left-to-right
+          - bottom-to-top
+          5:
+          - horizontal
+          - bottom-to-top
+          - right-to-left
+          6:
+          - horizontal
+          - bottom-to-top
+          - left-to-right
+          7:
+          - vertical
+          - right-to-left
+          - bottom-to-top
+        update:
+          0: implementation-dependent
+          1: data to presentation; reset active data position to first line/character
+          2: presentation to data; reset presentation position to first line/character
     - id: sph
       section: 8.3.131
       level: defined
@@ -2831,11 +2887,38 @@ specifications:
     - id: mode-bdsm
       section: 7.2.1
       level: defined
-      wire: CSI Pm h / CSI Pm l
+      wire: CSI 8 h / CSI 8 l
       dispatch:
-      - CSI h
-      - CSI l
-      rule: BI-DIRECTIONAL SUPPORT MODE (BDSM); standard mode selection; see section for exact mode value and effects.
+      - CSI 8 h
+      - CSI 8 l
+      rule: 'SM8 selects IMPLICIT: device handles bidirectional aspects, relevant controls operate on data component and DCSM
+        has no effect (treated as DATA). RM8 selects EXPLICIT: DCSM selects data or presentation reference for affected controls.
+        Section7.1 recommends initial reset state if modes implemented for compatibility; not an immutable initialization mandate.'
+      details:
+        selector: 8
+        set: implicit
+        reset: explicit
+        initial_recommendation: reset
+        affected_controls:
+        - CPR
+        - CR
+        - DCH
+        - DL
+        - EA
+        - ECH
+        - ED
+        - EF
+        - EL
+        - ICH
+        - IL
+        - LF
+        - NEL
+        - RI
+        - SLH
+        - SLL
+        - SPH
+        - SPL
+      source_locator: 7.1; 7.2.1; 7.3.4; 8.3.106 RM; 8.3.125 SM
     - id: mode-crm
       section: 7.2.2
       level: defined
@@ -2847,11 +2930,21 @@ specifications:
     - id: mode-dcsm
       section: 7.2.3
       level: defined
-      wire: CSI Pm h / CSI Pm l
+      wire: CSI 9 h / CSI 9 l
       dispatch:
-      - CSI h
-      - CSI l
-      rule: DEVICE COMPONENT SELECT MODE (DCSM); standard mode selection; see section for exact mode value and effects.
+      - CSI 9 h
+      - CSI 9 l
+      rule: RM9 selects PRESENTATION; SM9 selects DATA according to section7.2.3 state order and Table6. In explicit BDSM, corresponding
+        component is reference for affected controls; implicit BDSM forces DATA behavior. Section7.3.4 describes DATA as reset
+        state, contrary to Table6 and 7.2 order; retain internal polarity inconsistency rather than silently fix.
+      details:
+        selector: 9
+        set: data
+        reset: presentation
+        internal_text_conflict: 7.3.4(c) calls DATA reset state
+      source_locator: 7.2.3; 7.3.4; 8.3.106; 8.3.125
+      source_note: Printed section7.3.4(c) calls DATA the reset state, although Table6 lists PRESENTATION first (reset), DATA
+        second (set).
     - id: mode-erm
       section: 7.2.4
       level: defined
@@ -2999,6 +3092,17 @@ specifications:
       - CSI h
       - CSI l
       rule: ZERO DEFAULT MODE (ZDM); standard mode selection; see section for exact mode value and effects.
+    - id: dcsm-reset-wording
+      section: 7.3.4(c), interaction of BDSM and DCSM
+      level: defined
+      wire: CSI 9 h/l when BDSM implicit
+      rule: All relevant controls act on data in implicit mode; DCSM has no effect. Printed parenthesis calls DATA the reset
+        state, inconsistent with table6 and 7.2.3 order. This is a document-level inconsistency, not proof of an independently
+        implemented competing wire.
+      relations:
+      - kind: related
+        clause: ecma48.mode-dcsm
+        role: wording
     snapshot_sha256: 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
   osc8:
     title: Hyperlinks in Terminal Emulators (OSC 8)
@@ -13556,6 +13660,21 @@ specifications:
           9: 57600
           10: 76800
           11: 115200
+    - id: set-terminal-unit-id
+      section: 5-153 DECSTUI
+      level: defined
+      wire: DCS ! { eight-hex-digits ST
+      rule: 'Write terminal unit ID to NVR: four hexadecimal pairs, first manufacturing site, last three unique unit ID within
+        site. DA3 reads it. Requires VT level4 or higher; note says normal operation ignores and only works with invalid NVR
+        checksum or activated jumper and VT level4. Main section and appendix syntax ! { agree; summary table in extraction
+        prints ! f, preserve discrepancy, not second command.'
+      dispatch:
+      - DCS ! {
+      source_note: Physical hardware gate is source rule, not host-side permission or instruction to modify hardware.
+      relations:
+      - kind: related
+        clause: dec_vt420.tertiary-device-attributes
+        role: query
   dec_locator:
     title: Locator Input Model for ANSI Terminals (sixth revision)
     author: Peter Sichel, Digital Equipment Corporation Video Architecture
@@ -18931,13 +19050,15 @@ specifications:
         - url: https://bugzilla.gnome.org/show_bug.cgi?id=675987
           sha256: ec8cb20ed8dae88519252911230af6772f0387c6759ea77bcec208cf76e24f84
   teraterm_ime:
-    title: Tera Term IME control functions
+    title: Tera Term 4 supported control functions and specific profiles
     author: Tera Term project
     authority: protocol-author
-    revision: Manual 4 English, observed 2026-11-25
-    url: https://teratermproject.github.io/manual/4/en/about/ctrlseq.html
+    revision: Manual4, Git 90019d9086eb21da8903e91ea5536eda319aed81 (byte-match to prior observation)
+    url: https://raw.githubusercontent.com/TeraTermProject/teratermproject.github.io/90019d9086eb21da8903e91ea5536eda319aed81/manual/4/en/about/ctrlseq.html
     snapshot_sha256: 2fd8b13e9f9bdc2a16a7662dacf2ebe9a47f3e6661ff99cad9127332b656d6b2
-    scope: Only explicitly published TTIMEST/TTIMESV/TTIMERS family; full Tera Term catalogue remains a discovery obligation.
+    scope: Version4 author manual, exact published bytes and matching Git document. Stable existing source ID retains IME family
+      and now indexes additional author-specific profiles; adopted rows accounted separately. Earlier origin of unnamed private
+      controls not proven. No full parser or historical closure.
     clauses:
     - id: set
       section: Supported Control Functions / CSI / TTIMEST
@@ -18960,6 +19081,347 @@ specifications:
       dispatch:
       - CSI < r
       rule: Restore IME open state. Original manual table does not establish stack depth, underflow or repeated-save behavior.
+    - id: answerback
+      section: C0 Control Character / ENQ
+      level: defined
+      wire: ENQ
+      rule: Send configured answerback message. Tera Term profile, not a new C0 assignment.
+      dispatch:
+      - BYTE 05
+      relations:
+      - kind: related
+        clause: ecma48.enq
+        role: adopted-profile
+    - id: line-feed-profile
+      section: C0 Control Character / LF, VT, FF
+      level: defined
+      wire: LF / VT / FF
+      rule: All three act as LF or new line according to LNM. Preserve standard separate meanings for VT/FF; source adoption
+        profile not original equivalence.
+      dispatch:
+      - BYTE 0A
+      - BYTE 0B
+      - BYTE 0C
+      relations:
+      - kind: related
+        clause: ecma48.c0-lf
+        role: adopted-profile
+      - kind: related
+        clause: ecma48.vt
+        role: different-profile
+      - kind: related
+        clause: ecma48.ff
+        role: different-profile
+    - id: visible-bell
+      section: Escape Sequence
+      level: defined
+      wire: ESC g
+      rule: Request visible bell. Source manual does not give first origin or detailed presentation duration.
+      dispatch:
+      - ESC g
+      relations:
+      - kind: related
+        clause: foot_extensions.flash
+        role: alternative-visible-bell
+    - id: primary-da-profile
+      section: CSI Sequence / DA
+      level: defined
+      wire: CSI 0 c / ESC Z
+      rule: Report configured terminal identity. Manual4 documents table for VT100, VT100J, VT101, VT102, VT102J, VT220J, VT282,
+        VT320, VT382, VT420, VT520 and VT525. Preserve distinct configured response profiles, not proof of capability support.
+      dispatch:
+      - CSI c
+      - ESC Z
+      relations:
+      - kind: related
+        clause: dec_vt420.terminal-identification
+        role: adopted-profile
+      details:
+        responses:
+          VT100: ?1;2c
+          VT100J: ?5;2c
+          VT101: ?1;0c
+          VT102: ?6c
+          VT102J: ?15c
+          VT220J: ?62;1;2;5;6;7;8c
+          VT282: ?62;1;2;4;5;6;7;8;10;11c
+          VT320: ?63;1;2;6;7;8c
+          VT382: ?63;1;2;4;5;6;7;8;10;15c
+          VT420: ?64;1;2;7;8;9;15;18;21c
+          VT520: ?65;1;2;7;8;9;12;18;19;21;23;24;42;44;45;46c
+          VT525: ?65;1;2;7;9;12;18;19;21;22;23;24;42;44;45;46c
+    - id: secondary-da
+      section: CSI Sequence / DA2
+      level: defined
+      wire: CSI > Ps c / CSI > 32 ; 331 ; 2 c
+      rule: Published default Ps0, response type32/version331/options2. Documented example profile, not inferred fixed answer
+        for all newer releases.
+      dispatch:
+      - CSI > c
+      relations:
+      - kind: related
+        clause: dec_vt420.secondary-device-attributes
+        role: adopted-profile
+    - id: legacy-rect-erase
+      section: CSI Sequence
+      level: defined
+      wire: CSI > 3 ; Pt ; Pl ; Pb ; Pr J
+      rule: Documented private rectangular erase with four borders. No omitted-coordinate, origin/margin, protection or clipping
+        behavior stated. Origin of this private encoding not established.
+      dispatch:
+      - CSI > 3 J
+      relations:
+      - kind: related
+        clause: dec_vt420.erase-rect
+        role: alternative-wire
+    - id: legacy-line-erase
+      section: CSI Sequence
+      level: defined
+      wire: CSI > 3 ; Pl ; Pr K
+      rule: Documented erase of character positions from Pl through Pr column. Row, defaults and protection not independently
+        qualified.
+      dispatch:
+      - CSI > 3 K
+      relations:
+      - kind: related
+        clause: ecma48.el
+        role: alternative-wire
+    - id: legacy-line-draw
+      section: CSI Sequence
+      level: defined
+      wire: CSI > 5 ; Ps K
+      rule: Published table names selectors3..6 Draw Line,12 Set foreground color. No geometry or color operand semantics defined
+        here; do not invent them. Trace author implementation and earlier origin.
+      dispatch:
+      - CSI > 5 K
+      details:
+        selectors:
+          3..6: draw line
+          12: set foreground color
+    - id: rectangle-defaults
+      section: CSI Sequence / DECERA and DECSERA
+      level: defined
+      wire: CSI Pt ; Pl ; Pb ; Pr $ z / CSI Pt ; Pl ; Pb ; Pr $ {
+      rule: Published missing/default borders all current cursor position, unlike DEC rectangle defaults starting1 and ending
+        active page edges. DECERA all chars, DECSERA unprotected chars. Exact zero handling not established by this table.
+      dispatch:
+      - CSI $ z
+      - CSI $ {
+      relations:
+      - kind: related
+        clause: dec_vt420.erase-rect
+        role: default-variant
+      - kind: related
+        clause: dec_vt420.selective-erase-rect
+        role: default-variant
+    - id: status-display-profile
+      section: CSI Sequence / DECSSDT
+      level: defined
+      wire: CSI Ps $ ~
+      rule: Default0 and selector1 no status line;2 host-writable. Unlike original DEC1 indicator status line. Active-display
+        selection0 main,1 status remains adopted.
+      dispatch:
+      - CSI $ ~
+      relations:
+      - kind: related
+        clause: dec_vt420.status-display-type
+        role: profile
+      - kind: related
+        clause: dec_vt420.active-status-display
+        role: write-destination
+    - id: locator-status
+      section: CSI Sequence / DECDSR
+      level: defined
+      wire: CSI ? 55 n / CSI ? 50 n
+      rule: Locator status query always reports ready via ?50n per manual; does not establish actual mouse/device availability.
+      dispatch:
+      - CSI ? 55 n
+      - CSI ? 50 n
+      relations:
+      - kind: related
+        clause: dec_vt420.device-status-reports-extended
+        role: profile
+    - id: locator-report
+      section: CSI Sequence / DECRQLP
+      level: defined
+      wire: CSI ' | / CSI Pe ; Pb ; Pr ; Pc ; Pp & w
+      rule: Manual prints DECRQLP without parameter; event0 unavailable,1 requested,2/3 left down/up,4/5 middle,6/7 right,8/9
+        button4 unsupported,10 outside. Pb bit1 right,2 middle,4 left,8 fourth unsupported; Pp always1. Related original DEC
+        locator contract retained.
+      dispatch:
+      - CSI ' |
+      - CSI & w
+      relations:
+      - kind: related
+        clause: dec_locator.request-locator-position
+        role: adopted-profile
+      - kind: related
+        clause: dec_locator.locator-report
+        role: adopted-profile
+    - id: wyse-cursor-modes
+      section: Modes (Standard)
+      level: defined
+      wire: CSI 33 h/l / CSI 34 h/l
+      rule: WYSTCURM33 set steady/reset blinking; WYULCURM34 set underline/reset block. Tera Term adoption; original Wyse source
+        not established here.
+      dispatch:
+      - CSI 33 h
+      - CSI 33 l
+      - CSI 34 h
+      - CSI 34 l
+    - id: kanji-mode
+      section: Modes (DEC/xterm specific)
+      level: defined
+      wire: CSI ? 59 h / CSI ? 59 l
+      rule: DECKKDM selects Kanji terminal mode on SET and Katakana on RESET. Original Japanese terminal definition and actual
+        encoding interaction still open.
+      dispatch:
+      - CSI ? 59 h
+      - CSI ? 59 l
+    - id: ed-home
+      section: Modes (DEC/xterm specific) / TTCTH
+      level: defined
+      wire: CSI ? 8200 h/l / CSI 2 J
+      rule: Set TTCTH causes ED2 to also move cursor home; reset leaves cursor unmoved. No other ED selectors affected by documented
+        mode.
+      dispatch:
+      - CSI ? 8200 h
+      - CSI ? 8200 l
+      - CSI 2 J
+      relations:
+      - kind: extends
+        clause: ecma48.ed
+    - id: rgb-quantization
+      section: Character Attributes. (SGR)
+      level: defined
+      wire: CSI 38|48 ; 2 ; r ; g ; b m (and documented mixed separator forms)
+      rule: 'RGB colors matched to closest entry of 256-color palette rather than direct truecolor storage; published accepts
+        four combinations per selector: all semicolon, after mode semicolon with colon components, semicolon before mode plus
+        colon after, all colon. Do not infer color-space field or exact distance metric.'
+      dispatch:
+      - CSI 38 m
+      - CSI 48 m
+      relations:
+      - kind: related
+        clause: itu_t416.sgr-colour-subparameters
+        role: profile
+      details:
+        forms:
+        - 38;2;r;g;b
+        - 38;2;r:g:b
+        - 38;2:r:g:b
+        - 38:2:r:g:b
+        - 48;2;r;g;b
+        - 48;2;r:g:b
+        - 48;2:r:g:b
+        - 48:2:r:g:b
+    - id: indexed-colors
+      section: Character Attributes. (SGR)
+      level: defined
+      wire: CSI 38|48 ; 5 ; Ps m and mixed/colon forms
+      rule: Published indexed forms mode5 and selector separated by semicolon or colon, or all colon. Retain grammar separately
+        from truecolor quantization.
+      dispatch:
+      - CSI 38 m
+      - CSI 48 m
+      relations:
+      - kind: related
+        clause: itu_t416.sgr-colour-subparameters
+        role: profile
+      details:
+        forms:
+        - 38;5;Ps
+        - 38;5:Ps
+        - 38:5:Ps
+        - 48;5;Ps
+        - 48;5:Ps
+        - 48:5:Ps
+    - id: set-unit-id
+      section: DCS Sequence / DECSTUI
+      level: defined
+      wire: DCS ! { Pt ST
+      rule: Change terminal unique ID only if LockTUID disabled. Original DEC format and physical gates separately retained;
+        exact Tera Term input validation and persistence need code trace.
+      dispatch:
+      - DCS ! {
+      relations:
+      - kind: related
+        clause: dec_vt520.set-terminal-unit-id
+        role: adopted-profile
+    - id: status-reply-profile
+      section: DCS Sequence / DECRQSS
+      level: defined
+      wire: DCS $ q Pt ST / DCS Ps $ r Pt ST
+      rule: Manual4/5 retain valid0 with complete setting sans CSI, invalid1 with no payload. Request descriptors m,r,s," p,"
+        q,SP q,* x. Preserve documented profile, not proof current executable polarity and not reopening accepted Howl original
+        STD070 selection.
+      dispatch:
+      - DCS $ q
+      - DCS $ r
+      relations:
+      - kind: related
+        clause: dec_vt420.request-status-string
+        role: adopted-profile
+      - kind: conflicts
+        clause: dec_std070.reply-status-string
+    - id: capability-query-profile
+      section: DCS Sequence / XTGETTCAP
+      level: defined
+      wire: DCS + q hex-name ST / DCS Ps + r Pt ST
+      rule: Request hex-encoded termcap/terminfo name; response0 invalid no Pt,1 valid. Manual does not specify full multi-name
+        ordering or reply value encoding; link xterm source for broader contract.
+      dispatch:
+      - DCS + q
+      - DCS + r
+      relations:
+      - kind: related
+        clause: xterm_controls.terminal-capability-query
+        role: adopted-profile
+    - id: palette-profile
+      section: OSC Sequence / 4,5
+      level: defined
+      wire: OSC 4|5 ; c ; spec (BEL | ST)
+      rule: 'RGB notation rgb: one to four hex digits per component or # triplet of equal-width hex components, ? query OSC4
+        reply four hex digits. OSC5 slots0 bold,1 underline,2 blink,3 reverse; no italic slot stated. Named colors and multi-pair
+        processing not documented here. Version5 explicitly adds OSC4 offset aliases.'
+      dispatch:
+      - OSC 4
+      - OSC 5
+      relations:
+      - kind: related
+        clause: xterm_controls.palette-osc4
+        role: adopted-profile
+      - kind: related
+        clause: xterm_controls.special-colors
+        role: adopted-profile
+    - id: clipboard-profile
+      section: OSC Sequence / 52
+      level: defined
+      wire: OSC 52 ; Pc ; Pd (BEL | ST)
+      rule: Pc ignored in manual, Pd Base64 new system clipboard contents or ? query; response same style. Unlike xterm selection
+        routing. Host permission remains separate; no new clipboard behavior selected.
+      dispatch:
+      - OSC 52
+      relations:
+      - kind: related
+        clause: xterm_controls.clipboard-osc52
+        role: adopted-profile
+    - id: unsupported-strings
+      section: SOS, PM, APC Sequence
+      level: defined
+      wire: SOS Pt ST / PM Pt ST / APC Pt ST
+      rule: Manual explicitly says no functions for these string classes, ignore payload. Framing still admitted; do not infer
+        malformed/unterminated recovery from absence of functions.
+      relations:
+      - kind: related
+        clause: ecma48.sos
+        role: adopted-profile
+      - kind: related
+        clause: ecma48.pm
+        role: adopted-profile
+      - kind: related
+        clause: ecma48.apc
+        role: adopted-profile
   mintty_controls:
     title: Mintty control sequences and extensions
     author: Mintty project / Thomas Wolff and contributors
@@ -19223,6 +19685,9 @@ specifications:
       - kind: related
         clause: ecma48.mode-bdsm
         role: adopted-profile
+      - kind: related
+        clause: terminal_wg_bidi.bdsm
+        role: originating-recommendation
     - id: bidi-autodetect
       section: Bidirectional rendering
       level: defined
@@ -19232,6 +19697,10 @@ specifications:
       - CSI ? 2501 l
       rule: Enable paragraph direction auto-detection on set (default); disable on reset, for predictable tables/box drawing.
         Source credits terminal-wg recommendation; not independently attributed invention.
+      relations:
+      - kind: related
+        clause: terminal_wg_bidi.auto-mode
+        role: originating-recommendation
     - id: bidi-box-mirror
       section: Bidirectional rendering
       level: defined
@@ -19241,6 +19710,10 @@ specifications:
       - CSI ? 2500 l
       rule: Set enables mirroring additional asymmetric Box Drawing U+2500..257F and Block Elements U+2580..259F characters;
         reset disables. Roster may extend. Related terminal-wg proposal requires own intake.
+      relations:
+      - kind: related
+        clause: terminal_wg_bidi.box-mode
+        role: originating-recommendation
     - id: bidi-scp
       section: Bidirectional rendering
       level: defined
@@ -19253,6 +19726,9 @@ specifications:
       - kind: related
         clause: ecma48.scp
         role: adopted-profile
+      - kind: related
+        clause: terminal_wg_bidi.scp
+        role: originating-recommendation
       evidence:
         additional_sources:
         - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
@@ -19271,6 +19747,9 @@ specifications:
       - kind: related
         clause: ecma48.spd
         role: adopted-profile
+      - kind: related
+        clause: terminal_wg_bidi.spd-alias
+        role: originating-recommendation
       evidence:
         additional_sources:
         - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
@@ -20235,6 +20714,603 @@ specifications:
       wire: '@ macrograph / # comment'
       rule: Macrographs supported; source prints escaped hash as comment initiator through end of line. Exact ReGIS syntax and
         macro limits still original grammar review.
+  terminal_wg_bidi:
+    title: 'BiDi in Terminal Emulators: level 1 recommendation'
+    author: Egmont Koblinger
+    authority: protocol-author
+    revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+    snapshot_sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+    scope: Author draft hosted by terminal-wg. All nine recommendation chapters indexed against their exact Git objects; temporary
+      selectors, suggestions and explicitly unresolved design alternatives distinguished. Future-level ideas not adopted as
+      concrete wire semantics.
+    clauses:
+    - id: paragraph
+      section: 10-paragraph / Paragraphs
+      level: defined
+      wire: hard versus soft newline boundaries
+      rule: Paragraph is one or more physical rows joined by soft wrapping, delimited by explicit hard newline boundaries. Same
+        paragraph notion used for rewrap and logical selection. Alternate-screen single-line paragraphs common convention, not
+        mandatory.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/10-paragraph.md
+          sha256: 8df2fcf740b1b70a96c4e82c198a13fd5a3e4cb8f2f18aa60716a0752af0e8bd
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: model-view
+      section: 20-display-only / BiDi is display-only
+      level: defined
+      wire: all incoming terminal operations
+      rule: Operate on stored logical/model coordinates; bidi transformation rearranges cells within each physical line for
+        display only, using whole paragraph context; no view-to-model rewrite. Direction words in controls refer to model preceding/subsequent
+        columns, not visual left/right. Level1 adds paragraph boundaries/properties but preserves most emulation semantics.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/20-display-only.md
+          sha256: cda0b770d7132dd14fcdae62a374966eb75b8f3d715fe1b9423d6230f75f1c20
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: mouse-inverse
+      section: 20-display-only / BiDi is display-only
+      level: defined
+      wire: mouse report coordinates
+      rule: In every display mode, inverse-map visual mouse position to model column for application reports. Selection/copy
+        in implicit mode uses logical order, not visual order.
+      relations:
+      - kind: related
+        clause: xterm_controls.mouse-sgr
+        role: coordinate-profile
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/20-display-only.md
+          sha256: cda0b770d7132dd14fcdae62a374966eb75b8f3d715fe1b9423d6230f75f1c20
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: paragraph-properties
+      section: 30-basic-modes / 6 modes in the model; 4 ways of transformation
+      level: defined
+      wire: implicit/explicit × autodetect × direction
+      rule: Store implicit/explicit, autodetection and fallback/base direction per paragraph. Six effective model modes (implicit
+        LTR/RTL, auto with either fallback, explicit LTR/RTL); four transformation modes after resolving direction. Ignore autodetection
+        flag in explicit mode.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/30-basic-modes.md
+          sha256: c0503df5692f77894cd0d16054246466b4c019ad5c5fc6d62e1218e64a8703df
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: implicit
+      section: 30-basic-modes / Implicit mode (level 1)
+      level: defined
+      wire: logical text stream
+      rule: Implicit default recommended for bidi-unaware programs. Terminal performs reordering and shaping, receives logical
+        data. Discard bidi control characters at level1; retaining controls is future level2, not part of current contract.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/30-basic-modes.md
+          sha256: c0503df5692f77894cd0d16054246466b4c019ad5c5fc6d62e1218e64a8703df
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: autodetection
+      section: 30-basic-modes / Autodetecting the direction
+      level: defined
+      wire: implicit paragraph direction resolution
+      rule: When implicit+auto, guess from paragraph contents; first strong is suggested, not prescribed exact algorithm. Discourage
+        surrounding-paragraph context. If no guess (empty or neutral only), use stored fallback direction. Explicit ignores
+        auto.
+      relations:
+      - kind: related
+        clause: terminal_wg_bidi.paragraph-properties
+        role: resolution
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/30-basic-modes.md
+          sha256: c0503df5692f77894cd0d16054246466b4c019ad5c5fc6d62e1218e64a8703df
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: implicit-transform
+      section: 30-basic-modes / Implicit LTR mode; Implicit RTL mode
+      level: defined
+      wire: implicit paragraph rendering
+      rule: Apply Unicode bidi algorithm to entire paragraph with resolved direction; align to corresponding edge, perform mirroring
+        as algorithm directs, shape Arabic before splitting into lines. Cells remain in their physical rows. I-beam side follows
+        resolved underlying character.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/30-basic-modes.md
+          sha256: c0503df5692f77894cd0d16054246466b4c019ad5c5fc6d62e1218e64a8703df
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: explicit-transform
+      section: 30-basic-modes / Explicit mode (level 1); Explicit LTR/RTL mode
+      level: defined
+      wire: visual text stream
+      rule: Application supplies visual order and presentation-form shaping. Terminal does not reorder for mixed directions
+        or perform shaping at level1. LTR model first column leftmost; RTL reverse order within row, mirror mirrorable glyphs,
+        right-side I-beam. Ignore auto.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/30-basic-modes.md
+          sha256: c0503df5692f77894cd0d16054246466b4c019ad5c5fc6d62e1218e64a8703df
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: erased-cells
+      section: 40-erased / Erased cells
+      level: defined
+      wire: erased cell layout
+      rule: Distinguish erased/unwritten cells from typed spaces. Erased cells placed in trailing direction of line, retaining
+        directional order for inverse mapping. Trailing erased cells within wrapped paragraph ignored by bidi algorithm and
+        skipped when placing content, preserving rows and not splitting wide cells.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/40-erased.md
+          sha256: da87f4ee1715342b1a92ae5c62f9ae15f362bc1a7fe07be6773278ad3a5c181a
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: nonspacing-marks
+      section: 50-combining / Nonspacing and enclosing marks (Mn, Me)
+      level: defined
+      wire: base character and following Mn/Me
+      rule: Marks remain stored with preceding base and not moved to another cell. In explicit reversed-order output app reverses
+        base-cell order but keeps marks following their base in stream. Explicit RTL needs corresponding mark restoration for
+        embedded LTR glyphs.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/50-combining.md
+          sha256: bae38c7648b02cc4cbb7e9663cb31bb7d568b639df26b000e9ed9b79e3f84e6c
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: spacing-marks-a
+      section: 50-combining / Spacing marks / Approach A
+      level: defined
+      wire: base then Mc in reverse visual output
+      rule: 'Unresolved preferred alternative A: base first then spacing mark even when overall output order reversed; compatible
+        with data-layer combination. Author requests expert input; not a settled rule.'
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/50-combining.md
+          sha256: bae38c7648b02cc4cbb7e9663cb31bb7d568b639df26b000e9ed9b79e3f84e6c
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: spacing-marks-b
+      section: 50-combining / Spacing marks / Approach B
+      level: defined
+      wire: Mc then base in reverse visual output
+      rule: 'Alternative B: emit spacing mark before base in reversed output, following intended character direction. May require
+        renderer heuristics. No selected solution in draft.'
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/50-combining.md
+          sha256: bae38c7648b02cc4cbb7e9663cb31bb7d568b639df26b000e9ed9b79e3f84e6c
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: cursor
+      section: 60-cursor / The cursed cursor
+      level: defined
+      wire: visual cursor mapping
+      rule: Cursor follows cell it logically owns. I-beam left for resolved LTR/right for RTL, explicit RTL right. Directional
+        decoration optional; no wire introduced for decorative shape.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/60-cursor.md
+          sha256: 7e6a158f2b45b8a1eaac4e4f32fd3510f066134cfe74d002dd2bad241f1d9b61
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: pending-wrap
+      section: 60-cursor / The about to wrap state
+      level: defined
+      wire: cursor presentation at right edge
+      rule: Discusses last-column wrap flag versus VTE offscreen extra-column model. Confinement on cursor movement/report preserves
+        emulation equivalence as intended; offscreen disappearance preferred presentation, not prescribed storage architecture
+        or changed CPR coordinates.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/60-cursor.md
+          sha256: 7e6a158f2b45b8a1eaac4e4f32fd3510f066134cfe74d002dd2bad241f1d9b61
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: images
+      section: 70-misc / Images
+      level: defined
+      wire: inline image layout in RTL
+      rule: Do not flip image itself by default. Alignment should mirror overall layout for RTL where protocol provides alignment;
+        treat inline object as U+FFFC for bidi algorithm. Future flip flags suggested, no current selectors.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: resize
+      section: 70-misc / Chars disappearing at resize
+      level: defined
+      wire: resize without rewrap
+      rule: Proposal explicitly leaves logical truncation versus alternative behavior unspecified. Discusses logical cropping
+        as less problematic than visual cropping; rewrap more desirable, not new mandatory resize semantics.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: box-roster
+      section: 70-misc / Mirrored box drawing
+      level: defined
+      wire: DECSET 2500
+      rule: Experimental mirroring compatibility for U+2500..257F in RTL; Unicode mirroring does not include them by default.
+        Other chars and exact roster debated. Distinct from Mintty broader U+2580..259F extension.
+      relations:
+      - kind: related
+        clause: mintty_controls.bidi-box-mirror
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: host-strings
+      section: 70-misc / Terminal title and friends
+      level: defined
+      wire: titles/notifications/hyperlink target strings
+      rule: Pass external display strings through as-is normally; optional direction isolation or override for more pedantic
+        handling. Inherently logical LTR contexts such as displayed OSC8 URI ignore current bidi mode. No new wire.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: context-bounds
+      section: 70-misc / Scrollback context lines; Finite scrollback
+      level: defined
+      wire: paragraph context across viewport and history
+      rule: Implicit rendering needs context outside viewport. Optional safety cap may render very long paragraph as explicit
+        while preserving direction; example500 lines not normative. At history eviction, author suggests hidden extra history
+        up to paragraph cap or accepting degraded rendering; no fixed memory architecture.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: efficiency
+      section: 70-misc / Efficiency
+      level: defined
+      wire: presentation recomputation
+      rule: Recompute at display update, not per input scalar; caching and LTR-only shortcuts permitted ideas, not proof obligations
+        for a particular implementation.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: host-chrome
+      section: 70-misc / Scrollbar, padding
+      level: defined
+      wire: host scrollbar and extra padding
+      rule: Scrollbar side and unaligned grid padding stay host/user policy, not switched per paragraph by bidi controls.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: algorithm-tweaks
+      section: 70-misc / BiDi algorithm tweaks
+      level: defined
+      wire: path components / user overrides
+      rule: No standard escape for stop-character or attribute-boundary changes to bidi algorithm; nondefault user tweaks permitted.
+        Isolates in future level2 not current behavior.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/70-misc.md
+          sha256: a9bb351ecfe21be98f6742e83a4000b2c49556ce3fb1401a56b7a1c14f432090
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: arrow-behavior
+      section: 80-arrow-swapping / Arrow keys swapping
+      level: defined
+      wire: keyboard left/right output
+      rule: Global mode swaps Left/Right key sequences when cursor in resolved RTL paragraph (auto resolution, not fallback);
+        never swap Home/End. Default enabled proposed. Apps that need stable keys save+disable and restore; input mode not paragraph
+        property.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/80-arrow-swapping.md
+          sha256: c545e2a7ac02fba61b08b9b9cc6d0bff1cf553b885b12b1468fb818aa7a91d98
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: bdsm
+      section: 90-escape-sequences / Implicit vs. explicit
+      level: defined
+      wire: CSI 8 h / CSI 8 l
+      rule: Reuse ECMA BDSM, set implicit, reset explicit. Proposal default implicit/set, and generic terminal reset restores
+        implicit; unlike ECMA7.1 recommendation of reset initial state. Apps needing explicit set it at start, restore implicit
+        at exit.
+      dispatch:
+      - CSI 8 h
+      - CSI 8 l
+      relations:
+      - kind: related
+        clause: ecma48.mode-bdsm
+        role: revised-profile
+      - kind: related
+        clause: mintty_controls.bidi-support-mode
+        role: adopted-profile
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: scp
+      section: 90-escape-sequences / LTR vs. RTL
+      level: defined
+      wire: CSI [ Ps1 [ ; Ps2 ] ] SP k
+      rule: SCP path0 configured default,1 LTR,2 RTL; omitted both default0. Applies to implicit/explicit, including fallback
+        direction for auto. Effect0 defined by paragraph rules with no cursor movement; values1/2 need not supported,2 explicitly
+        discouraged as view-to-model rewrite. Apps must not assume default LTR.
+      dispatch:
+      - CSI SP k
+      relations:
+      - kind: extends
+        clause: ecma48.scp
+      - kind: related
+        clause: mintty_controls.bidi-scp
+        role: adopted-profile
+      details:
+        path:
+          0: configured default
+          1: LTR
+          2: RTL
+        defaults:
+        - 0
+        - 0
+        supported_update: 0
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: spd-alias
+      section: 90-escape-sequences / LTR vs. RTL
+      level: defined
+      wire: CSI 0 SP S / CSI 3 SP S
+      rule: Legacy optional alias suggestion SPD0→SCP1, SPD3→SCP2; apps following recommendation should not emit SPD. Whole-canvas
+        direction setting debated and not specified. Do not claim general SPD orientation support.
+      dispatch:
+      - CSI 0 SP S
+      - CSI 3 SP S
+      relations:
+      - kind: related
+        clause: ecma48.spd
+        role: optional-alias
+      - kind: related
+        clause: mintty_controls.bidi-spd
+        role: different-profile
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: box-mode
+      section: 90-escape-sequences / Other output modes
+      level: defined
+      wire: CSI ? 2500 h / CSI ? 2500 l
+      rule: Temporary selector2500 enables/disables extra box mirroring in current paragraph mode; author reports it from VTE
+        work-in-progress. Exact default not selected in prose; save/restore encouraged but existing DEC private-mode conventions
+        not all implemented.
+      dispatch:
+      - CSI ? 2500 h
+      - CSI ? 2500 l
+      relations:
+      - kind: related
+        clause: terminal_wg_bidi.box-roster
+        role: rendering
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: auto-mode
+      section: 90-escape-sequences / Other output modes
+      level: defined
+      wire: CSI ? 2501 h / CSI ? 2501 l
+      rule: Temporary selector2501 enables/disables direction autodetection. Author favors initial disabled, explicitly allows
+        reconsidering or leaving default to terminal/user; applications needing particular value save+set and restore. Mintty
+        documents default enabled.
+      dispatch:
+      - CSI ? 2501 h
+      - CSI ? 2501 l
+      relations:
+      - kind: related
+        clause: terminal_wg_bidi.autodetection
+        role: resolution
+      - kind: related
+        clause: mintty_controls.bidi-autodetect
+        role: default-variant
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: arrow-mode
+      section: 90-escape-sequences / Keyboard arrow swapping
+      level: defined
+      wire: CSI ? 1243 h / CSI ? 1243 l
+      rule: Temporary global keyboard mode selector1243, set enables conditional RTL Left/Right swap, reset disables. Default
+        high recommended; immediately effective unlike per-paragraph properties.
+      dispatch:
+      - CSI ? 1243 h
+      - CSI ? 1243 l
+      relations:
+      - kind: related
+        clause: terminal_wg_bidi.arrow-behavior
+        role: input
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: levels
+      section: 90-escape-sequences / Levels
+      level: defined
+      wire: bidi conformance levels
+      rule: No wire for choosing bidi conformance level; emulator should use highest level implemented. Level2 in separate future
+        ideas, not current recommendation.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: current-mode
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: per-paragraph mode updates
+      rule: 'Draft application rules: receiving relevant sequence always changes current mode. If cursor is at first logical
+        position of paragraph, apply only changed property to that paragraph immediately, even if current value repeated; otherwise
+        leave existing paragraph unchanged, including start of wrapped continuation.'
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: newline-mode
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: LF into different paragraph
+      rule: When LF handled and cursor moves into new paragraph, apply current bidi properties there. No action if within same
+        paragraph. LF alone not necessarily convert preceding line ending to hard boundary.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: join-mode
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: wrap joins adjacent paragraphs
+      rule: Printing that wraps and joins adjacent paragraphs preserves first old paragraph properties, discards second old
+        paragraph properties.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: erase-mode
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: CSI 0|1|2 J
+      rule: 'ED0 full rows below cursor, ED1 full rows above cursor excluding history, ED2 all display rows excluding history:
+        force each full erased row to standalone paragraph, use current properties. Cursor row excluded in0/1. ED1/2 harden
+        last history boundary even if ED1 at top erases no whole row.'
+      dispatch:
+      - CSI 0 J
+      - CSI 1 J
+      - CSI 2 J
+      relations:
+      - kind: extends
+        clause: ecma48.ed
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: scroll-mode
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: CSI Pn S / CSI Pn T
+      rule: For SU/SD, harden paragraph boundaries at inserted/removed lines. New blank lines standalone with current properties;
+        retained/moved content keeps its properties.
+      dispatch:
+      - CSI S
+      - CSI T
+      relations:
+      - kind: extends
+        clause: ecma48.su
+      - kind: extends
+        clause: ecma48.sd
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: split-mode
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: CSI Pn P / CSI Ps K
+      rule: If DCH, EL or similar operation splits paragraph, both resulting paragraphs inherit old properties.
+      dispatch:
+      - CSI P
+      - CSI K
+      relations:
+      - kind: extends
+        clause: ecma48.dch
+      - kind: extends
+        clause: ecma48.el
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+    - id: new-bottom
+      section: 90-escape-sequences / How these escape sequences apply
+      level: defined
+      wire: scrolling creates bottom line
+      rule: New bottom row that is its own paragraph (non-wrapping scroll) receives current bidi properties.
+      evidence:
+        additional_sources:
+        - url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+          sha256: a8d376f3177d16bf394750f8bac4570ff809c2602444b431fe32bb3516f25763
+          revision: cc8686a93c8cc2f25a2f68f79c01b4822111509c
+  teraterm5_profile:
+    title: 'Tera Term 5 supported control functions: revision-specific changes'
+    author: Tera Term project
+    authority: protocol-author
+    revision: Manual5, git 90019d9086eb21da8903e91ea5536eda319aed81
+    url: https://raw.githubusercontent.com/TeraTermProject/teratermproject.github.io/90019d9086eb21da8903e91ea5536eda319aed81/manual/5/en/about/ctrlseq.html
+    snapshot_sha256: 28565fc898b2e489aa1ba029ee08ca7e62ecc86f167e4fd56e9fe8fc3a50a4c8
+    scope: Documented deltas from version4 and profile additions; common definitions linked to earlier manual source and actual
+      origins. No claim of full implementation support.
+    clauses:
+    - id: da-vt220
+      section: CSI Sequence / DA
+      level: defined
+      wire: CSI 0 c / ESC Z
+      rule: Version5 adds VT220 reply CSI ?60;1;2;6;8;9;15;c (including printed trailing semicolon). Explicitly uses ESC [ for
+        VT100-family seven-bit responses. Actual emitted bytes need trace; preserve published table.
+      dispatch:
+      - CSI c
+      - ESC Z
+      relations:
+      - kind: related
+        clause: teraterm_ime.primary-da-profile
+        role: revision-delta
+    - id: sgr-pixel-mouse
+      section: Modes (DEC/xterm specific)
+      level: defined
+      wire: CSI ? 1016 h/l
+      rule: Version5 adds documented SGR-Pixels mouse mode, same report grammar as1006 with physical pixel positions; existing
+        xterm origin retained.
+      dispatch:
+      - CSI ? 1016 h
+      - CSI ? 1016 l
+      relations:
+      - kind: related
+        clause: xterm_controls.mouse-sgr-pixels
+        role: adopted-profile
+    - id: special-palette-alias
+      section: OSC Sequence / 4,5
+      level: defined
+      wire: OSC 4 ; 256..259 ; spec (BEL | ST)
+      rule: Explicit OSC4 aliases256 bold/increased intensity text,257 underline text,258 blink text,259 reverse background.
+        Same as OSC5 0..3. Bold note cites standards meaning bold or increased intensity. No new separate palette storage inferred.
+      dispatch:
+      - OSC 4
+      relations:
+      - kind: related
+        clause: teraterm_ime.palette-profile
+        role: revision-delta
+      - kind: related
+        clause: xterm_controls.special-colors
+        role: adopted-profile
+    - id: highlight-colors
+      section: OSC Sequence / 17,19,117,119
+      level: defined
+      wire: OSC 17|19 ; spec (BEL | ST) / OSC 117|119 (BEL | ST)
+      rule: Version5 adds documented selection/highlight background17 and text19, resets117/119. Color format same as OSC4.
+        Adopted xterm roles, not new original selectors.
+      dispatch:
+      - OSC 17
+      - OSC 19
+      - OSC 117
+      - OSC 119
+      relations:
+      - kind: related
+        clause: xterm_controls.dynamic-colors
+        role: adopted-profile
+      - kind: related
+        clause: xterm_controls.dynamic-colors-reset
+        role: adopted-profile
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
@@ -22971,3 +24047,82 @@ pending_reconciliation:
     - mintty_controls.ansi-color-reply-observation
     - mintty_controls.ansi-colors
     scope: OSC 7704 ; index ; ? ST
+- id: ecma48-dcsm-reset-state-wording
+  status: material-originating-extension-conflict
+  wire: CSI 9 h/l
+  original_author_sources:
+  - clause: ecma48.mode-dcsm
+    meaning: Table6 and 7.2.3 order identify presentation reset, data set.
+  - clause: ecma48.dcsm-reset-wording
+    meaning: 7.3.4(c) explicitly calls DATA reset state.
+  question: Recheck original standard and any corrigenda, preserve ignored DCSM while implicit; no new semantics selected.
+  decision: null
+  applies_to:
+    clauses:
+    - ecma48.dcsm-reset-wording
+    - ecma48.mode-dcsm
+    scope: CSI 9 h/l
+- id: bidi-bdsm-default-ecma-vs-recommendation
+  status: material-originating-extension-conflict
+  wire: CSI 8 h/l default and reset
+  original_author_sources:
+  - clause: ecma48.mode-bdsm
+    meaning: ECMA7.1 recommends reset initial state (explicit) when implementing modes.
+  - clause: terminal_wg_bidi.bdsm
+    meaning: Proposal default implicit and generic reset restores set.
+  question: Explicitly select initialization/reset contract, not assume same wire establishes identical mode model.
+  decision: null
+  applies_to:
+    clauses:
+    - ecma48.mode-bdsm
+    - terminal_wg_bidi.bdsm
+    scope: CSI 8 h/l default and reset
+- id: bidi-scp-ecma-vs-recommendation
+  status: material-originating-extension-conflict
+  wire: CSI Ps1 ; Ps2 SP k
+  original_author_sources:
+  - clause: ecma48.scp
+    meaning: No parameter defaults; path1/2, effect0 unspecified or effects1/2 update model/presentation and position.
+  - clause: terminal_wg_bidi.scp
+    meaning: Path0/omission defaults, effect0 specific paragraph scope without cursor movement; 1/2 not required.
+  question: Keep original and modern profiles distinct. Review terminal-specific application rules before selection.
+  decision: null
+  applies_to:
+    clauses:
+    - ecma48.scp
+    - terminal_wg_bidi.scp
+    scope: CSI Ps1 ; Ps2 SP k
+- id: bidi-spacing-mark-order-open
+  status: material-originating-extension-conflict
+  wire: spacing marks in reverse visual output
+  original_author_sources:
+  - clause: terminal_wg_bidi.spacing-marks-a
+    meaning: Base followed by spacing mark even in reverse output.
+  - clause: terminal_wg_bidi.spacing-marks-b
+    meaning: Spacing mark before base when emitting reverse-order text.
+  question: Author explicitly leaves unresolved, no concrete new control or selected interpretation.
+  decision: null
+  applies_to:
+    clauses:
+    - terminal_wg_bidi.spacing-marks-a
+    - terminal_wg_bidi.spacing-marks-b
+    scope: spacing marks in reverse visual output
+- id: teraterm-rectangle-omission-defaults
+  status: material-originating-extension-conflict
+  wire: CSI Pt ; Pl ; Pb ; Pr $ z/{
+  original_author_sources:
+  - clause: dec_vt420.erase-rect
+    meaning: Original DEC area selection uses defined top-left and lower-right defaults.
+  - clause: dec_vt420.selective-erase-rect
+    meaning: Original selective rectangle uses original area grammar.
+  - clause: teraterm_ime.rectangle-defaults
+    meaning: Tera Term published defaults each border current cursor.
+  question: Trace exact original and Tera Term missing/zero parameter handling before selecting any new interpretation; prior
+    accepted behavior not superseded.
+  decision: null
+  applies_to:
+    clauses:
+    - dec_vt420.erase-rect
+    - dec_vt420.selective-erase-rect
+    - teraterm_ime.rectangle-defaults
+    scope: CSI Pt ; Pl ; Pb ; Pr $ z/{
