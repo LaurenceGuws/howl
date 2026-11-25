@@ -64,10 +64,40 @@ GUI scheduling or client ownership into the core.
 
 ## Terminal protocols
 
-`protocol_specs.yml` is a static index of published terminal protocol definitions
-and control sequences. It distinguishes originating specifications from
-secondary discovery references. It contains no Howl implementation mapping,
-coverage score, CLI, or build step. The index can be read as ordinary YAML.
+`protocol_specs.yml` is the single evolving VT specification. It preserves
+originating definitions, identifies their relationships and conflicts, records
+scoped Howl decisions, and links narrow implementation evidence. Source census,
+semantic selection, implementation disposition, and conformance remain separate.
+
+Schema 2 uses a stable source-qualified clause ID (`source.clause`). The
+required clause fields are `id`, `section`, `level`, `wire`, and `rule`.
+Optional `dispatch` keys are search hints: e.g. `CSI $ r`, `CSI ? 80 h`,
+`OSC 60`. A fixed first selector narrows a key; an unqualified key groups
+the header. Neither matching keys nor missing keys determine equivalence,
+admission, coverage, or implementation requirements. Preserve the source's
+wire notation and exact parameter and mode constraints.
+
+Use `relations` for typed source links (`extends`, `reaffirms`,
+`equivalent`, `alias`, `conflicts`, `related`); use `clause` for a
+known target or `note` for an unresolved descriptive relation. Keep
+protocol-specific data in `details` and provenance in `evidence`.
+Decision `applies_to` records the affected clause IDs and the limited
+semantic scope. When decisions overlap, `selects` names stable semantic
+facets and references fields of `accepted_interpretation`; forward
+`supersedes.selection_keys` edges identify precisely which statements
+are replaced. Historical annotations do not select current behavior.
+Unresolved decisions belong to the top-level `pending_reconciliation`.
+
+Run the read-only development check after editing the index (Python with
+PyYAML):
+
+```sh
+python tools/check_protocol_specs.py
+```
+
+This checks structure, references, declared facet precedence and test
+declarations. It is not a wire parser, a completeness oracle, an
+implementation score, or a runtime/build dependency.
 
 ## Build
 

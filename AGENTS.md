@@ -10,7 +10,7 @@ Read only what the task needs:
 - `project_rules.yml`: non-negotiable engineering rules.
 - `project_source_map.yml`: accepted and experimental source boundaries.
 - `project_version_scope.yml`: current capability cut and gates.
-- `protocol_specs.yml`: static originating-protocol and VT-sequence index; no Howl implementation score or CLI.
+- `protocol_specs.yml`: single evolving source-backed VT specification, including source relations, scoped decisions, unresolved conflicts, and narrow test evidence; no aggregate implementation score or runtime CLI. Validate edits with `python tools/check_protocol_specs.py` (PyYAML, development only).
 
 Official docs and maintained references are local development inputs:
 

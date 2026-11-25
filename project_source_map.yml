@@ -8,7 +8,8 @@ accepted:
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-external-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
   howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
-  protocol_specs.yml: static terminal control/sequence index with primary specification and separately labeled discovery sources
+  protocol_specs.yml: evolving VT specification with originating definitions, dispatch lookup keys, scoped reconciliation, separately labeled discovery evidence, and narrow test references
+  tools/check_protocol_specs.py: development-only structural validation of specification identities, relations, decision scopes, supersession and test declaration references
   tools/audit_project.sh: Howl-specific core structural, exact package graph, audit coverage and workspace-version checks; no retired-source exceptions
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
