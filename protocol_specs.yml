@@ -133,6 +133,13 @@ specifications:
         relation: protocol-family
         note: Bounded parser admission and recovery regression at 2b392f3; not an ECMA-48 syntax capacity requirement or full
           grammar qualification.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: MAX_ESCAPE_PARAMETERS; parseArg
+          meaning: 32 argument entries including colon subparameters. Overflow behavior not inferred solely from bound.
     - id: c0-bel
       section: 8.3.3
       level: defined
@@ -908,6 +915,12 @@ specifications:
           location: _handle_esc_csi_color_set selector21
           meaning: Pinned Terminology clears bold/bright on SGR21, not double underline. Existing ECMA/Linux SGR21 reconciliation
             unchanged; no new selection.
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: attrs_from_sgr_parameters; Alacritty terminal_attribute
+          meaning: SGR21 CancelBold, not double underline. SGR5/6/25 parsed but Alacritty Term rendition fallback unhandled
+            for blink attributes. Existing selection unchanged.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rendition protection and rectangle owners report exact mutation'
@@ -1333,6 +1346,13 @@ specifications:
       dispatch:
       - BYTE 18
       rule: CANCEL (CAN); ECMA-48 standardized control function, C0 form (source page 34).
+      evidence:
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: processCodePoint CAN/SUB
+          meaning: When escape active both cancel and emit DEL codepoint127; in ground ignored. APC separate early path.
     - id: cbt
       section: 8.3.7
       level: defined
@@ -2421,6 +2441,13 @@ specifications:
           0: implementation-dependent
           1: data to presentation; reset active data column
           2: presentation to data; reset active presentation column
+      evidence:
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: csi_dispatch SCP; default Handler::set_scp
+          meaning: Parser accepts path0/1/2 and effect0/1/2; Alacritty Term does not override default no-op.
     - id: scs
       section: 8.3.112
       level: defined
@@ -2829,6 +2856,13 @@ specifications:
       dispatch:
       - BYTE 1A
       rule: SUBSTITUTE (SUB); ECMA-48 standardized control function, C0 form (source page 71).
+      evidence:
+        adopter_observations:
+        - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
+          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+          sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
+          location: substitute
+          meaning: Explicitly unimplemented.
     - id: svs
       section: 8.3.149
       level: defined
@@ -4607,6 +4641,17 @@ specifications:
           location: CLIPBOARD AND SELECTION ACCESS FROM PROGRAMS
           meaning: Author manpage describes opt-out writes and ask-by-default read, refusal returns empty response; host policy
             not mandated for Howl.
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doOscSetTextParameters 52
+          meaning: Ignores first selection field, attempts Base64 UTF8 text copy; no readback branch.
+        - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
+          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+          sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
+          location: clipboard_store/clipboard_load
+          meaning: Config gates copy/paste; first selection c/p/s, valid Base64 UTF8 writes; denied/invalid read handler emits
+            no reply.
       test_locations:
       - file: howl-app/src/consequences.zig
         test: terminal consequences own latest clipboard, attention and typed reply FIFO
@@ -4641,6 +4686,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:2636-2659,2980-3029,4182-4189; ptyx.h:1570-1594
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doOscSetTextParameters 4
+          meaning: Pairs dispatched to color parser, no question-mark reply branch.
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: xterm color query replies preserve BEL or ST request termination
@@ -4897,6 +4948,12 @@ specifications:
           entry_id: csi-4fe8991d89
           source_line: 1349
           wire: CSI ? Pp m
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: csi_dispatch ?m; Handler::report_modify_other_keys
+          meaning: Exact first parameter [4] routes default no-op; no Alacritty override.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: libvterm private DECSGR baseline collides with native modifyOtherKeys query
@@ -5456,6 +5513,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:7741-7753
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doDecSetOrReset 47/1047/1049
+          meaning: Shared handler clears alternate on entry, not xterm1047 exit-clear contract.
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -5551,6 +5614,12 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:7727-7740
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doDecSetOrReset 47/1047/1049
+          meaning: Shared handler with conditional bank-change guard.
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -6284,6 +6353,14 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:3987-4059,4097-4159; charproc.c:3692,5312
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: processCodePoint, doOsc, doOscEsc, collectOSCArgs, doDeviceControl
+          meaning: Decoded C1 ignored; OSC BEL/ST, non-ST ESC retained; length check8192 UTF16 code units before append, DCS
+            checks > limit and treats backslash as terminator after ESC ignored. Source-specific malformed framing, not general
+            contract.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: every byte split preserves mixed control framing'
@@ -6930,6 +7007,17 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:2377-2423,6336-6357
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doCsiBiggerThan m
+          meaning: Recognized and logged ignored.
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: csi_dispatch >m; Handler::set_modify_other_keys
+          meaning: Parser accepts selector4 and values0/1/2; Alacritty default no-op.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: xterm key format query reset and other-key encoding
@@ -7109,6 +7197,14 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:5164-5241; xtermcap.c:385-455; charproc.c:9455-9506
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doDeviceControl +q
+          meaning: Processes each semicolon-separated hex name separately; emits separate DCS reply per name. Failure includes
+            original name; odd length logged without reply; malformed hex pair skipped during decode. Different from xterm one
+            multi-name response and stop-on-error.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: XTGETTCAP replies preserve ordered names values failures and C1 serialization
@@ -7171,6 +7267,13 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6202-6205,8040-8393; ptyx.h:2267-2269
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doCsiQuestionMark s/r
+          meaning: Save ORs internalBit into saved flags without checking current state; saving an unset supported bit records
+            set. Restore reads cached bit. Existing selection retained.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty parameterless mode save restores the exact curated mode set
@@ -7728,6 +7831,13 @@ specifications:
             competes_with: dec_vt3xx_text.graphics-print-dec-private-modes
             decision: dec-vt3xx-graphics-print-vs-xterm-mode-47
             status: unresolved; no automatic implementation priority or conformance
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doDecSetOrReset 47/1047/1049
+          meaning: All three selectors share entry save-cursor/clear-alt and exit restore-cursor handler on actual bank change,
+            unlike distinct xterm definitions.
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -7770,6 +7880,12 @@ specifications:
         pinned_xterm_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: misc.c:991-1029,4097-4157,4288-4290
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: osc_dispatch 22; Handler::set_mouse_cursor_icon
+          meaning: Parses CursorIcon names; no Alacritty Term override.
     - id: osc51-emacs-reservation
       section: OSC 51, ctlseqs 2143
       level: defined
@@ -7932,6 +8048,13 @@ specifications:
         test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
         relation: protocol-family
         note: Narrow regression evidence at fefdce7; not whole-clause qualification.
+      evidence:
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: csi_dispatch =u
+          meaning: Truncates flags to known bitset; behavior2 union,3 difference, otherwise replace including invalid selector.
     - id: query
       section: Progressive enhancement
       level: defined
@@ -7953,6 +8076,14 @@ specifications:
         test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
         relation: protocol-family
         note: Narrow regression evidence at fefdce7; not whole-clause qualification.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
+          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+          sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
+          location: report_keyboard_mode
+          meaning: Config gates report; reply from last stack entry or zero. Direct setter and stack-top interaction needs targeted
+            trace.
     - id: stack
       section: Progressive enhancement
       level: defined
@@ -7990,6 +8121,12 @@ specifications:
           location: 526-565
           meaning: WezTerm push admits optional mode1/2/3 for assign/or/clear, keeps up to128 entries per screen. Original Kitty
             push wire specifies flags only; no extension selected.
+        - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
+          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+          sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
+          location: KEYBOARD_MODE_STACK_MAX_DEPTH; push_keyboard_mode; pop_keyboard_modes
+          meaning: 4096 entry capacity, oldest eviction, excessive pop truncates empty; config gates. Full bank lifetime not
+            qualified.
     - id: disambiguate
       section: Disambiguate escape codes
       level: defined
@@ -9714,6 +9851,17 @@ specifications:
           entry_id: private-mode-3-l-line-1066
           source_line: 1066
           wire: CSI ? 3 l
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doDecSetOrReset 3
+          meaning: Does not resize80/132; resets margins, clears display, disables DECLRMM and homes.
+        - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
+          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+          sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
+          location: deccolm; set_private_mode; report_private_mode
+          meaning: Resets scrolling region and grid rather than changing column count; reports not supported.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DEC column modes own permission preservation query save and reset lifetime
@@ -10189,6 +10337,13 @@ specifications:
           entry_id: csi-8f7c941588
           source_line: 1574
           wire: CSI Pt ; Pl ; Pb ; Pr ; Pm $ r
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: ESC_CSI_DOLLAR r/t
+          meaning: Only explicit selector operands from fifth parameter; coordinates-only does nothing. Supported flags subset;
+            geometry not verified.
       test_locations:
       - file: howl-vt/src/screen/main_test.zig
         test: 'screen: DECCARA stream mode spans full middle rows'
@@ -10649,6 +10804,13 @@ specifications:
           entry_id: dcs-2bfa63903e
           source_line: 474
           wire: DCS $ q Pt ST
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doDeviceControl $q
+          meaning: Only exact DECSCL descriptor double quote p gets successful response 64;1 double quote p. Other descriptors
+            logged without canonical failure reply.
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: DECRQSS replies for owned state and invalid requests
@@ -12709,6 +12871,15 @@ specifications:
       - kind: related
         clause: iterm2_legacy_sync.begin
         role: predecessor
+      evidence:
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: Processor advance_sync/advance_sync_csi; csi_dispatch h
+          meaning: Buffers bytes, timeout150ms, 2MiB threshold (>= capacity-1 before append). Reverse scans raw buffered bytes
+            for exact CSI ?2026h/l; repeated begin refreshes timeout; multi-mode forms not recognized by sync scan. Not original-mandated
+            architecture or proof of embedded-string handling.
     - id: end
       section: Semantics
       level: defined
@@ -13633,6 +13804,13 @@ specifications:
       - kind: related
         clause: ecma48.sm
         role: selector-assignment
+      evidence:
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: doSetMode selector20
+          meaning: Named LNM branch calls unknownParameter, no mode change.
   itu_t416:
     title: 'ITU-T Recommendation T.416 / ISO/IEC 8613-6: Character content architectures'
     author: International Telecommunication Union (ITU-T) / ISO-IEC
@@ -14151,6 +14329,12 @@ specifications:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:4945-4990
+        adopter_observations:
+        - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
+          revision: 542147067dd016fc5f49120ef0ba605a98a4e3a7
+          sha256: 7ac780a0cbbb37a0c3276aac2e717bfc83cb5a9280efee906ac2ee971ec5d58d
+          location: set_cursor_style; parser q
+          meaning: Selector0 passes None, restoring configured default style. Prior DEC-vs-configured-default conflict retained.
       test_locations:
       - file: howl-vt/test/unit/terminal_cursor_test.zig
         test: 'terminal cursor: DECSCUSR restores the canonical default and rejects unsupported values'
@@ -14212,6 +14396,12 @@ specifications:
         xterm_reference:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           source: charproc.c:5883-5896
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: csi_dispatch ?5W; Handler::set_tabs
+          meaning: Calls set_tabs(8); no Alacritty Term override.
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: tab stops remain bank local and Kitty DECST8C resets only the active bank'
@@ -17532,6 +17722,13 @@ specifications:
       dispatch:
       - CSI 4 m
       rule: Ps 0 none, 1 straight, 2 double, 3 curly, 4 dotted, 5 dashed; ordinary SGR 4 and 24 remain compatibility forms.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: selectGraphicRendition 4
+          meaning: Nonzero colon styles collapse to ordinary underline; zero clears.
     - id: color
       section: lines 22-27
       level: defined
@@ -17539,6 +17736,13 @@ specifications:
       dispatch:
       - CSI 58 m
       rule: Underline color follows the same color parameter forms as SGR 38 and 48.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: selectGraphicRendition 58; pen field comment
+          meaning: Stores underline color but source comment says not used in rendering.
     - id: reset-color
       section: lines 29-32
       level: defined
@@ -17546,6 +17750,13 @@ specifications:
       dispatch:
       - CSI 59 m
       rule: Restore default underline color.
+      evidence:
+        adopter_observations:
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: selectGraphicRendition 59
+          meaning: Resets to foreground index; SGR0 does not explicitly reset mUnderlineColor in this handler.
     - id: reverse-video-color
       section: lines 33-34
       level: defined
@@ -19828,6 +20039,12 @@ specifications:
           sha256: 0f4d9240a62af1755902ebf16e1bb18a591f767a69d8dd58d5dd33de69cfa62d
         - url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/profile/Profile.cpp
           sha256: cf83c63ad93ebbc514f14887c50bc59690fdd51414a743c0602a5b6fb59cc796
+        adopter_observations:
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: osc_dispatch 50
+          meaning: Only CursorShape=0/1/2 prefix, reads first digit and ignores suffix; no general profile property mutation.
     - id: cursor-blink
       section: Vt102Emulation.cpp:1623-1638
       level: defined
@@ -26382,6 +26599,105 @@ specifications:
         - url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/src/bin/termptyesc.c
           sha256: a5038598080437b3d4c9410985b89fb05bb5c7932bbd33a4508e4188828b3a67
           revision: 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+  ibm_aixterm_colors:
+    title: AIXterm additional foreground and background color selectors
+    author: IBM
+    authority: protocol-author
+    revision: AIX 6.1 Commands Reference Volume 1, a-c (copyright 1997, 2018); preserved PDF
+    url: https://public.dhe.ibm.com/systems/power/docs/aix/61/aixcmds1_pdf.pdf
+    snapshot_sha256: ca04e1e034b062764722161e107e66a08647b55c35122eb7a6d151f070750464
+    scope: Vendor command reference, aixterm Command, printed page66 (PDF index75). Selector assignments for Xh/H profiles;
+      xterm adoption and Termux/Rust vte mapping evidence identify modern bright palette indices. No earliest-release or exact
+      original RGB claim. Other AIXterm commands not exhaustively inventoried.
+    clauses:
+    - id: foreground
+      section: aixterm Command / sgr table, printed p66; PDF index75
+      level: defined
+      wire: CSI Ps m, Ps=90..97
+      dispatch:
+      - CSI 90 m
+      - CSI 91 m
+      - CSI 92 m
+      - CSI 93 m
+      - CSI 94 m
+      - CSI 95 m
+      - CSI 96 m
+      - CSI 97 m
+      rule: IBM documents additional foreground color selectors 90 through 97 for Xh/H profiles. The table does not specify
+        RGB values or name each color. Xterm explicitly credits these to aixterm and maps them to the second eight palette entries
+        under its 16-color configuration. Keep this adopting meaning distinct from the vendor table and from bold/intensity.
+      relations:
+      - kind: extends
+        clause: ecma48.sgr
+      details:
+        selectors:
+        - 90
+        - 97
+        modern_adopting_palette_indices:
+        - 8
+        - 15
+      evidence:
+        adopter_observations:
+        - url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+          revision: dated official control-sequence reference, observed 2026-11-23
+          sha256: 8c62d6c9f72af9f53c4744526132fee39630f465fd8d431766929faf1454e47f
+          location: SGR lines1245-1267
+          meaning: Credits aixterm; named colors black,red,green,yellow,blue,magenta,cyan,white with bright palette assumption.
+            Xterm also documents rxvt SGR100 resets both defaults when 16-color support disabled.
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: selectGraphicRendition
+          meaning: Maps selector to palette index8..15 independently of bold.
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: attrs_from_sgr_parameters
+          meaning: Maps selectors to NamedColor::BrightBlack through BrightWhite.
+    - id: background
+      section: aixterm Command / sgr table, printed p66; PDF index75
+      level: defined
+      wire: CSI Ps m, Ps=100..107
+      dispatch:
+      - CSI 100 m
+      - CSI 101 m
+      - CSI 102 m
+      - CSI 103 m
+      - CSI 104 m
+      - CSI 105 m
+      - CSI 106 m
+      - CSI 107 m
+      rule: IBM documents additional background color selectors 100 through 107 for Xh/H profiles. The table does not specify
+        RGB values or name each color. Xterm explicitly credits these to aixterm and maps them to the second eight palette entries
+        under its 16-color configuration. Keep this adopting meaning distinct from the vendor table and from bold/intensity.
+      relations:
+      - kind: extends
+        clause: ecma48.sgr
+      details:
+        selectors:
+        - 100
+        - 107
+        modern_adopting_palette_indices:
+        - 8
+        - 15
+      evidence:
+        adopter_observations:
+        - url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+          revision: dated official control-sequence reference, observed 2026-11-23
+          sha256: 8c62d6c9f72af9f53c4744526132fee39630f465fd8d431766929faf1454e47f
+          location: SGR lines1245-1267
+          meaning: Credits aixterm; named colors black,red,green,yellow,blue,magenta,cyan,white with bright palette assumption.
+            Xterm also documents rxvt SGR100 resets both defaults when 16-color support disabled.
+        - url: https://github.com/termux/termux-app/blob/3df69d1da197dd9bd71a3bafd902dffd720576b4/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+          revision: 3df69d1da197dd9bd71a3bafd902dffd720576b4
+          sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
+          location: selectGraphicRendition
+          meaning: Maps selector to palette index8..15 independently of bold.
+        - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
+          revision: 0.15.0
+          sha256: 2ce81d9282575b0f79d7a127463c177d966d1da13eea32d5ecbc0dc35f392b13
+          location: attrs_from_sgr_parameters
+          meaning: Maps selectors to NamedColor::BrightBlack through BrightWhite.
 discovery_catalogues:
   xterm_ctlseqs:
     title: XTerm Control Sequences (discovery only)
