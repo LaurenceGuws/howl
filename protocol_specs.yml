@@ -31988,60 +31988,600 @@ reconciliation:
       request +p and confirmation *q. Preserve all other original mode, reset and session-lifetime requirements for qualification,
       no implicit host disconnect or other-session reset. This selects confirmation/admission facet, not all reset effects
       or implementation target.
-pending_reconciliation:
 - id: rex-id-limit-kitty-profile
-  status: material-originating-extension-conflict
   wire: OSC 7501 id total length
-  original_author_sources:
-  - clause: rex_status.bounded-sequence
-    meaning: Original rev0.4 hard maximum 128 total bytes.
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: rex-original-hard-id-bound
+    effect: Select Rex revision0.4 original hard total ID limit128 bytes, independently of max32 bytes per segment and8 levels.
+      Separators count toward total. Reject any report exceeding the limit before stored record mutation; no truncation or
+      fallback to root record. Retain Kitty's263-byte adopting profile without admitting it. Other Rex bounds, lifetime and
+      implementation assessment remain as previously indexed; no new conformance claim.
+    selected_source_profiles:
+    - rex_status.bounded-sequence
+  selects:
+    rex.id-bound: effect
+  competing_interpretations_retained:
+  - kitty_misc.rex-status-profile
+  reason: Rex author table states hard maximum128 total, not a capacity minimum. Kitty explicitly documents263 as an intentional
+    deviation calculated from segment maxima. Those segment maxima do not override the original separate aggregate ceiling.
+    Retain exact original sizing.
+  evidence_basis: Original protocol-author requirement; explicitly documented adopting deviation.
+  source_clauses:
   - clause: kitty_misc.rex-status-profile
-    meaning: Kitty explicitly uses 263 total bytes, derived from 8 segments of up to32 plus separators.
-  question: Retain both original and adopting profile. Select whether to preserve original cap or explicitly admit the extended
-    profile; do not reinterpret the source limit.
-  decision: null
+    wire: OSC 7501 ; status-metadata ST
+    section: docs/misc-protocol.rst:57-86
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/misc-protocol.rst
+  - clause: rex_status.bounded-sequence
+    wire: complete OSC through ST
+    section: Limits
+    source_revision: 0.4, 2026-10-10
+    url: https://www.superlogical.com/rex/docs/build/program-status
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: rex-id-limit-kitty-profile
+    status: material-originating-extension-conflict
+    wire: OSC 7501 id total length
+    original_author_sources:
+    - clause: rex_status.bounded-sequence
+      meaning: Original rev0.4 hard maximum 128 total bytes.
+    - clause: kitty_misc.rex-status-profile
+      meaning: Kitty explicitly uses 263 total bytes, derived from 8 segments of up to32 plus separators.
+    question: Retain both original and adopting profile. Select whether to preserve original cap or explicitly admit the extended
+      profile; do not reinterpret the source limit.
+    decision: null
+    applies_to:
+      clauses:
+      - kitty_misc.rex-status-profile
+      - rex_status.bounded-sequence
+      scope: OSC 7501 id total length
   applies_to:
     clauses:
     - kitty_misc.rex-status-profile
     - rex_status.bounded-sequence
-    scope: OSC 7501 id total length
+    scope: Select Rex revision0.4 original hard total ID limit128 bytes, independently of max32 bytes per segment and8 levels.
+      Separators count toward total. Reject any report exceeding the limit before stored record mutation; no truncation or
+      fallback to root record. Retain Kitty's263-byte adopting profile without admitting it. Other Rex bounds, lifetime and
+      implementation assessment remain as previously indexed; no new conformance claim.
 - id: uapi-context-prose-vs-abnf
-  status: material-originating-extension-conflict
   wire: OSC 3008 textual metadata and numeric exit status
-  original_author_sources:
-  - clause: uapi_context.framing
-    meaning: Prose permits UTF-8, forbids ASCII controls and escapes separators.
-  - clause: uapi_context.exit-metadata
-    meaning: Metadata table limits command exit status to 0..255.
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: utf8-prose-and-byte-exit-status
+    effect: 'For OSC3008 textual metadata, use source prose UTF-8 with literal semicolon and backslash escaped as \x3b and
+      \x5c respectively; ASCII C0 and DEL excluded. Do not reduce text fields to ASCII SAFE. Keep context ID distinct: nonempty
+      printable ASCII identifier within original64-character constraint, with original separator escaping. Numeric command
+      exit status is decimal0..255, not full UINT64; invalid status ignored as an invalid optional field, retaining other
+      valid fields per source. The competing ABNF remains indexed; do not widen other numeric fields or resolve all field-length
+      units, stack bounds, escape admission or context lifecycle in this decision.'
+    selected_source_profiles:
+    - uapi_context.framing
+    - uapi_context.exit-metadata
+  selects:
+    uapi-context.text-status: effect
+  competing_interpretations_retained:
+  - uapi_context.abnf
+  reason: Preserved UAPI.15 author revision1.0 says all textual fields MUST be UTF-8 then escaped, and metadata table explicitly
+    describes exit status0..255; printed ABNF SAFE only has printable ASCII ranges and escape alternatives, and STATUS is
+    UINT64. Selecting prose is an explicit reconciliation of an internal source contradiction, not a discovered corrigendum.
+    No author clarification obtained.
+  evidence_basis: Explicit choice between conflicting normative passages; preserve other ABNF constraints pending exact qualification.
+  source_clauses:
   - clause: uapi_context.abnf
-    meaning: SAFE lists only ASCII ranges plus escapes, STATUS accepts UINT64; field lengths also defined.
-  question: Resolve prose/ABNF inconsistency using originating clarification; retain both exact definitions until selection.
-  decision: null
+    wire: OSC 3008 STARTSEQ / ENDSEQ
+    section: Syntax in ABNF
+    source_revision: 1.0, preserved 2026-11-24
+    url: https://uapi-group.org/specifications/specs/osc_context/
+  - clause: uapi_context.exit-metadata
+    wire: exit=success|failure|crash|interrupt / status=0..255 / signal=symbol
+    section: Metadata Fields
+    source_revision: 1.0, preserved 2026-11-24
+    url: https://uapi-group.org/specifications/specs/osc_context/
+  - clause: uapi_context.framing
+    wire: OSC 3008 ; start=id [ ; key=value ... ] ST / OSC 3008 ; end=id [ ; key=value ... ] ST
+    section: General Syntax
+    source_revision: 1.0, preserved 2026-11-24
+    url: https://uapi-group.org/specifications/specs/osc_context/
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: uapi-context-prose-vs-abnf
+    status: material-originating-extension-conflict
+    wire: OSC 3008 textual metadata and numeric exit status
+    original_author_sources:
+    - clause: uapi_context.framing
+      meaning: Prose permits UTF-8, forbids ASCII controls and escapes separators.
+    - clause: uapi_context.exit-metadata
+      meaning: Metadata table limits command exit status to 0..255.
+    - clause: uapi_context.abnf
+      meaning: SAFE lists only ASCII ranges plus escapes, STATUS accepts UINT64; field lengths also defined.
+    question: Resolve prose/ABNF inconsistency using originating clarification; retain both exact definitions until selection.
+    decision: null
+    applies_to:
+      clauses:
+      - uapi_context.abnf
+      - uapi_context.exit-metadata
+      - uapi_context.framing
+      scope: OSC 3008 textual metadata and numeric exit status
   applies_to:
     clauses:
     - uapi_context.abnf
     - uapi_context.exit-metadata
     - uapi_context.framing
-    scope: OSC 3008 textual metadata and numeric exit status
+    scope: 'For OSC3008 textual metadata, use source prose UTF-8 with literal semicolon and backslash escaped as \x3b and
+      \x5c respectively; ASCII C0 and DEL excluded. Do not reduce text fields to ASCII SAFE. Keep context ID distinct: nonempty
+      printable ASCII identifier within original64-character constraint, with original separator escaping. Numeric command
+      exit status is decimal0..255, not full UINT64; invalid status ignored as an invalid optional field, retaining other
+      valid fields per source. The competing ABNF remains indexed; do not widen other numeric fields or resolve all field-length
+      units, stack bounds, escape admission or context lifecycle in this decision.'
 - id: iterm2-progress-state4-revision
-  status: material-originating-extension-conflict
   wire: OSC 9 ; 4 ; 4 [ ; progress ] ST
-  original_author_sources:
-  - clause: iterm2_osc1337.progress-profile
-    meaning: Versioned 3.6 warning, percentage required.
-  - clause: iterm2_current.progress-profile
-    meaning: Current author page paused, absent percentage retains existing value.
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: conemu-paused-with-retained-progress
+    effect: OSC9;4;4 selects paused state. With valid supplied percentage0..100 set that value; when omitted retain existing
+      numeric percentage, or leave it absent if none exists rather than synthesize one. Pause is a state, not a required color
+      or animation. Do not require a percentage or select the iTerm2 3.6 warning meaning. Other progress states, abbreviated
+      clear, malformed operand grammar and host presentation remain separate. Existing OSC9 namespace reservation stays intact.
+    selected_source_profiles:
+    - conemu_progress.states
+    - iterm2_current.progress-profile
+  selects:
+    osc9.progress-paused: effect
+  competing_interpretations_retained:
+  - iterm2_osc1337.progress-profile
+  reason: Original ConEmu table permits omitted progress for state4 and calls it paused. Current iTerm2 author page explicitly
+    retains previous percentage when omitted; its 3.6 page calls state4 warning and requires a percentage. GNOME VTE0.84.1
+    sets missing progress to0 in its OSC9 handler; this is a distinct adoption, not the selected omission rule.
+  evidence_basis: Original ConEmu state plus later author-defined omission semantics; explicit choice of behavior when no
+    prior value exists.
+  source_clauses:
   - clause: conemu_progress.states
-    meaning: Original ConEmu profile paused, permits omission.
-  question: Preserve revision divergence; select exact state4 omission and presentation-neutral state semantics after reviewing
-    originating ConEmu definition.
-  decision: null
+    wire: state 0..4
+    section: ConEmu specific OSC
+    source_revision: ConEmu published ANSI escape code table, observed 2026-11-23
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC
+  - clause: iterm2_current.progress-profile
+    wire: OSC 9 ; 4 ; state [ ; progress ] ST / OSC 9 ; 4 ST
+    section: Progress Bar
+    source_revision: Unversioned author page, preserved 2026-11-24
+    url: https://iterm2.com/documentation-escape-codes.html
+  - clause: iterm2_osc1337.progress-profile
+    wire: OSC 9 ; 4 ; state [ ; progress ] ST / OSC 9 ; 4 ST
+    section: Progress Bar
+    source_revision: iTerm2 documentation 3.6, observed 2026-11-23
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: iterm2-progress-state4-revision
+    status: material-originating-extension-conflict
+    wire: OSC 9 ; 4 ; 4 [ ; progress ] ST
+    original_author_sources:
+    - clause: iterm2_osc1337.progress-profile
+      meaning: Versioned 3.6 warning, percentage required.
+    - clause: iterm2_current.progress-profile
+      meaning: Current author page paused, absent percentage retains existing value.
+    - clause: conemu_progress.states
+      meaning: Original ConEmu profile paused, permits omission.
+    question: Preserve revision divergence; select exact state4 omission and presentation-neutral state semantics after reviewing
+      originating ConEmu definition.
+    decision: null
+    applies_to:
+      clauses:
+      - conemu_progress.states
+      - iterm2_current.progress-profile
+      - iterm2_osc1337.progress-profile
+      scope: OSC 9 ; 4 ; 4 [ ; progress ] ST
   applies_to:
     clauses:
     - conemu_progress.states
     - iterm2_current.progress-profile
     - iterm2_osc1337.progress-profile
-    scope: OSC 9 ; 4 ; 4 [ ; progress ] ST
+    scope: OSC9;4;4 selects paused state. With valid supplied percentage0..100 set that value; when omitted retain existing
+      numeric percentage, or leave it absent if none exists rather than synthesize one. Pause is a state, not a required color
+      or animation. Do not require a percentage or select the iTerm2 3.6 warning meaning. Other progress states, abbreviated
+      clear, malformed operand grammar and host presentation remain separate. Existing OSC9 namespace reservation stays intact.
+- id: finalterm-command-c-origin-vs-screen-capture
+  wire: OSC 133 ; C [ ; payload ] ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: modern-c-marker-and-named-command-text
+    effect: OSC133;C is command-executed/end-input/start-output marker. Bare C or C with only a trailing separator may capture
+      the screen region between B and C using iTerm2's documented capture meaning (empty when no valid region); recognized
+      cmdline= or cmdline_url= metadata conveys explicit command text instead, parsed as data using the author-defined printf
+      %q or UTF-8 percent-encoded grammar, never evaluated as shell code. Do not interpret unkeyed legacy C payload as literal
+      command text or reinterpret unknown/malformed named operands under FinalTerm's historical grammar. C marker and admitted
+      metadata are separate facets; exact invalid/duplicate metadata, capture whitespace and missing B state handling remain
+      qualification. Preserve other semantic-prompt options and prior decisions, no host execution permission.
+    selected_source_profiles:
+    - iterm2_osc1337.ftcs-capture-profile
+    - kitty_shell_integration.command-line
+  selects:
+    osc133.command-executed: effect
+  competing_interpretations_retained:
+  - finalterm_original.command-executed
+  reason: Original FinalTerm source consumes first plain parameter and startup emits command text. iTerm2's later public definition
+    captures B..C screen region. Kitty explicitly documents named command-line encodings; tmux pinned code accepts cmdline_url.
+    Plain text can itself look like a name=value field, so no automatic unkeyed legacy fallback. Modern marker is the common
+    interoperable family; explicit metadata offers better provenance than reconstructing edits.
+  evidence_basis: Explicit compatibility profile; not a claim all modern terminals implement capture or both named encodings.
+  source_clauses:
+  - clause: finalterm_original.command-executed
+    wire: OSC 133 ; C ; command-text [ ; ] ST
+    section: TerminalOutput.vala:389-393
+    source_revision: git f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e
+    url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalStream.vala
+  - clause: iterm2_osc1337.ftcs-capture-profile
+    wire: OSC 133 ; C ST
+    section: Shell Integration/FinalTerm / FTCS_COMMAND_EXECUTED
+    source_revision: iTerm2 documentation 3.6, observed 2026-11-23
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+  - clause: kitty_shell_integration.command-line
+    wire: OSC 133 ; C ; cmdline=quoted ST / OSC 133 ; C ; cmdline_url=percent-encoded ST
+    section: lines 494-507
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/shell-integration.rst
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: finalterm-command-c-origin-vs-screen-capture
+    status: material-originating-extension-conflict
+    wire: OSC 133 ; C [ ; payload ] ST
+    original_author_sources:
+    - clause: finalterm_original.command-executed
+      meaning: Original C consumes parameter0 as command text, absent empty.
+    - clause: iterm2_osc1337.ftcs-capture-profile
+      meaning: Later C captures the screen region between B and C.
+    - clause: kitty_shell_integration.command-line
+      meaning: Kitty admits named cmdline and cmdline_url fields.
+    question: Preserve trailing-semicolon and parameter grammar differences; qualify overlap and selected handling of bare,
+      plain-text and named command-text fields before choosing. No implementation change.
+    decision: null
+    applies_to:
+      clauses:
+      - finalterm_original.command-executed
+      - iterm2_osc1337.ftcs-capture-profile
+      - kitty_shell_integration.command-line
+      scope: OSC 133 ; C [ ; payload ] ST
+  applies_to:
+    clauses:
+    - finalterm_original.command-executed
+    - iterm2_osc1337.ftcs-capture-profile
+    - kitty_shell_integration.command-line
+    scope: OSC133;C is command-executed/end-input/start-output marker. Bare C or C with only a trailing separator may capture
+      the screen region between B and C using iTerm2's documented capture meaning (empty when no valid region); recognized
+      cmdline= or cmdline_url= metadata conveys explicit command text instead, parsed as data using the author-defined printf
+      %q or UTF-8 percent-encoded grammar, never evaluated as shell code. Do not interpret unkeyed legacy C payload as literal
+      command text or reinterpret unknown/malformed named operands under FinalTerm's historical grammar. C marker and admitted
+      metadata are separate facets; exact invalid/duplicate metadata, capture whitespace and missing B state handling remain
+      qualification. Preserve other semantic-prompt options and prior decisions, no host execution permission.
+- id: osc133-prompt-fresh-line-vs-marker
+  wire: OSC 133 ; A [ ; options ] ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: prompt-marker-without-implicit-motion
+    effect: OSC133;A marks prompt at current position without implicit CR, LF, scrolling or cursor motion. Retain documented
+      prompt kind/continuation options as separate metadata; initial vs secondary prompt lifecycle still qualified separately.
+      Bothner's explicit OSC133;L remains distinct candidate fresh-line control, not an implicit A side effect. N/P semantics
+      not selected by this decision. Do not infer fresh-line from a user preference or prompt alias in canonical VT.
+    selected_source_profiles:
+    - finalterm_original.prompt
+    - finalterm_shell.prompt-start
+  selects:
+    osc133.prompt-motion: effect
+  competing_interpretations_retained:
+  - bothner_semantic_prompts.start-command
+  reason: Original FinalTerm marks current line. Kitty screen_shell_prompt_marking A updates row prompt kind and metadata,
+    Foot marks cur_row, VTE sets prompt insertion mode. Current pinned iTerm2 intentionally requests freshLine for A/N and
+    delegates to a preference gate; Bothner requires fresh-line first. Preserve divergence rather than count preference-gated
+    movement as universal. A marker should not change application-emitted grid geometry, especially for secondary prompts
+    and prompts drawn after partial lines.
+  evidence_basis: Independent marker implementations corroborate original; explicit no-motion selection despite material modern
+    preference-gated alternative.
+  source_clauses:
+  - clause: bothner_semantic_prompts.start-command
+    wire: OSC 133 ; A [ ; options ] BEL
+    section: Commands / A
+    source_revision: Started 2019-05-11; git 4d2e1d75d4861a1d924895e106f8f016880e12a7
+    url: https://gitlab.freedesktop.org/Per_Bothner/specifications/-/raw/4d2e1d75d4861a1d924895e106f8f016880e12a7/proposals/semantic-prompts.md
+  - clause: finalterm_original.prompt
+    wire: OSC 133 ; A ; ST
+    section: TerminalOutput.vala:375-378
+    source_revision: git f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e
+    url: https://raw.githubusercontent.com/p-e-w/finalterm/f46ffd03e9b1ad5d7ce4b18b429f6e0a4bc15f3e/src/TerminalStream.vala
+  - clause: finalterm_shell.prompt-start
+    wire: OSC 133 ; A ST
+    section: Shell Integration/FinalTerm / FTCS_PROMPT
+    source_revision: original FinalTerm A/B/C/D, cited in iTerm2 3.6
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc133-prompt-fresh-line-vs-marker
+    status: material-originating-extension-conflict
+    wire: OSC 133 ; A [ ; options ] ST
+    original_author_sources:
+    - clause: bothner_semantic_prompts.start-command
+      meaning: Proposal explicitly executes fresh-line before starting command.
+    - clause: finalterm_original.prompt
+      meaning: Original author handler marks current line without cursor motion.
+    - clause: finalterm_shell.prompt-start
+      meaning: Later reproduction describes marker just before prompt; no fresh-line operation stated.
+    question: Confirm exact grammar and active cursor behavior of original and modern profiles, including continuation options.
+      Select neither movement nor no-movement merely by alias.
+    decision: null
+    applies_to:
+      clauses:
+      - bothner_semantic_prompts.start-command
+      - finalterm_original.prompt
+      - finalterm_shell.prompt-start
+      scope: OSC 133 ; A [ ; options ] ST
+  applies_to:
+    clauses:
+    - bothner_semantic_prompts.start-command
+    - finalterm_original.prompt
+    - finalterm_shell.prompt-start
+    scope: OSC133;A marks prompt at current position without implicit CR, LF, scrolling or cursor motion. Retain documented
+      prompt kind/continuation options as separate metadata; initial vs secondary prompt lifecycle still qualified separately.
+      Bothner's explicit OSC133;L remains distinct candidate fresh-line control, not an implicit A side effect. N/P semantics
+      not selected by this decision. Do not infer fresh-line from a user preference or prompt alias in canonical VT.
+- id: semantic-prompt-err-d-vs-z
+  wire: OSC 133 ; D or Z ; err=value ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: defined-d-error-option
+    effect: Apply err= to the defined OSC133;D finish operation as in its command section and examples. When admitted err
+      is present, empty means success, nonempty means error (including literal0); otherwise use defined numeric exit-code/cancellation
+      semantics. Z is not a defined command in this proposal; do not create a Z operation from the stray reference. Exact
+      omission and option validation, nested aid closure and host effects remain separate.
+    selected_source_profiles:
+    - bothner_semantic_prompts.finish
+  selects:
+    osc133.finish-error-option: effect
+  competing_interpretations_retained:
+  - bothner_semantic_prompts.error-option
+  reason: The originating document D section explicitly lists err and aid, provides a D;0;err= example and recommends D with
+    err=CANCEL for cancellation. General-options prose refers to undefined Z. Strong internal evidence supports D rather than
+    inventing a second wire command. No external author correction claimed.
+  evidence_basis: Source-internal consistency choice, supported by actual examples.
+  source_clauses:
+  - clause: bothner_semantic_prompts.error-option
+    wire: err=value
+    section: Standard options / err; Commands / D
+    source_revision: Started 2019-05-11; git 4d2e1d75d4861a1d924895e106f8f016880e12a7
+    url: https://gitlab.freedesktop.org/Per_Bothner/specifications/-/raw/4d2e1d75d4861a1d924895e106f8f016880e12a7/proposals/semantic-prompts.md
+  - clause: bothner_semantic_prompts.finish
+    wire: OSC 133 ; D [ ; exit-code [ ; options ] ] BEL
+    section: Commands / D
+    source_revision: Started 2019-05-11; git 4d2e1d75d4861a1d924895e106f8f016880e12a7
+    url: https://gitlab.freedesktop.org/Per_Bothner/specifications/-/raw/4d2e1d75d4861a1d924895e106f8f016880e12a7/proposals/semantic-prompts.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: semantic-prompt-err-d-vs-z
+    status: material-originating-extension-conflict
+    wire: OSC 133 ; D or Z ; err=value ST
+    original_author_sources:
+    - clause: bothner_semantic_prompts.finish
+      meaning: Command list defines D with err option.
+    - clause: bothner_semantic_prompts.error-option
+      meaning: Standard options assigns err to Z, which has no defined command in command list; omitted-newline prose also
+        mentions Z.
+    question: Originating proposal internal inconsistency. Preserve D syntax and textual Z reference without inventing a Z
+      operation.
+    decision: null
+    applies_to:
+      clauses:
+      - bothner_semantic_prompts.error-option
+      - bothner_semantic_prompts.finish
+      scope: OSC 133 ; D or Z ; err=value ST
+  applies_to:
+    clauses:
+    - bothner_semantic_prompts.error-option
+    - bothner_semantic_prompts.finish
+    scope: Apply err= to the defined OSC133;D finish operation as in its command section and examples. When admitted err is
+      present, empty means success, nonempty means error (including literal0); otherwise use defined numeric exit-code/cancellation
+      semantics. Z is not a defined command in this proposal; do not create a Z operation from the stray reference. Exact
+      omission and option validation, nested aid closure and host effects remain separate.
+- id: vte-termprop-key-component-count
+  wire: OSC 666 property key
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: two-component-minimum
+    effect: Require at least two nonempty dot-separated components for ordinary VTE termprop names, each component comprising
+      dash-separated identifiers beginning with lowercase ASCII letters followed optionally by trailing digits. One-component
+      key is not a valid property name. Extension registration remains distinct with at least four components and vte.ext.
+      prefix as documented. This name rule does not alter forward-compatible dummy-query response, prefix-reset syntax, registry
+      authorization or all extension-specific component exceptions.
+    selected_source_profiles:
+    - vte_termprops.key-prose
+  selects:
+    vte-termprop.key-components: effect
+  competing_interpretations_retained:
+  - vte_termprops.key-grammar
+  reason: VTE vtegtk.cc prose requires two or more components, printed EBNF permits one. Exact pinned src/properties.hh validate_termprop_name
+    defaults required_components=2 and verifies n_dots+1>=required. termpropsregistry.cc uses required4 for extension installs
+    and aliases. That resolves the minimum-count question; code has further component admission nuances, not a proof of all
+    EBNF/prose equivalence.
+  evidence_basis: Author prose and active validator agree on minimum count.
+  source_clauses:
+  - clause: vte_termprops.key-grammar
+    wire: key-component[.key-component ...]
+    section: vtegtk.cc:2817-2830
+    source_revision: VTE 0.84.1 tag, observed 2026-11-25; introduced 0.78
+    url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vtegtk.cc
+  - clause: vte_termprops.key-prose
+    wire: property key component count
+    section: vtegtk.cc:2826-2830
+    source_revision: VTE 0.84.1 tag, observed 2026-11-25; introduced 0.78
+    url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vtegtk.cc
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: vte-termprop-key-component-count
+    status: material-originating-extension-conflict
+    wire: OSC 666 property key
+    original_author_sources:
+    - clause: vte_termprops.key-grammar
+      meaning: EBNF permits one component.
+    - clause: vte_termprops.key-prose
+      meaning: Prose requires at least two components.
+    question: Trace registry validation and intended documented property namespace; preserve both until selected.
+    decision: null
+    applies_to:
+      clauses:
+      - vte_termprops.key-grammar
+      - vte_termprops.key-prose
+      scope: OSC 666 property key
+  applies_to:
+    clauses:
+    - vte_termprops.key-grammar
+    - vte_termprops.key-prose
+    scope: Require at least two nonempty dot-separated components for ordinary VTE termprop names, each component comprising
+      dash-separated identifiers beginning with lowercase ASCII letters followed optionally by trailing digits. One-component
+      key is not a valid property name. Extension registration remains distinct with at least four components and vte.ext.
+      prefix as documented. This name rule does not alter forward-compatible dummy-query response, prefix-reset syntax, registry
+      authorization or all extension-specific component exceptions.
+- id: vte-progress-hint-zero-doc-vs-registry
+  wire: OSC 666 ; vte.progress.hint=0 ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: accept-stored-zero-inactive
+    effect: Direct OSC666 vte.progress.hint=0 is valid and stores integer0 (inactive), distinct from an unset hint. Admit
+      registry range0..4 as defined; do not clear or invent vte.progress.value merely because hint0 is set. Without progress
+      value, hint does not create progress by itself; unset hint with present value retains documented active-default interpretation.
+      OSC9;4 reset and state4 omission remain distinct decisions; no selection of full VTE invalid-value reset, UI visibility
+      or observer policy.
+    selected_source_profiles:
+    - vte_termprops.progress-hint-registry
+  selects:
+    vte-termprop.progress-hint-zero: effect
+  competing_interpretations_retained:
+  - vte_termprops.progress-hint
+  reason: Pinned VTE0.84.1 registry range0..4 calls properties.hh inclusive >=min and <=max parser, whole integral conversion;
+    vteseq.cc parse_termprop assigns valid result, no zero filter. Vteapp progress observer reads integer and has inactive
+    branch. vteglobals.h explicitly says inactive never stored, which conflicts with the direct OSC setter. Select demonstrated
+    wire admission, retain public documentation disagreement and do not claim this matches all UI behavior.
+  evidence_basis: Explicit author-code wire profile choice, not a repaired author specification.
+  source_clauses:
+  - clause: vte_termprops.progress-hint
+    wire: OSC 666 ; vte.progress.hint=n ST
+    section: vteglobals.h:183-204; vteenums.h:323-342; termpropsregistry.cc registry
+    source_revision: VTE 0.84.1 tag, observed 2026-11-25; introduced 0.78
+    url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vtegtk.cc
+  - clause: vte_termprops.progress-hint-registry
+    wire: OSC 666 ; vte.progress.hint=0 ST
+    section: termpropsregistry.cc:256-264; vteseq.cc:1906-1920
+    source_revision: VTE 0.84.1 tag, observed 2026-11-25; introduced 0.78
+    url: https://gitlab.gnome.org/GNOME/vte/-/raw/0.84.1/src/vtegtk.cc
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: vte-progress-hint-zero-doc-vs-registry
+    status: material-originating-extension-conflict
+    wire: OSC 666 ; vte.progress.hint=0 ST
+    original_author_sources:
+    - clause: vte_termprops.progress-hint
+      meaning: Public header states inactive0 is never stored.
+    - clause: vte_termprops.progress-hint-registry
+      meaning: Registry calls integral parser with range0..4; setter has no visible special exclusion of0. Exact helper needs
+        trace.
+    question: Trace public property setter and observer constraints to resolve whether direct OSC666 accepts zero despite
+      documentation. No inferred implementation requirement.
+    decision: null
+    applies_to:
+      clauses:
+      - vte_termprops.progress-hint
+      - vte_termprops.progress-hint-registry
+      scope: OSC 666 ; vte.progress.hint=0 ST
+  applies_to:
+    clauses:
+    - vte_termprops.progress-hint
+    - vte_termprops.progress-hint-registry
+    scope: Direct OSC666 vte.progress.hint=0 is valid and stores integer0 (inactive), distinct from an unset hint. Admit registry
+      range0..4 as defined; do not clear or invent vte.progress.value merely because hint0 is set. Without progress value,
+      hint does not create progress by itself; unset hint with present value retains documented active-default interpretation.
+      OSC9;4 reset and state4 omission remain distinct decisions; no selection of full VTE invalid-value reset, UI visibility
+      or observer policy.
+- id: mintty-ansi-query-index-omission
+  wire: OSC 7704 ; index ; ? ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: documented-indexed-restorable-reply
+    effect: 'For OSC7704 index;? reply in the published corresponding setting form: OSC7704;index;fg when variants equal,
+      OSC7704;index;fg;bg when different. Preserve requested index0..15, separate ANSI variants from palette slots, and original
+      color grammar. Do not copy pinned index omission. Exact response color serialization, incoming terminator policy and
+      all set/query admission remain later qualification; no new palette or host configuration policy.'
+    selected_source_profiles:
+    - mintty_controls.ansi-colors
+  selects:
+    mintty-ansi-color.query-index: effect
+  competing_interpretations_retained:
+  - mintty_controls.ansi-color-reply-observation
+  reason: Exact Mintty CtrlSeqs author table shows both setting forms include index and explicitly says query returns corresponding
+    single- or two-value sequence. Pinned do_ansi_colour_osc validates index but formats only OSC selector and colors. Without
+    index, response is not the documented replayable setting form. Select published contract rather than adopt observed output
+    defect.
+  evidence_basis: Explicit published-author grammar choice over code discrepancy.
+  source_clauses:
+  - clause: mintty_controls.ansi-color-reply-observation
+    wire: OSC 7704 ; rgb:R/G/B [ ; rgb:R/G/B ] (BEL | ST)
+    section: ANSI colours
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  - clause: mintty_controls.ansi-colors
+    wire: OSC 7704 ; index ; color [ ; bg ] BEL / OSC 7704 ; index ; ? BEL
+    section: ANSI colours
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: mintty-ansi-query-index-omission
+    status: material-originating-extension-conflict
+    wire: OSC 7704 ; index ; ? ST
+    original_author_sources:
+    - clause: mintty_controls.ansi-colors
+      meaning: Published query replies in corresponding one/two-value setting form (which includes index).
+    - clause: mintty_controls.ansi-color-reply-observation
+      meaning: Pinned code emits colors without index.
+    question: Determine exact author-intended reply or document observed defect; no selected response grammar.
+    decision: null
+    applies_to:
+      clauses:
+      - mintty_controls.ansi-color-reply-observation
+      - mintty_controls.ansi-colors
+      scope: OSC 7704 ; index ; ? ST
+  applies_to:
+    clauses:
+    - mintty_controls.ansi-color-reply-observation
+    - mintty_controls.ansi-colors
+    scope: 'For OSC7704 index;? reply in the published corresponding setting form: OSC7704;index;fg when variants equal, OSC7704;index;fg;bg
+      when different. Preserve requested index0..15, separate ANSI variants from palette slots, and original color grammar.
+      Do not copy pinned index omission. Exact response color serialization, incoming terminator policy and all set/query
+      admission remain later qualification; no new palette or host configuration policy.'
+pending_reconciliation:
 - id: iterm-feature-mouse-button-table
   status: material-originating-extension-conflict
   wire: CSI < Cb ; X ; Y M|m
@@ -32075,107 +32615,6 @@ pending_reconciliation:
     - iterm2_feature_reporting.file
     - iterm2_feature_reporting.focus
     scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
-- id: finalterm-command-c-origin-vs-screen-capture
-  status: material-originating-extension-conflict
-  wire: OSC 133 ; C [ ; payload ] ST
-  original_author_sources:
-  - clause: finalterm_original.command-executed
-    meaning: Original C consumes parameter0 as command text, absent empty.
-  - clause: iterm2_osc1337.ftcs-capture-profile
-    meaning: Later C captures the screen region between B and C.
-  - clause: kitty_shell_integration.command-line
-    meaning: Kitty admits named cmdline and cmdline_url fields.
-  question: Preserve trailing-semicolon and parameter grammar differences; qualify overlap and selected handling of bare,
-    plain-text and named command-text fields before choosing. No implementation change.
-  decision: null
-  applies_to:
-    clauses:
-    - finalterm_original.command-executed
-    - iterm2_osc1337.ftcs-capture-profile
-    - kitty_shell_integration.command-line
-    scope: OSC 133 ; C [ ; payload ] ST
-- id: osc133-prompt-fresh-line-vs-marker
-  status: material-originating-extension-conflict
-  wire: OSC 133 ; A [ ; options ] ST
-  original_author_sources:
-  - clause: bothner_semantic_prompts.start-command
-    meaning: Proposal explicitly executes fresh-line before starting command.
-  - clause: finalterm_original.prompt
-    meaning: Original author handler marks current line without cursor motion.
-  - clause: finalterm_shell.prompt-start
-    meaning: Later reproduction describes marker just before prompt; no fresh-line operation stated.
-  question: Confirm exact grammar and active cursor behavior of original and modern profiles, including continuation options.
-    Select neither movement nor no-movement merely by alias.
-  decision: null
-  applies_to:
-    clauses:
-    - bothner_semantic_prompts.start-command
-    - finalterm_original.prompt
-    - finalterm_shell.prompt-start
-    scope: OSC 133 ; A [ ; options ] ST
-- id: semantic-prompt-err-d-vs-z
-  status: material-originating-extension-conflict
-  wire: OSC 133 ; D or Z ; err=value ST
-  original_author_sources:
-  - clause: bothner_semantic_prompts.finish
-    meaning: Command list defines D with err option.
-  - clause: bothner_semantic_prompts.error-option
-    meaning: Standard options assigns err to Z, which has no defined command in command list; omitted-newline prose also mentions
-      Z.
-  question: Originating proposal internal inconsistency. Preserve D syntax and textual Z reference without inventing a Z operation.
-  decision: null
-  applies_to:
-    clauses:
-    - bothner_semantic_prompts.error-option
-    - bothner_semantic_prompts.finish
-    scope: OSC 133 ; D or Z ; err=value ST
-- id: vte-termprop-key-component-count
-  status: material-originating-extension-conflict
-  wire: OSC 666 property key
-  original_author_sources:
-  - clause: vte_termprops.key-grammar
-    meaning: EBNF permits one component.
-  - clause: vte_termprops.key-prose
-    meaning: Prose requires at least two components.
-  question: Trace registry validation and intended documented property namespace; preserve both until selected.
-  decision: null
-  applies_to:
-    clauses:
-    - vte_termprops.key-grammar
-    - vte_termprops.key-prose
-    scope: OSC 666 property key
-- id: vte-progress-hint-zero-doc-vs-registry
-  status: material-originating-extension-conflict
-  wire: OSC 666 ; vte.progress.hint=0 ST
-  original_author_sources:
-  - clause: vte_termprops.progress-hint
-    meaning: Public header states inactive0 is never stored.
-  - clause: vte_termprops.progress-hint-registry
-    meaning: Registry calls integral parser with range0..4; setter has no visible special exclusion of0. Exact helper needs
-      trace.
-  question: Trace public property setter and observer constraints to resolve whether direct OSC666 accepts zero despite documentation.
-    No inferred implementation requirement.
-  decision: null
-  applies_to:
-    clauses:
-    - vte_termprops.progress-hint
-    - vte_termprops.progress-hint-registry
-    scope: OSC 666 ; vte.progress.hint=0 ST
-- id: mintty-ansi-query-index-omission
-  status: material-originating-extension-conflict
-  wire: OSC 7704 ; index ; ? ST
-  original_author_sources:
-  - clause: mintty_controls.ansi-colors
-    meaning: Published query replies in corresponding one/two-value setting form (which includes index).
-  - clause: mintty_controls.ansi-color-reply-observation
-    meaning: Pinned code emits colors without index.
-  question: Determine exact author-intended reply or document observed defect; no selected response grammar.
-  decision: null
-  applies_to:
-    clauses:
-    - mintty_controls.ansi-color-reply-observation
-    - mintty_controls.ansi-colors
-    scope: OSC 7704 ; index ; ? ST
 - id: ecma48-dcsm-reset-state-wording
   status: material-originating-extension-conflict
   wire: CSI 9 h/l
