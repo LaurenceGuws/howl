@@ -369,3 +369,20 @@ test "Rex empty text replaces omitted text without allocating or fabricating con
     try std.testing.expect(record.titleText() == null and record.messageText() == null);
     try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
 }
+
+test "Rex keeps literal markup and invisible formatting out of the published summary" {
+    const literal = "<b>plain</b>\u{202e}\u{200b}";
+    var encoded: [128]u8 = undefined;
+    var body: [256]u8 = undefined;
+    const value = std.base64.standard.Encoder.encode(&encoded, literal);
+    const wire = try std.fmt.bufPrint(&body, "state=working:app=zig:title={s}:msg={s}", .{ value, value });
+    var index = Index.init(std.testing.allocator);
+    defer index.deinit();
+    try std.testing.expect(try index.apply(status.parse(wire).?));
+    try std.testing.expectEqualStrings(literal, index.records[0].titleText().?);
+    try std.testing.expectEqualStrings(literal, index.records[0].messageText().?);
+    const summary = index.summary();
+    try std.testing.expectEqualStrings("zig", summary.appText());
+    try std.testing.expectEqual(@as(?status.State, .working), summary.state);
+    try std.testing.expectEqual(@as(u8, 1), summary.count);
+}

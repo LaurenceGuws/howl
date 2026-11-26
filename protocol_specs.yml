@@ -3609,6 +3609,9 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex blocked host allocation preserves earlier clipboard attention and report results
         relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex rejects every forbidden decoded control in both text fields and duplicate positions
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Admitted invalid duplicate title/msg Base64, decoded control and invalid UTF-8 reject; rejected clear/replacement
@@ -3634,6 +3637,12 @@ specifications:
             no blanket FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: dc36511e5a0e08a8c20dea498a3a83a4d0c5f7fa
+        howl_qualification_20261126_rex_05:
+          scope: All 65 forbidden decoded C0, DEL and C1 codepoints rejected in title and msg, both padded and unpadded, including
+            a duplicate followed by valid text on clear.
+          method: Pinned Rex revision 0.4; deterministic Zig assertions and actual PTY worker; ReleaseFast root gates
+          source_revision: Rex 0.4 2026-10-10
+          baseline: b33cf147268791b2eff8abf073fbf9504642d860
     - id: record-update
       section: Records and ids
       level: defined
@@ -3859,6 +3868,9 @@ specifications:
       - file: howl-app/src/terminal.zig
         test: Rex host service preserves all five states across monotonic time without heartbeats
         relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: Rex child exit during retained status allocation pressure preserves final results
+        relation: protocol-family
       relations:
       - kind: related
         clause: finalterm_shell.prompt-start
@@ -3890,6 +3902,12 @@ specifications:
             no blanket FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: dc36511e5a0e08a8c20dea498a3a83a4d0c5f7fa
+        howl_qualification_20261126_rex_05:
+          scope: Actual PTY child exits while host allocation retry retains first final report. Two transient records remain during
+            pressure; on recovery both final reports survive and transients are cleared. No heartbeat or user wake on recovery.
+          method: Pinned Rex revision 0.4; deterministic Zig assertions and actual PTY worker; ReleaseFast root gates
+          source_revision: Rex 0.4 2026-10-10
+          baseline: b33cf147268791b2eff8abf073fbf9504642d860
     - id: no-heartbeat
       section: States
       level: must
@@ -4064,6 +4082,12 @@ specifications:
       - file: howl-app/src/program_status.zig
         test: Rex empty text replaces omitted text without allocating or fabricating content
         relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex rejects every forbidden decoded control in both text fields and duplicate positions
+        relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex keeps literal markup and invisible formatting out of the published summary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Validate every syntactically admitted title/msg before duplicate selection, including clear. Valid last value
@@ -4094,6 +4118,12 @@ specifications:
             no blanket FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: dc36511e5a0e08a8c20dea498a3a83a4d0c5f7fa
+        howl_qualification_20261126_rex_05:
+          scope: Literal markup, bidi override and zero-width formatting retained as text, not exposed in copied GUI summary.
+            Every forbidden decoded control rejected with either base64 padding form.
+          method: Pinned Rex revision 0.4; deterministic Zig assertions and actual PTY worker; ReleaseFast root gates
+          source_revision: Rex 0.4 2026-10-10
+          baseline: b33cf147268791b2eff8abf073fbf9504642d860
     - id: query
       section: Feature detection
       level: must
@@ -4341,6 +4371,12 @@ specifications:
       - file: howl-app/src/terminal.zig
         test: Rex host service preserves all five states across monotonic time without heartbeats
         relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex rejects every forbidden decoded control in both text fields and duplicate positions
+        relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex keeps literal markup and invisible formatting out of the published summary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Malformed duplicate text cannot mutate or clear retained host state, and rejects emit no reply or consequence.
@@ -4371,6 +4407,12 @@ specifications:
             no blanket FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: dc36511e5a0e08a8c20dea498a3a83a4d0c5f7fa
+        howl_qualification_20261126_rex_05:
+          scope: Exhaustive forbidden decoded control corpus; literal markup and invisible formatting stay in private decoded
+            record, not GUI summary. No new raw-text rendering or notification path.
+          method: Pinned Rex revision 0.4; deterministic Zig assertions and actual PTY worker; ReleaseFast root gates
+          source_revision: Rex 0.4 2026-10-10
+          baseline: b33cf147268791b2eff8abf073fbf9504642d860
     - id: presentation
       section: Motivation / In Rex
       level: defined
@@ -32673,7 +32715,7 @@ reconciliation:
       operations.
     intent: target
     priority: modern-first Rex qualification tranche 01
-    status: PARTIAL
+    status: FULL
     owners:
     - howl-vt/src/program_status.zig:validId
     - howl-vt/src/program_status.zig:parse
@@ -32689,12 +32731,9 @@ reconciliation:
     verified_subset: Standalone grammar accepts exact128 bytes and rejects129, segment33 and depth9. Real VT-to-host FIFO
       rejects over-limit clear and invalid duplicated text without mutating existing root/child records, reply queue or semantic
       identity for every split and both BEL/ST.
-    not_full_because: Source BEL/ST framing and CAN/SUB recovery, exact empty-versus-absent text, 24-hour monotonic no-heartbeat,
-      and live host OOM retry now have named proofs. Remaining exact source-security repertoire and simultaneous child exit while
-      a status is retained for allocation retry remain independently unqualified; raw C1 aliases are outside the originating
-      7-bit profile. No blanket Rex support claim.
-    boundary: Current bounded Rex grammar and local app store only. No remote-client conformance, UI text presentation or
-      optional bridge/notification claim.
+    boundary: FULL applies only to the explicitly selected original ID grammar and no-root-fallback facet, not the whole
+      Rex family. Standard BEL/ST local host scope; raw C1 aliases, remote clients, optional text presentation, progress bridge
+      and external notifications are not qualified or newly selected.
 - id: uapi-context-prose-vs-abnf
   wire: OSC 3008 textual metadata and numeric exit status
   status: resolved-by-explicit-captain-choice

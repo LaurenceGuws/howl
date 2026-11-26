@@ -182,3 +182,30 @@ test "Rex present empty text differs from absent and malformed text" {
     try std.testing.expectEqualStrings("", present.messageText(&scratch).?);
     try std.testing.expect(status.parse("state=working:msg=A:msg=") == null);
 }
+
+test "Rex rejects every forbidden decoded control in both text fields and duplicate positions" {
+    for (0..160) |n| {
+        if (n >= 32 and n < 127) continue;
+        const byte: u8 = @intCast(n);
+        const utf8 = [2]u8{ if (n >= 128) 0xc2 else byte, byte };
+        const decoded = utf8[0..if (n >= 128) @as(usize, 2) else 1];
+        for ([_]std.base64.Base64Encoder{ std.base64.standard.Encoder, std.base64.standard_no_pad.Encoder }) |encoder| {
+            var encoded: [8]u8 = undefined;
+            const value = encoder.encode(&encoded, decoded);
+            for ([_][]const u8{ "title", "msg" }) |field| {
+                var buf: [128]u8 = undefined;
+                const body = try std.fmt.bufPrint(&buf, "state=clear:{s}={s}:{s}=QQ==", .{ field, value, field });
+                try std.testing.expect(status.parse(body) == null);
+                const report = try std.fmt.bufPrint(&buf, "state=working:{s}={s}", .{ field, value });
+                try std.testing.expect(status.parse(report) == null);
+            }
+        }
+    }
+    const literal = " <b>plain</b> \u{202e}\u{200b}\u{00a0} ";
+    var encoded: [128]u8 = undefined;
+    var body: [256]u8 = undefined;
+    const value = std.base64.standard.Encoder.encode(&encoded, literal);
+    const report = status.parse(try std.fmt.bufPrint(&body, "state=working:msg={s}", .{value})).?.report;
+    var scratch: [status.max_msg_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(literal, report.messageText(&scratch).?);
+}

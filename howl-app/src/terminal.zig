@@ -2851,3 +2851,55 @@ test "Rex host service preserves all five states across monotonic time without h
         try std.testing.expectEqual(expected, state.status.program_status.state);
     }
 }
+
+test "Rex child exit during retained status allocation pressure preserves final results" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var pressure = SizePressureAllocator{ .child = std.testing.allocator, .fail_size = 17 };
+    const owner = try Terminal.create(pressure.allocator(), threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]7501;state=blocked:id=active\\007\\033]7501;state=blocked:id=waiting:kind=auth\\007\\033]0;READY\\007'; read line; printf '\\033]7501;state=done:id=first:msg=cmVjb3ZlcnktbWFya2VyMTc=\\007\\033]7501;state=done:id=second\\007'; read release; exit 0",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try std.testing.expectEqual(@as(?vt.Terminal.ProgramStatus.State, .blocked), owner.snapshot().program_status.state);
+    pressure.armed.store(true, .release);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    for (0..5000) |_| {
+        if (pressure.failures.load(.acquire) != 0) break;
+        if (owner.snapshot().failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(pressure.failures.load(.acquire) != 0);
+    try owner.submit(.{ .input = .{ .bytes = "EXIT\n" } });
+    var exited = false;
+    for (0..5000) |_| {
+        const observed = owner.snapshot();
+        if (observed.failure) |failure| return failure;
+        if (observed.child_exit != null) {
+            try std.testing.expectEqual(@as(?vt.Terminal.ProgramStatus.State, .blocked), observed.program_status.state);
+            try std.testing.expectEqual(@as(u8, 2), observed.program_status.count);
+            exited = true;
+            break;
+        }
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(exited);
+    pressure.armed.store(false, .release);
+    var completed = false;
+    for (0..5000) |_| {
+        const observed = owner.snapshot();
+        if (observed.failure) |failure| return failure;
+        if (observed.closed and observed.program_status.state == .done and observed.program_status.count == 2) {
+            completed = true;
+            break;
+        }
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(completed);
+}
