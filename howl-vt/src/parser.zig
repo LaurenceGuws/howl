@@ -221,6 +221,7 @@ pub const CsiAction = struct {
     intermediates: []const u8,
     intermediates_len: u8,
     numeric_overflow: bool = false,
+    omitted: u32 = 0,
 };
 
 /// Carries one ordered parser phase action with parser-borrowed slices.
@@ -273,6 +274,7 @@ pub const Parser = struct {
     state: ParseState,
     csi_params: [csi_max_params]i32,
     csi_separators: CsiSeparatorList,
+    csi_omitted: u32,
     csi_count: u8,
     csi_numeric_overflow: bool,
     header_overflow: bool,
@@ -306,6 +308,7 @@ pub const Parser = struct {
             .state = .ground,
             .csi_params = @as([csi_max_params]i32, @splat(0)),
             .csi_separators = CsiSeparatorList.empty,
+            .csi_omitted = 0,
             .csi_count = 0,
             .csi_numeric_overflow = false,
             .header_overflow = false,
@@ -922,6 +925,7 @@ pub const Parser = struct {
         self.csi_numeric_overflow = false;
         self.header_overflow = false;
         self.csi_separators = CsiSeparatorList.empty;
+        self.csi_omitted = 0;
         self.intermediates_len = 0;
         self.csi_in_param = false;
     }
@@ -941,7 +945,10 @@ pub const Parser = struct {
     fn feedParamByte(self: *Parser, comptime kind: ParamKind, byte: u8) void {
         if (byte == ';' or byte == ':') {
             if (self.csi_count < self.csi_params.len) {
-                if (kind == .csi and byte == ':') self.csi_separators.set(self.csi_count);
+                if (kind == .csi) {
+                    if (byte == ':') self.csi_separators.set(self.csi_count);
+                    if (!self.csi_in_param) self.csi_omitted |= @as(u32, 1) << @as(u5, @intCast(self.csi_count));
+                }
                 self.csi_count += 1;
                 if (self.csi_count < self.csi_params.len) {
                     self.csi_params[self.csi_count] = 0;
@@ -1011,6 +1018,7 @@ pub const Parser = struct {
             .intermediates = self.intermediates[intermediate_start .. intermediate_start + intermediates_len],
             .intermediates_len = intermediates_len,
             .numeric_overflow = self.csi_numeric_overflow,
+            .omitted = self.csi_omitted,
         };
         return action;
     }
@@ -1475,6 +1483,7 @@ const StyleChange = struct {
     intermediates: []const u8,
     intermediates_len: u8,
     numeric_overflow: bool = false,
+    omitted: u32 = 0,
 };
 
 const DcsEvent = struct {
@@ -2883,6 +2892,8 @@ fn appendOwnedAction(
                 .final = csi.final,
                 .params = params,
                 .separators = csi.separators,
+                .omitted = csi.omitted,
+                .numeric_overflow = csi.numeric_overflow,
                 .count = csi.count,
                 .leader = csi.leader,
                 .private = csi.private,

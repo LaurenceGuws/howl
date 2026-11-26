@@ -258,6 +258,7 @@ pub const Screen = struct {
 
         values: []const i32,
         colon_after: u32 = 0,
+        omitted: u32 = 0,
 
         fn colonAfter(self: SgrOperands, index: u8) bool {
             if (index >= capacity) return false;
@@ -5852,6 +5853,12 @@ fn decodeExtendedColor(
     if (next >= params.len) return null;
     const mode = params[idxOf(next)];
     if (operands.colonAfter(idx.*)) return decodeColonColor(operands, idx, mode);
+    if (mode == 6) {
+        // RGBA is colon-only. Retire the unsupported semicolon group rather
+        // than interpreting its four channels as ordinary SGR setters.
+        idx.* = @intCast(@min(@as(usize, idx.*) + 5, params.len - 1));
+        return null;
+    }
     if (mode == 5) {
         if (idx.* + 2 >= params.len) {
             idx.* = @intCast(params.len - 1);
@@ -5891,6 +5898,22 @@ fn decodeColonColor(
     if (mode == 5) {
         if (count < 3) return null;
         return .indexed(clampByte(params[idxOf(idx.* + 2)]));
+    }
+    if (mode == 6) {
+        // Selector and mode, optional numeric/empty colorspace, then
+        // exactly four present byte-valued components. A final colon
+        // with no following retained parameter is also incomplete.
+        if ((count != 6 and count != 7) or operands.colonAfter(end)) return null;
+        const red = idx.* + if (count == 6) @as(u8, 2) else 3;
+        const missing = (@as(u32, 0xf) << @as(u5, @intCast(red))) & operands.omitted;
+        if (missing != 0) return null;
+        var channels: [4]u8 = undefined;
+        for (&channels, 0..) |*channel, i| {
+            const value = params[@as(usize, red) + i];
+            if (value < 0 or value > 255) return null;
+            channel.* = @intCast(value);
+        }
+        return ScreenColor.rgba(.{ .r = channels[0], .g = channels[1], .b = channels[2], .a = channels[3] });
     }
     if (mode != 2 or count < 5) return null;
 

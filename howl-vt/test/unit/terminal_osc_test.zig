@@ -3680,3 +3680,65 @@ test "visual bell configured colour remains distinct from snapshots and automati
     try std.testing.expect(terminal.consequenceHead() == null);
     try std.testing.expectEqual(defaults.visual_bell, terminal.presentation().visual_bell);
 }
+
+test "WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition" {
+    const wire = "\x1b[38:6::1:2:3:64;48:6:9:4:5:6:128;58:6:7:8:9:192;4mA\x1bP$qm\x1b\\\x1b[39;49;59mB";
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        const view = terminal.semanticView(0);
+        const attrs = view.cellInfoAt(0, 0).attrs;
+        const p = terminal.presentation();
+        try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3, .a = 64 }, attrs.fg.resolve(p.foreground, &p.palette));
+        try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6, .a = 128 }, attrs.bg.resolve(p.background, &p.palette));
+        try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9, .a = 192 }, attrs.underline_color.resolve(p.foreground, &p.palette));
+        try std.testing.expectEqualStrings("\x1bP1$r0;4;38:6::1:2:3:64;48:6::4:5:6:128;58:6::7:8:9:192m\x1b\\", terminal.replyBytes());
+        const reset = view.cellInfoAt(0, 1).attrs;
+        try std.testing.expectEqual(Terminal.default_cell_attrs.fg, reset.fg);
+        try std.testing.expectEqual(Terminal.default_cell_attrs.bg, reset.bg);
+        try std.testing.expectEqual(Terminal.default_cell_attrs.underline_color, reset.underline_color);
+        try std.testing.expect(reset.underline);
+    }
+}
+
+test "WezTerm RGBA malformed groups do not mutate colour or leak channel values into rendition" {
+    for ([_][]const u8{ "38", "48", "58" }) |selector| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b[31;44;58:5:2m");
+        const before = terminal.semanticSequence();
+        for ([_][]const u8{
+            ":6::1:2:3", ":6::1:2:3:", ":6::1::3:4", ":6:1:2:3:256", ":6::1:2:3:4:5", ":6:1:2:3:4:", ":6::1:2:3:9999999999999", ";6;1;2;3;4",
+        }) |invalid| {
+            var command: [96]u8 = undefined;
+            try std.testing.expect(!(try terminal.feed(try std.fmt.bufPrint(&command, "\x1b[{s}{s}m", .{ selector, invalid }))).stateChanged());
+            try std.testing.expectEqual(before, terminal.semanticSequence());
+        }
+        try feed(&terminal, "A");
+        const attrs = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+        try std.testing.expectEqual(Terminal.Color.indexed(1), attrs.fg);
+        try std.testing.expectEqual(Terminal.Color.indexed(4), attrs.bg);
+        try std.testing.expectEqual(Terminal.Color.indexed(2), attrs.underline_color);
+        try std.testing.expect(!attrs.bold and !attrs.dim and !attrs.italic and !attrs.underline);
+    }
+}
+
+test "WezTerm RGBA alpha-only history attributes remain distinct through reflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 6, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[38:6:1:2:3:0;48:6:4:5:6:64;58:6:7:8:9:128;4mA\x1b[38:6:1:2:3:255;48:6:4:5:6:192;58:6:7:8:9:255mB\x1b[0mC\r\nD\r\nE");
+    for ([_]u16{ 6, 4, 6 }) |cols| {
+        try terminal.resize(2, cols);
+        const view = terminal.semanticView(1);
+        const p = terminal.presentation();
+        for ([_]u8{ 0, 255 }, [_]u8{ 64, 192 }, [_]u8{ 128, 255 }, 0..) |fg, bg, ul, col| {
+            const cell = view.cellInfoAt(0, @intCast(col));
+            try std.testing.expectEqual(@as(u32, @intCast('A' + col)), cell.codepoint);
+            try std.testing.expectEqual(fg, cell.attrs.fg.resolve(p.foreground, &p.palette).a);
+            try std.testing.expectEqual(bg, cell.attrs.bg.resolve(p.background, &p.palette).a);
+            try std.testing.expectEqual(ul, cell.attrs.underline_color.resolve(p.foreground, &p.palette).a);
+        }
+    }
+}

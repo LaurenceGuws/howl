@@ -2191,3 +2191,36 @@ test "transparent colour metadata retains explicit alpha and host fallback witho
     for (next.snapshot.backgrounds[0]) |command| try std.testing.expectEqual(@as(u8, 255), command.solid.color.a);
     try std.testing.expectEqualStrings("\x1b]21;transparent_background_color1=rgb:11/22/33@1.0000;transparent_background_color2=rgb:44/55/66@0.2471\x1b\\", owner.replyBytes());
 }
+
+test "WezTerm RGBA cell output retains independent background ink and underline alpha" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(3, 8);
+    try owner.feed("\x1b[?25l\x1b[38:6::255:0:0:128;48:6::0:255:0:64;58:6::0:0:255:192;4m█\x1b[2m█\x1b[7m█\x1b[0m");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const s = held.snapshot;
+    const Color = output.commands.Color;
+    const red: Color = .{ .r = 255, .g = 0, .b = 0, .a = 128 };
+    const green: Color = .{ .r = 0, .g = 255, .b = 0, .a = 64 };
+    const blue: Color = .{ .r = 0, .g = 0, .b = 255, .a = 192 };
+    try std.testing.expectEqual(@as(usize, 2), s.backgrounds[0].len);
+    try std.testing.expectEqual(green, s.backgrounds[0][0].solid.color);
+    try std.testing.expectEqual(red, s.backgrounds[0][1].solid.color);
+    try std.testing.expectEqual(@as(usize, 3), s.glyphs[0].len);
+    try std.testing.expectEqual(red, s.glyphs[0][0].alpha_mask.color);
+    var dim_red = red;
+    dim_red.a = 70;
+    try std.testing.expectEqual(dim_red, s.glyphs[0][1].alpha_mask.color);
+    var dim_green = green;
+    dim_green.a = 35;
+    try std.testing.expectEqual(dim_green, s.glyphs[0][2].alpha_mask.color);
+    try std.testing.expectEqual(@as(usize, 3), s.decorations[0].len);
+    try std.testing.expectEqual(blue, s.decorations[0][0].solid.color);
+    var dim_blue = blue;
+    dim_blue.a = 106;
+    for (s.decorations[0][1..]) |cmd| try std.testing.expectEqual(dim_blue, cmd.solid.color);
+}

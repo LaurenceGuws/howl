@@ -402,10 +402,7 @@ const SemanticEvent = union(enum) {
     locator_request: u16,
     media_copy_request: MediaCopyRequest,
     legacy_control: LegacyControlKind,
-    sgr: struct {
-        params: []const i32,
-        separators: parser_mod.CsiSeparatorList,
-    },
+    sgr: Screen.SgrOperands,
     enter_alt_screen: struct { clear: bool, save_cursor: bool },
     exit_alt_screen: struct { restore_cursor: bool },
     save_cursor,
@@ -488,13 +485,14 @@ fn screenAction(event: SemanticEvent) ?Screen.Action {
 fn screenSgrOperands(
     values: []const i32,
     separators: parser_mod.CsiSeparatorList,
+    omitted: u32,
 ) Screen.SgrOperands {
     std.debug.assert(values.len <= parser_mod.max_params);
     var colon_after: u32 = 0;
     for (0..values.len) |index| {
         if (separators.isSet(index)) colon_after |= @as(u32, 1) << @intCast(index);
     }
-    return .{ .values = values, .colon_after = colon_after };
+    return .{ .values = values, .colon_after = colon_after, .omitted = omitted };
 }
 
 // Selects one terminal-owned cell or caller-supplied pixel size report.
@@ -627,6 +625,7 @@ fn csiProcess(
     leader_byte: u8,
     is_private: bool,
     intermediates: []const u8,
+    omitted: u32,
 ) ?SemanticEvent {
     // Pinned Kitty dispatch_csi uses one-parameter guards for J/K erasure
     // and L/M line editing. Reject excess operands before either Screen or
@@ -635,20 +634,20 @@ fn csiProcess(
     if (is_private) return decodePrivateCsi(final, params, leader_byte, intermediates);
     if (leader_byte != 0) return decodeCsiLeader(final, params, leader_byte, intermediates);
     if (intermediates.len != 0) {
-        if (decodeCsiIntermediate(final, params, separators, intermediates)) |event| return event;
+        if (decodeCsiIntermediate(final, params, separators, intermediates, omitted)) |event| return event;
         // An unsupported intermediate does not turn its final byte into an
         // ordinary CSI operation. DECSTR (CSI ! p) remains its own exact route.
         if (intermediates.len != 1 or intermediates[0] != '!' or final != 'p') return null;
     }
-    return decodeCsi(final, params, separators, intermediates);
+    return decodeCsi(final, params, separators, intermediates, omitted);
 }
 
 // Decodes one CSI sequence with intermediates; unsupported forms return null.
-fn decodeCsiIntermediate(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList, intermediates: []const u8) ?SemanticEvent {
+fn decodeCsiIntermediate(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList, intermediates: []const u8, omitted: u32) ?SemanticEvent {
     if (intermediates.len != 1) return null;
     return switch (intermediates[0]) {
         '"' => processQuote(final, params),
-        '$' => processDollar(final, params, separators),
+        '$' => processDollar(final, params, separators, omitted),
         '*' => processStar(final, params),
         '+' => processPlus(final, params),
         '#' => processHash(final, params),
@@ -670,11 +669,11 @@ fn processQuote(final: u8, params: []const i32) ?SemanticEvent {
     return null;
 }
 
-fn processDollar(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList) ?SemanticEvent {
+fn processDollar(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList, omitted: u32) ?SemanticEvent {
     return switch (final) {
         'p' => if (queryParam(params)) |mode| SemanticEvent{ .ansi_mode_query = mode } else null,
-        'r' => rectAttrsChange(params, separators, false),
-        't' => rectAttrsChange(params, separators, true),
+        'r' => rectAttrsChange(params, separators, false, omitted),
+        't' => rectAttrsChange(params, separators, true, omitted),
         'v' => rectCopy(params),
         'x' => rectFill(params),
         'z' => rectErase(params, false),
@@ -773,17 +772,18 @@ fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
     };
 }
 
-fn rectAttrsChange(params: []const i32, separators: parser_mod.CsiSeparatorList, reverse: bool) ?SemanticEvent {
+fn rectAttrsChange(params: []const i32, separators: parser_mod.CsiSeparatorList, reverse: bool, omitted: u32) ?SemanticEvent {
     // Bare DECCARA defaults to SGR reset; supplied coordinates without
     // an SGR selector do not change rendition. DECRARA has no omitted selector.
     if (params.len < 5 and (reverse or params.len != 0)) return null;
     const area = rectArea(params, 0, .zero_or_omitted) orelse return null;
     const start = @min(params.len, 4);
     for (0..start) |i| if (separators.isSet(i)) return null;
-    const sgr = screenSgrOperands(params, separators);
+    const sgr = screenSgrOperands(params, separators, omitted);
     const operands: Screen.SgrOperands = .{
         .values = params[start..],
         .colon_after = sgr.colon_after >> @as(u5, @intCast(start)),
+        .omitted = sgr.omitted >> @as(u5, @intCast(start)),
     };
     // Reverse selectors are not SGR subparameter groups.
     if (reverse and operands.colon_after != 0) return null;
@@ -1074,6 +1074,7 @@ fn decodeCsi(
     params: []const i32,
     separators: parser_mod.CsiSeparatorList,
     intermediates: []const u8,
+    omitted: u32,
 ) ?SemanticEvent {
     // Frozen Kitty's one-parameter cursor, repeat, tab and cell-edit
     // controls reject extras before mutation. #P and SP @ remain separate;
@@ -1109,7 +1110,7 @@ fn decodeCsi(
         'T', '^' => return SemanticEvent{ .scroll_down_lines = scrollCount(params) orelse return null },
         'h' => return SemanticEvent{ .ansi_mode_set = collectParams(params) },
         'l' => return SemanticEvent{ .ansi_mode_reset = collectParams(params) },
-        'm' => return SemanticEvent{ .sgr = .{ .params = params, .separators = separators } },
+        'm' => return SemanticEvent{ .sgr = screenSgrOperands(params, separators, omitted) },
         's' => if (params.len == 0)
             return SemanticEvent.save_cursor_or_default_margins
         else
@@ -3148,7 +3149,7 @@ fn appendColorParam(
             }
             try appendExtendedColorParam(output, encode_buf, first, if (is_fg) 38 else 48, color);
         },
-        .rgb => try appendExtendedColorParam(output, encode_buf, first, if (is_fg) 38 else 48, color),
+        .rgb, .rgba => try appendExtendedColorParam(output, encode_buf, first, if (is_fg) 38 else 48, color),
     }
 }
 
@@ -3163,6 +3164,16 @@ fn appendExtendedColorParam(
         .default => return,
         .indexed => {
             const text = std.fmt.bufPrint(encode_buf, "{d};5;{d}", .{ prefix, color.value }) catch return error.ReplyLimit;
+            try appendSgrParam(output, first, text);
+        },
+        .rgba => {
+            const text = std.fmt.bufPrint(encode_buf, "{d}:6::{d}:{d}:{d}:{d}", .{
+                prefix,
+                (color.value >> 16) & 0xff,
+                (color.value >> 8) & 0xff,
+                color.value & 0xff,
+                color.value >> 24,
+            }) catch return error.ReplyLimit;
             try appendSgrParam(output, first, text);
         },
         .rgb => {
@@ -3661,7 +3672,7 @@ fn routeParserEvent(event: parser_mod.Event) ?SemanticEvent {
             const intermediates = sc.intermediates[0..sc.intermediates_len];
             if (sc.final == 'w' and std.mem.eql(u8, intermediates, "'") and
                 (sc.numeric_overflow or !sc.separators.eql(parser_mod.CsiSeparatorList.empty))) return null;
-            return csiProcess(sc.final, params, sc.separators, sc.leader, sc.private, intermediates);
+            return csiProcess(sc.final, params, sc.separators, sc.leader, sc.private, intermediates, sc.omitted);
         },
         .invoke_charset, .configure_charset => return null,
         .text => |s| return SemanticEvent{ .write_text = s },
@@ -3921,9 +3932,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
 
-        .sgr => |sgr| return vt.screen_state.active().applySgr(
-            screenSgrOperands(sgr.params, sgr.separators),
-        ),
+        .sgr => |sgr| return vt.screen_state.active().applySgr(sgr),
 
         .cursor_style => |value| {
             const cursor = &vt.screen_state.active().cursor;
@@ -4654,7 +4663,7 @@ const TerminalStream = struct {
             }
         }
         if (state.parser.consumeOrdinarySgrFinal(byte)) |sgr| {
-            const changed = self.applyOrdinarySgr(sgr.params[0..sgr.count], sgr.separators);
+            const changed = self.applyOrdinarySgr(sgr.params[0..sgr.count], sgr.separators, sgr.omitted);
             if (changed) self.synchronized_output.trailing_effect = true;
             return .{ .byte_count = 1, .mutations = .{ .text = changed } };
         }
@@ -4884,6 +4893,7 @@ const TerminalStream = struct {
         self: *TerminalStream,
         params: []const i32,
         separators: parser_mod.CsiSeparatorList,
+        omitted: u32,
     ) bool {
         const screen = self.terminal.screen_state.active();
         return if (params.len == 3 and
@@ -4893,7 +4903,7 @@ const TerminalStream = struct {
         else
             @call(.always_inline, Screen.applySgr, .{
                 screen,
-                screenSgrOperands(params, separators),
+                screenSgrOperands(params, separators, omitted),
             });
     }
 
@@ -4919,7 +4929,7 @@ const TerminalStream = struct {
                 };
             },
             'm' => {
-                const changed = self.applyOrdinarySgr(params, csi.separators);
+                const changed = self.applyOrdinarySgr(params, csi.separators, csi.omitted);
                 return .{
                     .changed = changed,
                     .mutations = .{ .text = changed },
@@ -4944,6 +4954,7 @@ const TerminalStream = struct {
                 .intermediates = csi.intermediates[0..csi.intermediates_len],
                 .intermediates_len = csi.intermediates_len,
                 .numeric_overflow = csi.numeric_overflow,
+                .omitted = csi.omitted,
             } }),
             .osc_dispatch => |osc| try self.applyEvent(.{ .osc = osc }),
             .screen_title => |title| try self.applyEvent(.{ .screen_title = title }),
@@ -6494,7 +6505,7 @@ pub const Terminal = struct {
             return switch (color.colorKind()) {
                 .default => 0,
                 .indexed => color.colorValue() & 0xff,
-                .rgb => color.colorValue() & 0xffffff,
+                .rgb, .rgba => color.colorValue() & 0xffffff,
             };
         }
 

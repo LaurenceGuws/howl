@@ -21636,6 +21636,26 @@ specifications:
           location: wezterm-escape-parser/src/csi.rs:2429-2488
           meaning: 'Three colon-only patterns: explicit numeric colorspace (ignored), omitted colorspace subfield, or no colorspace
             field. Four channels converted via to_u8. Full malformed/surplus operand admission not inferred from the documentation.'
+        howl_qualification_20261127_rgba_01:
+          scope: Selector38:6 retains independent RGB8 and alpha byte with an explicit RGBA tag and 0xAARRGGBB in the existing
+            8-byte Color value, preserving RGB/indexed/default kinds. Every input split of three-lane SGR, DECRQSS lossless
+            colon report and SGR39 reset; retained history alpha-only distinction through 6/4/6-column reflow; actual generated
+            block ink carries alpha128, dim70, reverse dim35. No per-cell size increase. Intrinsic RGBA font-image opacity,
+            physical compositor blending and all editing cases remain separately scoped.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md and wezterm-escape-parser/src/csi.rs
+            parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
+            blanket FULL promotion
+          baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA alpha-only history attributes remain distinct through reflow
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: WezTerm RGBA cell output retains independent background ink and underline alpha
+        relation: protocol-family
     - id: sgr-background
       section: docs/escape-sequences.md:307-316
       level: defined
@@ -21656,6 +21676,25 @@ specifications:
           location: wezterm-escape-parser/src/csi.rs:2429-2488
           meaning: 'Three colon-only patterns: explicit numeric colorspace (ignored), omitted colorspace subfield, or no colorspace
             field. Four channels converted via to_u8. Full malformed/surplus operand admission not inferred from the documentation.'
+        howl_qualification_20261127_rgba_01:
+          scope: Selector48:6 retains independent alpha in canonical attributes and existing background-source provenance;
+            actual command output preserves alpha64 background and alpha128 reversed foreground/background swap, with coalescing
+            based on full color. Exact report/reset and alpha-only retained history through reflow. Opaque host compositing
+            pixel proof and default-background OSC alpha remain separate.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md and wezterm-escape-parser/src/csi.rs
+            parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
+            blanket FULL promotion
+          baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA alpha-only history attributes remain distinct through reflow
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: WezTerm RGBA cell output retains independent background ink and underline alpha
+        relation: protocol-family
     - id: sgr-underline
       section: docs/escape-sequences.md:335-344
       level: defined
@@ -21676,6 +21715,25 @@ specifications:
           location: wezterm-escape-parser/src/csi.rs:2429-2488
           meaning: 'Three colon-only patterns: explicit numeric colorspace (ignored), omitted colorspace subfield, or no colorspace
             field. Four channels converted via to_u8. Full malformed/surplus operand admission not inferred from the documentation.'
+        howl_qualification_20261127_rgba_01:
+          scope: Selector58:6 uses existing underline-color owner; exact retained RGBA and report/reset59 without clearing
+            style, alpha-only history proof, independent blue alpha192 modulated to106 under existing dim policy and unaffected
+            by RGB reversal. Existing underline style and scaled projection owners remain singular; arbitrary geometry and
+            physical blending not independently qualified here.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md and wezterm-escape-parser/src/csi.rs
+            parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
+            blanket FULL promotion
+          baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA alpha-only history attributes remain distinct through reflow
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: WezTerm RGBA cell output retains independent background ink and underline alpha
+        relation: protocol-family
     - id: sgr-admission
       section: Pinned author parser; csi.rs:1732-1743,2429-2488
       level: defined
@@ -21694,6 +21752,27 @@ specifications:
       - kind: related
         clause: wezterm_rgba.sgr-underline
         role: grammar
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA malformed groups do not mutate colour or leak channel values into rendition
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_rgba_01:
+          scope: Retain omitted-field bitmask in bounded CSI parser without changing legacy zero-default numeric semantics;
+            shared SGR operands carry mask into ordinary and rectangular rendition routes. Exact colon group counts6/7 (selector/mode
+            plus RGBA, with optional numeric or empty colorspace), all four channels present and 0..255. Reject surplus, truncated/trailing-colon,
+            omitted channel and saturated out-of-range values. Unsupported semicolon mode6 consumes up to four channel operands
+            without interpreting them as SGR attributes; local bounded rejection policy, not a claim of author malformed-token
+            resynchronization equivalence. Every split of documented/explicit numeric/shortened forms, three-selector malformed
+            matrix; no independent negative-token, all mixed delimiters, rectangular or C1 proof yet. RGB2 and indexed5 retain
+            prior decoder policy.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md and wezterm-escape-parser/src/csi.rs
+            parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
+            blanket FULL promotion
+          baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
     - id: dynamic-colors
       section: Operating System Command Sequences / OSC 10,11,12; changelog.md:1533
       level: defined

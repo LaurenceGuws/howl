@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-/// Stores one exact 24-bit terminal color.
+/// Stores one exact RGB color with independent alpha (opaque by default).
 pub const Rgb = struct {
     r: u8,
     g: u8,
@@ -15,9 +15,10 @@ pub const ColorKind = enum(u8) {
     default,
     indexed,
     rgb,
+    rgba,
 };
 
-/// Stores a default, indexed, or RGB terminal color.
+/// Stores a default, indexed, RGB, or RGBA terminal color.
 pub const Color = struct {
     kind: ColorKind,
     value: u32,
@@ -27,7 +28,7 @@ pub const Color = struct {
         return self.kind;
     }
 
-    /// Returns zero for default, palette index for indexed, or 0xRRGGBB for RGB.
+    /// Returns zero for default, index for indexed, 0xRRGGBB for RGB, or 0xAARRGGBB for RGBA.
     pub fn colorValue(self: Color) u32 {
         return self.value;
     }
@@ -52,15 +53,21 @@ pub const Color = struct {
         return rgb(.{ .r = r, .g = g, .b = b });
     }
 
+    /// Constructs an explicit RGBA color without increasing the cell representation.
+    pub fn rgba(value: Rgb) Color {
+        return .{ .kind = .rgba, .value = rgb(value).value | (@as(u32, value.a) << 24) };
+    }
+
     /// Resolves this color against one complete terminal palette and caller-selected default.
     pub fn resolve(self: Color, default_value: Rgb, palette: *const [256]Rgb) Rgb {
         return switch (self.kind) {
             .default => default_value,
             .indexed => palette[@as(u8, @intCast(self.value))],
-            .rgb => .{
+            .rgb, .rgba => .{
                 .r = @truncate(self.value >> 16),
                 .g = @truncate(self.value >> 8),
                 .b = @truncate(self.value),
+                .a = if (self.kind == .rgba) @truncate(self.value >> 24) else 255,
             },
         };
     }
