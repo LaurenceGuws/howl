@@ -5854,9 +5854,16 @@ fn decodeExtendedColor(
     const mode = params[idxOf(next)];
     if (operands.colonAfter(idx.*)) return decodeColonColor(operands, idx, mode);
     if (mode == 6) {
-        // RGBA is colon-only. Retire the unsupported semicolon group rather
-        // than interpreting its four channels as ordinary SGR setters.
-        idx.* = @intCast(@min(@as(usize, idx.*) + 5, params.len - 1));
+        // RGBA is colon-only. Retire the unsupported semicolon group
+        // without letting a colon suffix become ordinary SGR setters.
+        // When the mode itself starts a colon group, its end is explicit;
+        // otherwise consume up to four channel operands and their tail.
+        var end: u8 = if (operands.colonAfter(next))
+            next
+        else
+            @intCast(@min(@as(usize, idx.*) + 5, params.len - 1));
+        while (end + 1 < params.len and operands.colonAfter(end)) end += 1;
+        idx.* = end;
         return null;
     }
     if (mode == 5) {

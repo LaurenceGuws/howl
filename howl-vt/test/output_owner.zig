@@ -2224,3 +2224,69 @@ test "WezTerm RGBA cell output retains independent background ink and underline 
     dim_blue.a = 106;
     for (s.decorations[0][1..]) |cmd| try std.testing.expectEqual(dim_blue, cmd.solid.color);
 }
+
+test "WezTerm RGBA scaled strips preserve independent text alpha and intrinsic image ink" {
+    const fonts = @import("test_fonts");
+    const f = try text.FontSet.init(a, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(6, 12);
+    try owner.feed("\x1b[?25l\x1b[38:6:255:0:0:128;48:6:0:255:0:64;58:6:0:0:255:192;4;9m\x1b]66;s=2;█\x07\x1b[1;5H\x1b]66;s=2;😀\x07");
+    try owner.feed("\x1b[2m\x1b[3;1H\x1b]66;s=2;█\x07\x1b[3;5H\x1b]66;s=2;😀\x07");
+    try owner.feed("\x1b[22m\x1b[38:6:255:0:0:0m\x1b[5;1H\x1b]66;s=2:n=1:d=2;█\x07\x1b[5;5H\x1b]66;s=2:n=1:d=2;😀\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const snap = held.snapshot;
+    const view = owner.observation().semanticView(0);
+    const Color = output.commands.Color;
+    const bg: Color = .{ .r = 0, .g = 255, .b = 0, .a = 64 };
+    var colour_count: usize = 0;
+    var fractional_ink: usize = 0;
+    for (0..6) |row| {
+        const fg_alpha: u8 = if (row < 2) 128 else if (row < 4) 70 else 0;
+        const underline_alpha: u8 = if (row >= 2 and row < 4) 106 else 192;
+        const raw_alpha: u8 = if (row < 4) 128 else 0;
+        const glyph_color: Color = .{ .r = 255, .g = 0, .b = 0, .a = fg_alpha };
+        const underline_color: Color = .{ .r = 0, .g = 0, .b = 255, .a = underline_alpha };
+        for ([_]u16{ 0, 4 }, [_]u8{ 2, 4 }) |col, width| {
+            const cell = view.cellInfoAt(@intCast(row), col);
+            try std.testing.expectEqual(width, cell.width);
+            try std.testing.expectEqual(@as(u8, 2), cell.height);
+            try std.testing.expectEqual(@as(u8, @intCast(row % 2)), cell.y);
+            try std.testing.expectEqual(raw_alpha, @as(u8, @truncate(cell.attrs.fg.value >> 24)));
+        }
+        try std.testing.expectEqual(@as(usize, 2), snap.backgrounds[row].len);
+        for (snap.backgrounds[row]) |cmd| try std.testing.expectEqual(bg, cmd.solid.color);
+        for (snap.decorations[row]) |cmd| {
+            try std.testing.expect(cmd == .solid);
+            try std.testing.expect(cmd.solid.color.a == underline_color.a or cmd.solid.color.a == glyph_color.a);
+            if (cmd.solid.color.b == 255) {
+                try std.testing.expectEqual(underline_color, cmd.solid.color);
+            } else {
+                try std.testing.expectEqual(glyph_color, cmd.solid.color);
+            }
+        }
+        for (snap.glyphs[row]) |cmd| switch (cmd) {
+            .alpha_mask => |mask| {
+                try std.testing.expectEqual(glyph_color, mask.color);
+                if (row >= 4) fractional_ink += 1;
+            },
+            .rgba => |image| {
+                colour_count += 1;
+                if (row >= 2 and row < 4) {
+                    const original = snap.glyphs[row - 2][snap.glyphs[row - 2].len - 1];
+                    try std.testing.expectEqualDeep(original.rgba, image);
+                }
+                if (row >= 4) fractional_ink += 1;
+            },
+            else => return error.UnexpectedCommand,
+        };
+    }
+    try std.testing.expect(colour_count >= 5 and fractional_ink >= 2);
+}

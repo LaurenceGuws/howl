@@ -2677,3 +2677,63 @@ test "WezTerm RGBA pixels compose once through retained narrow and missed-cut re
         }
     }
 }
+
+test "intrinsic colour glyph pixels ignore RGBA foreground alpha without suppressing text opacity" {
+    const output = @import("howl_vt_output");
+    const allocator = std.testing.allocator;
+    const fonts = @import("test_fonts");
+    const font = try @import("howl_text").FontSet.init(allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer font.deinit();
+    const owner = try output.Terminal.initConfig(allocator, font, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test retires its sole output lease before destruction.
+    defer owner.deinit() catch unreachable;
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b]11;#0000ff\x07\x1b[38:6:255:0:0:255m😀█\r\n\x1b[38:6:255:0:0:128m😀█\r\n\x1b[38:6:255:0:0:0m😀█\r\n\x1b[2;38:6:255:0:0:128m😀█");
+    try owner.flush();
+    const lease = try owner.hold();
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This test holds only this lease.
+    defer owner.release(lease) catch unreachable;
+    const snap = &lease.snapshot;
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(snap.surface.width, snap.surface.height, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    var backend = Canvas.init(allocator);
+    defer backend.deinit();
+    const geometry = try allocator.create(Geometry);
+    defer allocator.destroy(geometry);
+    geometry.* = .{};
+    try backend.applySnapshotResources(renderer, 1, snap);
+    const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snap.surface.width), .h = @floatFromInt(snap.surface.height) };
+    try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, snap);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    var intrinsic_pixels: usize = 0;
+    for (0..snap.cell_height) |y| for (0..@as(usize, snap.cell_width) * 2) |x| {
+        var original: [4]u8 = undefined;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &original[0], &original[1], &original[2], &original[3]));
+        if (!std.meta.eql(original, [4]u8{ 0, 0, 255, 255 })) intrinsic_pixels += 1;
+        for (1..4) |row| {
+            var actual: [4]u8 = undefined;
+            try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(row * snap.cell_height + y), &actual[0], &actual[1], &actual[2], &actual[3]));
+            try std.testing.expectEqualDeep(original, actual);
+        }
+    };
+    try std.testing.expect(intrinsic_pixels != 0);
+    for ([_]u8{ 255, 128, 0, 70 }, 0..) |red, row| {
+        var actual: [4]u8 = undefined;
+        const x = @as(i32, snap.cell_width) * 2 + snap.cell_width / 2;
+        const y: i32 = @intCast(row * snap.cell_height + snap.cell_height / 2);
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, x, y, &actual[0], &actual[1], &actual[2], &actual[3]));
+        const expected = [4]u8{ red, 0, 255 - red, 255 };
+        for (expected, actual) |want, got| try std.testing.expect(@abs(@as(i16, want) - got) <= 2);
+    }
+}

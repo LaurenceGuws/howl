@@ -3816,3 +3816,76 @@ test "WezTerm dynamic alpha stack and reply pressure retain exact configured own
     try std.testing.expectEqual(defaults.background, terminal.presentation().background);
     try std.testing.expectEqual(defaults.cursor, terminal.presentation().cursor);
 }
+
+test "WezTerm RGBA malformed mixed delimiter groups retire their complete colon suffix" {
+    for ([_][]const u8{ "\x1b[", "\x9b" }) |intro| {
+        for ([_][]const u8{ "38", "48", "58" }) |selector| {
+            for ([_][]const u8{
+                ";6:10:20:30:40:5",
+                ";6;10:20:30:40:5",
+                ";6;10;20;30;40:5",
+                ";6:10:20",
+            }) |invalid| {
+                var storage: [96]u8 = undefined;
+                const command = try std.fmt.bufPrint(&storage, "{s}{s}{s};3m", .{ intro, selector, invalid });
+                for (0..command.len + 1) |split| {
+                    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+                    defer terminal.deinit();
+                    try feed(&terminal, "\x1b[31;44;58:5:2m");
+                    try feed(&terminal, command[0..split]);
+                    try feed(&terminal, command[split..]);
+                    try feed(&terminal, "X");
+                    const attrs = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+                    var expected = Terminal.default_cell_attrs;
+                    expected.fg = .indexed(1);
+                    expected.bg = .indexed(4);
+                    expected.underline_color = .indexed(2);
+                    expected.italic = true;
+                    try std.testing.expectEqualDeep(expected, attrs);
+                }
+            }
+        }
+    }
+}
+
+test "WezTerm RGBA rectangular admission and reports preserve alpha across both C1 profiles" {
+    for ([_][]const u8{ "\x1b[", "\x9b" }, 0..) |intro, profile| {
+        var storage: [160]u8 = undefined;
+        const command = try std.fmt.bufPrint(&storage, "{s}1;1;1;2;38:6:1:2:3:0;48:6::4:5:6:128;58:6:9:7:8:9:192$r", .{intro});
+        for (0..command.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+            defer terminal.deinit();
+            if (profile == 1) try feed(&terminal, "\x1b G");
+            try feed(&terminal, "\x1b[31;4m\x1b[1\"qAB\x1b[0\"q\x1b[2;3H\x1b[2*x");
+            // Restore an independent indexed pen (SGR does not own protection).
+            try feed(&terminal, "\x1b[31m");
+            const initial = terminal.semanticView(0).cellInfoAt(0, 0);
+            try std.testing.expect(initial.attrs.protected == .dec);
+            try feed(&terminal, command[0..split]);
+            try feed(&terminal, command[split..]);
+            const view = terminal.semanticView(0);
+            const p = terminal.presentation();
+            for (0..2) |col| {
+                const cell = view.cellInfoAt(0, @intCast(col));
+                try std.testing.expectEqual(@as(u32, @intCast('A' + col)), cell.codepoint);
+                try std.testing.expectEqual(initial.attrs.protected, cell.attrs.protected);
+                try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3, .a = 0 }, cell.attrs.fg.resolve(p.foreground, &p.palette));
+                try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6, .a = 128 }, cell.attrs.bg.resolve(p.background, &p.palette));
+                try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9, .a = 192 }, cell.attrs.underline_color.resolve(p.foreground, &p.palette));
+                try std.testing.expect(cell.attrs.underline);
+            }
+            try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+            try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+            try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+            const invalid = if (profile == 0) "\x1b[1;1;1;2;38:6::1::3:4$r" else "\x9b1;1;1;2;38:6::1::3:4$r";
+            try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+            try feed(&terminal, if (profile == 0) "\x1b[1;1;1;2#|\x1b[1;2;1;2;38:6:1:2:3:255$r\x1b[1;1;1;2#|" else "\x9b1;1;1;2#|\x9b1;2;1;2;38:6:1:2:3:255$r\x9b1;1;1;2#|");
+            try std.testing.expectEqualStrings(if (profile == 0)
+                "\x1b[0;4;38:6::1:2:3:0;48:6::4:5:6:128;58:6::7:8:9:192m\x1b[0;4;48:6::4:5:6:128;58:6::7:8:9:192m"
+            else
+                "\x9b0;4;38:6::1:2:3:0;48:6::4:5:6:128;58:6::7:8:9:192m\x9b0;4;48:6::4:5:6:128;58:6::7:8:9:192m", terminal.replyBytes());
+            try feed(&terminal, "Z");
+            try std.testing.expectEqual(Terminal.Color.indexed(1), terminal.semanticView(0).cellInfoAt(1, 2).attrs.fg);
+        }
+    }
+}

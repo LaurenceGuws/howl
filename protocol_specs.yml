@@ -21655,6 +21655,18 @@ specifications:
             SrgbaTuple FromStr and wezterm-escape-parser/src/osc.rs ColorOrQuery Display, term/src/terminalstate/performer.rs
             ChangeDynamicColors; VT red-green and actual SDL software-rendered pixel red-green; no blanket FULL promotion
           baseline: ac68296fa39558a8e2ed194d3c534a3448c4ed1e
+        howl_qualification_20261127_rgba_03:
+          scope: Exact retained alpha in ordinary and rectangular rendition; selected full 24-operand DECCARA request preserves
+            protection, cursor and independent pen. XTREPORTSGR returns RGBA when common, omits foreground when only alpha
+            differs. Scaled integer and fractional OSC66 strips preserve monochrome text alpha and intrinsic image ink. Pinned
+            author GLSL and WGSL intrinsic emoji branches take source texture RGBA independently of text foreground, so no
+            opacity field added to image commands. Actual SDL fixture verifies identical intrinsic colour pixels at foreground
+            alpha255/128/0 and dim128, while adjacent monochrome block obeys alpha255/128/0/70. Selected intrinsic policy,
+            not all cursor/selection/compositor interactions.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/csi.rs parse_sgr_color,
+            wezterm-gui/src/glyph-frag.glsl and shader.wgsl intrinsic emoji branches; deterministic split/rectangle/strip/SDL
+            pixel proofs; no blanket FULL promotion
+          baseline: 25a4cda6859519f6be49118d08a1f0fbb953ed3b
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
@@ -21667,6 +21679,15 @@ specifications:
         relation: protocol-family
       - file: howl-app/src/canvas.zig
         test: WezTerm RGBA pixels compose once through retained narrow and missed-cut repairs
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA rectangular admission and reports preserve alpha across both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: WezTerm RGBA scaled strips preserve independent text alpha and intrinsic image ink
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: intrinsic colour glyph pixels ignore RGBA foreground alpha without suppressing text opacity
         relation: protocol-family
     - id: sgr-background
       section: docs/escape-sequences.md:307-316
@@ -21706,6 +21727,14 @@ specifications:
             SrgbaTuple FromStr and wezterm-escape-parser/src/osc.rs ColorOrQuery Display, term/src/terminalstate/performer.rs
             ChangeDynamicColors; VT red-green and actual SDL software-rendered pixel red-green; no blanket FULL promotion
           baseline: ac68296fa39558a8e2ed194d3c534a3448c4ed1e
+        howl_qualification_20261127_rgba_03:
+          scope: Rectangular alpha assignment and exact common-region report in both C1 profiles. Integer and fractional scaled
+            block backgrounds retain explicit alpha64 and complete occupancy. Existing independent source-over and translucent
+            repair evidence retained.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/csi.rs parse_sgr_color,
+            wezterm-gui/src/glyph-frag.glsl and shader.wgsl intrinsic emoji branches; deterministic split/rectangle/strip/SDL
+            pixel proofs; no blanket FULL promotion
+          baseline: 25a4cda6859519f6be49118d08a1f0fbb953ed3b
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
@@ -21718,6 +21747,12 @@ specifications:
         relation: protocol-family
       - file: howl-app/src/canvas.zig
         test: WezTerm RGBA pixels compose once through retained narrow and missed-cut repairs
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA rectangular admission and reports preserve alpha across both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: WezTerm RGBA scaled strips preserve independent text alpha and intrinsic image ink
         relation: protocol-family
     - id: sgr-underline
       section: docs/escape-sequences.md:335-344
@@ -21748,6 +21783,14 @@ specifications:
             parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
             blanket FULL promotion
           baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+        howl_qualification_20261127_rgba_03:
+          scope: Rectangular RGBA underline survives both C1 profiles, independent pen and common-report round trip. Scaled
+            ordinary/fractional decoration strips retain explicit alpha192 and dim106, with strike using effective foreground
+            opacity; source glyph RGB remains independent. Selected strip geometry rather than exhaustive scale/style matrix.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/csi.rs parse_sgr_color,
+            wezterm-gui/src/glyph-frag.glsl and shader.wgsl intrinsic emoji branches; deterministic split/rectangle/strip/SDL
+            pixel proofs; no blanket FULL promotion
+          baseline: 25a4cda6859519f6be49118d08a1f0fbb953ed3b
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
@@ -21757,6 +21800,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/output_owner.zig
         test: WezTerm RGBA cell output retains independent background ink and underline alpha
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA rectangular admission and reports preserve alpha across both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: WezTerm RGBA scaled strips preserve independent text alpha and intrinsic image ink
         relation: protocol-family
     - id: sgr-admission
       section: Pinned author parser; csi.rs:1732-1743,2429-2488
@@ -21783,6 +21832,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: WezTerm RGBA malformed groups do not mutate colour or leak channel values into rendition
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA malformed mixed delimiter groups retire their complete colon suffix
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA rectangular admission and reports preserve alpha across both C1 profiles
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_rgba_01:
           scope: Retain omitted-field bitmask in bounded CSI parser without changing legacy zero-default numeric semantics;
@@ -21797,6 +21852,17 @@ specifications:
             parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
             blanket FULL promotion
           baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+        howl_qualification_20261127_rgba_03:
+          scope: Unsupported semicolon mode6 retires a complete attached colon group when selector and mode separators are
+            mixed, otherwise up to four channel operands plus their final colon suffix. No trailing blink/other SGR leakage;
+            independent later semicolon italic preserved. Every split of four malformed mixed cases across all three selectors
+            and both CSI introducers. Rectangular exact 24-operand ceiling, valid three forms and omitted channel rejection,
+            repeated no-op, distinct alpha common-report and independent pen across 7/8-bit framing. Existing bounded parser
+            policy preserved; no blanket author malformed-resynchronization equivalence.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/csi.rs parse_sgr_color,
+            wezterm-gui/src/glyph-frag.glsl and shader.wgsl intrinsic emoji branches; deterministic split/rectangle/strip/SDL
+            pixel proofs; no blanket FULL promotion
+          baseline: 25a4cda6859519f6be49118d08a1f0fbb953ed3b
     - id: dynamic-colors
       section: Operating System Command Sequences / OSC 10,11,12; changelog.md:1533
       level: defined
