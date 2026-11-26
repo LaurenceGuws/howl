@@ -31538,29 +31538,457 @@ reconciliation:
       levels may restore state. Omitted/zero and unsupported formats must not trigger profile change. No Contour parameterless
       STP interpretation. Model-specific payload, partial failure semantics and actual supported formats to qualify later;
       neither format automatically targeted.
-pending_reconciliation:
 - id: contour-sgr-slot-vs-xterm-stack
-  status: material-originating-extension-conflict
   wire: 'CSI # { / CSI # }'
-  original_author_sources:
-  - clause: contour_sgr_storage.save
-    meaning: Save into one storage location, confirmed Screen.cpp:1061-1070.
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: xterm-lifo-rendition-stack
+    effect: 'CSI # { and # } select push/pop on a LIFO rendition stack, not a single reusable save slot. No-parameter push
+      saves all rendition attributes in the selected stack contract; explicit subset uses the originating xterm mask. Each
+      successful pop consumes its entry; empty pop is inert. Xterm''s documented # p/# q aliases follow the same family. Preserve
+      the published ten-entry storage profile, not an unbounded stack. Exact overflow nesting debt, extended rendition mask,
+      bank/reset lifetime, malformed operands and actual targeting require later qualification; no new palette stack semantics.'
+    selected_source_profiles:
+    - xterm_controls.sgr-stack-push
+    - xterm_controls.sgr-stack-pop
+  selects:
+    sgr-stack.lifetime: effect
+  competing_interpretations_retained:
+  - contour_sgr_storage.save
+  - contour_sgr_storage.restore
+  reason: Repeated saves followed by restores must restore nested state rather than overwrite one shared slot. Pinned xterm
+    misc.c:8114-8137/8188-8248 has a real stack and logical overflow bookkeeping; iTerm2 VT100Terminal.m:5225-5265 also uses
+    a ten-entry stack but rejects push at capacity; Mintty termout.c:3390 onward supports subset stack. Contour Screen.cpp:1061-1070
+    is demonstrably a single slot. Stack semantics have practical independent adoption; overflow differs and is not settled
+    by the majority.
+  evidence_basis: Source-backed convergent stack behavior; explicit choice retains unresolved overflow and extended-mask details.
+  source_clauses:
   - clause: contour_sgr_storage.restore
-    meaning: Restore same saved value without stack pop.
-  - clause: xterm_controls.sgr-stack-push
-    meaning: Push stack, optional selection.
+    wire: 'CSI # }'
+    section: Restore; Screen.cpp:1061-1070
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/save-and-restore-sgr-attributes.md
+  - clause: contour_sgr_storage.save
+    wire: 'CSI # {'
+    section: Save; Screen.cpp:1061-1070
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/save-and-restore-sgr-attributes.md
   - clause: xterm_controls.sgr-stack-pop
-    meaning: Pop stack.
-  question: Resolve identical no-parameter wire with different repeated-save and restore lifetime. No implementation decision
-    in census.
-  decision: null
+    wire: 'CSI # } / CSI # q'
+    section: Functions using CSI / XTPOPSGR, lines 1556-1558,1941-1943
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  - clause: xterm_controls.sgr-stack-push
+    wire: 'CSI [ Pm ] # { / CSI [ Pm ] # p'
+    section: Functions using CSI / XTPUSHSGR, lines 1519-1523,1861-1880
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: contour-sgr-slot-vs-xterm-stack
+    status: material-originating-extension-conflict
+    wire: 'CSI # { / CSI # }'
+    original_author_sources:
+    - clause: contour_sgr_storage.save
+      meaning: Save into one storage location, confirmed Screen.cpp:1061-1070.
+    - clause: contour_sgr_storage.restore
+      meaning: Restore same saved value without stack pop.
+    - clause: xterm_controls.sgr-stack-push
+      meaning: Push stack, optional selection.
+    - clause: xterm_controls.sgr-stack-pop
+      meaning: Pop stack.
+    question: Resolve identical no-parameter wire with different repeated-save and restore lifetime. No implementation decision
+      in census.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_sgr_storage.restore
+      - contour_sgr_storage.save
+      - xterm_controls.sgr-stack-pop
+      - xterm_controls.sgr-stack-push
+      scope: 'CSI # { / CSI # }'
   applies_to:
     clauses:
     - contour_sgr_storage.restore
     - contour_sgr_storage.save
     - xterm_controls.sgr-stack-pop
     - xterm_controls.sgr-stack-push
-    scope: 'CSI # { / CSI # }'
+    scope: 'CSI # { and # } select push/pop on a LIFO rendition stack, not a single reusable save slot. No-parameter push
+      saves all rendition attributes in the selected stack contract; explicit subset uses the originating xterm mask. Each
+      successful pop consumes its entry; empty pop is inert. Xterm''s documented # p/# q aliases follow the same family. Preserve
+      the published ten-entry storage profile, not an unbounded stack. Exact overflow nesting debt, extended rendition mask,
+      bank/reset lifetime, malformed operands and actual targeting require later qualification; no new palette stack semantics.'
+- id: decscusr-zero-configured-vs-dec
+  wire: CSI 0 SP q
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: configured-cursor-default
+    effect: CSI 0 SP q and CSI SP q both select the configured cursor appearance, shape and blink preference (not hard-coded
+      blinking block). Explicit1..6 retain defined blinking/steady block, underline and bar choices, subject to existing independent
+      cursor visibility. Selecting default does not force cursor visible. Preserve original DEC zero/omitted blinking-block
+      and differing adopter behavior as historical alternatives. Exact default provenance, later settings changes, independent
+      blink mode interaction, invalid/multiple operands, status report and host renderer qualification remain open.
+    selected_source_profiles:
+    - iterm2_osc1337.cursor-default
+    - dec_vt520.cursor-style
+  selects:
+    decscusr.default: effect
+  competing_interpretations_retained: []
+  reason: Ghostty stream.zig/Terminal.zig explicitly maps both forms to default style and default blink; Foot csi.c uses configured
+    style and blink for default0; Contour Screen.cpp:3124-3144 explicitly admits deviation and restores factory settings for
+    omitted/0. Alacritty parser0/omitted uses None and consumer configured default. WezTerm explicit0 maps Default but its
+    bare-form parser admission is different; Microsoft and Kitty have partial differences in blink/default shape. Original
+    DEC and xterm charproc.c:4945 onward explicitly select blinking block. Preserve user preference with explicit nonzero
+    control choices.
+  evidence_basis: Substantial independent modern agreement on configured default. Select exact zero and omission contract
+    explicitly, not assert all modern consumers agree on blink or reset lifetime.
+  source_clauses:
+  - clause: dec_vt520.cursor-style
+    wire: CSI Ps SP q
+    section: 5-127 DECSCUSR
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  - clause: iterm2_osc1337.cursor-default
+    wire: CSI 0 SP q
+    section: DECSCUSR 0
+    source_revision: iTerm2 documentation 3.6, observed 2026-11-23
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: decscusr-zero-configured-vs-dec
+    status: material-originating-extension-conflict
+    wire: CSI 0 SP q
+    original_author_sources:
+    - clause: dec_vt520.cursor-style
+      meaning: Original DEC selector0,1 or omitted selects blinking block.
+    - clause: iterm2_osc1337.cursor-default
+      meaning: Selector0 restores terminal-configured appearance; explicit authored deviation.
+    question: Determine intended selector0 and separately omitted-selector profile; existing implementation cannot settle
+      author conflict.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt520.cursor-style
+      - iterm2_osc1337.cursor-default
+      scope: CSI 0 SP q
+  applies_to:
+    clauses:
+    - dec_vt520.cursor-style
+    - iterm2_osc1337.cursor-default
+    scope: CSI 0 SP q and CSI SP q both select the configured cursor appearance, shape and blink preference (not hard-coded
+      blinking block). Explicit1..6 retain defined blinking/steady block, underline and bar choices, subject to existing independent
+      cursor visibility. Selecting default does not force cursor visible. Preserve original DEC zero/omitted blinking-block
+      and differing adopter behavior as historical alternatives. Exact default provenance, later settings changes, independent
+      blink mode interaction, invalid/multiple operands, status report and host renderer qualification remain open.
+- id: decarr-mintty-rate-vs-dec-bands
+  wire: CSI Ps - p
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: dec-original-repeat-bands
+    effect: 'CSI Ps - p selects original VT520 DECARR meaning: explicit0..5 repeat off,6..15 10 characters/second,16..30 30
+      characters/second, outside range ignored; initial default fast30. Do not adopt Mintty''s direct cps or zero-unlimited
+      meaning. Omitted-selector admission/meaning and interactions with DECARM, key scheduling, report encoding and host ownership
+      need exact qualification; no immediate timing implementation.'
+    selected_source_profiles:
+    - dec_vt520.repeat-rate
+  selects:
+    decarr.rate-bands: effect
+  competing_interpretations_retained:
+  - mintty_controls.repeat-rate
+  reason: VT520 table5-20 defines bands and off explicitly. Mintty author documentation and pinned termout.c:3989-3991 instead
+    store cps directly, zero disables limitation while DECARM is separate. No independent majority for the alternate meaning.
+    Preserve the origin for this optional operation rather than make a silent timing policy decision.
+  evidence_basis: Explicit original-source choice; not a majority claim.
+  source_clauses:
+  - clause: dec_vt520.repeat-rate
+    wire: CSI Ps - p
+    section: 5-20 DECARR
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  - clause: mintty_controls.repeat-rate
+    wire: CSI cps - p
+    section: Keyboard auto repeat
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: decarr-mintty-rate-vs-dec-bands
+    status: material-originating-extension-conflict
+    wire: CSI Ps - p
+    original_author_sources:
+    - clause: dec_vt520.repeat-rate
+      meaning: DEC0..5 off,6..15 ten cps,16..30 thirty cps.
+    - clause: mintty_controls.repeat-rate
+      meaning: Mintty direct cps1..30; zero unlimited, repeat enable separate.
+    question: Select exact repeat-rate meaning and scope after source comparison; no new input scheduling policy.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt520.repeat-rate
+      - mintty_controls.repeat-rate
+      scope: CSI Ps - p
+  applies_to:
+    clauses:
+    - dec_vt520.repeat-rate
+    - mintty_controls.repeat-rate
+    scope: 'CSI Ps - p selects original VT520 DECARR meaning: explicit0..5 repeat off,6..15 10 characters/second,16..30 30
+      characters/second, outside range ignored; initial default fast30. Do not adopt Mintty''s direct cps or zero-unlimited
+      meaning. Omitted-selector admission/meaning and interactions with DECARM, key scheduling, report encoding and host ownership
+      need exact qualification; no immediate timing implementation.'
+- id: decscs-mintty-zero-vs-dec-default
+  wire: CSI 2 ; 0 * r
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: dec-communication-line-default
+    effect: For DECSCS host receive line2, speed0 or omitted selects receive=transmit, not unlimited simulated display speed.
+      Nonzero selector table retains source baud values. Other line selectors and defaults retain separate source meanings,
+      not a single generic display throttle. No PTY/VT pacing, sleep, serial reconfiguration or printer operation targeted
+      by this semantic selection.
+    selected_source_profiles:
+    - dec_vt520.communication-speed
+  selects:
+    decscs.receive-default: effect
+  competing_interpretations_retained:
+  - mintty_controls.display-speed
+  reason: VT5205-126 defines separate communication lines and speed0/omitted as line-specific default. Mintty termout.c:4072
+    onward simulates receive/display speed with configured Baud on omission, unlimited on explicit0. Different ownership and
+    observable meaning; no evidence requiring a PTY emulator to reproduce display throttling.
+  evidence_basis: Explicit original-source choice on disputed line2 default only.
+  source_clauses:
+  - clause: dec_vt520.communication-speed
+    wire: CSI Ps1 ; Ps2 * r
+    section: 5-126 DECSCS
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  - clause: mintty_controls.display-speed
+    wire: CSI 2 * r / CSI 2 ; Ps * r
+    section: Display speed
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: decscs-mintty-zero-vs-dec-default
+    status: material-originating-extension-conflict
+    wire: CSI 2 ; 0 * r
+    original_author_sources:
+    - clause: dec_vt520.communication-speed
+      meaning: Original speed0/omitted means receive follows transmit.
+    - clause: mintty_controls.display-speed
+      meaning: Explicit0 unlimited, omitted configured speed.
+    question: Resolve original line semantics versus display throttling profile; no timing architecture selected.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt520.communication-speed
+      - mintty_controls.display-speed
+      scope: CSI 2 ; 0 * r
+  applies_to:
+    clauses:
+    - dec_vt520.communication-speed
+    - mintty_controls.display-speed
+    scope: For DECSCS host receive line2, speed0 or omitted selects receive=transmit, not unlimited simulated display speed.
+      Nonzero selector table retains source baud values. Other line selectors and defaults retain separate source meanings,
+      not a single generic display throttle. No PTY/VT pacing, sleep, serial reconfiguration or printer operation targeted
+      by this semantic selection.
+- id: sgr-framed-encircled-vs-mintty-emoji
+  wire: CSI 51/52/54 m
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: ecma48-framing-rendition
+    effect: SGR51 selects framed,52 encircled,54 clears framing and encircling. Never use these selectors to force emoji presentation.
+      Exact shape/combined rendering, reset/attribute interaction and implementation priority remain qualification questions.
+      Other SGR choices, including earlier double-underline21, unchanged.
+    selected_source_profiles:
+    - ecma48.sgr
+  selects:
+    sgr.51-52-54.meaning: effect
+  competing_interpretations_retained:
+  - mintty_rendition.emoji-style
+  reason: ECMA48 8.3.117 explicitly defines framing/encircling. Mintty Tips and termout.c use same bit for 51/52 and describe
+    emoji preference instead; no relevant independent majority for that reinterpretation. Separate emoji-presentation protocols
+    and width decisions remain available.
+  evidence_basis: Explicit original standard choice.
+  source_clauses:
+  - clause: ecma48.sgr
+    wire: CSI Pm m
+    section: 8.3.117
+    source_revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+  - clause: mintty_rendition.emoji-style
+    wire: CSI 51 m / CSI 52 m / CSI 54 m
+    section: Tips / Text attributes
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d; introduction 3.0.1 (2019-05-28)
+    url: https://github.com/mintty/mintty/wiki/Tips
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: sgr-framed-encircled-vs-mintty-emoji
+    status: material-originating-extension-conflict
+    wire: CSI 51/52/54 m
+    original_author_sources:
+    - clause: ecma48.sgr
+      meaning: ECMA-48 section8.3.117:51 framed,52 encircled,54 clears framing and encircling.
+    - clause: mintty_rendition.emoji-style
+      meaning: Mintty reuses both51/52 for emoji-style display preference,54 clears.
+    question: Select original rendition or explicitly scoped alternative profile, not both by matching selector. No semantic
+      choice.
+    decision: null
+    applies_to:
+      clauses:
+      - ecma48.sgr
+      - mintty_rendition.emoji-style
+      scope: CSI 51/52/54 m
+  applies_to:
+    clauses:
+    - ecma48.sgr
+    - mintty_rendition.emoji-style
+    scope: SGR51 selects framed,52 encircled,54 clears framing and encircling. Never use these selectors to force emoji presentation.
+      Exact shape/combined rendering, reset/attribute interaction and implementation priority remain qualification questions.
+      Other SGR choices, including earlier double-underline21, unchanged.
+- id: sgr-super-sub-combination
+  wire: CSI 73 ; 74 m
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: mintty-independent-super-sub-bits
+    effect: SGR73 sets superscript and74 sets subscript independently; both set (either order, including separate calls) produces
+      smaller baseline-aligned characters. SGR75 clears both; normal SGR0 resets both. Do not select the private ?4/?5 aliases
+      here (prior XTQMODKEYS decision unchanged). Exact glyph geometry, width, scaling and rectangle/stack interaction to
+      qualify later.
+    selected_source_profiles:
+    - mintty_rendition.vertical-align
+  selects:
+    sgr.73-74-75.combination: effect
+  competing_interpretations_retained:
+  - wezterm_rendition_profile.vertical-align
+  reason: Mintty Tips explicitly specifies combined73;74, and pinned termout.c:2268-2270 sets independent flags; WezTerm uses
+    a single vertical-alignment enum and successive assignment, losing the combined meaning. Preserve originating distinct
+    useful state instead of adopter loss of information.
+  evidence_basis: Explicit original-author choice for standard SGR73/74/75 only.
+  source_clauses:
+  - clause: mintty_rendition.vertical-align
+    wire: CSI 73 m / CSI 74 m / CSI 75 m
+    section: Tips / Text attributes; Changelog 3.0.1
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d; introduction 3.0.1 (2019-05-28)
+    url: https://github.com/mintty/mintty/wiki/Tips
+  - clause: wezterm_rendition_profile.vertical-align
+    wire: CSI 73 m / CSI 74 m / CSI 75 m
+    section: docs/escape-sequences.md SGR table; csi.rs:94-98,2765-2773; terminalstate/mod.rs:2791-2793
+    source_revision: git cab25161054c50fd6c705db4ceefef0f1e5a9575; docs since 20221119-145034-49b9839f
+    url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/docs/escape-sequences.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: sgr-super-sub-combination
+    status: material-originating-extension-conflict
+    wire: CSI 73 ; 74 m
+    original_author_sources:
+    - clause: mintty_rendition.vertical-align
+      meaning: Mintty both flags give small baseline characters.
+    - clause: wezterm_rendition_profile.vertical-align
+      meaning: WezTerm single enum means last setting replaces previous.
+    question: Select combined attribute semantics explicitly, preserving separate SGR75 reset. No new selected rendition behavior.
+    decision: null
+    applies_to:
+      clauses:
+      - mintty_rendition.vertical-align
+      - wezterm_rendition_profile.vertical-align
+      scope: CSI 73 ; 74 m
+  applies_to:
+    clauses:
+    - mintty_rendition.vertical-align
+    - wezterm_rendition_profile.vertical-align
+    scope: SGR73 sets superscript and74 sets subscript independently; both set (either order, including separate calls) produces
+      smaller baseline-aligned characters. SGR75 clears both; normal SGR0 resets both. Do not select the private ?4/?5 aliases
+      here (prior XTQMODKEYS decision unchanged). Exact glyph geometry, width, scaling and rectangle/stack interaction to
+      qualify later.
+- id: decsr-zero-confirmation-vt520-vs-std070
+  wire: CSI 0 + p
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: std070-zero-silent
+    effect: DECSR omitted or explicit zero performs reset without DECSRC reply; admitted nonzero1..16383 confirms same token
+      only after successful reset; greater than16383 ignores entire sequence (no state mutation or confirmation). Distinguish
+      request +p and confirmation *q. Preserve all other original mode, reset and session-lifetime requirements for qualification,
+      no implicit host disconnect or other-session reset. This selects confirmation/admission facet, not all reset effects
+      or implementation target.
+    selected_source_profiles:
+    - dec_std070.secure-reset
+  selects:
+    decsr.confirmation: effect
+  competing_interpretations_retained:
+  - dec_vt520.secure-reset
+  - dec_vt520.secure-reset-confirmation
+  reason: Internal STD070 Terminal Management pp29-30 states exact zero/omitted/over-limit behavior; later VT5205-144/146
+    says a supplied token0..16383 receives confirmation. VTE pinned handler unconditionally calls confirmation after reset,
+    not evidence of complete source semantics. Nonzero token provides explicit completion request while zero and omission
+    have consistent default behavior. Keep conflict visible.
+  evidence_basis: Explicit source-version choice; no modern majority established.
+  source_clauses:
+  - clause: dec_std070.secure-reset
+    wire: CSI [ Pn ] + p / CSI Pn * q
+    section: Terminal Management EL-00070-G4 pp29-30, 04-Oct-1990 / DECSR and DECSRC
+    source_revision: A-MN-ELSM070-00-0000 Rev H, 03 December 1991; EL-00070-05 Character Cell Display pages dated 29 June
+      1990, for review
+    url: https://bitsavers.trailing-edge.com/pdf/dec/standards/EL-SM070-00_DEC_STD_070_Video_Systems_Reference_Manual_Dec91.pdf
+  - clause: dec_vt520.secure-reset
+    wire: CSI [ Pr ] + p
+    section: 5-144..145 DECSR
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  - clause: dec_vt520.secure-reset-confirmation
+    wire: CSI Pr * q
+    section: 5-146 DECSRC
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: decsr-zero-confirmation-vt520-vs-std070
+    status: material-originating-extension-conflict
+    wire: CSI 0 + p
+    original_author_sources:
+    - clause: dec_vt520.secure-reset
+      meaning: Public guide includes optional token0..16383 and says if supplied send confirmation.
+    - clause: dec_std070.secure-reset
+      meaning: Internal standard explicitly omits confirmation for zero or omitted token.
+    question: Choose explicit-zero response semantics and exact admission; preserve successful-reset ordering and distinction
+      from RIS. Existing reset choices unchanged.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_std070.secure-reset
+      - dec_vt520.secure-reset
+      - dec_vt520.secure-reset-confirmation
+      scope: Explicit zero Secure Reset token and response; no host reset policy selected.
+  applies_to:
+    clauses:
+    - dec_std070.secure-reset
+    - dec_vt520.secure-reset
+    - dec_vt520.secure-reset-confirmation
+    scope: DECSR omitted or explicit zero performs reset without DECSRC reply; admitted nonzero1..16383 confirms same token
+      only after successful reset; greater than16383 ignores entire sequence (no state mutation or confirmation). Distinguish
+      request +p and confirmation *q. Preserve all other original mode, reset and session-lifetime requirements for qualification,
+      no implicit host disconnect or other-session reset. This selects confirmation/admission facet, not all reset effects
+      or implementation target.
+pending_reconciliation:
 - id: rex-id-limit-kitty-profile
   status: material-originating-extension-conflict
   wire: OSC 7501 id total length
@@ -31595,22 +32023,6 @@ pending_reconciliation:
     - uapi_context.exit-metadata
     - uapi_context.framing
     scope: OSC 3008 textual metadata and numeric exit status
-- id: decscusr-zero-configured-vs-dec
-  status: material-originating-extension-conflict
-  wire: CSI 0 SP q
-  original_author_sources:
-  - clause: dec_vt520.cursor-style
-    meaning: Original DEC selector0,1 or omitted selects blinking block.
-  - clause: iterm2_osc1337.cursor-default
-    meaning: Selector0 restores terminal-configured appearance; explicit authored deviation.
-  question: Determine intended selector0 and separately omitted-selector profile; existing implementation cannot settle author
-    conflict.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt520.cursor-style
-    - iterm2_osc1337.cursor-default
-    scope: CSI 0 SP q
 - id: iterm2-progress-state4-revision
   status: material-originating-extension-conflict
   wire: OSC 9 ; 4 ; 4 [ ; progress ] ST
@@ -31749,36 +32161,6 @@ pending_reconciliation:
     - vte_termprops.progress-hint
     - vte_termprops.progress-hint-registry
     scope: OSC 666 ; vte.progress.hint=0 ST
-- id: decarr-mintty-rate-vs-dec-bands
-  status: material-originating-extension-conflict
-  wire: CSI Ps - p
-  original_author_sources:
-  - clause: dec_vt520.repeat-rate
-    meaning: DEC0..5 off,6..15 ten cps,16..30 thirty cps.
-  - clause: mintty_controls.repeat-rate
-    meaning: Mintty direct cps1..30; zero unlimited, repeat enable separate.
-  question: Select exact repeat-rate meaning and scope after source comparison; no new input scheduling policy.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt520.repeat-rate
-    - mintty_controls.repeat-rate
-    scope: CSI Ps - p
-- id: decscs-mintty-zero-vs-dec-default
-  status: material-originating-extension-conflict
-  wire: CSI 2 ; 0 * r
-  original_author_sources:
-  - clause: dec_vt520.communication-speed
-    meaning: Original speed0/omitted means receive follows transmit.
-  - clause: mintty_controls.display-speed
-    meaning: Explicit0 unlimited, omitted configured speed.
-  question: Resolve original line semantics versus display throttling profile; no timing architecture selected.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt520.communication-speed
-    - mintty_controls.display-speed
-    scope: CSI 2 ; 0 * r
 - id: mintty-ansi-query-index-omission
   status: material-originating-extension-conflict
   wire: OSC 7704 ; index ; ? ST
@@ -31979,54 +32361,6 @@ pending_reconciliation:
     - mintty_controls.emoji-width-mode
     - mintty_controls.emoji-width-rules
     scope: CSI ? 2027 h/l and U+FE0E
-- id: sgr-framed-encircled-vs-mintty-emoji
-  status: material-originating-extension-conflict
-  wire: CSI 51/52/54 m
-  original_author_sources:
-  - clause: ecma48.sgr
-    meaning: ECMA-48 section8.3.117:51 framed,52 encircled,54 clears framing and encircling.
-  - clause: mintty_rendition.emoji-style
-    meaning: Mintty reuses both51/52 for emoji-style display preference,54 clears.
-  question: Select original rendition or explicitly scoped alternative profile, not both by matching selector. No semantic
-    choice.
-  decision: null
-  applies_to:
-    clauses:
-    - ecma48.sgr
-    - mintty_rendition.emoji-style
-    scope: CSI 51/52/54 m
-- id: sgr-super-sub-combination
-  status: material-originating-extension-conflict
-  wire: CSI 73 ; 74 m
-  original_author_sources:
-  - clause: mintty_rendition.vertical-align
-    meaning: Mintty both flags give small baseline characters.
-  - clause: wezterm_rendition_profile.vertical-align
-    meaning: WezTerm single enum means last setting replaces previous.
-  question: Select combined attribute semantics explicitly, preserving separate SGR75 reset. No new selected rendition behavior.
-  decision: null
-  applies_to:
-    clauses:
-    - mintty_rendition.vertical-align
-    - wezterm_rendition_profile.vertical-align
-    scope: CSI 73 ; 74 m
-- id: decsr-zero-confirmation-vt520-vs-std070
-  status: material-originating-extension-conflict
-  wire: CSI 0 + p
-  original_author_sources:
-  - clause: dec_vt520.secure-reset
-    meaning: Public guide includes optional token0..16383 and says if supplied send confirmation.
-  - clause: dec_std070.secure-reset
-    meaning: Internal standard explicitly omits confirmation for zero or omitted token.
-  question: Choose explicit-zero response semantics and exact admission; preserve successful-reset ordering and distinction
-    from RIS. Existing reset choices unchanged.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_std070.secure-reset
-    - dec_vt520.secure-reset
-    - dec_vt520.secure-reset-confirmation
-    scope: Explicit zero Secure Reset token and response; no host reset policy selected.
 - id: gip-readme-vs-draft-envelope
   status: material-originating-extension-conflict
   wire: DCS u/r/s/d versus DCS ! g
