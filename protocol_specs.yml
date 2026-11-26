@@ -21671,6 +21671,34 @@ specifications:
           sha256: 4110904e6a7bac8faa8db6d7b9bb76fcd927a6cf2490dd95ad66478b2ecc3ef2
           location: dcs_hook =1s
           meaning: Unhook callback enables app sync; =2s disables. No new payload semantics.
+        howl_qualification_20261126_legacy_sync_01:
+          scope: Recognized numeric DCS=1s begins only at completed ST; reserved payload discarded at capture, 8192-byte witness
+            in both framing forms, no payload allocation/overflow after bounded header. CAN/SUB and incomplete or invalid
+            selector remain nonbegins across every split. Existing numeric zero-padded alias retained, not newly inferred
+            exact author grammar. Same canonical hold as DEC2026.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized begin facts survive fragmented legacy and DEC framing without revision churn
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: legacy synchronized DCS ignores reserved payload without metadata length semantics
+        relation: protocol-family
+      - file: howl-vt/src/stream_state.zig
+        test: discarded reserved DCS payload consumes no allocation and leaves ordinary capture reusable
+        relation: protocol-family
+      - file: howl-vt/src/stream_state.zig
+        test: DCS capture start and put report exact failures and remain reusable
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized update DCS shares exact bounded mode state
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
     - id: end
       section: Control Sequence / End synchronized update (ESU)
       level: defined
@@ -21695,6 +21723,33 @@ specifications:
           url: https://gitlab.com/api/v4/projects/gnachman%2Fiterm2/wikis/synchronized-updates-spec
           sha256: dfbef594f71d893c37aa8b56c1480dc255d9ed94d49a5736e8fba000edfad17d
           meaning: API content is byte-identical to raw author wiki Markdown.
+        howl_qualification_20261126_legacy_sync_01:
+          scope: Completed DCS=2s with ignored payload releases same canonical hold, including 8192-byte ignored payload and
+            raw C1 ST. Inactive ESU is silent no-op; cancelled/incomplete or invalid control cannot release. Actual release
+            boundary preserved before next begin.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized begin facts survive fragmented legacy and DEC framing without revision churn
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: legacy synchronized DCS ignores reserved payload without metadata length semantics
+        relation: protocol-family
+      - file: howl-vt/src/stream_state.zig
+        test: discarded reserved DCS payload consumes no allocation and leaves ordinary capture reusable
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized update DCS shares exact bounded mode state
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: service boundary preserves each synchronized release cut across every split
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
     - id: mode-begin
       section: Control Sequence / DECSET/DECRESET
       level: defined
@@ -21708,6 +21763,28 @@ specifications:
         clause: iterm2_legacy_sync.begin
       - kind: reaffirms
         clause: contour_sync.begin
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized begin facts survive fragmented legacy and DEC framing without revision churn
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized update DCS shares exact bounded mode state
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native feed success yields exact reply and synchronized boundaries
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_legacy_sync_01:
+          scope: Preferred DEC2026 SET and legacy DCS share the same hold; admitted repeated SET emits transient began fact
+            without revision churn. Existing grouped DECSET semantics retained rather than attributed to iTerm2 standalone
+            syntax.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
     - id: mode-end
       section: Control Sequence / DECSET/DECRESET
       level: defined
@@ -21720,6 +21797,30 @@ specifications:
         clause: iterm2_legacy_sync.end
       - kind: reaffirms
         clause: contour_sync.end
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized begin facts survive fragmented legacy and DEC framing without revision churn
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized update DCS shares exact bounded mode state
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: service boundary preserves each synchronized release cut across every split
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native feed success yields exact reply and synchronized boundaries
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_legacy_sync_01:
+          scope: DEC2026 reset and DCS ESU share exact release boundary; no retrospective or duplicate end on inactive mode.
+            Mixed framing and every split, native service boundaries retained.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
     - id: presentation
       section: What is Synchronized?
       level: defined
@@ -21727,12 +21828,53 @@ specifications:
       rule: SHOULD defer presentation of characters, character attributes, cursor blink/position/style and palette changes until
         end. Window title and icon title changes MAY be deferred or not. Hint can be ignored when particular input makes atomicity
         impracticable; source does not require a second canonical screen or input-buffering architecture.
+      test_locations:
+      - file: howl-app/src/terminal.zig
+        test: Contour holds immutable text palette and cursor while servicing queries then publishes exact release cuts
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: service boundary preserves each synchronized release cut across every split
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: synchronized hold releases a new frame after one second without further child output
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_legacy_sync_01:
+          scope: Local actual font-backed immutable projection preserves old text/palette/cursor during canonical progress,
+            releases at exact end with credit. Legacy begin/end share canonical owner and service gate. Not a separate legacy
+            graphical witness for every cursor/blink/attribute variation or physical/remote renderer. Title/icon remain independent.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
     - id: timeout
       section: Premature Termination / Timeout
       level: defined
       wire: synchronized update timeout
       rule: SHOULD end update after implementation-chosen, possibly configurable timeout. Clock starts when BSU handled. No
         fixed default specified; balance quick recovery after crash with slow-network tolerance.
+      test_locations:
+      - file: howl-app/src/terminal.zig
+        test: synchronized hold releases a new frame after one second without further child output
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: held output releases on timeout without new child output, then resets on exact release
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_legacy_sync_01:
+          scope: Local one-second presentation recovery interval from handling begin at monotonic service turn, quiescent
+            timeout without child output; canonical negotiated mode stays enabled until actual end. Bounded refresh may re-arm
+            after timeout; no normative fixed default claimed. Native C layout unchanged, native clients own their own deadlines.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
     - id: early-end
       section: Premature Termination / Optional Conditions
       level: defined
@@ -21750,6 +21892,29 @@ specifications:
       - kind: related
         role: lifetime
         clause: iterm2_legacy_sync.timeout
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized begin facts survive fragmented legacy and DEC framing without revision churn
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: held output releases on timeout without new child output, then resets on exact release
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_legacy_sync_01:
+          scope: Pinned iTerm2 1d6e758 iTermTemporaryDoubleBufferedGridController.m startExplicitly/scheduleTimer invalidates
+            old timer and schedules one second from the new begin. Foot cb277178 terminal.c term_enable_app_sync_updates also
+            rearms one second. Selected local policy refreshes one interval from current handled begin, not adding duration
+            to old deadline. Repeated begin and actual begin transition emit feed-local began, merged only after last release,
+            independent of revision/mutation. Mixed DCS/DEC clock test verifies 900ms repeat grants1000ms, old deadline held,
+            new deadline recovers, repeat after timeout re-arms, end clears. Existing native C fields unchanged; not a claim
+            of exported native repeated-begin metadata. Original normative ambiguity retained as source text.
+          method: Preserved iTerm2 author wiki SHA256 49e959ee22d7d52a1405f75a4ba588f3c56074d43c9dd07613476280f87a9d85, pinned
+            author implementation 1d6e758 and Foot cb277178 timer code; red-green VT/host, allocation and fragmented framing
+            proofs; no blanket FULL promotion
+          baseline: 88ec6c7e2dc65424ecf5ff878a8246beb622dfef
   finalterm_original:
     title: Original Final Term control sequences (OSC 133)
     author: Philipp Emanuel Weidmann / Final Term project

@@ -1339,17 +1339,21 @@ fn zeroQuery(params: []const i32) bool {
 
 const DcsEvent = @FieldType(parser_mod.Event, "dcs");
 
+// The legacy synchronized-update dialect reserves its entire payload.
+// Use the same header recognition for capture policy and completed dispatch.
+fn synchronizedDcsMode(final: u8, params: []const i32, intermediates: []const u8) ?bool {
+    if (final != 's' or !std.mem.eql(u8, intermediates, "=") or params.len != 1) return null;
+    return switch (params[0]) {
+        1 => true,
+        2 => false,
+        else => null,
+    };
+}
+
 // Decodes one completed borrowed DCS payload; unsupported commands return null.
 fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '=' and
-        dcs.final == 's' and dcs.param_count == 1)
-    {
-        return switch (dcs.params[0]) {
-            1 => .{ .synchronized_output = true },
-            2 => .{ .synchronized_output = false },
-            else => null,
-        };
-    }
+    if (synchronizedDcsMode(dcs.final, dcs.params[0..dcs.param_count], dcs.intermediates[0..dcs.intermediates_len])) |enabled|
+        return .{ .synchronized_output = enabled };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 'q')
         return SemanticEvent{ .dcs_request_status = dcs.payload };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'q')
@@ -3468,6 +3472,7 @@ const EventEffect = struct {
     mutations: MutationSet = .{},
     suppress_owner_fallback: bool = false,
     cursor_or_bracket_only: bool = false,
+    synchronized_begin: bool = false,
 };
 
 fn suppressOwnerFallback(event: SemanticEvent) bool {
@@ -3749,6 +3754,12 @@ fn applyParserEvent(
         .mutations = mutations,
         .suppress_owner_fallback = suppressOwnerFallback(semantic),
         .cursor_or_bracket_only = cursorOrBracketOnly(semantic),
+        // Repeated SET is a timing fact, even without a semantic mutation.
+        .synchronized_begin = switch (semantic) {
+            .synchronized_output => |enabled| enabled,
+            .dec_mode_set => |modes| std.mem.indexOfScalar(u16, modes.params[0..modes.param_count], 2026) != null,
+            else => false,
+        },
     };
 }
 
@@ -4462,6 +4473,9 @@ const TerminalFeedError = error{
 pub const TerminalSynchronizedOutputProgress = struct {
     /// At least one real enabled-to-disabled transition occurred.
     ended: bool = false,
+    /// An admitted begin (including repeated SET) or a real begin transition
+    /// occurred after the last release in this prefix. Independent of mutation.
+    began: bool = false,
     /// An effect followed the last release, or occurred without a release.
     /// Reply/consequence effects count conservatively, just like state changes.
     trailing_effect: bool = false,
@@ -4472,6 +4486,7 @@ pub const TerminalSynchronizedOutputProgress = struct {
             later.trailing_effect
         else
             self.trailing_effect or later.trailing_effect;
+        self.began = if (later.ended) later.began else self.began or later.began;
         self.ended = self.ended or later.ended;
     }
 };
@@ -4625,17 +4640,16 @@ const TerminalStream = struct {
                 self.content_mode_changed = self.content_mode_changed or
                     (event_mutations.mode and !effect.cursor_or_bracket_only);
                 mutations.merge(event_mutations);
-                var ended = false;
-                if (event_mutations.mode) {
-                    const held = self.terminal.synchronizedOutput();
-                    ended = self.synchronized_output_held and !held;
-                    self.synchronized_output_held = held;
-                }
+                const held_before = self.synchronized_output_held;
+                if (event_mutations.mode) self.synchronized_output_held = self.terminal.synchronizedOutput();
                 std.debug.assert(self.synchronized_output_held == self.terminal.synchronizedOutput());
-                if (ended) {
+                if (held_before and !self.synchronized_output_held) {
                     self.synchronized_output = .{ .ended = true };
-                } else if (effect.changed or event_mutations.stateChanged()) {
-                    self.synchronized_output.trailing_effect = true;
+                } else {
+                    if (self.synchronized_output_held and (!held_before or effect.synchronized_begin))
+                        self.synchronized_output.began = true;
+                    if (effect.changed or event_mutations.stateChanged())
+                        self.synchronized_output.trailing_effect = true;
                 }
             }
         }
@@ -5064,7 +5078,8 @@ const TerminalStream = struct {
     }
 
     fn startDcs(self: *TerminalStream, hook: parser_mod.DcsHook) TerminalFeedError!EventEffect {
-        try self.terminal.stream_state.dcs.start(hook);
+        const reserved = synchronizedDcsMode(hook.final, hook.params[0..hook.count], hook.intermediates[0..hook.intermediates_len]) != null;
+        try self.terminal.stream_state.dcs.start(hook, if (reserved) .discard else .retain);
         return .{
             .changed = false,
         };

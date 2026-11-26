@@ -226,8 +226,10 @@ const OutputGate = struct {
     pending: bool = true,
 
     /// Tracks pending canonical change and exact release/hold deadlines without changing VT.
-    fn note(self: *OutputGate, revision: u64, held: bool, ended: bool, now: u64) void {
-        if (ended or !held) {
+    fn note(self: *OutputGate, revision: u64, held: bool, progress: vt.Terminal.SynchronizedOutputProgress, now: u64) void {
+        // The accepted begin refreshes one bounded interval from this turn,
+        // not an accumulated extension of the previous deadline.
+        if (progress.ended or progress.began or !held) {
             self.hold_started = null;
             self.timed_out = false;
         }
@@ -943,7 +945,7 @@ const State = struct {
         const observation = self.observe();
         const live = observation.semanticView(0);
         self.viewport.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
-        self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
+        self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output, now);
         if (result.animation_changed) self.output_gate.pending = true;
         self.reconcileSelection(observation, live);
         const search_changed = self.search.step(observation) catch |failure| failed: {
@@ -2759,17 +2761,17 @@ test "direct worker draws a multi-row continuation after history scroll" {
 
 test "held output releases on timeout without new child output, then resets on exact release" {
     var gate: OutputGate = .{ .pending = false };
-    gate.note(7, true, false, 100);
+    gate.note(7, true, .{}, 100);
     try std.testing.expect(gate.pending);
     try std.testing.expect(!gate.released(true));
     try std.testing.expectEqual(@as(?i32, 1000), gate.waitMs(100));
-    gate.note(7, true, false, 100 + std.time.ns_per_s);
+    gate.note(7, true, .{}, 100 + std.time.ns_per_s);
     try std.testing.expect(gate.released(true));
     try std.testing.expectEqual(@as(?i32, null), gate.waitMs(100 + std.time.ns_per_s));
     gate.pending = false;
-    gate.note(8, true, true, 200 + std.time.ns_per_s);
+    gate.note(8, true, .{ .ended = true }, 200 + std.time.ns_per_s);
     try std.testing.expect(!gate.released(true));
-    gate.note(8, false, false, 201 + std.time.ns_per_s);
+    gate.note(8, false, .{}, 201 + std.time.ns_per_s);
     try std.testing.expect(gate.released(false));
 }
 
@@ -3404,4 +3406,70 @@ test "Contour holds immutable text palette and cursor while servicing queries th
     try std.testing.expect(held.snapshot.terminal_revision > first_revision);
     try std.testing.expectEqual(state.status.revision, held.snapshot.terminal_revision);
     try std.testing.expect(!core.terminal.synchronizedOutput());
+}
+
+test "legacy and DEC synchronized begins refresh the bounded host deadline without screen mutation" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const core = try allocator.create(pty_vt.Core);
+    defer allocator.destroy(core);
+    try core.initInto(allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 0,
+    }, .{ .width = 8, .height = 16 });
+    defer core.deinit();
+    var state: State = .{
+        .allocator = allocator,
+        .program_status_index = host_status.Index.init(allocator),
+        .io = threaded.io(),
+        .core = core,
+        .projection = undefined,
+        .history_capacity = 0,
+        .wake_fd = -1,
+        .event_type = 0,
+        .visible = .init(false),
+    };
+    defer state.program_status_index.deinit();
+    const Check = struct {
+        fn step(owner: *State, bytes: []const u8, now: u64) !pty_vt.Service {
+            const c_owner = owner.core;
+            std.debug.assert(c_owner.read_start == c_owner.read_end);
+            @memcpy(c_owner.reads[0..bytes.len], bytes);
+            c_owner.read_start = 0;
+            c_owner.read_end = bytes.len;
+            return owner.service(false, false, now);
+        }
+    };
+    const start = 100 * std.time.ns_per_ms;
+    const first = try Check.step(&state, "\x1bP=1s\x1b\\", start);
+    try std.testing.expect(!first.synchronized_output.ended);
+    try std.testing.expect(core.terminal.synchronizedOutput());
+    const revision = core.terminal.semanticSequence();
+    const repeat_at = start + 900 * std.time.ns_per_ms;
+    const repeated = try Check.step(&state, "\x1b[?2026h", repeat_at);
+    try std.testing.expect(!repeated.synchronized_output.ended);
+    try std.testing.expectEqual(revision, core.terminal.semanticSequence());
+    try std.testing.expectEqual(@as(?i32, 1000), state.output_gate.waitMs(repeat_at));
+    const old_deadline = try Check.step(&state, "", start + std.time.ns_per_s);
+    try std.testing.expect(!old_deadline.synchronized_output.ended);
+    try std.testing.expect(!state.output_gate.released(true));
+    const final_deadline = repeat_at + std.time.ns_per_s;
+    const elapsed = try Check.step(&state, "", final_deadline);
+    try std.testing.expect(!elapsed.synchronized_output.ended);
+    try std.testing.expect(state.output_gate.released(true));
+    try std.testing.expect(core.terminal.synchronizedOutput());
+    try std.testing.expectEqual(revision, core.terminal.semanticSequence());
+    const rearm = try Check.step(&state, "\x90=1sreserved\x9c", final_deadline + 1);
+    try std.testing.expect(!rearm.synchronized_output.ended);
+    try std.testing.expect(!state.output_gate.released(true));
+    try std.testing.expectEqual(revision, core.terminal.semanticSequence());
+    const ended = try Check.step(&state, "\x1bP=2s\x1b\\", final_deadline + 2);
+    try std.testing.expect(ended.synchronized_output.ended);
+    try std.testing.expect(!core.terminal.synchronizedOutput());
+    try std.testing.expect(state.output_gate.released(false));
+    try std.testing.expectEqual(@as(?i32, null), state.output_gate.waitMs(final_deadline + 2));
 }

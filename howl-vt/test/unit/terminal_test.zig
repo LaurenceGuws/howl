@@ -1909,3 +1909,55 @@ test "whole tall block survives downward scroll with and without history restore
         try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(2, 0).y);
     }
 }
+
+test "legacy synchronized DCS ignores reserved payload without metadata length semantics" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const reserved: [8192]u8 = @splat('x');
+    try std.testing.expect(!(try terminal.feed("\x1bP=1s")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(&reserved)).stateChanged());
+    try std.testing.expect(!terminal.synchronizedOutput());
+    try std.testing.expect((try terminal.feed("\x1b\\")).stateChanged());
+    try std.testing.expect(terminal.synchronizedOutput());
+    try std.testing.expect(!(try terminal.feed("\x90=2s")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(&reserved)).stateChanged());
+    try std.testing.expect(terminal.synchronizedOutput());
+    try std.testing.expect((try terminal.feed("\x9c")).synchronized_output.ended);
+    try std.testing.expect(!terminal.synchronizedOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "synchronized begin facts survive fragmented legacy and DEC framing without revision churn" {
+    const cases = [_]struct { wire: []const u8, initial: bool, began: bool, ended: bool, held: bool }{
+        .{ .wire = "\x1bP=1sreserved\x1b\\", .initial = false, .began = true, .ended = false, .held = true },
+        .{ .wire = "\x90=01sreserved\x9c", .initial = true, .began = true, .ended = false, .held = true },
+        .{ .wire = "\x1b[?2026h", .initial = true, .began = true, .ended = false, .held = true },
+        .{ .wire = "\x1b[?25;2026h", .initial = true, .began = true, .ended = false, .held = true },
+        .{ .wire = "\x1bP=2sreserved\x1b\\", .initial = true, .began = false, .ended = true, .held = false },
+        .{ .wire = "\x90=2sreserved\x9c", .initial = false, .began = false, .ended = false, .held = false },
+        .{ .wire = "\x1bP=1s\x1b\\\x1b[?2026l", .initial = false, .began = false, .ended = true, .held = false },
+        .{ .wire = "\x1b[?2026l\x90=1s\x9c", .initial = true, .began = true, .ended = true, .held = true },
+        .{ .wire = "\x1bP=1sdrop\x18", .initial = false, .began = false, .ended = false, .held = false },
+        .{ .wire = "\x1bP=2sdrop\x1a", .initial = true, .began = false, .ended = false, .held = true },
+        .{ .wire = "\x1bP=3s\x1b\\\x1bP=1;2s\x1b\\\x1bP=s\x1b\\", .initial = false, .began = false, .ended = false, .held = false },
+        .{ .wire = "\x1bP=1sunfinished", .initial = false, .began = false, .ended = false, .held = false },
+    };
+    for (cases) |case| {
+        for (0..case.wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            if (case.initial) try std.testing.expect((try terminal.feed("\x1b[?2026h")).synchronized_output.began);
+            const before = terminal.semanticSequence();
+            var progress = (try terminal.feed(case.wire[0..split])).synchronized_output;
+            progress.merge((try terminal.feed(case.wire[split..])).synchronized_output);
+            try std.testing.expectEqual(case.began, progress.began);
+            try std.testing.expectEqual(case.ended, progress.ended);
+            try std.testing.expectEqual(case.held, terminal.synchronizedOutput());
+            if (!case.ended and case.initial == case.held)
+                try std.testing.expectEqual(before, terminal.semanticSequence());
+            const empty = try terminal.feed("");
+            try std.testing.expect(!empty.synchronized_output.began and !empty.synchronized_output.ended);
+            try std.testing.expectEqualStrings("", terminal.replyBytes());
+        }
+    }
+}

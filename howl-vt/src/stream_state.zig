@@ -22,6 +22,9 @@ pub const DcsCapture = struct {
     pub const StartError = error{OutOfMemory};
     /// Reports allocation failure while appending bounded DCS bytes.
     pub const PutError = error{OutOfMemory};
+    /// The semantic owner may discard a known reserved payload while the
+    /// parser still owns framing and cancellation.
+    pub const PayloadPolicy = enum { retain, discard };
 
     allocator: std.mem.Allocator,
     bytes: std.ArrayList(u8) = .empty,
@@ -33,6 +36,7 @@ pub const DcsCapture = struct {
     intermediates_len: u8 = 0,
     active: bool = false,
     overflowed: bool = false,
+    payload_policy: PayloadPolicy = .retain,
 
     /// Initializes one inactive capture with caller-owned allocation policy.
     pub fn init(allocator: std.mem.Allocator) DcsCapture {
@@ -53,15 +57,17 @@ pub const DcsCapture = struct {
         self.param_count = 0;
         self.intermediates_len = 0;
         self.overflowed = false;
+        self.payload_policy = .retain;
         self.bytes.clearRetainingCapacity();
     }
 
     /// Copies one parser-borrowed hook and materializes its exact DCS body prefix.
-    pub fn start(self: *DcsCapture, hook: parser.DcsHook) StartError!void {
+    pub fn start(self: *DcsCapture, hook: parser.DcsHook, policy: PayloadPolicy) StartError!void {
         std.debug.assert(hook.count <= parser.max_params);
         std.debug.assert(hook.intermediates_len <= parser.max_intermediates);
         self.reset();
         self.active = true;
+        self.payload_policy = policy;
         self.final = hook.final;
         self.param_count = hook.count;
         self.intermediates_len = hook.intermediates_len;
@@ -97,7 +103,7 @@ pub const DcsCapture = struct {
     /// remains exceptional.
     pub fn put(self: *DcsCapture, byte: u8) PutError!void {
         std.debug.assert(self.active);
-        if (self.overflowed) return;
+        if (self.overflowed or self.payload_policy == .discard) return;
         const limit: usize = if (self.isSixel())
             sixel.max_encoded_bytes
         else
@@ -293,7 +299,7 @@ test "stream state initialization reports parser allocation failure" {
 }
 
 test "DCS capture start and put report exact failures and remain reusable" {
-    const start: *const fn (*DcsCapture, parser.DcsHook) DcsCapture.StartError!void = DcsCapture.start;
+    const start: *const fn (*DcsCapture, parser.DcsHook, DcsCapture.PayloadPolicy) DcsCapture.StartError!void = DcsCapture.start;
     const put: *const fn (*DcsCapture, u8) DcsCapture.PutError!void = DcsCapture.put;
     const hook: parser.DcsHook = .{
         .final = 'q',
@@ -307,12 +313,12 @@ test "DCS capture start and put report exact failures and remain reusable" {
     var capture = DcsCapture.init(failing.allocator());
     defer capture.deinit();
 
-    try std.testing.expectError(error.OutOfMemory, start(&capture, hook));
+    try std.testing.expectError(error.OutOfMemory, start(&capture, hook, .retain));
     try std.testing.expect(!capture.active);
     try std.testing.expectEqual(@as(usize, 0), capture.bytes.items.len);
 
     failing.fail_index = std.math.maxInt(usize);
-    try start(&capture, hook);
+    try start(&capture, hook, .retain);
     const payload_start = capture.payload_start;
     failing.fail_index = failing.alloc_index;
 
@@ -340,7 +346,7 @@ test "DCS capture start and put report exact failures and remain reusable" {
     try std.testing.expectEqual(@as(usize, 0), capture.bytes.items.len);
     capture.reset();
     try std.testing.expect(!capture.active);
-    try start(&capture, hook);
+    try start(&capture, hook, .retain);
 }
 
 test "string capture bounds generic controls and discards overflow storage" {
@@ -423,4 +429,38 @@ test "string run allocation failure remains bounded and reusable" {
     failing.fail_index = std.math.maxInt(usize);
     try capture.putSlice("Gok");
     try std.testing.expectEqualStrings("Gok", capture.payload());
+}
+
+test "discarded reserved DCS payload consumes no allocation and leaves ordinary capture reusable" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var capture = DcsCapture.init(failing.allocator());
+    defer capture.deinit();
+    const hook: parser.DcsHook = .{
+        .final = 's',
+        .params = &.{1},
+        .count = 1,
+        .intermediates = "=",
+        .intermediates_len = 1,
+    };
+    try capture.start(hook, .discard);
+    const before = failing.alloc_index;
+    const prefix_len = capture.bytes.items.len;
+    failing.fail_index = before;
+    for (0..8192) |_| try capture.put('x');
+    try std.testing.expectEqual(before, failing.alloc_index);
+    try std.testing.expect(!failing.has_induced_failure);
+    try std.testing.expectEqual(prefix_len, capture.bytes.items.len);
+    try std.testing.expectEqualStrings("", capture.payload());
+    try std.testing.expect(!capture.didOverflow());
+    failing.fail_index = std.math.maxInt(usize);
+    capture.reset();
+    try capture.start(.{
+        .final = 'p',
+        .params = &.{},
+        .count = 0,
+        .intermediates = "+",
+        .intermediates_len = 1,
+    }, .retain);
+    try capture.put('A');
+    try std.testing.expectEqualStrings("A", capture.payload());
 }
