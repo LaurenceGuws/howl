@@ -9234,6 +9234,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty typed committed text preserves multiple scalars and unknown key identity
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: report-all alphabet keys carry committed text repeat release and focus cleanup exactly once
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Observed LazyGit =1u after alternate entry and DECCKM set. Unmodified arrow letter form omits default1; Num
@@ -9249,6 +9255,13 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_05:
+          scope: Negotiated shortcut route uses current-layout printable Unicode instead of SDL normalized event key. Actual
+            SDL default lookup and typed Cyrillic/French facts prove identity fields. Existing normalized ASCII lane retained
+            for nonnegotiated shortcuts; no global shortcut policy change.
+          method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
+            layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
     - id: event-types
       section: Report event types
       level: defined
@@ -9280,6 +9293,12 @@ specifications:
       - file: howl-vt/src/input.zig
         test: Kitty event parameter covers every factual modifier combination
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: report-all alphabet keys carry committed text repeat release and focus cleanup exactly once
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key press without modifiers or additional fields omits first parameter; repeat/release with reporting
@@ -9300,6 +9319,14 @@ specifications:
           method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
             PTY with synthetic SDL events; no blanket FULL promotion
           baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
+        howl_qualification_20261126_keyboard_05:
+          scope: Hold complete press identity through committed text, repeat, actual release and existing logical focus retirement.
+            Live test alters event.key and modifier mask during hold; repeat dispatch uses current modifiers, not stale press
+            mask; release drops shifted subfield when Shift inactive. No assertion for presses without corresponding SDL text
+            commit.
+          method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
+            layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
     - id: alternate-keys
       section: Report alternate keys
       level: defined
@@ -9325,6 +9352,15 @@ specifications:
       - file: howl-vt/src/input.zig
         test: Kitty alternate identity rejects non-Unicode scalars only in emitted fields
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: report-all alphabet keys carry committed text repeat release and focus cleanup exactly once
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: PC101 base identity is confined to standard printable positions
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_02:
           scope: Shifted identity included only with active Shift; base-layout-only retains empty shifted subfield, zero alternatives
@@ -9340,6 +9376,14 @@ specifications:
           method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
             PTY with synthetic SDL events; no blanket FULL promotion
           baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
+        howl_qualification_20261126_keyboard_05:
+          scope: Negotiated SDL Unicode events obtain unshifted and shifted identities from direct scancode lookup, bypassing
+            event normalization. PC101 base is derived only from 48 standard printable USB scancode positions. Omit redundant/invalid
+            alternatives. Typed synthetic Cyrillic/French/ISO cases and headless SDL default-layout actual child prove exact
+            bytes and held-identity retention. No physical non-US or AltGr/level5 qualification.
+          method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
+            layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
     - id: all-keys
       section: Report all keys as escape codes
       level: defined
@@ -9380,6 +9424,15 @@ specifications:
       - file: howl-app/src/terminal.zig
         test: live maximum Kitty text commit reaches child intact before later input
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: report-all alphabet keys carry committed text repeat release and focus cleanup exactly once
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: PC101 base identity is confined to standard printable positions
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
@@ -9408,6 +9461,13 @@ specifications:
           method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
             pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
           baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
+        howl_qualification_20261126_keyboard_05:
+          scope: Report-all SDL printable identities preserve current layout and committed text independently. Headless direct
+            SDL lookup produces a/A and equals/plus; typed layout cases keep original scalar and base-layout position distinct.
+            No complete functional-key repertoire or physical IME claim.
+          method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
+            layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9595,6 +9655,12 @@ specifications:
       - file: howl-app/src/terminal.zig
         test: live maximum Kitty text commit reaches child intact before later input
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: report-all alphabet keys carry committed text repeat release and focus cleanup exactly once
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
@@ -9622,6 +9688,13 @@ specifications:
           method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
             pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
           baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
+        howl_qualification_20261126_keyboard_05:
+          scope: Exact primary, shifted and base-only empty-subfield grammar across fixture cases; actual PTY confirms current-layout
+            identity rather than normalized event.key, retained across repeats/releases with current modifier fields. Missing
+            layout facts are not synthesized by adapter; SDL backend fallback and live layout transitions remain unqualified.
+          method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
+            layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined
@@ -9641,6 +9714,12 @@ specifications:
       - file: howl-app/src/input.zig
         test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: report-all alphabet keys carry committed text repeat release and focus cleanup exactly once
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Unmodified default omits number, Ctrl5 and Num Lock129 retained for letter-key forms. No change to modifier
@@ -9656,6 +9735,13 @@ specifications:
           method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
             PTY with synthetic SDL events; no blanket FULL promotion
           baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
+        howl_qualification_20261126_keyboard_05:
+          scope: Current SDL mask determines repeat routing; Control added during a held text key causes encoded repeat immediately.
+            Shift removed during hold omits shifted alternate on subsequent repeat/release. Existing modifier owner and lock
+            state unchanged.
+          method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
+            layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
     - id: feature-detection
       section: docs/keyboard-protocol.rst:441-458
       level: defined

@@ -5,10 +5,27 @@ const terminal = @import("terminal.zig");
 const mappings = @import("keybindings.zig");
 
 const Kind = enum { none, application, overlay, terminal, text };
+const Identity = struct {
+    key: VT.Key,
+    shifted: ?u21 = null,
+    alternate: ?u21 = null,
+
+    fn event(self: Identity, mods: VT.InputModifier, action: VT.KeyAction, text: []const u8) VT.InputEvent {
+        return .{ .key = .{
+            .key = self.key,
+            .mods = mods,
+            .action = action,
+            .shifted = self.shifted,
+            .alternate = self.alternate,
+            .text = text,
+        } };
+    }
+};
+
 const Held = struct {
     kind: Kind = .none,
     target: ?*terminal.Terminal = null,
-    key: ?VT.Key = null,
+    identity: ?Identity = null,
     mods: VT.InputModifier = .{},
 };
 
@@ -43,7 +60,7 @@ pub const Keyboard = struct {
                 const owner = previous.target.?;
                 const status = owner.snapshot();
                 if (status.failure == null and !status.closed)
-                    try owner.submit(.{ .input = .{ .key = .{ .key = previous.key.?, .mods = semanticModifiers(event.mod), .action = .release } } });
+                    try owner.submit(.{ .input = previous.identity.?.event(semanticModifiers(event.mod), .release, "") });
             }
             return .handled;
         }
@@ -68,15 +85,16 @@ pub const Keyboard = struct {
                 .terminal => {
                     const owner = entry.target.?;
                     const status = owner.snapshot();
-                    if (entry.key.? == .unicode and !entry.mods.control and !entry.mods.alt and !entry.mods.super) {
+                    const mods = semanticModifiers(event.mod);
+                    if (entry.identity.?.key == .unicode and !shortcutModifiers(mods)) {
                         self.pending_text = event.scancode;
-                        entry.mods = semanticModifiers(event.mod);
+                        entry.mods = mods;
                         self.pending_repeat = true;
                         return .handled;
                     }
                     if (!modifier) self.suppress_text = true;
                     if (status.failure == null and !status.closed)
-                        try owner.submit(.{ .input = .{ .key = .{ .key = entry.key.?, .mods = semanticModifiers(event.mod), .action = .repeat } } });
+                        try owner.submit(.{ .input = entry.identity.?.event(mods, .repeat, "") });
                     return .handled;
                 },
                 .none, .text => return .handled,
@@ -95,23 +113,34 @@ pub const Keyboard = struct {
         const status = owner.snapshot();
         if (status.failure != null or status.closed) return .handled;
         const mods = semanticModifiers(event.mod);
-        const report_all = status.interaction != null and status.interaction.?.kitty_keyboard_flags & 8 != 0;
+        const flags = if (status.interaction) |interaction| interaction.kitty_keyboard_flags else 0;
+        const report_all = flags & 8 != 0;
         if (modifier and !report_all) return .handled;
-        const key: VT.Key = if (named) |identity| .{ .named = identity } else if ((mods.control or mods.alt or mods.super) and event.key >= 0x20 and event.key < 0x7f)
-            try VT.Key.initUnicode(@intCast(event.key))
-        else {
+        const identity: Identity = if (named) |key| .{ .key = .{ .named = key } } else blk: {
+            const shortcut = shortcutModifiers(mods);
+            const negotiated = flags & (1 | 2 | 8) != 0;
+            const layout = if (negotiated) queryLayoutIdentity(event.scancode, event.mod) else null;
+            if (shortcut) {
+                // Preserve the existing normalized ASCII shortcut lane when
+                // no enhancement selects encoded Unicode events.
+                if (negotiated) {
+                    if (layout) |key| break :blk key;
+                } else if (event.key >= 0x20 and event.key < 0x7f) {
+                    break :blk .{ .key = try VT.Key.initUnicode(@intCast(event.key)) };
+                }
+            }
             entry.* = .{ .kind = .text };
-            if (status.interaction != null and status.interaction.?.kitty_keyboard_flags & 8 != 0 and event.key >= 0x20 and event.key <= 0x10ffff) {
+            if (report_all and layout != null) {
                 entry.target = owner;
-                entry.key = try VT.Key.initUnicode(@intCast(event.key));
+                entry.identity = layout;
                 entry.mods = mods;
                 self.pending_text = event.scancode;
                 self.pending_repeat = false;
             }
             return .handled;
         };
-        try owner.submit(.{ .input = .{ .key = .{ .key = key, .mods = mods, .action = .press } } });
-        entry.* = .{ .kind = .terminal, .target = owner, .key = key, .mods = mods };
+        try owner.submit(.{ .input = identity.event(mods, .press, "") });
+        entry.* = .{ .kind = .terminal, .target = owner, .identity = identity, .mods = mods };
         if (!modifier) self.suppress_text = true;
         return .handled;
     }
@@ -132,10 +161,10 @@ pub const Keyboard = struct {
             entry.* = .{};
             const owner = previous.target.?;
             const status = owner.snapshot();
-            const key = previous.key.?;
-            if (key == .named) mods &= ~modifierSideMask(key.named);
+            const identity = previous.identity.?;
+            if (identity.key == .named) mods &= ~modifierSideMask(identity.key.named);
             if (status.failure == null and !status.closed)
-                try owner.submit(.{ .input = .{ .key = .{ .key = key, .mods = semanticModifiers(mods), .action = .release } } });
+                try owner.submit(.{ .input = identity.event(semanticModifiers(mods), .release, "") });
         }
     }
 
@@ -170,7 +199,7 @@ pub const Keyboard = struct {
         const owner = entry.target orelse return false;
         const status = owner.snapshot();
         if (status.failure != null or status.closed) return true;
-        try owner.submit(.{ .input = .{ .key = .{ .key = entry.key.?, .mods = entry.mods, .action = if (self.pending_repeat) .repeat else .press, .text = text } } });
+        try owner.submit(.{ .input = entry.identity.?.event(entry.mods, if (self.pending_repeat) .repeat else .press, text) });
         entry.kind = .terminal;
         return true;
     }
@@ -192,6 +221,66 @@ pub fn semanticModifiers(mod: c.SDL_Keymod) VT.InputModifier {
         .super = mod & c.SDL_KMOD_GUI != 0,
         .caps_lock = mod & c.SDL_KMOD_CAPS != 0,
         .num_lock = mod & c.SDL_KMOD_NUM != 0,
+    };
+}
+
+fn shortcutModifiers(mods: VT.InputModifier) bool {
+    return mods.control or mods.alt or mods.super or mods.hyper or mods.meta;
+}
+
+// SDL's event keycode may have french_numbers/latin_letters normalization.
+// Query the active layout directly, retaining unreported AltGr/level-5
+// selection but excluding Ctrl/Alt/Super, Shift and lock state.
+fn queryLayoutIdentity(scan: c.SDL_Scancode, mods: c.SDL_Keymod) ?Identity {
+    if (scan == c.SDL_SCANCODE_UNKNOWN) return null;
+    const level = mods & @as(c.SDL_Keymod, c.SDL_KMOD_MODE | c.SDL_KMOD_LEVEL5);
+    return layoutIdentity(
+        scan,
+        c.SDL_GetKeyFromScancode(scan, level, false),
+        c.SDL_GetKeyFromScancode(scan, level | @as(c.SDL_Keymod, c.SDL_KMOD_SHIFT), false),
+    );
+}
+
+fn printableScalar(code: c.SDL_Keycode) ?u21 {
+    if (code < 32 or (code >= 127 and code <= 159) or code > 0x10ffff) return null;
+    const scalar: u21 = @intCast(code);
+    return if (std.unicode.utf8ValidCodepoint(scalar)) scalar else null;
+}
+
+// Only a known Unicode identity can carry alternatives. SDL does not expose
+// a portable default-layout lookup distinct from its current keymap.
+fn layoutIdentity(scan: c.SDL_Scancode, unshifted: c.SDL_Keycode, shifted: c.SDL_Keycode) ?Identity {
+    const primary = printableScalar(unshifted) orelse return null;
+    const shift = printableScalar(shifted);
+    const base = pc101Key(scan);
+    return .{
+        .key = VT.Key.initUnicode(primary) catch return null,
+        .shifted = if (shift == primary) null else shift,
+        .alternate = if (base == primary) null else base,
+    };
+}
+
+// Printable positions of the standard US PC-101 layout. SDL scancodes name
+// USB keyboard usage positions, not current-layout characters. ISO-only,
+// international, keypad and nonprintable positions have no base scalar.
+fn pc101Key(scan: c.SDL_Scancode) ?u21 {
+    return switch (scan) {
+        c.SDL_SCANCODE_A...c.SDL_SCANCODE_Z => @intCast('a' + scan - c.SDL_SCANCODE_A),
+        c.SDL_SCANCODE_1...c.SDL_SCANCODE_9 => @intCast('1' + scan - c.SDL_SCANCODE_1),
+        c.SDL_SCANCODE_0 => '0',
+        c.SDL_SCANCODE_SPACE => ' ',
+        c.SDL_SCANCODE_MINUS => '-',
+        c.SDL_SCANCODE_EQUALS => '=',
+        c.SDL_SCANCODE_LEFTBRACKET => '[',
+        c.SDL_SCANCODE_RIGHTBRACKET => ']',
+        c.SDL_SCANCODE_BACKSLASH => 0x5c,
+        c.SDL_SCANCODE_SEMICOLON => ';',
+        c.SDL_SCANCODE_APOSTROPHE => 0x27,
+        c.SDL_SCANCODE_GRAVE => 0x60,
+        c.SDL_SCANCODE_COMMA => ',',
+        c.SDL_SCANCODE_PERIOD => '.',
+        c.SDL_SCANCODE_SLASH => '/',
+        else => null,
     };
 }
 
@@ -308,7 +397,9 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    const expected = "\x1b[119;;119u\x1b[119;1:2;119u\x1b[119;1:3u\x1b[119;;119u\x1b[119;1:3u";
+    const expected = "\x1b[119;;119u\x1b[119;1:2;119u\x1b[119;1:3u\x1b[119;;119u\x1b[119;1:3u" ++
+        "\x1b[97:65;6u\x1b[97:65;6:2u\x1b[97;5:2u\x1b[97;5:3u\x1b[61:43;2;43u\x1b[61:43;2:2;43u\x1b[61;1:3u" ++
+        "\x1b[119;;119u\x1b[119;5:2u\x1b[119;5:3u";
     const command = try std.fmt.allocPrint(std.testing.allocator, "stty raw -echo; printf '\\033[>31u\\033]0;READY\\007'; value=$(dd bs=1 count={d} 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\033]0;%s\\007' \"$value\"; sleep 30", .{expected.len});
     defer std.testing.allocator.free(command);
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
@@ -347,6 +438,46 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
     try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
     try std.testing.expect(try keyboard.commitText("w"));
     try keyboard.releaseTerminal();
+    try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    // Headless SDL supplies the default layout. A normalized event key
+    // must not replace that direct-layout identity in a negotiated event.
+    try std.testing.expectEqual(@as(c.SDL_Keycode, 'a'), c.SDL_GetKeyFromScancode(c.SDL_SCANCODE_A, c.SDL_KMOD_NONE, false));
+    try std.testing.expectEqual(@as(c.SDL_Keycode, 'A'), c.SDL_GetKeyFromScancode(c.SDL_SCANCODE_A, c.SDL_KMOD_SHIFT, false));
+    event.scancode = c.SDL_SCANCODE_A;
+    event.key = c.SDLK_Q;
+    event.mod = c.SDL_KMOD_CTRL | c.SDL_KMOD_SHIFT;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(keyboard.consumeText());
+    event.repeat = true;
+    event.key = c.SDLK_Z;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(keyboard.consumeText());
+    event.mod = c.SDL_KMOD_CTRL;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(keyboard.consumeText());
+    event.repeat = false;
+    try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    event.scancode = c.SDL_SCANCODE_EQUALS;
+    event.key = c.SDLK_EQUALS;
+    event.mod = c.SDL_KMOD_SHIFT;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(try keyboard.commitText("+"));
+    event.repeat = true;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(try keyboard.commitText("+"));
+    event.repeat = false;
+    event.mod = c.SDL_KMOD_NONE;
+    try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    // A repeat uses the current modifier state, not the press's text route.
+    event.scancode = c.SDL_SCANCODE_W;
+    event.key = c.SDLK_W;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(try keyboard.commitText("w"));
+    event.mod = c.SDL_KMOD_CTRL;
+    event.repeat = true;
+    try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+    try std.testing.expect(keyboard.consumeText());
+    event.repeat = false;
     try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
     const expected_hex = std.fmt.bytesToHex(expected, .lower);
     attempt = 0;
@@ -463,4 +594,74 @@ test "Kitty live modifier lifecycle preserves both sides and does not acknowledg
     try Check.wait(owner, threaded.io(), "x-" ++ expected_hex);
     try std.testing.expect(!owner.takeInputActivity());
     try std.testing.expectEqual(@as(?VT.ProgramStatus.State, .done), owner.snapshot().program_status.state);
+}
+
+test "PC101 base identity is confined to standard printable positions" {
+    const letters = "abcdefghijklmnopqrstuvwxyz";
+    for (letters, 0..) |letter, i| {
+        const scan: c.SDL_Scancode = @intCast(c.SDL_SCANCODE_A + i);
+        try std.testing.expectEqual(@as(?u21, letter), pc101Key(scan));
+    }
+    const digits = "1234567890";
+    for (digits, 0..) |digit, i| {
+        const scan: c.SDL_Scancode = @intCast(c.SDL_SCANCODE_1 + i);
+        try std.testing.expectEqual(@as(?u21, digit), pc101Key(scan));
+    }
+    const cases = [_]struct { scan: c.SDL_Scancode, key: u21 }{
+        .{ .scan = c.SDL_SCANCODE_SPACE, .key = ' ' },
+        .{ .scan = c.SDL_SCANCODE_MINUS, .key = '-' },
+        .{ .scan = c.SDL_SCANCODE_EQUALS, .key = '=' },
+        .{ .scan = c.SDL_SCANCODE_LEFTBRACKET, .key = '[' },
+        .{ .scan = c.SDL_SCANCODE_RIGHTBRACKET, .key = ']' },
+        .{ .scan = c.SDL_SCANCODE_BACKSLASH, .key = 0x5c },
+        .{ .scan = c.SDL_SCANCODE_SEMICOLON, .key = ';' },
+        .{ .scan = c.SDL_SCANCODE_APOSTROPHE, .key = 0x27 },
+        .{ .scan = c.SDL_SCANCODE_GRAVE, .key = 0x60 },
+        .{ .scan = c.SDL_SCANCODE_COMMA, .key = ',' },
+        .{ .scan = c.SDL_SCANCODE_PERIOD, .key = '.' },
+        .{ .scan = c.SDL_SCANCODE_SLASH, .key = '/' },
+    };
+    for (cases) |case| try std.testing.expectEqual(@as(?u21, case.key), pc101Key(case.scan));
+    var count: usize = 0;
+    for (0..c.SDL_SCANCODE_COUNT) |i| {
+        if (pc101Key(@intCast(i)) != null) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 48), count);
+    for ([_]c.SDL_Scancode{ c.SDL_SCANCODE_UNKNOWN, c.SDL_SCANCODE_NONUSHASH, c.SDL_SCANCODE_NONUSBACKSLASH, c.SDL_SCANCODE_INTERNATIONAL1, c.SDL_SCANCODE_KP_1, c.SDL_SCANCODE_F1 }) |scan|
+        try std.testing.expectEqual(@as(?u21, null), pc101Key(scan));
+}
+
+test "SDL layout identities encode Cyrillic French and missing alternate facts without substitution" {
+    var vt = try VT.init(std.testing.allocator, 2, 8);
+    defer vt.deinit();
+    try std.testing.expect((try vt.feed("\x1b[=31u")).stateChanged());
+    var scratch: VT.InputScratch = .{};
+    const cases = [_]struct {
+        scan: c.SDL_Scancode,
+        primary: c.SDL_Keycode,
+        shift: c.SDL_Keycode,
+        press: []const u8,
+        release: []const u8,
+    }{
+        .{ .scan = c.SDL_SCANCODE_C, .primary = 0x441, .shift = 0x421, .press = "\x1b[1089:1057:99;6u", .release = "\x1b[1089::99;5:3u" },
+        .{ .scan = c.SDL_SCANCODE_1, .primary = '&', .shift = '1', .press = "\x1b[38:49:49;6u", .release = "\x1b[38::49;5:3u" },
+        .{ .scan = c.SDL_SCANCODE_A, .primary = 'a', .shift = 'A', .press = "\x1b[97:65;6u", .release = "\x1b[97;5:3u" },
+        .{ .scan = c.SDL_SCANCODE_NONUSBACKSLASH, .primary = 'é', .shift = 'É', .press = "\x1b[233:201;6u", .release = "\x1b[233;5:3u" },
+        .{ .scan = c.SDL_SCANCODE_C, .primary = 0x441, .shift = c.SDLK_UNKNOWN, .press = "\x1b[1089::99;6u", .release = "\x1b[1089::99;5:3u" },
+        .{ .scan = c.SDL_SCANCODE_SPACE, .primary = ' ', .shift = ' ', .press = "\x1b[32;6u", .release = "\x1b[32;5:3u" },
+    };
+    for (cases) |case| {
+        const identity = layoutIdentity(case.scan, case.primary, case.shift) orelse return error.MissingIdentity;
+        var press = try vt.encodeInput(std.testing.allocator, &scratch, identity.event(.{ .control = true, .shift = true }, .press, ""));
+        defer press.deinit();
+        try std.testing.expectEqualStrings(case.press, press.bytes);
+        var released = try vt.encodeInput(std.testing.allocator, &scratch, identity.event(.{ .control = true }, .release, ""));
+        defer released.deinit();
+        try std.testing.expectEqualStrings(case.release, released.bytes);
+    }
+    for ([_]c.SDL_Keycode{ c.SDLK_UNKNOWN, c.SDLK_F1, 0xd800, 0x110000, 127, 159 }) |invalid| {
+        try std.testing.expect(layoutIdentity(c.SDL_SCANCODE_A, invalid, 'A') == null);
+        const identity = layoutIdentity(c.SDL_SCANCODE_A, 'a', invalid) orelse return error.MissingIdentity;
+        try std.testing.expectEqual(@as(?u21, null), identity.shifted);
+    }
 }
