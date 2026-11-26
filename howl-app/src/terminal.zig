@@ -1138,10 +1138,7 @@ fn inputActivity(task: Task) bool {
         .bytes, .paste, .committed_text => |bytes| bytes.len != 0,
         .key => |key| key.action != .release and switch (key.key) {
             .unicode => true,
-            .named => |named| switch (named) {
-                .left_shift, .right_shift, .left_control, .right_control, .left_alt, .right_alt, .left_super, .right_super, .left_hyper, .right_hyper, .left_meta, .right_meta, .caps_lock, .num_lock => false,
-                else => true,
-            },
+            .named => |named| !vt.Terminal.isModifierKey(named),
         },
         else => false,
     };

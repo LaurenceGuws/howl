@@ -64,8 +64,8 @@ pub const Keyboard = struct {
             }
             return .handled;
         }
-        const named = namedKey(event.key);
-        const modifier = if (named) |key| isModifier(key) else false;
+        const named = eventNamedKey(event);
+        const modifier = if (named) |key| VT.isModifierKey(key) else false;
         if (!modifier) {
             self.suppress_text = false;
             self.pending_text = null;
@@ -294,12 +294,29 @@ fn modifierSideMask(key: VT.NamedKey) c.SDL_Keymod {
         .right_alt => c.SDL_KMOD_RALT,
         .left_super => c.SDL_KMOD_LGUI,
         .right_super => c.SDL_KMOD_RGUI,
+        .iso_level3_shift => c.SDL_KMOD_MODE,
+        .iso_level5_shift => c.SDL_KMOD_LEVEL5,
         else => c.SDL_KMOD_NONE,
     };
 }
 
-fn isModifier(key: VT.NamedKey) bool {
-    return modifierSideMask(key) != c.SDL_KMOD_NONE or key == .caps_lock or key == .num_lock;
+// Recover keypad provenance only from an explicit matching SDL pair.
+// Do not infer navigation from Num Lock or guess the platform keymap.
+fn eventNamedKey(event: c.SDL_KeyboardEvent) ?VT.NamedKey {
+    return switch (event.scancode) {
+        c.SDL_SCANCODE_KP_1 => if (event.key == c.SDLK_END) .keypad_end else namedKey(event.key),
+        c.SDL_SCANCODE_KP_2 => if (event.key == c.SDLK_DOWN) .keypad_down else namedKey(event.key),
+        c.SDL_SCANCODE_KP_3 => if (event.key == c.SDLK_PAGEDOWN) .keypad_page_down else namedKey(event.key),
+        c.SDL_SCANCODE_KP_4 => if (event.key == c.SDLK_LEFT) .keypad_left else namedKey(event.key),
+        c.SDL_SCANCODE_KP_5 => if (event.key == c.SDLK_CLEAR) .keypad_begin else namedKey(event.key),
+        c.SDL_SCANCODE_KP_6 => if (event.key == c.SDLK_RIGHT) .keypad_right else namedKey(event.key),
+        c.SDL_SCANCODE_KP_7 => if (event.key == c.SDLK_HOME) .keypad_home else namedKey(event.key),
+        c.SDL_SCANCODE_KP_8 => if (event.key == c.SDLK_UP) .keypad_up else namedKey(event.key),
+        c.SDL_SCANCODE_KP_9 => if (event.key == c.SDLK_PAGEUP) .keypad_page_up else namedKey(event.key),
+        c.SDL_SCANCODE_KP_0 => if (event.key == c.SDLK_INSERT) .keypad_insert else namedKey(event.key),
+        c.SDL_SCANCODE_KP_PERIOD => if (event.key == c.SDLK_DELETE) .keypad_delete else namedKey(event.key),
+        else => namedKey(event.key),
+    };
 }
 
 /// Named physical keys, including function, lock and keypad identities.
@@ -359,6 +376,36 @@ pub fn namedKey(key: c.SDL_Keycode) ?VT.NamedKey {
         c.SDLK_KP_COMMA => .keypad_separator,
         c.SDLK_KP_EQUALS => .keypad_equal,
         c.SDLK_KP_ENTER => .keypad_enter,
+        c.SDLK_F13 => .f13,
+        c.SDLK_F14 => .f14,
+        c.SDLK_F15 => .f15,
+        c.SDLK_F16 => .f16,
+        c.SDLK_F17 => .f17,
+        c.SDLK_F18 => .f18,
+        c.SDLK_F19 => .f19,
+        c.SDLK_F20 => .f20,
+        c.SDLK_F21 => .f21,
+        c.SDLK_F22 => .f22,
+        c.SDLK_F23 => .f23,
+        c.SDLK_F24 => .f24,
+        c.SDLK_SCROLLLOCK => .scroll_lock,
+        c.SDLK_PRINTSCREEN => .print_screen,
+        c.SDLK_PAUSE => .pause,
+        c.SDLK_APPLICATION, c.SDLK_MENU => .menu,
+        c.SDLK_MEDIA_PLAY => .media_play,
+        c.SDLK_MEDIA_PAUSE => .media_pause,
+        c.SDLK_MEDIA_PLAY_PAUSE => .media_play_pause,
+        c.SDLK_MEDIA_STOP => .media_stop,
+        c.SDLK_MEDIA_FAST_FORWARD => .media_fast_forward,
+        c.SDLK_MEDIA_REWIND => .media_rewind,
+        c.SDLK_MEDIA_NEXT_TRACK => .media_track_next,
+        c.SDLK_MEDIA_PREVIOUS_TRACK => .media_track_previous,
+        c.SDLK_MEDIA_RECORD => .media_record,
+        c.SDLK_VOLUMEDOWN => .lower_volume,
+        c.SDLK_VOLUMEUP => .raise_volume,
+        c.SDLK_MUTE => .mute_volume,
+        c.SDLK_MODE => .iso_level3_shift,
+        c.SDLK_LEVEL5_SHIFT => .iso_level5_shift,
         else => null,
     };
 }
@@ -399,7 +446,10 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
     defer threaded.deinit();
     const expected = "\x1b[119;;119u\x1b[119;1:2;119u\x1b[119;1:3u\x1b[119;;119u\x1b[119;1:3u" ++
         "\x1b[97:65;6u\x1b[97:65;6:2u\x1b[97;5:2u\x1b[97;5:3u\x1b[61:43;2;43u\x1b[61:43;2:2;43u\x1b[61;1:3u" ++
-        "\x1b[119;;119u\x1b[119;5:2u\x1b[119;5:3u";
+        "\x1b[119;;119u\x1b[119;5:2u\x1b[119;5:3u" ++
+        "\x1b[57376u\x1b[57376;1:3u\x1b[57430u\x1b[57430;1:3u\x1b[57361u\x1b[57361;1:3u" ++
+        "\x1b[57363u\x1b[57363;1:3u\x1b[57359u\x1b[57359;1:3u\x1b[57453u\x1b[57453;1:3u" ++
+        "\x1b[57417u\x1b[57417;1:3u";
     const command = try std.fmt.allocPrint(std.testing.allocator, "stty raw -echo; printf '\\033[>31u\\033]0;READY\\007'; value=$(dd bs=1 count={d} 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\033]0;%s\\007' \"$value\"; sleep 30", .{expected.len});
     defer std.testing.allocator.free(command);
     const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
@@ -479,6 +529,23 @@ test "report-all alphabet keys carry committed text repeat release and focus cle
     try std.testing.expect(keyboard.consumeText());
     event.repeat = false;
     try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    // Named functional events do not require a following SDL text commit.
+    const functional = [_]struct { scan: c.SDL_Scancode, key: c.SDL_Keycode }{
+        .{ .scan = c.SDL_SCANCODE_F13, .key = c.SDLK_F13 },
+        .{ .scan = c.SDL_SCANCODE_MEDIA_PLAY_PAUSE, .key = c.SDLK_MEDIA_PLAY_PAUSE },
+        .{ .scan = c.SDL_SCANCODE_PRINTSCREEN, .key = c.SDLK_PRINTSCREEN },
+        .{ .scan = c.SDL_SCANCODE_APPLICATION, .key = c.SDLK_APPLICATION },
+        .{ .scan = c.SDL_SCANCODE_SCROLLLOCK, .key = c.SDLK_SCROLLLOCK },
+        .{ .scan = c.SDL_SCANCODE_MODE, .key = c.SDLK_MODE },
+        .{ .scan = c.SDL_SCANCODE_KP_4, .key = c.SDLK_LEFT },
+    };
+    for (functional) |item| {
+        event.scancode = item.scan;
+        event.key = item.key;
+        event.mod = c.SDL_KMOD_NONE;
+        try std.testing.expect((try keyboard.route(event, true, owner, null, false)) == .handled);
+        try std.testing.expect((try keyboard.route(event, false, owner, null, false)) == .handled);
+    }
     const expected_hex = std.fmt.bytesToHex(expected, .lower);
     attempt = 0;
     while (attempt < 5000) : (attempt += 1) {
@@ -664,4 +731,71 @@ test "SDL layout identities encode Cyrillic French and missing alternate facts w
         const identity = layoutIdentity(c.SDL_SCANCODE_A, 'a', invalid) orelse return error.MissingIdentity;
         try std.testing.expectEqual(@as(?u21, null), identity.shifted);
     }
+}
+
+test "SDL extended functional key mapping preserves explicit keypad provenance" {
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f13), namedKey(c.SDLK_F13));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f14), namedKey(c.SDLK_F14));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f15), namedKey(c.SDLK_F15));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f16), namedKey(c.SDLK_F16));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f17), namedKey(c.SDLK_F17));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f18), namedKey(c.SDLK_F18));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f19), namedKey(c.SDLK_F19));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f20), namedKey(c.SDLK_F20));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f21), namedKey(c.SDLK_F21));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f22), namedKey(c.SDLK_F22));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f23), namedKey(c.SDLK_F23));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .f24), namedKey(c.SDLK_F24));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .scroll_lock), namedKey(c.SDLK_SCROLLLOCK));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .print_screen), namedKey(c.SDLK_PRINTSCREEN));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .pause), namedKey(c.SDLK_PAUSE));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .menu), namedKey(c.SDLK_APPLICATION));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_play), namedKey(c.SDLK_MEDIA_PLAY));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_pause), namedKey(c.SDLK_MEDIA_PAUSE));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_play_pause), namedKey(c.SDLK_MEDIA_PLAY_PAUSE));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_stop), namedKey(c.SDLK_MEDIA_STOP));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_fast_forward), namedKey(c.SDLK_MEDIA_FAST_FORWARD));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_rewind), namedKey(c.SDLK_MEDIA_REWIND));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_track_next), namedKey(c.SDLK_MEDIA_NEXT_TRACK));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_track_previous), namedKey(c.SDLK_MEDIA_PREVIOUS_TRACK));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .media_record), namedKey(c.SDLK_MEDIA_RECORD));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .lower_volume), namedKey(c.SDLK_VOLUMEDOWN));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .raise_volume), namedKey(c.SDLK_VOLUMEUP));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .mute_volume), namedKey(c.SDLK_MUTE));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .iso_level3_shift), namedKey(c.SDLK_MODE));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .iso_level5_shift), namedKey(c.SDLK_LEVEL5_SHIFT));
+    try std.testing.expectEqual(@as(?VT.NamedKey, .menu), namedKey(c.SDLK_MENU));
+    var event: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
+    const cases = [_]struct { scan: c.SDL_Scancode, code: c.SDL_Keycode, key: VT.NamedKey }{
+        .{ .scan = c.SDL_SCANCODE_KP_1, .code = c.SDLK_END, .key = .keypad_end },
+        .{ .scan = c.SDL_SCANCODE_KP_2, .code = c.SDLK_DOWN, .key = .keypad_down },
+        .{ .scan = c.SDL_SCANCODE_KP_3, .code = c.SDLK_PAGEDOWN, .key = .keypad_page_down },
+        .{ .scan = c.SDL_SCANCODE_KP_4, .code = c.SDLK_LEFT, .key = .keypad_left },
+        .{ .scan = c.SDL_SCANCODE_KP_5, .code = c.SDLK_CLEAR, .key = .keypad_begin },
+        .{ .scan = c.SDL_SCANCODE_KP_6, .code = c.SDLK_RIGHT, .key = .keypad_right },
+        .{ .scan = c.SDL_SCANCODE_KP_7, .code = c.SDLK_HOME, .key = .keypad_home },
+        .{ .scan = c.SDL_SCANCODE_KP_8, .code = c.SDLK_UP, .key = .keypad_up },
+        .{ .scan = c.SDL_SCANCODE_KP_9, .code = c.SDLK_PAGEUP, .key = .keypad_page_up },
+        .{ .scan = c.SDL_SCANCODE_KP_0, .code = c.SDLK_INSERT, .key = .keypad_insert },
+        .{ .scan = c.SDL_SCANCODE_KP_PERIOD, .code = c.SDLK_DELETE, .key = .keypad_delete },
+    };
+    for (cases) |case| {
+        event.scancode = case.scan;
+        event.key = case.code;
+        for ([_]c.SDL_Keymod{ c.SDL_KMOD_NONE, c.SDL_KMOD_NUM }) |mods| {
+            event.mod = mods;
+            try std.testing.expectEqual(@as(?VT.NamedKey, case.key), eventNamedKey(event));
+        }
+    }
+    event.scancode = c.SDL_SCANCODE_LEFT;
+    event.key = c.SDLK_LEFT;
+    try std.testing.expectEqual(@as(?VT.NamedKey, .left), eventNamedKey(event));
+    event.scancode = c.SDL_SCANCODE_KP_4;
+    event.key = c.SDLK_KP_4;
+    event.mod = c.SDL_KMOD_NONE;
+    try std.testing.expectEqual(@as(?VT.NamedKey, .keypad_4), eventNamedKey(event));
+    try std.testing.expect(namedKey(c.SDLK_MULTI_KEY_COMPOSE) == null);
+    try std.testing.expect(namedKey(c.SDLK_MEDIA_EJECT) == null);
+    try std.testing.expect(namedKey(c.SDLK_LHYPER) == null);
+    try std.testing.expect(namedKey(c.SDLK_LMETA) == null);
 }

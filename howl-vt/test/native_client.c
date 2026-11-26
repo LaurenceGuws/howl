@@ -308,8 +308,38 @@ cleanup:
     return failed;
 }
 
+static int functional_key_proof(void) {
+    int failed=0;
+    hvt_terminal *value=NULL;
+    const hvt_config config={2,8,4,0,8,16};
+    uint8_t bytes[HVT_INPUT_BUFFER_BYTES+1];
+    size_t count=0;
+    const struct { uint8_t key, action, mods; const char *wire; } cases[]={
+        {HVT_KEY_F35,HVT_PRESS,0,"\033[57398u"},
+        {HVT_KEY_MEDIA_REVERSE,HVT_REPEAT,HVT_CONTROL,"\033[57431;5:2u"},
+        {HVT_KEY_KEYPAD_BEGIN,HVT_RELEASE,0,"\033[1;1:3E"},
+        {HVT_KEY_KEYPAD_LEFT,HVT_PRESS,HVT_NUM_LOCK,"\033[57417;129u"},
+        {HVT_KEY_ISO_LEVEL5_SHIFT,HVT_RELEASE,0,"\033[57454;1:3u"}
+    };
+    CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_OK);
+    CHECK(feed_all(value,"\033[=31u")==HVT_OK);
+    for(size_t i=0;i<sizeof cases/sizeof cases[0];++i) {
+        memset(bytes,0xa5,sizeof bytes);
+        CHECK(hvt_encode_named_key(value,cases[i].key,cases[i].action,cases[i].mods,bytes,sizeof bytes,&count)==HVT_OK);
+        CHECK(count==strlen(cases[i].wire) && memcmp(bytes,cases[i].wire,count)==0 && bytes[count]==0xa5);
+    }
+    for(unsigned tag=1;tag<=111;++tag) {
+        CHECK(hvt_encode_named_key(value,(uint8_t)tag,HVT_PRESS,0,bytes,sizeof bytes,&count)==HVT_OK && count!=0);
+    }
+    CHECK(hvt_encode_named_key(value,112,HVT_PRESS,0,bytes,sizeof bytes,&count)==HVT_INVALID_ARGUMENT && !count);
+    CHECK(hvt_encode_named_key(value,255,HVT_PRESS,0,bytes,sizeof bytes,&count)==HVT_INVALID_ARGUMENT && !count);
+cleanup:
+    hvt_release(&value);
+    return failed;
+}
+
 int main(void) {
-    if (program_status_proof()!=0) return 1;
+    if (program_status_proof()!=0 || functional_key_proof()!=0) return 1;
     int failed=0;
     hvt_terminal *value=NULL,*fresh=NULL;
     hvt_observation *source=NULL,*peer=NULL;

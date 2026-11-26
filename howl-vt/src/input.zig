@@ -218,6 +218,59 @@ pub const KeyName = enum {
     keypad_separator,
     keypad_equal,
     keypad_enter,
+    scroll_lock,
+    print_screen,
+    pause,
+    menu,
+    f13,
+    f14,
+    f15,
+    f16,
+    f17,
+    f18,
+    f19,
+    f20,
+    f21,
+    f22,
+    f23,
+    f24,
+    f25,
+    f26,
+    f27,
+    f28,
+    f29,
+    f30,
+    f31,
+    f32,
+    f33,
+    f34,
+    f35,
+    keypad_left,
+    keypad_right,
+    keypad_up,
+    keypad_down,
+    keypad_page_up,
+    keypad_page_down,
+    keypad_home,
+    keypad_end,
+    keypad_insert,
+    keypad_delete,
+    keypad_begin,
+    media_play,
+    media_pause,
+    media_play_pause,
+    media_reverse,
+    media_stop,
+    media_fast_forward,
+    media_rewind,
+    media_track_next,
+    media_track_previous,
+    media_record,
+    lower_volume,
+    raise_volume,
+    mute_volume,
+    iso_level3_shift,
+    iso_level5_shift,
 };
 
 /// Valid Unicode scalar produced by one physical key event.
@@ -304,9 +357,8 @@ pub fn encodeKey(
 ) []const u8 {
     const report_all = kitty_keyboard_flags & 8 != 0;
     const disambiguate = kitty_keyboard_flags & 1 != 0;
-    if (report_all) {
-        if (encodeKittyKey(buf, key, mod)) |encoded| return encoded;
-    } else if (disambiguate) {
+    if (report_all) return encodeKittyKey(buf, key, mod);
+    if (disambiguate) {
         if (encodeDisambiguatedKey(buf, key, mod)) |encoded| return encoded;
     }
     const legacy_mod = mod.legacy();
@@ -433,7 +485,8 @@ fn isLegacyControl(key: KeyName) bool {
     return key == .enter or key == .tab or key == .backspace;
 }
 
-fn isModifier(key: KeyName) bool {
+/// Reports modifier-only identities; these do not represent typing activity.
+pub fn isModifier(key: KeyName) bool {
     return switch (key) {
         .left_shift,
         .right_shift,
@@ -449,6 +502,9 @@ fn isModifier(key: KeyName) bool {
         .right_meta,
         .caps_lock,
         .num_lock,
+        .scroll_lock,
+        .iso_level3_shift,
+        .iso_level5_shift,
         => true,
         else => false,
     };
@@ -614,6 +670,59 @@ fn kittyIdentityForKey(key: InputKey) KittyIdentity {
             .right_meta => .{ .code = 57452 },
             .caps_lock => .{ .code = 57358 },
             .num_lock => .{ .code = 57360 },
+            .scroll_lock => .{ .code = 57359 },
+            .print_screen => .{ .code = 57361 },
+            .pause => .{ .code = 57362 },
+            .menu => .{ .code = 57363 },
+            .f13 => .{ .code = 57376 },
+            .f14 => .{ .code = 57377 },
+            .f15 => .{ .code = 57378 },
+            .f16 => .{ .code = 57379 },
+            .f17 => .{ .code = 57380 },
+            .f18 => .{ .code = 57381 },
+            .f19 => .{ .code = 57382 },
+            .f20 => .{ .code = 57383 },
+            .f21 => .{ .code = 57384 },
+            .f22 => .{ .code = 57385 },
+            .f23 => .{ .code = 57386 },
+            .f24 => .{ .code = 57387 },
+            .f25 => .{ .code = 57388 },
+            .f26 => .{ .code = 57389 },
+            .f27 => .{ .code = 57390 },
+            .f28 => .{ .code = 57391 },
+            .f29 => .{ .code = 57392 },
+            .f30 => .{ .code = 57393 },
+            .f31 => .{ .code = 57394 },
+            .f32 => .{ .code = 57395 },
+            .f33 => .{ .code = 57396 },
+            .f34 => .{ .code = 57397 },
+            .f35 => .{ .code = 57398 },
+            .keypad_left => .{ .code = 57417 },
+            .keypad_right => .{ .code = 57418 },
+            .keypad_up => .{ .code = 57419 },
+            .keypad_down => .{ .code = 57420 },
+            .keypad_page_up => .{ .code = 57421 },
+            .keypad_page_down => .{ .code = 57422 },
+            .keypad_home => .{ .code = 57423 },
+            .keypad_end => .{ .code = 57424 },
+            .keypad_insert => .{ .code = 57425 },
+            .keypad_delete => .{ .code = 57426 },
+            .keypad_begin => .{ .code = 1, .trailer = 'E' },
+            .media_play => .{ .code = 57428 },
+            .media_pause => .{ .code = 57429 },
+            .media_play_pause => .{ .code = 57430 },
+            .media_reverse => .{ .code = 57431 },
+            .media_stop => .{ .code = 57432 },
+            .media_fast_forward => .{ .code = 57433 },
+            .media_rewind => .{ .code = 57434 },
+            .media_track_next => .{ .code = 57435 },
+            .media_track_previous => .{ .code = 57436 },
+            .media_record => .{ .code = 57437 },
+            .lower_volume => .{ .code = 57438 },
+            .raise_volume => .{ .code = 57439 },
+            .mute_volume => .{ .code = 57440 },
+            .iso_level3_shift => .{ .code = 57453 },
+            .iso_level5_shift => .{ .code = 57454 },
         },
     };
 }
@@ -657,18 +766,40 @@ fn encodeDisambiguatedKey(buf: []u8, key: InputKey, mod: Modifier) ?[]const u8 {
 
 fn encodeNamedKey(
     buf: []u8,
-    key: KeyName,
+    supplied: KeyName,
     mod: Modifier,
     application_cursor_keys: bool,
     application_keypad: bool,
 ) []const u8 {
+    if (isModifier(supplied)) return buf[0..0];
+    // Legacy keypad navigation collapses to the corresponding ordinary key.
+    const key = switch (supplied) {
+        .keypad_left => .left,
+        .keypad_right => .right,
+        .keypad_up => .up,
+        .keypad_down => .down,
+        .keypad_page_up => .page_up,
+        .keypad_page_down => .page_down,
+        .keypad_home => .home,
+        .keypad_end => .end,
+        .keypad_insert => .insert,
+        .keypad_delete => .delete,
+        else => supplied,
+    };
+    if (key == .keypad_begin)
+        return if (mod.none() and application_cursor_keys)
+            fixed3(buf, 0x1b, 'O', 'E')
+        else
+            csiFinal(buf, 'E', mod.protocolParameter());
+    if (key == .menu) return csiTilde(buf, 29, mod.protocolParameter());
     if (encodeKeypadKey(buf, key, application_keypad)) |encoded| return encoded;
     if (encodeControlKey(buf, key, mod)) |encoded| return encoded;
     if (encodeCursorKey(buf, key, mod, application_cursor_keys)) |encoded| return encoded;
     if (encodeHomeEndKey(buf, key, mod, application_cursor_keys)) |encoded| return encoded;
     if (encodeTildeKey(buf, key, mod)) |encoded| return encoded;
     if (encodeFunctionKey(buf, key, mod)) |encoded| return encoded;
-    return buf[0..0];
+    // The author uses CSI-u for functional keys without a legacy sequence.
+    return encodeKittyKey(buf, .{ .named = key }, mod);
 }
 
 fn encodeKeypadKey(buf: []u8, key: KeyName, application_keypad: bool) ?[]const u8 {
@@ -746,39 +877,13 @@ fn encodeModifyOtherKey(
     return std.fmt.bufPrint(buf, "\x1b[27;{d};{d}~", .{ mod.protocolParameter(), codepoint }) catch null;
 }
 
-fn encodeKittyKey(buf: []u8, key: InputKey, mod: Modifier) ?[]const u8 {
+fn encodeKittyKey(buf: []u8, key: InputKey, mod: Modifier) []const u8 {
+    const identity = kittyIdentityForKey(key);
     const modifier = mod.protocolParameter();
-    return switch (key) {
-        .unicode => |scalar| csiU(buf, scalar.value, modifier),
-        .named => |named| switch (named) {
-            .enter => csiU(buf, 13, modifier),
-            .tab => csiU(buf, 9, modifier),
-            .backspace => csiU(buf, 127, modifier),
-            .escape => csiU(buf, 27, modifier),
-            .up => csiFinal(buf, 'A', modifier),
-            .down => csiFinal(buf, 'B', modifier),
-            .right => csiFinal(buf, 'C', modifier),
-            .left => csiFinal(buf, 'D', modifier),
-            .home => csiFinal(buf, 'H', modifier),
-            .end => csiFinal(buf, 'F', modifier),
-            .f1 => csiFinal(buf, 'P', modifier),
-            .f2 => csiFinal(buf, 'Q', modifier),
-            .f3 => csiTilde(buf, 13, modifier),
-            .f4 => csiFinal(buf, 'S', modifier),
-            .insert => csiTilde(buf, 2, modifier),
-            .delete => csiTilde(buf, 3, modifier),
-            .page_up => csiTilde(buf, 5, modifier),
-            .page_down => csiTilde(buf, 6, modifier),
-            .f5 => csiTilde(buf, 15, modifier),
-            .f6 => csiTilde(buf, 17, modifier),
-            .f7 => csiTilde(buf, 18, modifier),
-            .f8 => csiTilde(buf, 19, modifier),
-            .f9 => csiTilde(buf, 20, modifier),
-            .f10 => csiTilde(buf, 21, modifier),
-            .f11 => csiTilde(buf, 23, modifier),
-            .f12 => csiTilde(buf, 24, modifier),
-            else => null,
-        },
+    return switch (identity.trailer) {
+        'u' => csiU(buf, identity.code, modifier),
+        '~' => csiTilde(buf, identity.code, modifier),
+        else => csiFinal(buf, identity.trailer, modifier),
     };
 }
 

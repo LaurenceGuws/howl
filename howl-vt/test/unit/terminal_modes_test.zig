@@ -4794,3 +4794,182 @@ test "Kitty committed text validates exact expanded extent and allocation failur
     }
     try std.testing.expectEqual(@as(usize, 12), try Terminal.committedTextCapacity("😀"));
 }
+
+test "Kitty author functional repertoire encodes every named identity and event kind" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    const cases = [_]struct { key: Terminal.NamedKey, code: u32, final: u8 }{
+        .{ .key = .escape, .code = 27, .final = 'u' },
+        .{ .key = .enter, .code = 13, .final = 'u' },
+        .{ .key = .tab, .code = 9, .final = 'u' },
+        .{ .key = .backspace, .code = 127, .final = 'u' },
+        .{ .key = .insert, .code = 2, .final = '~' },
+        .{ .key = .delete, .code = 3, .final = '~' },
+        .{ .key = .left, .code = 1, .final = 'D' },
+        .{ .key = .right, .code = 1, .final = 'C' },
+        .{ .key = .up, .code = 1, .final = 'A' },
+        .{ .key = .down, .code = 1, .final = 'B' },
+        .{ .key = .page_up, .code = 5, .final = '~' },
+        .{ .key = .page_down, .code = 6, .final = '~' },
+        .{ .key = .home, .code = 1, .final = 'H' },
+        .{ .key = .end, .code = 1, .final = 'F' },
+        .{ .key = .caps_lock, .code = 57358, .final = 'u' },
+        .{ .key = .scroll_lock, .code = 57359, .final = 'u' },
+        .{ .key = .num_lock, .code = 57360, .final = 'u' },
+        .{ .key = .print_screen, .code = 57361, .final = 'u' },
+        .{ .key = .pause, .code = 57362, .final = 'u' },
+        .{ .key = .menu, .code = 57363, .final = 'u' },
+        .{ .key = .f1, .code = 1, .final = 'P' },
+        .{ .key = .f2, .code = 1, .final = 'Q' },
+        .{ .key = .f3, .code = 13, .final = '~' },
+        .{ .key = .f4, .code = 1, .final = 'S' },
+        .{ .key = .f5, .code = 15, .final = '~' },
+        .{ .key = .f6, .code = 17, .final = '~' },
+        .{ .key = .f7, .code = 18, .final = '~' },
+        .{ .key = .f8, .code = 19, .final = '~' },
+        .{ .key = .f9, .code = 20, .final = '~' },
+        .{ .key = .f10, .code = 21, .final = '~' },
+        .{ .key = .f11, .code = 23, .final = '~' },
+        .{ .key = .f12, .code = 24, .final = '~' },
+        .{ .key = .f13, .code = 57376, .final = 'u' },
+        .{ .key = .f14, .code = 57377, .final = 'u' },
+        .{ .key = .f15, .code = 57378, .final = 'u' },
+        .{ .key = .f16, .code = 57379, .final = 'u' },
+        .{ .key = .f17, .code = 57380, .final = 'u' },
+        .{ .key = .f18, .code = 57381, .final = 'u' },
+        .{ .key = .f19, .code = 57382, .final = 'u' },
+        .{ .key = .f20, .code = 57383, .final = 'u' },
+        .{ .key = .f21, .code = 57384, .final = 'u' },
+        .{ .key = .f22, .code = 57385, .final = 'u' },
+        .{ .key = .f23, .code = 57386, .final = 'u' },
+        .{ .key = .f24, .code = 57387, .final = 'u' },
+        .{ .key = .f25, .code = 57388, .final = 'u' },
+        .{ .key = .f26, .code = 57389, .final = 'u' },
+        .{ .key = .f27, .code = 57390, .final = 'u' },
+        .{ .key = .f28, .code = 57391, .final = 'u' },
+        .{ .key = .f29, .code = 57392, .final = 'u' },
+        .{ .key = .f30, .code = 57393, .final = 'u' },
+        .{ .key = .f31, .code = 57394, .final = 'u' },
+        .{ .key = .f32, .code = 57395, .final = 'u' },
+        .{ .key = .f33, .code = 57396, .final = 'u' },
+        .{ .key = .f34, .code = 57397, .final = 'u' },
+        .{ .key = .f35, .code = 57398, .final = 'u' },
+        .{ .key = .keypad_0, .code = 57399, .final = 'u' },
+        .{ .key = .keypad_1, .code = 57400, .final = 'u' },
+        .{ .key = .keypad_2, .code = 57401, .final = 'u' },
+        .{ .key = .keypad_3, .code = 57402, .final = 'u' },
+        .{ .key = .keypad_4, .code = 57403, .final = 'u' },
+        .{ .key = .keypad_5, .code = 57404, .final = 'u' },
+        .{ .key = .keypad_6, .code = 57405, .final = 'u' },
+        .{ .key = .keypad_7, .code = 57406, .final = 'u' },
+        .{ .key = .keypad_8, .code = 57407, .final = 'u' },
+        .{ .key = .keypad_9, .code = 57408, .final = 'u' },
+        .{ .key = .keypad_decimal, .code = 57409, .final = 'u' },
+        .{ .key = .keypad_divide, .code = 57410, .final = 'u' },
+        .{ .key = .keypad_multiply, .code = 57411, .final = 'u' },
+        .{ .key = .keypad_subtract, .code = 57412, .final = 'u' },
+        .{ .key = .keypad_add, .code = 57413, .final = 'u' },
+        .{ .key = .keypad_enter, .code = 57414, .final = 'u' },
+        .{ .key = .keypad_equal, .code = 57415, .final = 'u' },
+        .{ .key = .keypad_separator, .code = 57416, .final = 'u' },
+        .{ .key = .keypad_left, .code = 57417, .final = 'u' },
+        .{ .key = .keypad_right, .code = 57418, .final = 'u' },
+        .{ .key = .keypad_up, .code = 57419, .final = 'u' },
+        .{ .key = .keypad_down, .code = 57420, .final = 'u' },
+        .{ .key = .keypad_page_up, .code = 57421, .final = 'u' },
+        .{ .key = .keypad_page_down, .code = 57422, .final = 'u' },
+        .{ .key = .keypad_home, .code = 57423, .final = 'u' },
+        .{ .key = .keypad_end, .code = 57424, .final = 'u' },
+        .{ .key = .keypad_insert, .code = 57425, .final = 'u' },
+        .{ .key = .keypad_delete, .code = 57426, .final = 'u' },
+        .{ .key = .keypad_begin, .code = 1, .final = 'E' },
+        .{ .key = .media_play, .code = 57428, .final = 'u' },
+        .{ .key = .media_pause, .code = 57429, .final = 'u' },
+        .{ .key = .media_play_pause, .code = 57430, .final = 'u' },
+        .{ .key = .media_reverse, .code = 57431, .final = 'u' },
+        .{ .key = .media_stop, .code = 57432, .final = 'u' },
+        .{ .key = .media_fast_forward, .code = 57433, .final = 'u' },
+        .{ .key = .media_rewind, .code = 57434, .final = 'u' },
+        .{ .key = .media_track_next, .code = 57435, .final = 'u' },
+        .{ .key = .media_track_previous, .code = 57436, .final = 'u' },
+        .{ .key = .media_record, .code = 57437, .final = 'u' },
+        .{ .key = .lower_volume, .code = 57438, .final = 'u' },
+        .{ .key = .raise_volume, .code = 57439, .final = 'u' },
+        .{ .key = .mute_volume, .code = 57440, .final = 'u' },
+        .{ .key = .left_shift, .code = 57441, .final = 'u' },
+        .{ .key = .left_control, .code = 57442, .final = 'u' },
+        .{ .key = .left_alt, .code = 57443, .final = 'u' },
+        .{ .key = .left_super, .code = 57444, .final = 'u' },
+        .{ .key = .left_hyper, .code = 57445, .final = 'u' },
+        .{ .key = .left_meta, .code = 57446, .final = 'u' },
+        .{ .key = .right_shift, .code = 57447, .final = 'u' },
+        .{ .key = .right_control, .code = 57448, .final = 'u' },
+        .{ .key = .right_alt, .code = 57449, .final = 'u' },
+        .{ .key = .right_super, .code = 57450, .final = 'u' },
+        .{ .key = .right_hyper, .code = 57451, .final = 'u' },
+        .{ .key = .right_meta, .code = 57452, .final = 'u' },
+        .{ .key = .iso_level3_shift, .code = 57453, .final = 'u' },
+        .{ .key = .iso_level5_shift, .code = 57454, .final = 'u' },
+    };
+    try std.testing.expectEqual(@as(usize, 111), cases.len);
+    try std.testing.expectEqual(@typeInfo(Terminal.NamedKey).@"enum".field_names.len, cases.len);
+    try feed(&terminal, "\x1b[=31u");
+    for (cases, 0..) |case, index| {
+        for (cases[index + 1 ..]) |later| {
+            try std.testing.expect(case.key != later.key);
+            try std.testing.expect(case.code != later.code or case.final != later.final);
+        }
+        for ([_]Terminal.InputModifier{ .{}, .{ .control = true, .num_lock = true } }) |mods| {
+            const parameter: u16 = if (mods.control) 133 else 1;
+            for ([_]Terminal.KeyAction{ .press, .repeat, .release }) |action| {
+                var storage: [48]u8 = undefined;
+                const expected = if (action == .press and parameter == 1)
+                    if (case.code == 1)
+                        try std.fmt.bufPrint(&storage, "\x1b[{c}", .{case.final})
+                    else
+                        try std.fmt.bufPrint(&storage, "\x1b[{d}{c}", .{ case.code, case.final })
+                else if (action == .press)
+                    try std.fmt.bufPrint(&storage, "\x1b[{d};{d}{c}", .{ case.code, parameter, case.final })
+                else
+                    try std.fmt.bufPrint(&storage, "\x1b[{d};{d}:{d}{c}", .{ case.code, parameter, @backingInt(action), case.final });
+                var encoded = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = .{ .named = case.key }, .mods = mods, .action = action } });
+                defer encoded.deinit();
+                try std.testing.expectEqualStrings(expected, encoded.bytes);
+            }
+        }
+    }
+    try feed(&terminal, "\x1b[=8u");
+    for (cases) |case| {
+        var released = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = .{ .named = case.key }, .action = .release } });
+        defer released.deinit();
+        try std.testing.expectEqualStrings("", released.bytes);
+    }
+}
+
+test "Kitty additional functional keys preserve legacy navigation and modifier silence" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const cases = [_]struct { key: Terminal.NamedKey, bytes: []const u8 }{
+        .{ .key = .f13, .bytes = "\x1b[57376u" },
+        .{ .key = .f35, .bytes = "\x1b[57398u" },
+        .{ .key = .media_play_pause, .bytes = "\x1b[57430u" },
+        .{ .key = .menu, .bytes = "\x1b[29~" },
+        .{ .key = .print_screen, .bytes = "\x1b[57361u" },
+        .{ .key = .keypad_left, .bytes = "\x1b[D" },
+        .{ .key = .keypad_page_up, .bytes = "\x1b[5~" },
+        .{ .key = .keypad_begin, .bytes = "\x1b[E" },
+        .{ .key = .scroll_lock, .bytes = "" },
+        .{ .key = .iso_level3_shift, .bytes = "" },
+        .{ .key = .iso_level5_shift, .bytes = "" },
+    };
+    for (cases) |case| try std.testing.expectEqualStrings(case.bytes, encodeKey(&terminal, .{ .named = case.key }, .{}));
+    try feed(&terminal, "\x1b[?1h");
+    try std.testing.expectEqualStrings("\x1bOD", encodeKey(&terminal, .{ .named = .keypad_left }, .{}));
+    try std.testing.expectEqualStrings("\x1bOE", encodeKey(&terminal, .{ .named = .keypad_begin }, .{}));
+    try feed(&terminal, "\x1b[=3u");
+    try std.testing.expectEqualStrings("\x1b[57417u", encodeKey(&terminal, .{ .named = .keypad_left }, .{}));
+    try std.testing.expectEqualStrings("\x1b[E", encodeKey(&terminal, .{ .named = .keypad_begin }, .{}));
+    try std.testing.expectEqualStrings("", encodeKey(&terminal, .{ .named = .scroll_lock }, .{}));
+    try std.testing.expectEqualStrings("", encodeKey(&terminal, .{ .named = .iso_level5_shift }, .{}));
+}

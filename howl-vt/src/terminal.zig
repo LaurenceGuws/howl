@@ -6016,6 +6016,8 @@ pub const Terminal = struct {
     pub const InputEvent = input.Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
     pub const NamedKey = input.KeyName;
+    /// Classifies modifier-only keys without duplicating host policy.
+    pub const isModifierKey = input.isModifier;
     /// Validates Unicode physical-key identities before input encoding.
     pub const Key = input.InputKey;
     /// Exposes one physical-key transition action.

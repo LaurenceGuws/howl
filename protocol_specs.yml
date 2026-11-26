@@ -9240,6 +9240,15 @@ specifications:
       - file: howl-app/src/input.zig
         test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty author functional repertoire encodes every named identity and event kind
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty additional functional keys preserve legacy navigation and modifier silence
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL extended functional key mapping preserves explicit keypad provenance
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Observed LazyGit =1u after alternate entry and DECCKM set. Unmodified arrow letter form omits default1; Num
@@ -9262,6 +9271,13 @@ specifications:
           method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
             layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
+        howl_qualification_20261126_keyboard_06:
+          scope: Canonical functional identity selection includes distinct keypad navigation and keypad begin. Legacy arrows
+            and keypad navigation collapse only in existing legacy route, while selected disambiguation yields distinct author
+            identities. Existing LazyGit letter-form omission preserved.
+          method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
+            provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
     - id: event-types
       section: Report event types
       level: defined
@@ -9299,6 +9315,9 @@ specifications:
       - file: howl-app/src/input.zig
         test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty author functional repertoire encodes every named identity and event kind
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key press without modifiers or additional fields omits first parameter; repeat/release with reporting
@@ -9327,6 +9346,13 @@ specifications:
           method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
             layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
+        howl_qualification_20261126_keyboard_06:
+          scope: All111 named identities crossed with press/repeat/release and two modifier states (666 exact encodings),
+            plus111 release suppressions under report-all without event-types. Real PTY receives distinct extended functional
+            press/releases without waiting for a text commit. Existing held-key and text-only boundaries remain separate.
+          method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
+            provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
     - id: alternate-keys
       section: Report alternate keys
       level: defined
@@ -9433,6 +9459,15 @@ specifications:
       - file: howl-app/src/input.zig
         test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty author functional repertoire encodes every named identity and event kind
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL extended functional key mapping preserves explicit keypad provenance
+        relation: protocol-family
+      - file: howl-vt/src/native.zig
+        test: every native key tag means its exact canonical key
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
@@ -9468,6 +9503,17 @@ specifications:
           method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
             layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
+        howl_qualification_20261126_keyboard_06:
+          scope: 'Canonical typed named repertoire now covers all111 identities in pinned Kitty author functional-key table
+            (53 additions). Exact report-all press/repeat/release encodings with no modifiers and Ctrl+NumLock; release suppressed
+            when event-types disabled. Native tags1..58 unchanged, appended59..111; native C consumer checks all tag admissions
+            and representative exact extended wires. SDL adds30 direct identities and 11 explicit normalized keypad-navigation
+            scancode/keycode pairings; live child verifies seven additional representative key lifecycles. Physical host repertoire
+            remains partial: no SDL F25..35, media reverse or factual Hyper/Meta mask; keypad navigation not guessed from
+            lock state; no-text printable press outstanding.'
+          method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
+            provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9583,6 +9629,12 @@ specifications:
       - file: howl-app/src/main.zig
         test: SDL composition stays local, uses its caret area and clears before pane input ownership changes
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty additional functional keys preserve legacy navigation and modifier silence
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL extended functional key mapping preserves explicit keypad provenance
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Legacy arrows restored after LazyGit negotiation exit and bank return; legacy lock modifier omitted. Existing
@@ -9610,6 +9662,14 @@ specifications:
           method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
             pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
           baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
+        howl_qualification_20261126_keyboard_06:
+          scope: New functional identities without a traditional sequence use author CSI-u forms; menu uses CSI29~ in legacy,
+            explicit keypad navigation collapses to ordinary navigation and KP_BEGIN respects application cursor mode. Scroll
+            Lock and ISO level shifts stay silent outside report-all. Existing legacy keypad/function/control policies deliberately
+            retained; no whole-family legacy promotion.
+          method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
+            provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
     - id: event-envelope
       section: docs/keyboard-protocol.rst:125-146
       level: defined
@@ -9661,6 +9721,15 @@ specifications:
       - file: howl-app/src/input.zig
         test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty author functional repertoire encodes every named identity and event kind
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: SDL extended functional key mapping preserves explicit keypad provenance
+        relation: protocol-family
+      - file: howl-vt/src/native.zig
+        test: every native key tag means its exact canonical key
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
@@ -9695,6 +9764,14 @@ specifications:
           method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
             layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
+        howl_qualification_20261126_keyboard_06:
+          scope: Every named author-table identity and selected trailer proven via Terminal.encodeInput; no duplicate key
+            or code/trailer pair. New PUA identities and canonical KP_BEGIN CSI E, exact modifier/event fields. Native C exact
+            extended wires and unknown tags rejected; SDL explicit keypad provenance preserved. No claim for every optional
+            field or host physical event.
+          method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
+            provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined
@@ -9720,6 +9797,12 @@ specifications:
       - file: howl-app/src/input.zig
         test: SDL layout identities encode Cyrillic French and missing alternate facts without substitution
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty author functional repertoire encodes every named identity and event kind
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty additional functional keys preserve legacy navigation and modifier silence
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Unmodified default omits number, Ctrl5 and Num Lock129 retained for letter-key forms. No change to modifier
@@ -9742,6 +9825,13 @@ specifications:
           method: Pinned Kitty author docs/glfw a79f376, SDL reference 7bbd9d5 and installed SDL3.4.20 public headers/US XKB
             layout; typed deterministic layout facts and actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: c71ba5c1e63c9e86f631f6a849044a15e992346b
+        howl_qualification_20261126_keyboard_06:
+          scope: Scroll Lock and ISO level3/5 shifts join canonical modifier-only classification and share it with host routing/input
+            activity; no fabricated modifier bit. Exact named report-all modifier/action field cases and representative SDL/PTY
+            lifecycle. Hyper/Meta bit acquisition and actual compositor state remain unqualified.
+          method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
+            provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
+          baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
     - id: feature-detection
       section: docs/keyboard-protocol.rst:441-458
       level: defined
