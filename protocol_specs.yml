@@ -14640,6 +14640,27 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.synchronized_output
+      - file: howl-app/src/terminal.zig
+        test: Contour holds immutable text palette and cursor while servicing queries then publishes exact release cuts
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: synchronized release fact survives every feed split and reports actual transitions
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: service boundary preserves each synchronized release cut across every split
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: synchronized release remains observable across reply service boundaries
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native feed success yields exact reply and synchronized boundaries
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: synchronized hold releases a new frame after one second without further child output
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: held output releases on timeout without new child output, then resets on exact release
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_legacy_sync.begin
@@ -14653,6 +14674,16 @@ specifications:
           meaning: Buffers bytes, timeout150ms, 2MiB threshold (>= capacity-1 before append). Reverse scans raw buffered bytes
             for exact CSI ?2026h/l; repeated begin refreshes timeout; multi-mode forms not recognized by sync scan. Not original-mandated
             architecture or proof of embedded-string handling.
+        howl_qualification_20261126_contour_01:
+          scope: Canonical VT continues text, palette, cursor and query processing while local projection keeps its previous
+            immutable cut. Clock-controlled actual projection proof checks unchanged held glyphs/background/cursor and advancing
+            VT, with no new publication. Existing split/transition and native evidence linked. Local one-second timeout remains
+            presentation policy, not a Contour mandated timeout; repeated-begin extension in the legacy iTerm2 specification
+            remains separately unqualified.
+          method: Pinned Contour synchronization Markdown SHA256 df3cfb42f9e23694aa76c804a77d053d187f7dfdcd2e1ac98849f5dbbca4bbc1
+            and color author git829ff29e SHA256 8c897d719dec8aef0b3d1f0dd26fe391403435b2316f923ff2302f61c15a855c; local clock-controlled
+            projection, host red-green query/palette, actual PTY child and bounded pressure; no blanket FULL promotion
+          baseline: 2ae15ecebadd3b3f6de8a98eb1a662db4e36e1f7
     - id: end
       section: Semantics
       level: defined
@@ -14671,10 +14702,44 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.synchronized_output
+      - file: howl-app/src/terminal.zig
+        test: Contour holds immutable text palette and cursor while servicing queries then publishes exact release cuts
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: synchronized release fact survives every feed split and reports actual transitions
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: service boundary preserves each synchronized release cut across every split
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: canonical service yields the unread suffix on synchronized-output release
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: synchronized release remains observable across reply service boundaries
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native feed success yields exact reply and synchronized boundaries
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: synchronized hold releases a new frame after one second without further child output
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: held output releases on timeout without new child output, then resets on exact release
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_legacy_sync.end
         role: predecessor
+      evidence:
+        howl_qualification_20261126_contour_01:
+          scope: Exact enabled-to-disabled release yields unread suffix before another synchronized begin. With available
+            presentation credit, actual local projection publishes first release cut, then second cut in a separate service
+            turn. Existing fragmented feed and timeout/recovery witnesses linked; no guarantee that stalled observers receive
+            every historical cut, no physical compositor or remote renderer qualification.
+          method: Pinned Contour synchronization Markdown SHA256 df3cfb42f9e23694aa76c804a77d053d187f7dfdcd2e1ac98849f5dbbca4bbc1
+            and color author git829ff29e SHA256 8c897d719dec8aef0b3d1f0dd26fe391403435b2316f923ff2302f61c15a855c; local clock-controlled
+            projection, host red-green query/palette, actual PTY child and bounded pressure; no blanket FULL promotion
+          baseline: 2ae15ecebadd3b3f6de8a98eb1a662db4e36e1f7
     - id: query
       section: Feature detection
       level: defined
@@ -14682,6 +14747,28 @@ specifications:
       dispatch:
       - CSI ? 2026 $ p
       rule: Report whether private mode 2026 is supported and its state.
+      test_locations:
+      - file: howl-app/src/terminal.zig
+        test: Contour holds immutable text palette and cursor while servicing queries then publishes exact release cuts
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: synchronized release remains observable across reply service boundaries
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native feed success yields exact reply and synchronized boundaries
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: synchronized update DCS shares exact bounded mode state
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_contour_01:
+          scope: Exact DECRPM 2026 state2/1 with dollar intermediate before and during a hold; DSR cursor reply serviced while
+            held. Existing native service boundaries and DCS-shared mode query retained. Local timeout may release presentation
+            while VT mode remains enabled; query reports actual negotiated state, not renderer state.
+          method: Pinned Contour synchronization Markdown SHA256 df3cfb42f9e23694aa76c804a77d053d187f7dfdcd2e1ac98849f5dbbca4bbc1
+            and color author git829ff29e SHA256 8c897d719dec8aef0b3d1f0dd26fe391403435b2316f923ff2302f61c15a855c; local clock-controlled
+            projection, host red-green query/palette, actual PTY child and bounded pressure; no blanket FULL promotion
+          baseline: 2ae15ecebadd3b3f6de8a98eb1a662db4e36e1f7
   urxvt_notify:
     title: rxvt-unicode Perl extension OSC 777 namespace
     author: rxvt-unicode notify Perl extension
@@ -20047,6 +20134,37 @@ specifications:
       - CSI ? 996 n
       - CSI ? 997 n
       rule: Report preference1 dark or2 light.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty color-preference queries retain ordered intent and transactional replies
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: Contour reports configured palette changes even within the same color preference
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: color preference query yields before later canonical replies
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: color preference host query retains exact identity under reply saturation
+        relation: protocol-family
+      - file: howl-app/src/desktop.zig
+        test: terminal background decides host color preference rather than application chrome
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: terminal consequence replies pass through PTY before subsequent input
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_contour_01:
+          scope: Exact private DSR996 query retained in canonical FIFO; host supplies actual configured background preference,
+            dark1/light2, using seven-bit author-compatible response. Local service yields at pending preference query so
+            later canonical replies cannot overtake it; no hardcoded dark pressure fallback. Bounded reply saturation retains
+            exact head for retry. Live child proves configured preference distinct from program OSC override and query after
+            subscription disabled. Native C peer retains its caller-mediated query interface; OS-wide theme integration not
+            claimed.
+          method: Pinned Contour synchronization Markdown SHA256 df3cfb42f9e23694aa76c804a77d053d187f7dfdcd2e1ac98849f5dbbca4bbc1
+            and color author git829ff29e SHA256 8c897d719dec8aef0b3d1f0dd26fe391403435b2316f923ff2302f61c15a855c; local clock-controlled
+            projection, host red-green query/palette, actual PTY child and bounded pressure; no blanket FULL promotion
+          baseline: 2ae15ecebadd3b3f6de8a98eb1a662db4e36e1f7
     - id: updates
       section: Enable/disable notification
       level: defined
@@ -20055,6 +20173,31 @@ specifications:
       - CSI ? 2031 h
       - CSI ? 2031 l
       rule: Subscribe/unsubscribe preference updates; ?997;1|2n when configured/OS palette preference changes.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty caller-coordinated modes retain exact state reports and color notifications
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: Contour reports configured palette changes even within the same color preference
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: color preference host query retains exact identity under reply saturation
+        relation: protocol-family
+      - file: howl-app/src/desktop.zig
+        test: terminal background decides host color preference rather than application chrome
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_contour_01:
+          scope: Host configuration baseline change triggers notification even when dark/light class is unchanged (same-dark
+            indexed palette replacement); repeated identical baseline is silent and program OSC color changes do not masquerade
+            as host preference. Actual child verifies same-dark notification, no duplicate, dark-to-light and disabled-mode
+            silence followed by current query. Existing host latest-default mailbox can coalesce unadmitted configuration
+            changes; no every-intermediate-palette guarantee under pressure. Local configured preference classification retained;
+            no physical desktop OS theme subscription or full remote host qualification.
+          method: Pinned Contour synchronization Markdown SHA256 df3cfb42f9e23694aa76c804a77d053d187f7dfdcd2e1ac98849f5dbbca4bbc1
+            and color author git829ff29e SHA256 8c897d719dec8aef0b3d1f0dd26fe391403435b2316f923ff2302f61c15a855c; local clock-controlled
+            projection, host red-green query/palette, actual PTY child and bounded pressure; no blanket FULL promotion
+          baseline: 2ae15ecebadd3b3f6de8a98eb1a662db4e36e1f7
   contour_line_reflow:
     title: Contour line reflow mode
     author: Contour project

@@ -3472,6 +3472,8 @@ test "failed settings save restores fonts without changing canonical history or 
         try panes[0].canvas.update(renderer, panes[0].owner.?);
         const frame = panes[0].canvas.frame().?;
         if (frame.presentation_generation > generation and frame.history_count >= history and frame.terminal_revision == panes[0].snapshot().revision) break;
+        // A real observer acknowledges presentation before waiting for a later cut.
+        panes[0].owner.?.requestFrame();
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     try std.testing.expect(attempts < 5000);

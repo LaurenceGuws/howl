@@ -75,7 +75,16 @@ pub fn drain(
                 continue;
             },
             .color_preference_query => {
-                try terminal.replyColorPreference(id, preference);
+                terminal.replyColorPreference(id, preference) catch |failure| switch (failure) {
+                    error.ReplyLimit => {
+                        // The exact query remains at the head. Wait for PTY
+                        // write progress rather than fabricating a reply or
+                        // stopping canonical service.
+                        result.worked = previously_worked;
+                        return result;
+                    },
+                    else => return failure,
+                };
                 continue;
             },
             .container => |request| switch (request.request) {
@@ -620,4 +629,28 @@ test "Rex blocked host allocation preserves earlier clipboard attention and repo
     try std.testing.expect(index.summary().state.? == .done);
     try std.testing.expect(terminal.consequenceHead() == null);
     try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "color preference host query retains exact identity under reply saturation" {
+    const allocator = std.testing.allocator;
+    var terminal = try vt.Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    var statuses = host_status.Index.init(allocator);
+    defer statuses.deinit();
+    for (0..16384) |_| try std.testing.expect((try terminal.feed("\x1b[5n")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?996n")).stateChanged());
+    const id = terminal.consequenceHead().?.id();
+    const revision = terminal.semanticSequence();
+    var blocked = try drain(&terminal, allocator, .light, &statuses);
+    defer blocked.deinit(allocator);
+    try std.testing.expect(!blocked.worked);
+    try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
+    try std.testing.expectEqual(revision, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(usize, 65536), terminal.replyBytes().len);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    var recovered = try drain(&terminal, allocator, .light, &statuses);
+    defer recovered.deinit(allocator);
+    try std.testing.expect(recovered.worked);
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqualStrings("\x1b[?997;2n", terminal.replyBytes());
 }

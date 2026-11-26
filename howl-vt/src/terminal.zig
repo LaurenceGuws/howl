@@ -8400,6 +8400,12 @@ pub const Terminal = struct {
         return self.consequences.program_status_count != 0;
     }
 
+    /// Host preference queries must be resolved before later stream replies
+    /// can overtake them. The embedding owner, not VT, supplies the preference.
+    pub fn hasPendingColorPreferenceQuery(self: *const Terminal) bool {
+        return self.consequences.color_preference_query_count != 0;
+    }
+
     /// Borrows the oldest retained consequence across every protocol family.
     pub fn consequenceHead(self: *const Terminal) ?Consequence {
         const head = self.consequences.head() orelse return null;

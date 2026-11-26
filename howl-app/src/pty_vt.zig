@@ -232,10 +232,15 @@ pub const Core = struct {
     pub fn writeRoom(self: *const Core) usize {
         return self.writes.remaining();
     }
+    // Ordered host-owned facts cannot be relieved with invented replies.
+    fn hostBoundary(self: *const Core) bool {
+        return self.terminal.hasPendingProgramStatus() or self.terminal.hasPendingColorPreferenceQuery();
+    }
+
     /// Retained bytes can advance without a new PTY readiness event.
     pub fn bufferedOutputRunnable(self: *const Core) bool {
         const replies = self.terminal.replyBytes().len;
-        return self.input_retry_at == null and !self.terminal.hasPendingProgramStatus() and self.read_start < self.read_end and
+        return self.input_retry_at == null and !self.hostBoundary() and self.read_start < self.read_end and
             (replies == 0 or replies <= self.writes.remaining());
     }
 
@@ -243,7 +248,7 @@ pub const Core = struct {
     /// retained reply cannot fit the outbox wakes indefinitely on unchanged data.
     /// A buffered tail progresses through the existing zero-timeout service path.
     pub fn readAdmissible(self: *const Core) bool {
-        if (self.stream_closed or self.terminal.inputBlocked() or self.input_retry_at != null or self.terminal.hasPendingProgramStatus() or
+        if (self.stream_closed or self.terminal.inputBlocked() or self.input_retry_at != null or self.hostBoundary() or
             self.read_start != self.read_end) return false;
         return self.write_closed or self.terminal.replyBytes().len <= self.writes.remaining();
     }
@@ -296,7 +301,7 @@ pub const Core = struct {
         }
         try self.processBuffered(timestamp_ns, &synchronized_output);
         if (self.input_retry_at == null and self.terminal.replyBytes().len == 0 and
-            !self.terminal.hasPendingProgramStatus() and
+            !self.hostBoundary() and
             self.read_start == self.read_end and readable and !self.stream_closed)
         {
             var read_calls: u8 = 0;
@@ -330,9 +335,9 @@ pub const Core = struct {
     fn processBuffered(self: *Core, timestamp_ns: u64, synced: *vt.Terminal.SynchronizedOutputProgress) ServiceError!void {
         if (self.input_retry_at) |deadline| if (timestamp_ns < deadline) return;
         while (self.read_start < self.read_end or self.terminal.inputBlocked()) {
-            // The worker drains ordered status/prompt events between prefixes.
-            // Unlike disposable attention, these reports cannot be dropped.
-            if (self.terminal.hasPendingProgramStatus()) return;
+            // The worker resolves ordered status and preference facts between
+            // prefixes. Later replies cannot overtake a pending preference query.
+            if (self.hostBoundary()) return;
             const blocked = self.terminal.inputBlocked();
             if (!blocked) {
                 self.collectReplies() catch |failure| switch (failure) {
@@ -456,15 +461,7 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
             },
             else => {},
         },
-        .color_preference_query => {
-            machine.replyColorPreference(id, .dark) catch |failure| switch (failure) {
-                // zig-audit: acknowledge unreachable
-                // reason: The color-preference query identity is checked without intervening mutation.
-                error.StaleColorPreferenceQuery => unreachable,
-                else => |err| return err,
-            };
-            return;
-        },
+        .color_preference_query => return error.ConsequencePressure,
         else => {},
     }
     machine.consumeConsequence(id) catch |failure| switch (failure) {
@@ -940,4 +937,29 @@ test "large Kitty committed text allocation failure and child closure retain exa
     try std.testing.expect(!core.writePending());
     try std.testing.expect(core.writes.tail.allocator == null);
     try std.testing.expect(core.readAdmissible());
+}
+
+test "color preference query yields before later canonical replies" {
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 8, 0);
+    defer core.terminal.deinit();
+    const query = "\x1b[?996n";
+    const tail = "\x1b[5n";
+    const bytes = query ++ tail;
+    @memcpy(core.reads[0..bytes.len], bytes);
+    core.read_end = bytes.len;
+    var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
+    try core.processBuffered(1, &synchronized);
+    try std.testing.expectEqual(query.len, core.read_start);
+    try std.testing.expectEqualStrings("", core.writes.bytes[0..core.writes.count]);
+    try std.testing.expect(!core.readAdmissible());
+    try std.testing.expect(!core.bufferedOutputRunnable());
+    try core.terminal.replyColorPreference(core.terminal.consequenceHead().?.id(), .light);
+    try std.testing.expect(core.bufferedOutputRunnable());
+    try core.processBuffered(2, &synchronized);
+    try std.testing.expectEqualStrings("\x1b[?997;2n\x1b[0n", core.writes.bytes[0..core.writes.count]);
+    try std.testing.expectEqual(@as(usize, 0), core.read_end);
 }

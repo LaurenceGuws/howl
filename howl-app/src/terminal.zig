@@ -1039,6 +1039,19 @@ const State = struct {
         };
     }
 
+    fn applyColorDefaults(self: *State, defaults: vt.Terminal.ColorDefaults) void {
+        // Canonical defaults replacement is the authority for an effective
+        // host configuration change. A dark-to-dark palette update is still
+        // an update, whereas affirming the same baseline is not.
+        const before = self.core.terminal.semanticSequence();
+        self.core.terminal.setColorDefaults(defaults);
+        self.color_preference = desktop.colorPreference(defaults.background);
+        if (self.core.terminal.semanticSequence() != before) {
+            self.preference_pending = true;
+            self.output_gate.pending = true;
+        }
+    }
+
     fn takeColors(self: *State) ?vt.Terminal.ColorDefaults {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -1070,13 +1083,9 @@ const State = struct {
                     self.output_gate.pending = true;
                 }
                 if (self.takeColors()) |defaults| {
-                    self.core.terminal.setColorDefaults(defaults);
-                    const preference = desktop.colorPreference(defaults.background);
-                    self.preference_pending = self.preference_pending or preference != self.color_preference;
-                    self.color_preference = preference;
-                    self.output_gate.pending = true;
+                    self.applyColorDefaults(defaults);
                 }
-                if (self.preference_pending) {
+                if (self.preference_pending and !self.core.terminal.hasPendingColorPreferenceQuery()) {
                     const sent: ?bool = self.core.terminal.reportColorSchemePreference(self.color_preference) catch |failure| switch (failure) {
                         error.ReplyLimit => null,
                         else => return failure,
@@ -1094,6 +1103,8 @@ const State = struct {
                 (self.core.writeRoom() > room_before or self.core.terminal.replyBytes().len < replies_before);
             // Queued work received while blocked must not wait for another wake.
             const retry_after_scalar_recovery = scalar_was_blocked and !self.core.inputBlocked();
+            const retry_preference = self.preference_pending and
+                (self.core.terminal.replyBytes().len < replies_before or self.consequence_worked);
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.output_gate.waitMs(now),
@@ -1113,7 +1124,7 @@ const State = struct {
             // Runnable queue work and newly available outbox room both need a
             // fresh PTY readiness snapshot. A zero-timeout poll retries now
             // without pinning readable=false through sustained input traffic.
-            if (queue_turn == .more or retry_after_write_progress or retry_after_scalar_recovery or self.core.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            if (queue_turn == .more or retry_after_write_progress or retry_after_scalar_recovery or retry_preference or self.core.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
             const can_read = self.core.readAdmissible();
             const can_write = result.write_pending or self.core.writePending();
             var fds = [_]posix.pollfd{
@@ -3234,4 +3245,163 @@ test "visibility FIFO retains a transition under reply pressure before later inp
     try core.terminal.consumeReplyBytes(core.terminal.replyBytes().len);
     try std.testing.expectEqual(State.QueueTurn.empty, try state.applyQueued());
     try std.testing.expectEqualStrings("\x1b[?999;2nnext", core.writes.bytes[0..core.writes.count]);
+}
+
+test "Contour reports configured palette changes even within the same color preference" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const command = "stty raw -echo; " ++
+        "report() { value=$(dd bs=1 count=$2 2>/dev/null | od -v -An -tx1 | tr -d ' \\n'); printf '\\033]0;%s-%s\\007' \"$1\" \"$value\"; }; " ++
+        "printf '\\033[?2031h\\033[?996n'; report INITIAL 9; report DARK 9; " ++
+        "IFS= read -r ack; [ \"$ack\" = go ] || exit 1; printf '\\033]11;#ffffff\\007\\033[?996n'; report OVERRIDE 9; " ++
+        "report LIGHT 9; IFS= read -r ack; [ \"$ack\" = disable ] || exit 1; " ++
+        "printf '\\033[?2031l\\033[?2031$p'; report DISABLED 11; " ++
+        "IFS= read -r ack; [ \"$ack\" = query ] || exit 1; printf '\\033[?996n'; report FINAL 9; sleep 30";
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    const dark = "\x1b[?997;1n";
+    const light = "\x1b[?997;2n";
+    const Check = struct {
+        fn title(t: *Terminal, comptime stage: []const u8, comptime bytes: []const u8) !void {
+            const expected = comptime stage ++ "-" ++ std.fmt.bytesToHex(bytes[0..bytes.len].*, .lower);
+            waitTitle(t, expected) catch |failure| {
+                const observed = t.snapshot();
+                std.debug.print("color proof expected={s}; actual={s}\n", .{ expected, observed.title[0..observed.title_len] });
+                return failure;
+            };
+        }
+    };
+    try Check.title(owner, "INITIAL", dark);
+    var defaults: vt.Terminal.ColorDefaults = .{};
+    defaults.palette[1] = .{ .r = 11, .g = 22, .b = 33 };
+    owner.setColorDefaults(defaults);
+    try Check.title(owner, "DARK", dark);
+    owner.setColorDefaults(defaults);
+    try owner.submit(.{ .input = .{ .bytes = "go\n" } });
+    try Check.title(owner, "OVERRIDE", dark);
+    defaults.background = .{ .r = 240, .g = 240, .b = 240 };
+    owner.setColorDefaults(defaults);
+    try Check.title(owner, "LIGHT", light);
+    try owner.submit(.{ .input = .{ .bytes = "disable\n" } });
+    try Check.title(owner, "DISABLED", "\x1b[?2031;2$y");
+    const revision = owner.snapshot().revision;
+    defaults.background = .{ .r = 1, .g = 2, .b = 3 };
+    owner.setColorDefaults(defaults);
+    var attempts: usize = 0;
+    while (owner.snapshot().revision == revision and attempts < 5000) : (attempts += 1)
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    try std.testing.expect(attempts < 5000);
+    try owner.submit(.{ .input = .{ .bytes = "query\n" } });
+    try Check.title(owner, "FINAL", dark);
+    try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "Contour holds immutable text palette and cursor while servicing queries then publishes exact release cuts" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const presentation = testPresentation();
+    const store = try vt_output.initPresentationStore(allocator, threaded.io(), presentation.text.private, .{
+        .shape_cache = presentation.shape_cache,
+        .shaped_capacity = presentation.shaped_capacity,
+        .raster_bytes = presentation.raster_bytes,
+    });
+    defer vt_output.releasePresentationStore(store);
+    const cell = vt_output.presentationStoreCellSize(store);
+    const core = try allocator.create(pty_vt.Core);
+    defer allocator.destroy(core);
+    try core.initInto(allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, .{ .width = cell.width, .height = cell.height });
+    defer core.deinit();
+    const output_owner = try projection.Projection.create(allocator, &core.terminal, store, sharedConfig(presentation, 8));
+    defer output_owner.destroy();
+    const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (fd < 0) return error.WakeFailed;
+    defer closeWake(fd);
+    var state: State = .{
+        .allocator = allocator,
+        .program_status_index = host_status.Index.init(allocator),
+        .io = threaded.io(),
+        .core = core,
+        .projection = output_owner,
+        .history_capacity = 8,
+        .wake_fd = fd,
+        .event_type = c.SDL_RegisterEvents(1),
+    };
+    defer state.program_status_index.deinit();
+    const Check = struct {
+        fn inject(owner: *pty_vt.Core, bytes: []const u8) void {
+            std.debug.assert(owner.read_start == owner.read_end);
+            @memcpy(owner.reads[0..bytes.len], bytes);
+            owner.read_start = 0;
+            owner.read_end = bytes.len;
+        }
+    };
+    Check.inject(core, "A\x1b[?2026$p");
+    const initial = try state.service(false, false, 100);
+    try std.testing.expect(!initial.synchronized_output.ended);
+    var held = (try state.replaceFrame(null, null)) orelse return error.NotReady;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: Only the current lease is retained by this test; each successful replacement retires its predecessor.
+    defer output_owner.release(held) catch unreachable;
+    const before = held.snapshot.terminal_revision;
+    const before_color = held.snapshot.background.solid.color;
+    const before_cursor = held.snapshot.cursor;
+    const before_glyphs = held.snapshot.glyphs[0].len;
+    try std.testing.expect(before_glyphs != 0 and before_cursor != null);
+    try std.testing.expectEqualStrings("\x1b[?2026;2$y", core.writes.bytes[0..core.writes.count]);
+
+    state.requestFrame();
+    Check.inject(core, "\x1b[?2026hB\x1b]11;#112233\x07\x1b[?25l\x1b[?2026$p\x1b[6n");
+    const during = try state.service(false, false, 200);
+    try std.testing.expect(!during.synchronized_output.ended);
+    try std.testing.expect(core.terminal.synchronizedOutput());
+    try std.testing.expectEqual(@as(u21, 'B'), core.terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u8, 0x11), core.terminal.presentation().background.r);
+    try std.testing.expect(!core.terminal.semanticView(0).cursor_visible);
+    try std.testing.expectEqualStrings("\x1b[?2026;2$y\x1b[?2026;1$y\x1b[1;3R", core.writes.bytes[0..core.writes.count]);
+    try std.testing.expect(state.status.revision > before);
+    try std.testing.expect(try state.replaceFrame(&held, null) == null);
+    try std.testing.expectEqual(before, held.snapshot.terminal_revision);
+    try std.testing.expectEqualDeep(before_color, held.snapshot.background.solid.color);
+    try std.testing.expectEqualDeep(before_cursor, held.snapshot.cursor);
+    try std.testing.expectEqual(before_glyphs, held.snapshot.glyphs[0].len);
+
+    const release = "\x1b[?2026l";
+    Check.inject(core, release ++ "\x1b[?2026hC\x1b[?2026l");
+    const first = try state.service(false, false, 300);
+    try std.testing.expect(first.synchronized_output.ended and !first.synchronized_output.trailing_effect);
+    try std.testing.expectEqual(release.len, core.read_start);
+    try std.testing.expectEqual(@as(u21, 0), core.terminal.semanticView(0).cellAt(0, 2));
+    held = (try state.replaceFrame(&held, null)) orelse return error.NotReady;
+    try std.testing.expectEqual(state.status.revision, held.snapshot.terminal_revision);
+    try std.testing.expectEqual(@as(u8, 0x11), held.snapshot.background.solid.color.r);
+    try std.testing.expect(held.snapshot.cursor == null);
+    try std.testing.expect(held.snapshot.glyphs[0].len > before_glyphs);
+    const first_revision = held.snapshot.terminal_revision;
+
+    state.requestFrame();
+    const second = try state.service(false, false, 400);
+    try std.testing.expect(second.synchronized_output.ended and !second.synchronized_output.trailing_effect);
+    try std.testing.expectEqual(@as(usize, 0), core.read_end);
+    try std.testing.expectEqual(@as(u21, 'C'), core.terminal.semanticView(0).cellAt(0, 2));
+    held = (try state.replaceFrame(&held, null)) orelse return error.NotReady;
+    try std.testing.expect(held.snapshot.terminal_revision > first_revision);
+    try std.testing.expectEqual(state.status.revision, held.snapshot.terminal_revision);
+    try std.testing.expect(!core.terminal.synchronizedOutput());
 }
