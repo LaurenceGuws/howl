@@ -1613,6 +1613,22 @@ fn conEmuCwd(raw: []const u8) ?SemanticEvent {
     return .{ .working_directory_report = .{ .kind = .path, .value = path } };
 }
 
+// OSC 9 has two source namespaces. Reserve exact decimal subcommand
+// tokens, including unsupported ones, before the plain notification lane.
+fn oscNotification(command: u16, payload: []const u8) ?SemanticEvent {
+    if (command == 9) {
+        const end = std.mem.indexOfScalar(u8, payload, ';') orelse payload.len;
+        const token = payload[0..end];
+        if (token.len == 1) switch (token[0]) {
+            '4' => return if (progress_mod.parse(payload)) |value| .{ .task_progress = value } else null,
+            '9' => return if (end < payload.len) conEmuCwd(payload[end + 1 ..]) else null,
+            '1'...'3', '5'...'8' => return null,
+            else => {},
+        } else if (token.len == 2 and token[0] == '1' and token[1] >= '0' and token[1] <= '2') return null;
+    }
+    return .{ .notification = .{ .kind = .message, .command = command, .payload = payload } };
+}
+
 // Decodes one complete borrowed OSC action into a canonical semantic event.
 fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
@@ -1637,17 +1653,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .osc = .{ .command = v.command, .payload = v.payload, .reply_bel = v.term == .bel } } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (iterm_control.parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
-        .notification => |v| if (v.command == 9 and std.mem.startsWith(u8, v.payload, "9;"))
-            conEmuCwd(v.payload[2..])
-        else if (v.command == 9 and
-            (std.mem.startsWith(u8, v.payload, "4;") or std.mem.eql(u8, v.payload, "4")))
-            if (progress_mod.parse(v.payload)) |value| .{ .task_progress = value } else null
-        else
-            SemanticEvent{ .notification = .{
-                .kind = .message,
-                .command = v.command,
-                .payload = v.payload,
-            } },
+        .notification => |v| oscNotification(v.command, v.payload),
         .pointer_shape => |v| SemanticEvent{ .pointer_shape = v.payload },
         .rxvt_extension => |v| SemanticEvent{ .notification = .{
             .kind = .message,
@@ -11795,9 +11801,9 @@ test "task progress survives fragments without notification or text mutation" {
         try std.testing.expect(!(try terminal.feed(sequence)).stateChanged());
         try std.testing.expectEqual(before, terminal.semanticSequence());
         try std.testing.expect((try terminal.feed("\x1b]9;4;2\x07")).stateChanged());
-        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .failure, .value = 65 }, terminal.taskProgress());
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .failure }, terminal.taskProgress());
         try std.testing.expect(!(try terminal.feed("\x1b]9;4;1;101\x07")).stateChanged());
-        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .failure, .value = 65 }, terminal.taskProgress());
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .failure }, terminal.taskProgress());
         try std.testing.expect((try terminal.feed("\x1b]9;4;3\x07")).stateChanged());
         try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .indeterminate }, terminal.taskProgress());
         try std.testing.expect((try terminal.feed("\x1b]9;4;4;30\x07")).stateChanged());
@@ -12774,4 +12780,119 @@ test "explicit hard reset discards a pending scalar" {
     try std.testing.expect(!terminal.inputBlocked());
     try std.testing.expect((try terminal.feed("X")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "OSC 9 reserves every selected ConEmu token without notification fallback" {
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        for (1..13) |subcommand| {
+            for ([_][]const u8{ "", ";invalid" }) |suffix| {
+                if (subcommand == 4 and suffix.len == 0) continue; // Clear is separately tested.
+                var buffer: [64]u8 = undefined;
+                const wire = try std.fmt.bufPrint(&buffer, "\x1b]9;{d}{s}{s}", .{ subcommand, suffix, term });
+                for (0..wire.len + 1) |split| {
+                    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+                    defer terminal.deinit();
+                    const before = terminal.semanticSequence();
+                    try std.testing.expect(!(try terminal.feed(wire[0..split])).stateChanged());
+                    try std.testing.expect(!(try terminal.feed(wire[split..])).stateChanged());
+                    try std.testing.expectEqual(before, terminal.semanticSequence());
+                    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+                    try std.testing.expectEqualStrings("", terminal.replyBytes());
+                }
+            }
+        }
+        for ([_][]const u8{ "01", "13;hello", "0", "4foo", "1 text", "001;hello", "+1", " 1", "1 ", "12x" }) |message| {
+            var buffer: [64]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&buffer, "\x1b]9;{s}{s}", .{ message, term });
+            for (0..wire.len + 1) |split| {
+                var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+                defer terminal.deinit();
+                const first = try terminal.feed(wire[0..split]);
+                const second = try terminal.feed(wire[split..]);
+                try std.testing.expect(first.stateChanged() or second.stateChanged());
+                try std.testing.expectEqualStrings(message, terminal.consequenceHead().?.notification.payload);
+                try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+                try std.testing.expectEqualDeep(Terminal.Progress{}, terminal.taskProgress());
+                try std.testing.expectEqualStrings("", terminal.replyBytes());
+            }
+        }
+    }
+}
+
+test "OSC 9 progress clear shortcut and unspecified error percentage follow current source" {
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        for ([_]struct { body: []const u8, expected: Terminal.Progress }{
+            .{ .body = "4;2", .expected = .{ .kind = .failure } },
+            .{ .body = "4", .expected = .{} },
+        }) |case| {
+            var buffer: [64]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&buffer, "\x1b]9;{s}{s}", .{ case.body, term });
+            for (0..wire.len + 1) |split| {
+                var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+                defer terminal.deinit();
+                try std.testing.expect((try terminal.feed("\x1b]9;4;1;73\x07")).stateChanged());
+                const first = try terminal.feed(wire[0..split]);
+                const second = try terminal.feed(wire[split..]);
+                try std.testing.expect(first.stateChanged() or second.stateChanged());
+                try std.testing.expect(!first.mutations.text and !second.mutations.text);
+                try std.testing.expectEqualDeep(case.expected, terminal.taskProgress());
+                try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+                try std.testing.expectEqualStrings("", terminal.replyBytes());
+            }
+        }
+    }
+}
+
+test "OSC 9 paused progress retains only present percentages and remains independent of Rex" {
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        const cases = [_]struct { seed: []const u8, body: []const u8, expected: Terminal.Progress }{
+            .{ .seed = "4", .body = "4;4", .expected = .{ .kind = .paused } },
+            .{ .seed = "4;1;0", .body = "4;4;", .expected = .{ .kind = .paused, .value = 0 } },
+            .{ .seed = "4;1;100", .body = "4;4", .expected = .{ .kind = .paused, .value = 100 } },
+            .{ .seed = "4;2", .body = "4;4", .expected = .{ .kind = .paused } },
+            .{ .seed = "4;2;63", .body = "4;4", .expected = .{ .kind = .paused, .value = 63 } },
+            .{ .seed = "4;3", .body = "4;4", .expected = .{ .kind = .paused } },
+            .{ .seed = "4;4;39", .body = "4;4", .expected = .{ .kind = .paused, .value = 39 } },
+            .{ .seed = "4;1;88", .body = "4;4;0", .expected = .{ .kind = .paused, .value = 0 } },
+        };
+        for (cases) |case| {
+            var buf: [48]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&buf, "\x1b]9;{s}{s}", .{ case.body, term });
+            for (0..wire.len + 1) |split| {
+                var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+                defer terminal.deinit();
+                terminal.setProgramStatusConsumer(true);
+                var seed_buf: [48]u8 = undefined;
+                const seed = try std.fmt.bufPrint(&seed_buf, "\x1b]9;{s}\x07", .{case.seed});
+                const seeded = try terminal.feed(seed);
+                try std.testing.expect(!seeded.mutations.text);
+                try std.testing.expect((try terminal.feed("\x1b]7501;state=working:id=job:progress=27\x07")).stateChanged());
+                const id = terminal.consequenceHead().?.id();
+                const before = terminal.taskProgress();
+                if (split != wire.len) {
+                    try std.testing.expect(!(try terminal.feed(wire[0..split])).stateChanged());
+                    try std.testing.expectEqualDeep(before, terminal.taskProgress());
+                    const result = try terminal.feed(wire[split..]);
+                    try std.testing.expect(!result.mutations.text);
+                } else {
+                    const result = try terminal.feed(wire);
+                    try std.testing.expect(!result.mutations.text);
+                }
+                try std.testing.expectEqualDeep(case.expected, terminal.taskProgress());
+                const after = terminal.semanticSequence();
+                try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+                try std.testing.expectEqual(after, terminal.semanticSequence());
+                for ([_][]const u8{ "\x1b]9;4;4;101\x07", "\x1b]9;4;4;-1\x1b\\", "\x1b]9;4;4;1;2\x07", "\x1b]9;4;4;bad\x07", "\x1b]9;4;4;12\x18", "\x1b]9;4;4;12\x1a" }) |invalid| {
+                    try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+                    try std.testing.expectEqualDeep(case.expected, terminal.taskProgress());
+                }
+                try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+                const rex = terminal.consequenceHead().?.program_status;
+                try std.testing.expectEqual(id, rex.generation);
+                try std.testing.expectEqualStrings("job", rex.action.report.id);
+                try std.testing.expectEqual(@as(?u8, 27), rex.action.report.progress);
+                try std.testing.expectEqualStrings("", terminal.replyBytes());
+            }
+        }
+    }
 }

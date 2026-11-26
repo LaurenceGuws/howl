@@ -78,10 +78,10 @@ pub fn fromStatus(
     }
     const base = switch (task.kind) {
         .none => return null,
-        .normal => std.fmt.bufPrint(&scratch, "{s} {d}%", .{ spinner, task.value }) catch return null,
+        .normal => std.fmt.bufPrint(&scratch, "{s} {d}%", .{ spinner, task.value orelse return null }) catch return null,
         .indeterminate => std.fmt.bufPrint(&scratch, "{s} Working", .{spinner}) catch return null,
-        .paused => std.fmt.bufPrint(&scratch, "◷ Paused {d}%", .{task.value}) catch return null,
-        .failure => "✕ Failed",
+        .paused => if (task.value) |value| std.fmt.bufPrint(&scratch, "◷ Paused {d}%", .{value}) catch return null else "◷ Paused",
+        .failure => if (task.value) |value| std.fmt.bufPrint(&scratch, "✕ Failed {d}%", .{value}) catch return null else "✕ Failed",
     };
     const kind: Kind = switch (task.kind) {
         .none => return null,
@@ -164,4 +164,16 @@ test "toast geometry is right aligned and never changes the terminal grid" {
     try std.testing.expect(geometry(0, 80, 0, 30, .top_right) == null);
     try std.testing.expect(geometry(80, 10, 0, 30, .top_right) == null);
     try std.testing.expect(geometry(std.math.nan(f32), 80, 0, 30, .top_right) == null);
+}
+
+test "OSC 9 paused toast distinguishes an unspecified percentage from explicit zero" {
+    try std.testing.expectEqualStrings("◷ Paused", fromStatus(.{}, .{ .kind = .paused }, "", 0).?.text());
+    try std.testing.expectEqualStrings("◷ Paused 0%", fromStatus(.{}, .{ .kind = .paused, .value = 0 }, "", 0).?.text());
+}
+
+test "OSC 9 failure toast displays only an explicitly present percentage" {
+    try std.testing.expectEqualStrings("✕ Failed", fromStatus(.{}, .{ .kind = .failure }, "", 0).?.text());
+    try std.testing.expectEqualStrings("✕ Failed 0%", fromStatus(.{}, .{ .kind = .failure, .value = 0 }, "", 0).?.text());
+    try std.testing.expectEqualStrings("✕ Failed 75%", fromStatus(.{}, .{ .kind = .failure, .value = 75 }, "", 0).?.text());
+    try std.testing.expectEqualStrings("◷ Waiting", fromStatus(.{ .state = .blocked }, .{ .kind = .failure, .value = 75 }, "", 0).?.text());
 }

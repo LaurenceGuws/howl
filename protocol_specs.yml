@@ -4511,6 +4511,20 @@ specifications:
       - kind: related
         clause: rex_status.screen-reset-lifetime
         role: lifetime
+      test_locations:
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 paused progress retains only present percentages and remains independent of Rex
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: OSC 9 live worker publishes nullable progress independently of Rex records
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_progress_01:
+          scope: No mapping selected or introduced. Real Rex retained occurrence and live record coexist with independent
+            nullable legacy progress; clearing Rex and clearing progress are separate operations.
+          method: Pinned ConEmu/current iTerm2 source, accepted selection, red/green native Zig proofs and live PTY host;
+            ReleaseFast root gates
+          baseline: 9fb7e32bcd60621b901eaea3bead7f51685c4213
     - id: notifications
       section: Relationship to other sequences
       level: defined
@@ -4552,6 +4566,25 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: task progress survives fragments without notification or text mutation
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 progress clear shortcut and unspecified error percentage follow current source
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 paused progress retains only present percentages and remains independent of Rex
+        relation: protocol-family
+      - file: howl-vt/src/progress.zig
+        test: OSC 9 progress preserves numeric presence through the complete percentage domain
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: OSC 9 live worker publishes nullable progress independently of Rex records
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_progress_01:
+          scope: Existing OSC9;4 retained owner remains allocation-free after parsing. Both BEL/ST, every split of representative
+            transitions, no text mutation, no reply or notification, abbreviated clear admitted from current iTerm2 profile.
+          method: Pinned ConEmu/current iTerm2 source, accepted selection, red/green native Zig proofs and live PTY host;
+            ReleaseFast root gates
+          baseline: 9fb7e32bcd60621b901eaea3bead7f51685c4213
     - id: states
       section: ConEmu specific OSC
       level: defined
@@ -4567,6 +4600,18 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: ordinary OSC9 notifications remain distinct from bounded retained progress
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 progress clear shortcut and unspecified error percentage follow current source
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 paused progress retains only present percentages and remains independent of Rex
+        relation: protocol-family
+      - file: howl-vt/src/progress.zig
+        test: OSC 9 progress preserves numeric presence through the complete percentage domain
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: OSC 9 live worker publishes nullable progress independently of Rex records
+        relation: protocol-family
       evidence:
         adopter_observations:
         - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
@@ -4581,6 +4626,13 @@ specifications:
           location: DoConEmuAction subParam4
           meaning: Missing/empty state or progress starts at0; malformed nonempty field rejects; state>4 rejects and progress>100
             clamps. Distinct optional paused retention semantics in other profiles.
+        howl_qualification_20261126_progress_01:
+          scope: All 101 numeric values accepted for each of normal/error/paused across representative predecessor states;
+            none/indeterminate remove value, omitted error has no numeric value, omitted paused retains present percentage
+            or absence. Existing strict numeric admission preserved.
+          method: Pinned ConEmu/current iTerm2 source, accepted selection, red/green native Zig proofs and live PTY host;
+            ReleaseFast root gates
+          baseline: 9fb7e32bcd60621b901eaea3bead7f51685c4213
   iterm2_osc1337:
     title: iTerm2 proprietary OSC 1337 commands
     author: iTerm2
@@ -4689,6 +4741,24 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.notify_9
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 reserves every selected ConEmu token without notification fallback
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: newer Kitty ConEmu OSC 9;9 reports bounded canonical paths without notification
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: OSC notification bounds preserve the FIFO and wrap without reuse
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_progress_01:
+          scope: Accepted namespace reservation covers exact completed first tokens1..12, including bare and malformed forms,
+            before ordinary notification dispatch; valid CWD/progress retain their own owners. Noncanonical and unreserved
+            tokens stay ordinary text; reserved unsupported commands remain no-ops even with full notification FIFO. No new
+            host notification policy.
+          method: Pinned ConEmu/current iTerm2 source, accepted selection, red/green native Zig proofs and live PTY host;
+            ReleaseFast root gates
+          baseline: 9fb7e32bcd60621b901eaea3bead7f51685c4213
     - id: cursor-guide
       section: Cursor Guide
       level: defined
@@ -20063,6 +20133,33 @@ specifications:
         clause: iterm2_osc1337.progress-profile
       - kind: reaffirms
         clause: conemu_progress.states
+      test_locations:
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 progress clear shortcut and unspecified error percentage follow current source
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 paused progress retains only present percentages and remains independent of Rex
+        relation: protocol-family
+      - file: howl-vt/src/progress.zig
+        test: OSC 9 progress preserves numeric presence through the complete percentage domain
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: OSC 9 live worker publishes nullable progress independently of Rex records
+        relation: protocol-family
+      - file: howl-app/src/status_toast.zig
+        test: OSC 9 paused toast distinguishes an unspecified percentage from explicit zero
+        relation: protocol-family
+      - file: howl-app/src/status_toast.zig
+        test: OSC 9 failure toast displays only an explicitly present percentage
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_progress_01:
+          scope: 'Current source explicit optional percentage semantics: omitted error unspecified, omitted pause retains
+            current numeric value or absence, abbreviated clear. Zero distinct from absent through live host and toast. UI
+            uses existing local toast, not source-mandated color or animation.'
+          method: Pinned ConEmu/current iTerm2 source, accepted selection, red/green native Zig proofs and live PTY host;
+            ReleaseFast root gates
+          baseline: 9fb7e32bcd60621b901eaea3bead7f51685c4213
     - id: dual-rgb
       section: Dual-mode Colors (light/dark variants)
       level: defined
@@ -21603,6 +21700,28 @@ specifications:
           location: input_osc_9
           meaning: Pinned tmux sub9 routes cwd; sub4 validates state0..4 and progress0..100, absent/empty percentage passes
             -1. No generic OSC9 notification fallback.
+        howl_qualification_20261126_progress_01:
+          scope: Reserve exact first tokens1..12; only existing progress4 and CWD9 dispatched. Malformed progress never becomes
+            notification. No other ConEmu host operation selected. Independent retained Rex record unaffected.
+          method: Pinned ConEmu/current iTerm2 source, accepted selection, red/green native Zig proofs and live PTY host;
+            ReleaseFast root gates
+          baseline: 9fb7e32bcd60621b901eaea3bead7f51685c4213
+      test_locations:
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 reserves every selected ConEmu token without notification fallback
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 progress clear shortcut and unspecified error percentage follow current source
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 9 paused progress retains only present percentages and remains independent of Rex
+        relation: protocol-family
+      - file: howl-vt/src/progress.zig
+        test: OSC 9 progress preserves numeric presence through the complete percentage domain
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: OSC 9 live worker publishes nullable progress independently of Rex records
+        relation: protocol-family
     - id: wait-key
       section: ConEmu specific OSC table, HTML lines 768-832
       level: defined
@@ -31607,6 +31726,37 @@ reconciliation:
       in that namespace; never reinterpret as notification. All other ordinary text uses iTerm2 notification grammar. This
       is dispatch selection only; preserve every ConEmu source and do not select sleep, process launch, environment disclosure,
       macros or any other host operation by reservation. Progress-state4 and omitted-percent decision remains separate.'
+  implementation_assessment:
+    as_of: '2026-11-26'
+    scope: Selected exact completed OSC9 payload first-token namespace reservation only (1..12 canonical ASCII tokens);
+      not all reserved subcommand operations or notification host presentation.
+    intent: target
+    priority: modern-first progress qualification 01
+    status: FULL
+    owners:
+    - howl-vt/src/terminal.zig:oscNotification
+    - howl-vt/src/terminal.zig:conEmuCwd
+    - howl-vt/src/progress.zig:parse
+    tests:
+    - file: howl-vt/src/terminal.zig
+      test: OSC 9 reserves every selected ConEmu token without notification fallback
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: newer Kitty ConEmu OSC 9;9 reports bounded canonical paths without notification
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: OSC notification bounds preserve the FIFO and wrap without reuse
+      relation: protocol-family
+    - file: howl-vt/src/terminal.zig
+      test: OSC 9 progress clear shortcut and unspecified error percentage follow current source
+      relation: protocol-family
+    verified_subset: All reserved bare or malformed tokens reject or route only to existing typed progress/CWD; valid
+      abbreviated clear tested. Both standard terminators, every split; nonreserved and noncanonical printable ASCII tokens
+      remain notification text. Full notification FIFO unaffected by reserved unsupported commands; prior CWD and notification
+      bounds retained.
+    boundary: FULL only for the selected completed-payload dispatch facet in the standard 7-bit OSC profile. Shared OSC
+      raw control filtering and raw C1 alias semantics, full host operation implementation and desktop notification delivery
+      are separate.
 - id: osc72-domterm-html-vs-kitty-dnd
   wire: OSC 72 ; payload ST
   status: resolved-by-explicit-captain-choice
@@ -32877,6 +33027,37 @@ reconciliation:
       numeric percentage, or leave it absent if none exists rather than synthesize one. Pause is a state, not a required color
       or animation. Do not require a percentage or select the iTerm2 3.6 warning meaning. Other progress states, abbreviated
       clear, malformed operand grammar and host presentation remain separate. Existing OSC9 namespace reservation stays intact.
+  implementation_assessment:
+    as_of: '2026-11-26'
+    scope: Selected paused state4 and percentage omission/retention semantics, standard 7-bit BEL/ST OSC9;4 grammar.
+    intent: target
+    priority: modern-first progress qualification 01
+    status: FULL
+    owners:
+    - howl-vt/src/progress.zig:parse
+    - howl-vt/src/progress.zig:apply
+    - howl-vt/src/properties.zig:replaceProgress
+    - howl-app/src/terminal.zig:State.service
+    - howl-app/src/status_toast.zig:fromStatus
+    tests:
+    - file: howl-vt/src/progress.zig
+      test: OSC 9 progress preserves numeric presence through the complete percentage domain
+      relation: protocol-family
+    - file: howl-vt/src/terminal.zig
+      test: OSC 9 paused progress retains only present percentages and remains independent of Rex
+      relation: protocol-family
+    - file: howl-app/src/terminal.zig
+      test: OSC 9 live worker publishes nullable progress independently of Rex records
+      relation: protocol-family
+    - file: howl-app/src/status_toast.zig
+      test: OSC 9 paused toast distinguishes an unspecified percentage from explicit zero
+      relation: protocol-family
+    verified_subset: All 0..100 explicit percentages, omitted and trailing-empty percentages across predecessor states,
+      including zero versus no value. Both standard terminators and every split of representative transitions, strict
+      malformed percentage rejection, CAN/SUB cancellation, idempotence and no reply/notification/record mutation. Actual
+      PTY worker and toast preserve nullable value.
+    boundary: FULL only for the accepted paused facet, not a blanket OSC9 progress or ConEmu capability claim. Raw control
+      filtering and raw C1 aliases remain shared framing concerns; presentation color and remote clients are not qualified.
 - id: finalterm-command-c-origin-vs-screen-capture
   wire: OSC 133 ; C [ ; payload ] ST
   status: resolved-by-explicit-captain-choice

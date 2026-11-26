@@ -2903,3 +2903,34 @@ test "Rex child exit during retained status allocation pressure preserves final 
     }
     try std.testing.expect(completed);
 }
+
+test "OSC 9 live worker publishes nullable progress independently of Rex records" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]7501;state=working:id=job:progress=27\\007\\033]9;4;4\\007\\033]0;READY\\007'; read line; printf '\\033]9;4;1;0\\007\\033]9;4;4\\007\\033]0;PAUSED\\007'; read line; printf '\\033]7501;state=clear:id=job\\007\\033]9;4;2\\007\\033]0;ERROR\\007'; read line; printf '\\033]9;4\\007\\033]0;CLEARED\\007'; read line",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    const cases = [_]struct { title: []const u8, progress: vt.Terminal.Progress, rex: bool }{
+        .{ .title = "READY", .progress = .{ .kind = .paused }, .rex = true },
+        .{ .title = "PAUSED", .progress = .{ .kind = .paused, .value = 0 }, .rex = true },
+        .{ .title = "ERROR", .progress = .{ .kind = .failure }, .rex = false },
+        .{ .title = "CLEARED", .progress = .{}, .rex = false },
+    };
+    for (cases, 0..) |case, i| {
+        if (i != 0) try owner.submit(.{ .input = .{ .bytes = "next\n" } });
+        try waitTitle(owner, case.title);
+        const observed = owner.snapshot();
+        try std.testing.expectEqualDeep(case.progress, observed.task_progress);
+        try std.testing.expectEqual(@as(?vt.Terminal.ProgramStatus.State, if (case.rex) .working else null), observed.program_status.state);
+        try std.testing.expectEqual(@as(?u8, if (case.rex) 27 else null), observed.program_status.progress);
+        try std.testing.expectEqual(@as(u8, if (case.rex) 1 else 0), observed.program_status.count);
+        try std.testing.expect(observed.failure == null);
+    }
+}

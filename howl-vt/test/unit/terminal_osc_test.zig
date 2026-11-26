@@ -1502,6 +1502,12 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]9;rejected\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.notification.generation);
     try std.testing.expectEqual(expected_notification_capacity, terminal.consequenceCount());
+    // Reserved unsupported commands do not even enter the full notification FIFO.
+    const before = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b]9;1;5000\x07\x1b]9;7;ignored\x1b\\\x1b]9;9\x07\x1b]9;12\x07")).stateChanged());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.notification.generation);
+    try std.testing.expectEqual(expected_notification_capacity, terminal.consequenceCount());
 
     for (0..expected_notification_capacity) |_| {
         retained = terminal.consequenceHead().?.notification;
