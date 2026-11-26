@@ -2907,45 +2907,9 @@ pub const Screen = struct {
         }
         defer if (prepared) |*range| range.deinit();
 
-        const right = self.cursorRightBoundary();
-        if (graphic.width > right - self.leftBoundary() + 1) return false;
-        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareGraphicScroll(graphic.width) else null;
-        defer self.discardPreparedHistory(&history);
-        if (self.wrap_pending) {
-            self.wrap_pending = false;
-            if (self.cursor.col == right) {
-                self.setRowWrapped(self.cursor.row, true);
-                self.lineFeedWithHistory(&history);
-                self.cursor.setColByClient(
-                    if (self.left_right_margin_mode) self.left_margin else 0,
-                );
-            }
-        }
-        if (self.cells) |cells| {
-            const target = cells[self.rowStart(self.cursor.row) + self.cursor.col];
-            if (target.y > 0 and target.width > 0 and target.x < target.width) {
-                const after = self.cursor.col -| target.x + target.width;
-                if (after <= right) {
-                    self.cursor.setColByClient(after);
-                } else {
-                    self.lineFeedWithHistory(&history);
-                    self.cursor.setColByClient(
-                        if (self.left_right_margin_mode) self.left_margin else 0,
-                    );
-                }
-            }
-        }
-        if (graphic.width == 2 and self.cursor.col == right) {
-            if (self.auto_wrap) {
-                self.setRowWrapped(self.cursor.row, true);
-                self.lineFeedWithHistory(&history);
-                self.cursor.setColByClient(
-                    if (self.left_right_margin_mode) self.left_margin else 0,
-                );
-            } else if (self.cursor.col > self.leftBoundary()) {
-                self.cursor.setColByClient(self.cursor.col - 1);
-            }
-        }
+        const placement = self.planGraphicPlacement(graphic.width, self.cursorRightBoundary()) orelse return false;
+        if (grow) try self.commitGraphicPlacement(placement, true) else self.commitGraphicPlacement(placement, false);
+        const right = placement.right;
         if (self.insert_mode) {
             const inserted = self.insertChars(graphic.width);
             std.debug.assert(inserted or !self.wrap_pending);
@@ -3069,11 +3033,10 @@ pub const Screen = struct {
             scalars.len <= scalar_storage.maximum_scalars);
         const physical_width = @as(u16, parsed.scale) * width_cells;
         const height: u16 = parsed.scale;
-        const left = self.leftBoundary();
-        const right = self.rightBoundary();
-        const available_width = right - left + 1;
         const available_height = self.scrollBottom() - self.scroll_top + 1;
-        if (physical_width > available_width or height > available_height) return false;
+        if (height > available_height) return false;
+        const placement = self.planGraphicPlacement(physical_width, self.rightBoundary()) orelse return false;
+        const right = placement.right;
         var prepared_tail: ?scalar_storage.Prepared = null;
         if (scalars.len > 1 + @as(usize, 3)) {
             var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
@@ -3085,79 +3048,17 @@ pub const Screen = struct {
                 self.scalars.?.prepare(values) catch return false;
         }
         defer if (prepared_tail) |*prepared| prepared.deinit();
-        // A pending wrap means the logical insertion point is past the
-        // rightmost cell even for an incoming one-cell sized block.
-        const wraps = self.auto_wrap and (self.wrap_pending or self.cursor.col + physical_width - 1 > right);
-        var history: ?history_store_mod.Store.Prepared = null;
-        if (grow and wraps and self.cursor.row == self.scrollBottom()) {
-            history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Capacity => return error.HistoryCapacity,
-            };
-        }
-        defer self.discardPreparedHistory(&history);
-
-        var changed = self.cancelPendingWrap();
-        if (wraps) {
-            self.setRowWrapped(self.cursor.row, true);
-            self.lineFeedWithHistory(&history);
-            self.cursor.setColByClient(left);
-            changed = true;
-        } else if (self.cursor.col + physical_width - 1 > right) {
-            self.cursor.setColByClient(right - physical_width + 1);
-            changed = true;
-        }
-        if (self.nonsemantic_clusters_possible) {
-            const cells = self.cells orelse return changed;
-            // Search the whole incoming top-row span. A lower continuation
-            // is protected even with DECAWM disabled. Each successful skip
-            // advances the candidate; each line feed commits before retry.
-            var placed = false;
-            for (0..@as(usize, self.rows) + 1) |_| {
-                var candidate = self.cursor.col;
-                while (@as(u32, candidate) + physical_width <= @as(u32, right) + 1) {
-                    var next = candidate;
-                    for (candidate..candidate + physical_width) |col| {
-                        const observed = cells[self.rowStart(self.cursor.row) + col];
-                        if (observed.y == 0) continue;
-                        next = @intCast(col -| observed.x + observed.width);
-                        std.debug.assert(next > col);
-                        break;
-                    }
-                    if (next == candidate) {
-                        if (candidate != self.cursor.col) {
-                            self.cursor.setColByClient(candidate);
-                            changed = true;
-                        }
-                        placed = true;
-                        break;
-                    }
-                    candidate = next;
-                }
-                if (placed) break;
-                // Below the scroll region at the physical bottom a line
-                // feed cannot move. Use the author's last-line fallback.
-                if (self.cursor.row == self.rows - 1 and self.cursor.row != self.scrollBottom()) {
-                    self.cursor.setColByClient(right - physical_width + 1);
-                    changed = true;
-                    placed = true;
-                    break;
-                }
-                if (grow and self.cursor.row == self.scrollBottom()) {
-                    history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
-                        error.OutOfMemory => return error.OutOfMemory,
-                        error.Capacity => return error.HistoryCapacity,
-                    };
-                }
-                self.setRowWrapped(self.cursor.row, true);
-                self.lineFeedWithHistory(&history);
-                self.cursor.setColByClient(left);
+        var changed = self.wrap_pending or placement.feeds != 0 or placement.col != self.cursor.col;
+        if (grow) try self.commitGraphicPlacement(placement, true) else self.commitGraphicPlacement(placement, false);
+        const bottom = self.scrollBottom();
+        if (self.cursor.row > bottom) {
+            // The fixed region below DECSTBM cannot scroll. Fit the block
+            // against the physical screen bottom instead.
+            if (@as(u32, self.cursor.row) + height > self.rows) {
+                self.cursor.setPositionByClient(self.rows - height, self.cursor.col);
                 changed = true;
             }
-            std.debug.assert(placed);
-        }
-        const bottom = self.scrollBottom();
-        if (self.cursor.row + height - 1 > bottom) {
+        } else if (@as(u32, self.cursor.row) + height - 1 > bottom) {
             const full_width = !self.left_right_margin_mode or
                 (self.left_margin == 0 and self.right_margin + 1 == self.cols);
             if (grow and self.scroll_top == 0 and self.history_capacity != 0 and full_width) {
@@ -3291,42 +3192,10 @@ pub const Screen = struct {
         if (grapheme) |changed| return changed;
         if (properties.width() == 0) return false;
 
-        const right = self.cursorRightBoundary();
         const width: u8 = if (properties.width() == 2) 2 else 1;
-        if (width > right - self.leftBoundary() + 1) return false;
-        var history: ?history_store_mod.Store.Prepared = if (grow) try self.prepareGraphicScroll(width) else null;
-        defer self.discardPreparedHistory(&history);
-        if (self.wrap_pending) {
-            self.wrap_pending = false;
-            if (self.cursor.col == right) {
-                self.setRowWrapped(self.cursor.row, true);
-                self.lineFeedWithHistory(&history);
-                self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
-            }
-        }
-        if (self.cells) |cells| {
-            const target = cells[@intCast(self.rowStart(self.cursor.row) + self.cursor.col)];
-            if (target.y > 0 and target.width > 0 and target.x < target.width) {
-                const after = self.cursor.col -| target.x + target.width;
-                if (after <= right) {
-                    self.cursor.setColByClient(after);
-                } else {
-                    self.lineFeedWithHistory(&history);
-                    self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
-                }
-            }
-        }
-        if (width == 2 and self.cursor.col == right) {
-            if (self.auto_wrap) {
-                self.setRowWrapped(self.cursor.row, true);
-                self.lineFeedWithHistory(&history);
-                self.cursor.setColByClient(
-                    if (self.left_right_margin_mode) self.left_margin else 0,
-                );
-            } else if (self.cursor.col > self.leftBoundary()) {
-                self.cursor.setColByClient(self.cursor.col - 1);
-            }
-        }
+        const placement = self.planGraphicPlacement(width, self.cursorRightBoundary()) orelse return false;
+        if (grow) try self.commitGraphicPlacement(placement, true) else self.commitGraphicPlacement(placement, false);
+        const right = placement.right;
         if (self.insert_mode) {
             const inserted = self.insertChars(width);
             std.debug.assert(inserted or !self.wrap_pending);
@@ -4214,32 +4083,99 @@ pub const Screen = struct {
         prepared.* = null;
     }
 
-    // Look past an initial non-scrolling wrap: its destination may be a
-    // multicell continuation that forces a second line feed at the margin.
-    fn prepareGraphicScroll(self: *Screen, width: u8) error{ OutOfMemory, HistoryCapacity }!?history_store_mod.Store.Prepared {
+    const GraphicPlacement = struct {
+        col: u16,
+        right: u16,
+        feeds: u16,
+        scrolls: bool = false,
+    };
+
+    // Plan the complete incoming span before changing cursor, rows or
+    // history. A lower continuation is protected even without DECAWM.
+    // Until the bottom margin is reached the grid is immutable. One
+    // bottom-margin scroll exposes an empty span, so at most one history
+    // reservation is required for horizontal placement.
+    fn planGraphicPlacement(self: *const Screen, width: u16, initial_right: u16) ?GraphicPlacement {
+        const left = self.leftBoundary();
+        if (@as(u32, left) + width > @as(u32, initial_right) + 1) return null;
         const bottom = self.scrollBottom();
-        const right = self.cursorRightBoundary();
+        const wrap_right = if (self.left_right_margin_mode) self.right_margin else self.cols - 1;
         var row = self.cursor.row;
         var col = self.cursor.col;
-        var scrolls = self.wrap_pending and col == right and row == bottom;
-        if (self.wrap_pending and col == right and row < bottom) {
-            row += 1;
-            col = if (self.left_right_margin_mode) self.left_margin else 0;
-        }
-        if (!scrolls and row != bottom) return null;
-        if (!scrolls and self.nonsemantic_clusters_possible) if (self.cells) |cells| {
-            const target = cells[self.rowStart(row) + col];
-            if (target.y > 0 and target.width > 0 and target.x < target.width) {
-                const after = col -| target.x + target.width;
-                if (after > right) scrolls = true else col = after;
+        var right = initial_right;
+        var feeds: u16 = 0;
+        var pending = self.wrap_pending and self.auto_wrap and col == right;
+        while (true) {
+            const fits = @as(u32, left) + width <= @as(u32, right) + 1;
+            if (fits and !pending) {
+                if (@as(u32, col) + width > @as(u32, right) + 1 and !self.auto_wrap)
+                    col = right - (width - 1);
+                if (self.freeGraphicSpan(row, col, right, width)) |destination|
+                    return .{ .col = destination, .right = right, .feeds = feeds };
             }
-        };
-        if (!scrolls and width == 2 and col == right and self.auto_wrap) scrolls = true;
-        if (!scrolls) return null;
-        return self.prepareScrollHistoryOne(self.scroll_top, bottom, true) catch |failure| switch (failure) {
-            error.OutOfMemory => error.OutOfMemory,
-            error.Capacity => error.HistoryCapacity,
-        };
+            if (row == bottom) {
+                // The scroll clears the active bottom span. Full-width
+                // scrolling also resets that row's DEC line geometry.
+                const full_width = left == 0 and wrap_right + 1 == self.cols;
+                const next_right = if (full_width or (self.scroll_top == 0 and bottom == self.rows - 1))
+                    wrap_right
+                else
+                    @min(wrap_right, self.lineRightBoundary(row));
+                if (@as(u32, left) + width > @as(u32, next_right) + 1) return null;
+                return .{ .col = left, .right = next_right, .feeds = feeds + 1, .scrolls = true };
+            }
+            if (row == self.rows - 1) {
+                // No further line feed can move the cursor below DECSTBM.
+                // The author's last-line fallback makes space at the edge.
+                if (!fits) return null;
+                return .{ .col = right - (width - 1), .right = right, .feeds = feeds };
+            }
+            row += 1;
+            feeds += 1;
+            col = left;
+            right = @min(wrap_right, self.lineRightBoundary(row));
+            pending = false;
+        }
+    }
+
+    fn freeGraphicSpan(self: *const Screen, row: u16, start: u16, right: u16, width: u16) ?u16 {
+        var candidate = @as(u32, start);
+        const after = @as(u32, right) + 1;
+        if (candidate + width > after) return null;
+        if (!self.nonsemantic_clusters_possible) return start;
+        const cells = self.cells orelse return start;
+        const base = self.rowStart(row);
+        while (candidate + width <= after) {
+            var next = candidate;
+            for (candidate..candidate + width) |col| {
+                const observed = cells[base + col];
+                if (observed.y == 0) continue;
+                next = @intCast(col -| observed.x + observed.width);
+                std.debug.assert(next > col);
+                break;
+            }
+            if (next == candidate) return @intCast(candidate);
+            candidate = next;
+        }
+        return null;
+    }
+
+    fn commitGraphicPlacement(self: *Screen, placement: GraphicPlacement, comptime grow: bool) (if (grow) error{ OutOfMemory, HistoryCapacity }!void else void) {
+        var history: ?history_store_mod.Store.Prepared = if (grow and placement.scrolls)
+            self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Capacity => return error.HistoryCapacity,
+            }
+        else
+            null;
+        defer self.discardPreparedHistory(&history);
+        self.wrap_pending = false;
+        for (0..placement.feeds) |_| {
+            self.setRowWrapped(self.cursor.row, true);
+            self.lineFeedWithHistory(&history);
+            self.cursor.setColByClient(self.leftBoundary());
+        }
+        self.cursor.setColByClient(placement.col);
     }
 
     fn lineFeedWithHistory(self: *Screen, history: *?history_store_mod.Store.Prepared) void {
@@ -9674,4 +9610,43 @@ test "OSC 66 later combining preserves scaled rectangle and invalidates every st
     try std.testing.expect(screen.rowGeneration(0).? > first);
     try std.testing.expect(screen.rowGeneration(1).? > second);
     try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+}
+
+test "graphic placement reserves history before skipping multiple obstructed rows" {
+    for ([_]bool{ false, true }) |sized| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 3, 8, 4);
+        defer screen.deinit(failing.allocator());
+        screen.cursor.setPositionByClient(0, 1);
+        try std.testing.expect(screen.writeSizedText("s=3:w=2;A"));
+        screen.cursor.setPositionByClient(1, 0);
+        const before = try std.testing.allocator.dupe(Screen.Cell, screen.cells.?);
+        defer std.testing.allocator.free(before);
+        const cursor = screen.cursor;
+        const revisions = [_]u64{ screen.rowGeneration(0).?, screen.rowGeneration(1).?, screen.rowGeneration(2).? };
+        failing.fail_index = failing.alloc_index;
+        if (sized) {
+            const blocked = screen.writeSizedTextGrowing("w=2;B", 0);
+            try std.testing.expectEqual(error.OutOfMemory, blocked.blocked.?);
+            try std.testing.expect(!blocked.changed);
+            try std.testing.expectEqual(@as(usize, 0), blocked.next_offset);
+        } else try std.testing.expectError(error.OutOfMemory, screen.writeCodepointGrowing(0x754c));
+        try std.testing.expectEqualSlices(Screen.Cell, before, screen.cells.?);
+        try std.testing.expectEqualDeep(cursor, screen.cursor);
+        for (revisions, 0..) |revision, row|
+            try std.testing.expectEqual(revision, screen.rowGeneration(@intCast(row)).?);
+        try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+        failing.fail_index = std.math.maxInt(usize);
+        if (sized) {
+            const accepted = screen.writeSizedTextGrowing("w=2;B", 0);
+            try std.testing.expect(accepted.changed and accepted.blocked == null);
+        } else try std.testing.expect(try screen.writeCodepointGrowing(0x754c));
+        try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+        try std.testing.expectEqual(@as(u32, 'A'), screen.historyCellAt(0, 1).codepoint);
+        try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(1, 6).y);
+        try std.testing.expectEqual(@as(u32, if (sized) 'B' else 0x754c), screen.cellInfoAt(2, 0).codepoint);
+        try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(2, 0).width);
+        try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+        try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
+    }
 }

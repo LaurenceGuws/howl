@@ -2230,3 +2230,92 @@ test "OSC 66 lower-row span skip crosses the right margin even without autowrap"
         try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
     }
 }
+
+test "ordinary wide and repeated graphics skip the complete lower multicell span" {
+    const cases = [_]struct { prefix: []const u8, write: []const u8, width: u8, codepoint: u21 }{
+        .{ .prefix = "", .write = "X", .width = 1, .codepoint = 'X' },
+        .{ .prefix = "", .write = "界", .width = 2, .codepoint = 0x754c },
+        .{ .prefix = "\x1b[4;1H界", .write = "\x1b[b", .width = 2, .codepoint = 0x754c },
+    };
+    for ([_]bool{ false, true }) |wrap| {
+        for (cases) |case| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 12, 0);
+            defer terminal.deinit();
+            if (!wrap) try feed(&terminal, "\x1b[?7l");
+            try feedChanged(&terminal, "\x1b[1;2H\x1b]66;s=2:w=2;A\x07\x1b]66;s=2:w=2;B\x07");
+            try feed(&terminal, case.prefix);
+            // Width1 starts inside A; width2 begins in a free cell but
+            // intersects A in its second column. Both must skip A and B.
+            try feed(&terminal, if (case.width == 1) "\x1b[2;2H" else "\x1b[2;1H");
+            try feedChanged(&terminal, case.write);
+            const view = terminal.semanticView(0);
+            try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 1));
+            try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 5));
+            try std.testing.expectEqual(@as(u21, case.codepoint), view.cellAt(1, 9));
+            try std.testing.expectEqual(case.width, view.cellInfoAt(1, 9).width);
+            try std.testing.expectEqual(@as(u16, 9 + case.width), view.cursor_col);
+            for (1..9) |col| try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, @intCast(col)).y);
+        }
+    }
+}
+
+test "OSC 66 below a vertical scroll region fits the screen without scrolling the margin" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 8, 4);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "top\x1b[2;1Hmiddle\x1b[3;1Hmargin\x1b[2;3r\x1b[5;1H\x1b]66;s=2;Z\x07");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 't'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'm'), view.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'm'), view.cellAt(2, 0));
+    try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(3, 0));
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(4, 1).y);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+    try std.testing.expectEqual(@as(u32, 0), view.history_count);
+}
+
+test "OSC 66 horizontal edit and erase matrix clears intersected rectangles and retains unrelated cells" {
+    const cases = [_]struct { command: []const u8, clears: bool, b_col: ?u16 }{
+        .{ .command = "\x1b[2;3H\x1b[2@", .clears = true, .b_col = 8 },
+        .{ .command = "\x1b[2;3H\x1b[2P", .clears = true, .b_col = 4 },
+        .{ .command = "\x1b[2;3H\x1b[X", .clears = true, .b_col = 6 },
+        .{ .command = "\x1b[2;3H\x1b[1K", .clears = true, .b_col = 6 },
+        .{ .command = "\x1b[2;3H\x1b[1J", .clears = true, .b_col = 6 },
+        .{ .command = "\x1b[2;6H\x1b[X", .clears = false, .b_col = 6 },
+        .{ .command = "\x1b[2;7H\x1b[P", .clears = false, .b_col = null },
+        .{ .command = "\x1b[2;8H\x1b[@", .clears = false, .b_col = null },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 14, 0);
+        defer terminal.deinit();
+        try feedChanged(&terminal, "\x1b]66;s=2:w=2;A\u{301}\u{302}\u{303}\u{304}\x07\x1b[2;7H\x1b]66;w=3;BCD\u{301}\u{302}\x07\x1b[5;14HZ");
+        try feedChanged(&terminal, case.command);
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(4, 13));
+        for (0..2) |row| for (0..4) |col| {
+            const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+            try std.testing.expectEqual(@as(u8, if (case.clears) 1 else 4), cell.width);
+            try std.testing.expectEqual(@as(u8, if (case.clears) 1 else 2), cell.height);
+            try std.testing.expectEqual(@as(u8, if (case.clears) 0 else @intCast(col)), cell.x);
+            try std.testing.expectEqual(@as(u8, if (case.clears) 0 else @intCast(row)), cell.y);
+            if (case.clears) try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+        };
+        var scalars: [24]u21 = undefined;
+        if (!case.clears) try std.testing.expectEqualSlices(u21, &.{ 'A', 0x301, 0x302, 0x303, 0x304 }, view.cellScalarsAt(0, 0, &scalars));
+        if (case.b_col) |col| {
+            try std.testing.expectEqualSlices(u21, &.{ 'B', 'C', 'D', 0x301, 0x302 }, view.cellScalarsAt(1, col, &scalars));
+            for (0..3) |offset| {
+                const cell = view.cellInfoAt(1, col + @as(u16, @intCast(offset)));
+                try std.testing.expectEqual(@as(u8, 3), cell.width);
+                try std.testing.expectEqual(@as(u8, @intCast(offset)), cell.x);
+                try std.testing.expect(cell.explicit_width);
+            }
+        } else {
+            for (4..14) |col| {
+                const cell = view.cellInfoAt(1, @intCast(col));
+                try std.testing.expectEqual(@as(u8, 1), cell.width);
+                try std.testing.expectEqual(@as(u8, 0), cell.combining_len);
+            }
+        }
+    }
+}

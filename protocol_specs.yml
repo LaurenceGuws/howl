@@ -10837,6 +10837,15 @@ specifications:
       - file: howl-vt/src/screen.zig
         test: OSC 66 later combining preserves scaled rectangle and invalidates every strip
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 horizontal edit and erase matrix clears intersected rectangles and retains unrelated cells
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ordinary wide and repeated graphics skip the complete lower multicell span
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: graphic placement reserves history before skipping multiple obstructed rows
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_03:
           scope: Cell ownership, exact compact-history restore/reflow and selected overwrite/combining mutations. Explicit
@@ -10847,6 +10856,14 @@ specifications:
             VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
             FULL promotion
           baseline: 86dbb20a16298396777116670570415633e704ee
+        howl_qualification_20261126_text_size_04:
+          scope: Eight deterministic local wire cases for ICH/DCH/ECH/EL1/ED1, including tall-cluster intersection, disjoint
+            erase, intact one-row shifts and bisected one-row erasure. Verify exact scalar tails, continuation geometry, explicit
+            width and unrelated marker. Existing editing and history proofs retained. Full vertical IL/DL, ED22, margins,
+            insert-mode sized text, and graphics-interaction matrix remain separately unqualified.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst overwriting/editing clauses and screen.c move_cursor_past_multicell/handle_fixed_width_multicell_command;
+            VT red-green, exact cells, fault injection and horizontal edit matrix; no blanket FULL promotion
+          baseline: a4d4fdb59a00f11f351ee27df8d80272776729c0
     - id: detection
       section: Detecting if the terminal supports this protocol
       level: defined
@@ -10950,6 +10967,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: OSC 66 sized writes preserve lower-row blocks and erase top interiors with spaces
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ordinary wide and repeated graphics skip the complete lower multicell span
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 below a vertical scroll region fits the screen without scrolling the margin
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: graphic placement reserves history before skipping multiple obstructed rows
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: chained graphic scroll reserves history before the first cursor move
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: Pending right-margin wrap honoured before next sized block, including width1 after ordinary output and successive
@@ -10969,6 +10998,16 @@ specifications:
             VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
             FULL promotion
           baseline: 86dbb20a16298396777116670570415633e704ee
+        howl_qualification_20261126_text_size_04:
+          scope: Complete-span search finds a fitting row/column before mutation; selected ordinary/REP/sized cases honor
+            width and auto-wrap policies. Fixed area below vertical margins fits tall OSC66 against physical screen bottom
+            without scrolling the active region, as pinned author implementation. Fault-injected history reservation preserves
+            original cursor, row IDs, cells and history; success emits exactly one outgoing row. Existing multi-row height/partial-scroll
+            retry witnesses retained; no complete arbitrary DEC line geometry/combined margin or later vertical placement
+            guarantee.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst overwriting/editing clauses and screen.c move_cursor_past_multicell/handle_fixed_width_multicell_command;
+            VT red-green, exact cells, fault injection and horizontal edit matrix; no blanket FULL promotion
+          baseline: a4d4fdb59a00f11f351ee27df8d80272776729c0
     - id: overwrite-order
       section: docs/text-sizing-protocol.rst:234-253
       level: defined
@@ -10991,6 +11030,15 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ordinary wide and repeated graphics skip the complete lower multicell span
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: graphic placement reserves history before skipping multiple obstructed rows
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: chained graphic scroll reserves history before the first cursor move
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_03:
           scope: Sized incoming span skips existing lower-row continuations before overwriting; repeated adjacent skips and
@@ -11003,6 +11051,15 @@ specifications:
             VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
             FULL promotion
           baseline: 86dbb20a16298396777116670570415633e704ee
+        howl_qualification_20261126_text_size_04:
+          scope: Ordinary single-width, ordinary wide, REP and OSC66 share a read-only complete-span horizontal placement
+            plan. It skips adjacent lower continuations even when the first candidate cell is free, independent of DECAWM;
+            exact lower-block occupancy and destination verified. Preflight reserves the outgoing history row before any movement,
+            including multiple obstructed rows. Ordinary top-row and sized overwrite semantics from preceding evidence retained.
+            Last physical line fallback and later variation-selector relocation remain separate boundaries.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst overwriting/editing clauses and screen.c move_cursor_past_multicell/handle_fixed_width_multicell_command;
+            VT red-green, exact cells, fault injection and horizontal edit matrix; no blanket FULL promotion
+          baseline: a4d4fdb59a00f11f351ee27df8d80272776729c0
     - id: segmentation
       section: docs/text-sizing-protocol.rst:353-425
       level: defined
