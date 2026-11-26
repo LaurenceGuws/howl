@@ -4617,3 +4617,120 @@ test "Kitty functional letter keys omit default first field only without additio
         try std.testing.expectEqualStrings(try std.fmt.bufPrint(&expected, "\x1b[1;1:3{c}", .{case.final}), released.bytes);
     }
 }
+
+test "Kitty negotiation exhausts documented flag algebra without mutating the other bank" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    // The dormant alternate bank is a canary for every primary mutation.
+    try feed(&terminal, "\x1b[?47h\x1b[=19u\x1b[>27u\x1b[?47l");
+    for (0..32) |before| {
+        for (0..32) |requested| {
+            for (1..4) |mode| {
+                var storage: [48]u8 = undefined;
+                try feed(&terminal, try std.fmt.bufPrint(&storage, "\x1b[={d}u", .{before}));
+                const expected: u8 = @intCast(switch (mode) {
+                    1 => requested,
+                    2 => before | requested,
+                    3 => before & ~requested,
+                    else => return error.BadFixture,
+                });
+                const sequence = terminal.semanticSequence();
+                const result = try terminal.feed(try std.fmt.bufPrint(&storage, "\x1b[={d};{d}u", .{ requested, mode }));
+                try std.testing.expectEqual(expected != before, result.stateChanged());
+                try std.testing.expect(!result.mutations.text);
+                try std.testing.expectEqual(sequence + @intFromBool(expected != before), terminal.semanticSequence());
+                try feed(&terminal, "\x1b[?u");
+                try std.testing.expectEqualStrings(try std.fmt.bufPrint(&storage, "\x1b[?{d}u", .{expected}), terminal.replyBytes());
+                try consumeReplies(&terminal);
+            }
+        }
+    }
+    try feed(&terminal, "\x1b[?47h\x1b[?u\x1b[<u\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?27u\x1b[?19u", terminal.replyBytes());
+}
+
+test "Kitty bank stacks preserve eight live slots through defaults eviction and large pops" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[=5u\x1b[>u\x1b[?u\x1b[<u\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u\x1b[?5u", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[=u\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    for (0..10) |i| {
+        var storage: [80]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&storage, "\x1b[>{d}u\x1b[?47h\x1b[>{d}u\x1b[?47l", .{ i + 1, i + 17 }));
+    }
+    try feed(&terminal, "\x1b[?u\x1b[?47h\x1b[?u\x1b[<7u\x1b[?u\x1b[?47l\x1b[?u\x1b[<7u\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?10u\x1b[?26u\x1b[?19u\x1b[?10u\x1b[?3u", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[<0u")).stateChanged());
+    try feed(&terminal, "\x1b[<2147483647u\x1b[?u\x1b[?47h\x1b[?u\x1b[<u\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u\x1b[?19u\x1b[?0u", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[>31u\x1b[?47l\x1b[>16u\x1b[!p\x1b[?u\x1b[?47h\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u\x1b[?0u", terminal.replyBytes());
+}
+
+test "Kitty feature detection replies before DA1 across every input split and C1 profile" {
+    for ([_]bool{ false, true }) |eight_bit| {
+        const wire = if (eight_bit) "\x9b?u\x9bc" else "\x1b[?u\x1b[c";
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[=31u");
+            if (eight_bit) try feed(&terminal, "\x1b G");
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            try std.testing.expectEqualStrings(if (eight_bit) "\x1b[?31u\x9b?62;22c" else "\x1b[?31u\x1b[?62;22c", terminal.replyBytes());
+            try std.testing.expectEqual(@as(u8, 31), terminal.interactionState().kitty_keyboard_flags);
+            try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        }
+    }
+}
+
+test "Kitty alternate identity is shifted only with Shift and never decorates named keys" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    try feed(&terminal, "\x1b[=31u");
+    const key = try Terminal.Key.initUnicode('a');
+    const KeyEvent = @FieldType(Terminal.InputEvent, "key");
+    const cases = [_]struct { event: KeyEvent, bytes: []const u8 }{
+        .{ .event = .{ .key = key, .mods = .{ .control = true }, .shifted = 'A' }, .bytes = "\x1b[97;5u" },
+        .{ .event = .{ .key = key, .mods = .{ .control = true }, .shifted = 'A', .alternate = 'q' }, .bytes = "\x1b[97::113;5u" },
+        .{ .event = .{ .key = key, .mods = .{ .shift = true, .control = true }, .shifted = 'A', .alternate = 'q' }, .bytes = "\x1b[97:65:113;6u" },
+        .{ .event = .{ .key = key, .mods = .{ .caps_lock = true }, .shifted = 'A', .text = "A" }, .bytes = "\x1b[97;65;65u" },
+        .{ .event = .{ .key = key, .mods = .{ .shift = true }, .shifted = 0, .alternate = 0 }, .bytes = "\x1b[97;2u" },
+        .{ .event = .{ .key = .{ .named = .up }, .shifted = 'A', .alternate = 'q' }, .bytes = "\x1b[A" },
+        .{ .event = .{ .key = .{ .named = .up }, .mods = .{ .shift = true }, .shifted = 'A', .alternate = 'q' }, .bytes = "\x1b[1;2A" },
+    };
+    for (cases) |case| {
+        var encoded = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = case.event });
+        defer encoded.deinit();
+        try std.testing.expectEqualStrings(case.bytes, encoded.bytes);
+    }
+}
+
+test "Kitty typed committed text preserves multiple scalars and unknown key identity" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    const KeyEvent = @FieldType(Terminal.InputEvent, "key");
+    const cases = [_]struct { mode: []const u8, event: KeyEvent, bytes: []const u8 }{
+        .{ .mode = "\x1b[=0u", .event = .{ .key = try Terminal.Key.initUnicode('e'), .text = "éx" }, .bytes = "éx" },
+        .{ .mode = "\x1b[=1u", .event = .{ .key = try Terminal.Key.initUnicode('e'), .mods = .{ .num_lock = true }, .text = "éx" }, .bytes = "éx" },
+        .{ .mode = "\x1b[=2u", .event = .{ .key = try Terminal.Key.initUnicode(0), .text = "éx", .action = .repeat }, .bytes = "éx" },
+        .{ .mode = "\x1b[=31u", .event = .{ .key = try Terminal.Key.initUnicode(0), .text = "éx" }, .bytes = "\x1b[0;;233:120u" },
+        .{ .mode = "\x1b[=8u", .event = .{ .key = try Terminal.Key.initUnicode('e'), .text = "éx" }, .bytes = "\x1b[101u" },
+        .{ .mode = "\x1b[=1u", .event = .{ .key = try Terminal.Key.initUnicode('e'), .legacy_text = "legacy", .text = "éx" }, .bytes = "legacy" },
+        .{ .mode = "\x1b[=3u", .event = .{ .key = try Terminal.Key.initUnicode('e'), .text = "éx", .action = .release }, .bytes = "" },
+    };
+    for (cases) |case| {
+        try feed(&terminal, case.mode);
+        var encoded = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = case.event });
+        defer encoded.deinit();
+        try std.testing.expectEqualStrings(case.bytes, encoded.bytes);
+    }
+}

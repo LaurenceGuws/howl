@@ -337,13 +337,16 @@ pub fn encodeEvent(
 ) error{ InvalidUtf8, InvalidText, KeyTextLimit, EncodingLimit }![]const u8 {
     if (text.len > max_text_bytes) return error.KeyTextLimit;
     if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
-    if (kitty_flags & 16 != 0 and kitty_flags & 8 != 0) {
+    const text_has_control = controls: {
         var text_view = std.unicode.Utf8View.initUnchecked(text);
         var text_iterator = text_view.iterator();
         while (text_iterator.nextCodepoint()) |codepoint|
             if (codepoint < 32 or (codepoint >= 127 and codepoint <= 159))
-                return error.InvalidText;
-    }
+                break :controls true;
+        break :controls false;
+    };
+    if (kitty_flags & 16 != 0 and kitty_flags & 8 != 0 and text_has_control)
+        return error.InvalidText;
     const report_all = kitty_flags & 8 != 0;
     if (key == .named and isModifier(key.named) and !report_all)
         return buf[0..0];
@@ -375,6 +378,11 @@ pub fn encodeEvent(
         return try encodeKittyEvent(buf, key, mod, action, shifted, alternate, text, kitty_flags);
     if (produces_text) {
         if (action == .release) return buf[0..0];
+        // The entire committed text belongs to this key, not just its
+        // first scalar or the physical key identity. Explicit legacy
+        // bytes still take precedence; control text never uses this lane.
+        if (legacy_text.len != 0) return legacy_text;
+        if (text.len != 0 and !text_has_control) return text;
     } else if (kitty_flags & (1 | 2) != 0) {
         // Preserve the unshifted identity before the legacy fallback transforms it.
         return try encodeKittyEvent(buf, key, mod, action, shifted, alternate, text, kitty_flags);
@@ -456,7 +464,10 @@ fn encodeKittyEvent(
     var builder = Builder.init(buf);
     try builder.append("\x1b[");
     const identity = kittyIdentityForKey(key);
-    const add_alternates = flags & 4 != 0 and (shifted != null or alternate != null);
+    const report_alternates = flags & 4 != 0 and key == .unicode;
+    const shifted_key = if (report_alternates and mod.shift and (shifted orelse 0) != 0) shifted else null;
+    const base_key = if (report_alternates and (alternate orelse 0) != 0) alternate else null;
+    const add_alternates = shifted_key != null or base_key != null;
     const add_action = flags & 2 != 0 and action != .press;
     const add_text = flags & 16 != 0 and flags & 8 != 0 and text.len != 0;
     // Functional letter keys omit the default first parameter only when
@@ -466,8 +477,8 @@ fn encodeKittyEvent(
         try builder.decimal(identity.code);
     if (add_alternates) {
         try builder.append(":");
-        if (shifted) |value| try builder.decimal(value);
-        if (alternate) |value| {
+        if (shifted_key) |value| try builder.decimal(value);
+        if (base_key) |value| {
             try builder.append(":");
             try builder.decimal(value);
         }

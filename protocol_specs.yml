@@ -9063,6 +9063,12 @@ specifications:
         test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
         relation: protocol-family
         note: Narrow regression evidence at fefdce7; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty negotiation exhausts documented flag algebra without mutating the other bank
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty bank stacks preserve eight live slots through defaults eviction and large pops
+        relation: protocol-family
       evidence:
         adopter_observations:
         - url: https://static.crates.io/crates/vte/vte-0.15.0.crate
@@ -9075,6 +9081,14 @@ specifications:
           sha256: 79ae9a48ddd7314684571f42e89c61c5850c6041071957d64da39fadde5d766f
           location: csi_dispatch =u
           meaning: Unknown bits truncated; behavior2 union,3 difference, other replace, including invalid behavior value.
+        howl_qualification_20261126_keyboard_02:
+          scope: All 32 documented flag sets crossed with all 32 requested sets and modes1/2/3 (3072 transitions), exact query
+            and semantic no-op/text nonmutation checks. Alternate stack remains independent. Bare setter defaults to zero
+            per pinned author implementation. Existing seven-bit retained-mask behavior preserved; bits5/6 are not additional
+            implemented enhancements.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: query
       section: Progressive enhancement
       level: defined
@@ -9096,6 +9110,15 @@ specifications:
         test: 'terminal: bare CSI s selects DEC savepoint or default margins by DECLRMM'
         relation: protocol-family
         note: Narrow regression evidence at fefdce7; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty negotiation exhausts documented flag algebra without mutating the other bank
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty bank stacks preserve eight live slots through defaults eviction and large pops
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty feature detection replies before DA1 across every input split and C1 profile
+        relation: protocol-family
       evidence:
         adopter_observations:
         - url: https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty_terminal/src/term/mod.rs
@@ -9109,6 +9132,13 @@ specifications:
           sha256: 7ae373cfb9f46f8d3032c651ffaf71217ca56dec76a06061465561293d21f976
           location: report_keyboard_mode
           meaning: Report current stack entry.
+        howl_qualification_20261126_keyboard_02:
+          scope: Exact current-bank reply after each flag-algebra transition and stack pop. Standard query reply remains seven-bit
+            under both tested C1 policies and precedes DA1. Existing bounded reply-failure test retained; no new malformed-query
+            policy.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: stack
       section: Progressive enhancement
       level: defined
@@ -9138,6 +9168,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: kitty keyboard flags stay separate across alternate screen
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty negotiation exhausts documented flag algebra without mutating the other bank
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty bank stacks preserve eight live slots through defaults eviction and large pops
+        relation: protocol-family
       evidence:
         adopter_observations:
         - url: https://github.com/wez/wezterm/blob/cab25161054c50fd6c705db4ceefef0f1e5a9575/term/src/terminalstate/performer.rs
@@ -9163,6 +9199,13 @@ specifications:
           location: KEYBOARD_MODE_STACK_MAX_DEPTH; push/pop_keyboard_modes
           meaning: 8 slots, cyclic index on push, pop clears traversed slots and wraps, >=8 clears all. Separate bank fields;
             not proof of original empty-pop semantics.
+        howl_qualification_20261126_keyboard_02:
+          scope: Interleaved primary and alternate stacks preserve eight live slots; ten pushes per bank evict oldest; pop7
+            restores oldest surviving entry, zero is a no-op, large positive pop exhausts stack. Default push/pop and DECSTR
+            clear both banks. No new stack semantics.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: disambiguate
       section: Disambiguate escape codes
       level: defined
@@ -9188,6 +9231,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty functional letter keys omit default first field only without additional fields
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty typed committed text preserves multiple scalars and unknown key identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Observed LazyGit =1u after alternate entry and DECCKM set. Unmodified arrow letter form omits default1; Num
@@ -9196,6 +9242,13 @@ specifications:
           method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
             no blanket FULL promotion
           baseline: da742dda0dec062bbe63229201a68a87dd9c80db
+        howl_qualification_20261126_keyboard_02:
+          scope: Typed key input with disambiguation enabled preserves complete committed printable UTF-8 when no shortcut
+            modifier requires an encoded event, including Num Lock. No change to prior shortcut classification or actual SDL
+            input policy.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: event-types
       section: Report event types
       level: defined
@@ -9218,6 +9271,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty functional letter keys omit default first field only without additional fields
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty typed committed text preserves multiple scalars and unknown key identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key press without modifiers or additional fields omits first parameter; repeat/release with reporting
@@ -9225,6 +9281,12 @@ specifications:
           method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
             no blanket FULL promotion
           baseline: da742dda0dec062bbe63229201a68a87dd9c80db
+        howl_qualification_20261126_keyboard_02:
+          scope: Typed repeat with committed text is transmitted as text rather than an invented key sequence; text-producing
+            release suppressed without report-all. Existing named event and recovery-control proofs retained.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: alternate-keys
       section: Report alternate keys
       level: defined
@@ -9244,6 +9306,17 @@ specifications:
       - file: howl-vt/src/input.zig
         test: alternate-key and associated-text flags do not enable reporting by themselves
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty alternate identity is shifted only with Shift and never decorates named keys
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_02:
+          scope: Shifted identity included only with active Shift; base-layout-only retains empty shifted subfield, zero alternatives
+            omitted, named functional keys never carry alternate Unicode identities. Exact typed VT bytes. Host discovery
+            and validation of arbitrary alternate scalars remain separate.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: all-keys
       section: Report all keys as escape codes
       level: defined
@@ -9263,12 +9336,25 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty functional letter keys omit default first field only without additional fields
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty alternate identity is shifted only with Shift and never decorates named keys
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty typed committed text preserves multiple scalars and unknown key identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
           method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
             no blanket FULL promotion
           baseline: da742dda0dec062bbe63229201a68a87dd9c80db
+        howl_qualification_20261126_keyboard_02:
+          scope: Report-all with associated text encodes complete multi-scalar text and unknown key0; report-all without associated-text
+            flag reports key identity alone. Existing typed modifier and press/repeat/release tests retained. No claim for
+            complete physical SDL input repertoire.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9288,6 +9374,17 @@ specifications:
       - file: howl-vt/src/input.zig
         test: alternate-key and associated-text flags do not enable reporting by themselves
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty typed committed text preserves multiple scalars and unknown key identity
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_02:
+          scope: Typed report-all plus associated-text input with no known key identity encodes key0 and both UTF-8 codepoints
+            (233:120); without associated-text bit emits only key identity. Preserve explicit legacy bytes, no new control
+            text path. Actual host IME-only input path remains unqualified.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: legacy
       section: Legacy key event encoding
       level: defined
@@ -9334,6 +9431,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty functional letter keys omit default first field only without additional fields
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty typed committed text preserves multiple scalars and unknown key identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Legacy arrows restored after LazyGit negotiation exit and bank return; legacy lock modifier omitted. Existing
@@ -9341,6 +9441,12 @@ specifications:
           method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
             no blanket FULL promotion
           baseline: da742dda0dec062bbe63229201a68a87dd9c80db
+        howl_qualification_20261126_keyboard_02:
+          scope: Typed nonshortcut printable committed text is retained in full, not replaced by a single scalar or physical
+            identity; explicit legacy bytes take precedence. Existing Alt/Control and control-character behavior retained.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: event-envelope
       section: docs/keyboard-protocol.rst:125-146
       level: defined
@@ -9356,6 +9462,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty functional letter keys omit default first field only without additional fields
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty alternate identity is shifted only with Shift and never decorates named keys
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty typed committed text preserves multiple scalars and unknown key identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
@@ -9364,6 +9476,12 @@ specifications:
           method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
             no blanket FULL promotion
           baseline: da742dda0dec062bbe63229201a68a87dd9c80db
+        howl_qualification_20261126_keyboard_02:
+          scope: Exact omitted, shifted-only, base-layout-only, zero and named-key alternate handling and multi-scalar associated
+            text, including key0. No claim for all optional fields or functional-key repertoire.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined
@@ -9393,6 +9511,21 @@ specifications:
       - CSI c
       rule: DA1 after enhancement query for detection; set desired flags then query current flags for supported subset. Source
         strongly encourages complete enhancements.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty feature detection replies before DA1 across every input split and C1 profile
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty negotiation exhausts documented flag algebra without mutating the other bank
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_02:
+          scope: Query before DA1 at every split for standard seven-bit and raw C1 input in the corresponding reply profile;
+            supported flag algebra exact for all five documented bits. Preserved pinned Kitty seven-bit retained storage,
+            not an assertion that reserved bits5/6 implement enhancements.
+          method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
+            VT red/green and ReleaseFast root gates; no blanket FULL promotion
+          baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
   kitty_graphics:
     title: Kitty terminal graphics protocol
     author: Kovid Goyal / kitty
