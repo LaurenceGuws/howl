@@ -21646,6 +21646,15 @@ specifications:
             parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
             blanket FULL promotion
           baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+        howl_qualification_20261127_rgba_02:
+          scope: Actual SDL software-renderer source-over oracle checks fully covered generated block foreground alpha128
+            and zero alpha over an explicit partially transparent cell background and opaque default blue. Independent expected
+            pixel channel values within two byte values of mathematical source-over (SDL rounding); every retained/fresh pixel
+            compared exactly across subsequent cuts. Intrinsic color-font images and physical compositor not qualified.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md, color-types/src/lib.rs
+            SrgbaTuple FromStr and wezterm-escape-parser/src/osc.rs ColorOrQuery Display, term/src/terminalstate/performer.rs
+            ChangeDynamicColors; VT red-green and actual SDL software-rendered pixel red-green; no blanket FULL promotion
+          baseline: ac68296fa39558a8e2ed194d3c534a3448c4ed1e
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
@@ -21655,6 +21664,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/output_owner.zig
         test: WezTerm RGBA cell output retains independent background ink and underline alpha
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: WezTerm RGBA pixels compose once through retained narrow and missed-cut repairs
         relation: protocol-family
     - id: sgr-background
       section: docs/escape-sequences.md:307-316
@@ -21685,6 +21697,15 @@ specifications:
             parse_sgr_color; VT/output-owner red-green, exact split/admission/report, history and draw-command proofs; no
             blanket FULL promotion
           baseline: e18ae71890c5be6bc8f3c726e4f47ec5d9fdae9c
+        howl_qualification_20261127_rgba_02:
+          scope: Actual SDL software-renderer pixel oracle for alpha64 explicit background over opaque blue, and exact retained-versus-fresh
+            RGBA pixels through dynamic translucent/zero-alpha default changes, narrow edits and skipped accepted cut. Damage
+            clear uses source replacement before replay only when full-view background is not opaque; existing blink clear
+            shares helper. This is offscreen cell compositing, not enabling desktop transparency.
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md, color-types/src/lib.rs
+            SrgbaTuple FromStr and wezterm-escape-parser/src/osc.rs ColorOrQuery Display, term/src/terminalstate/performer.rs
+            ChangeDynamicColors; VT red-green and actual SDL software-rendered pixel red-green; no blanket FULL promotion
+          baseline: ac68296fa39558a8e2ed194d3c534a3448c4ed1e
       test_locations:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: WezTerm RGBA SGR retains all three colour lanes and reports lossless rendition
@@ -21694,6 +21715,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/output_owner.zig
         test: WezTerm RGBA cell output retains independent background ink and underline alpha
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: WezTerm RGBA pixels compose once through retained narrow and missed-cut repairs
         relation: protocol-family
     - id: sgr-underline
       section: docs/escape-sequences.md:335-344
@@ -21798,6 +21822,35 @@ specifications:
             1..4 hex digits; additionally accepts four ASCII-whitespace fields with percent or decimal components. Other admitted
             CSS color grammar comes from color parser. Palette use, OSC13..19 applicability, replies and actual retained/rendered
             alpha require separate review.'
+        howl_qualification_20261127_rgba_02:
+          scope: 'OSC10/11/12 accept documented comma-form rgba(r,g,b,a), four slash hexadecimal rgba: components of 1..4
+            digits, and author-observed rgba: whitespace decimal/percent fields. Strict finite bounded decimal parsing, round
+            to RGB8/alpha bytes; slash precision uses existing nibble expansion/high-byte truncation. CSS support is selected
+            comma syntax, not complete CSS parser; reject out-of-range decimal fields rather than adopt every CSS clipping
+            behavior. Alpha retained by existing ColorState, configured reset110/111/112, bounded color stack and cursor bank
+            projection. All splits of grouped set/query, malformed and unaffected other OSC grammars, reply-pressure rollback
+            and refeed exact. Author ColorOrQuery Display emits RGB-only; preserve local RGB8/16 reply width and BEL/ST framing,
+            OSC21 RGB-only, without mutating retained alpha. Actual SDL software-rendered retained/fresh pixel proof includes
+            translucent default background, narrow damage and missed-cut repairs, and zero-alpha background. Clear damaged
+            regions before translucent replay, opaque path unchanged. Intrinsic color glyph modulation, full CSS syntax, palette/other
+            dynamic selectors, physical compositor transparency and broader host policy remain outside proof.'
+          method: Pinned WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 docs/escape-sequences.md, color-types/src/lib.rs
+            SrgbaTuple FromStr and wezterm-escape-parser/src/osc.rs ColorOrQuery Display, term/src/terminalstate/performer.rs
+            ChangeDynamicColors; VT red-green and actual SDL software-rendered pixel red-green; no blanket FULL promotion
+          baseline: ac68296fa39558a8e2ed194d3c534a3448c4ed1e
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm dynamic RGBA admits slash CSS and byte-percent forms at every split
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm dynamic RGBA malformed values preserve state and other OSC grammars
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm dynamic alpha stack and reply pressure retain exact configured ownership
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: WezTerm RGBA pixels compose once through retained narrow and missed-cut repairs
+        relation: protocol-family
   uapi_context:
     title: UAPI.15 OSC 3008 Hierarchical Context Signalling
     author: UAPI Group

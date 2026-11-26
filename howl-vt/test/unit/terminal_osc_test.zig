@@ -3742,3 +3742,77 @@ test "WezTerm RGBA alpha-only history attributes remain distinct through reflow"
         }
     }
 }
+
+test "WezTerm dynamic RGBA admits slash CSS and byte-percent forms at every split" {
+    const wire = "\x1b]10;rgba(127,127,127,0.4);rgba:efff/ecff/f4ff/d000;rgba:127 50% 255 64\x07\x1b]10;?;?;?\x1b\\";
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        const p = terminal.presentation();
+        try std.testing.expectEqual(Rgb{ .r = 127, .g = 127, .b = 127, .a = 102 }, p.foreground);
+        try std.testing.expectEqual(Rgb{ .r = 239, .g = 236, .b = 244, .a = 208 }, p.background);
+        try std.testing.expectEqual(@as(?Rgb, .{ .r = 127, .g = 128, .b = 255, .a = 64 }), p.cursor);
+        try std.testing.expectEqualStrings("\x1b]10;rgb:7f7f/7f7f/7f7f\x1b\\\x1b]11;rgb:efef/ecec/f4f4\x1b\\\x1b]12;rgb:7f7f/8080/ffff\x1b\\", terminal.replyBytes());
+        try consumeReplies(&terminal);
+        try feed(&terminal, "\x1b]21;foreground=?;background=?;cursor=?\x07");
+        try std.testing.expectEqualStrings("\x1b]21;foreground=rgb:7f/7f/7f;background=rgb:ef/ec/f4;cursor=rgb:7f/80/ff\x1b\\", terminal.replyBytes());
+        try std.testing.expectEqualDeep(p, terminal.presentation());
+    }
+}
+
+test "WezTerm dynamic RGBA malformed values preserve state and other OSC grammars" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]10;#123456;#abcdef;#fedcba\x07");
+    const before = terminal.presentation();
+    for ([_][]const u8{
+        "rgba:1/2/3",         "rgba:1/2/3/4/5",  "rgba:1/2/3/zz",     "rgba:1/2/3/12345",
+        "rgba:1 2 3 256",     "rgba:1 2 3 -1",   "rgba:1 2 3 nan",    "rgba:1 2 3 101%",
+        "rgba(1,2,3)",        "rgba(1,2,3,1.1)", "rgba(256,2,3,1)",   "rgba(1,2,3,0.5)x",
+        "rgba(1,2,3,0x1p-1)", "rgba(1,2,3,1_0)", "rgba(1,2,3,1e999)", "rgba(1,2,3,)",
+    }) |invalid| {
+        var bytes: [160]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b]10;{s}\x07", .{invalid});
+        try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+        try std.testing.expectEqualDeep(before, terminal.presentation());
+    }
+    try std.testing.expect(!(try terminal.feed("\x1b]4;1;rgba:1/2/3/4\x07\x1b]21;foreground=rgba:1/2/3/4\x07\x1b]13;rgba:1/2/3/4\x07")).stateChanged());
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+}
+
+test "WezTerm dynamic alpha stack and reply pressure retain exact configured ownership" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.foreground = .{ .r = 1, .g = 2, .b = 3, .a = 4 };
+    defaults.background = .{ .r = 5, .g = 6, .b = 7, .a = 8 };
+    defaults.cursor = .{ .r = 9, .g = 10, .b = 11, .a = 12 };
+    terminal.setColorDefaults(defaults);
+    try feed(&terminal, "\x1b]10;rgba:11/22/33/44;rgba(0,100%,0,50%);rgba:ab/cd/ef/0\x07");
+    const saved = terminal.presentation();
+    try std.testing.expectEqual(Rgb{ .r = 17, .g = 34, .b = 51, .a = 68 }, saved.foreground);
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 255, .b = 0, .a = 128 }, saved.background);
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 171, .g = 205, .b = 239, .a = 0 }), saved.cursor);
+    try feed(&terminal, "\x1b]30001\x1b\\\x1b[?1049h\x1b]10;#ffffff;#000000;#aabbcc\x07\x1b]30101\x1b\\");
+    try std.testing.expectEqualDeep(saved, terminal.presentation());
+    try feed(&terminal, "\x1b[?1049l");
+    try std.testing.expectEqualDeep(saved, terminal.presentation());
+    const command = "\x1b]10;rgba:ff/ee/dd/00;?\x07";
+    const response = "\x1b]11;rgb:0000/ffff/0000\x07";
+    const filler = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes - response.len + 1, false);
+    defer std.testing.allocator.free(filler);
+    try std.testing.expectError(error.ReplyLimit, terminal.feed(command));
+    try std.testing.expectEqualDeep(saved, terminal.presentation());
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, command);
+    try std.testing.expectEqualStrings(response, terminal.replyBytes());
+    try std.testing.expectEqual(@as(u8, 0), terminal.presentation().foreground.a);
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b]110\x07\x1b]111\x07\x1b]112\x07");
+    try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
+    try std.testing.expectEqual(defaults.background, terminal.presentation().background);
+    try std.testing.expectEqual(defaults.cursor, terminal.presentation().cursor);
+}

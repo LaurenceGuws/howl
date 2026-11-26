@@ -357,7 +357,7 @@ fn handleXtermDynamicColor(
     while (parts.next()) |value| {
         if (std.mem.eql(u8, value, "?")) {
             try appendXtermDynamicColorReply(output, encode_buf, colors, key, reply_bel);
-        } else if (parseColor(value)) |color| {
+        } else if (parseDynamicColor(value, key)) |color| {
             setDynamicColor(colors, key, color);
         }
         key = nextDynamicKey(key) orelse return;
@@ -414,6 +414,66 @@ fn parseColorWithIntensity(value: []const u8, policy: IntensityPolicy) ?Rgb {
     if (std.mem.startsWith(u8, color_text, "rgb:")) return parseRgbColor(color_text[4..]);
     if (std.mem.startsWith(u8, color_text, "rgbi:")) return parseRgbiColor(color_text[5..], policy);
     return namedColor(color_text);
+}
+
+// The documented WezTerm extension applies to OSC10/11/12. Keep
+// other colour grammars, including Kitty's separate alpha suffix, intact.
+fn parseDynamicColor(value: []const u8, key: DynamicKey) ?Rgb {
+    switch (key) {
+        .foreground, .background, .cursor => {
+            const text = std.mem.trim(u8, value, " \t\r\n");
+            if (std.mem.startsWith(u8, text, "rgba:")) return parseRgbaColon(text[5..]);
+            if (std.mem.startsWith(u8, text, "rgba(")) {
+                if (!std.mem.endsWith(u8, text, ")")) return null;
+                return parseRgbaCss(text[5 .. text.len - 1]);
+            }
+        },
+        else => {},
+    }
+    return parseColor(value);
+}
+
+fn rgbaChannels(channels: [4]u8) Rgb {
+    return .{ .r = channels[0], .g = channels[1], .b = channels[2], .a = channels[3] };
+}
+
+// Slash syntax uses the existing XParseColor component precision.
+// The whitespace form uses decimal byte or percent units for all channels.
+fn parseRgbaColon(text: []const u8) ?Rgb {
+    var channels: [4]u8 = undefined;
+    if (std.mem.indexOfScalar(u8, text, '/') != null) {
+        var parts = std.mem.splitScalar(u8, text, '/');
+        for (&channels) |*channel| channel.* = parseRgbComponent(parts.next() orelse return null) orelse return null;
+        if (parts.next() != null) return null;
+    } else {
+        var parts = std.mem.tokenizeAny(u8, text, " \t\r\n");
+        for (&channels) |*channel| channel.* = parseRgbaDecimal(parts.next() orelse return null, 255) orelse return null;
+        if (parts.next() != null) return null;
+    }
+    return rgbaChannels(channels);
+}
+
+// Bounded comma-form CSS rgba: three byte/percent channels and a
+// unit-interval/percent alpha. Do not adopt unrelated CSS syntax here.
+fn parseRgbaCss(text: []const u8) ?Rgb {
+    var parts = std.mem.splitScalar(u8, text, ',');
+    var channels: [4]u8 = undefined;
+    for (&channels, 0..) |*channel, index| {
+        const field = std.mem.trim(u8, parts.next() orelse return null, " \t\r\n");
+        channel.* = parseRgbaDecimal(field, if (index == 3) 1 else 255) orelse return null;
+    }
+    if (parts.next() != null) return null;
+    return rgbaChannels(channels);
+}
+
+fn parseRgbaDecimal(text: []const u8, maximum: f64) ?u8 {
+    const percent = std.mem.endsWith(u8, text, "%");
+    const number = if (percent) text[0 .. text.len - 1] else text;
+    if (!isDecimalFloat(number)) return null;
+    const value = std.fmt.parseFloat(f64, number) catch return null;
+    const limit: f64 = if (percent) 100 else maximum;
+    if (!std.math.isFinite(value) or value < 0 or value > limit) return null;
+    return @intFromFloat(@round(value / limit * 255.0));
 }
 
 // Independently sourced X.Org colour facts. Compact offsets into a

@@ -323,6 +323,7 @@ pub const Canvas = struct {
                                 .w = @intCast(band.after - band.first),
                                 .h = snapshot.cell_height,
                             };
+                            if (!opaqueBackground(snapshot.background)) try clearContentClip(renderer, clip);
                             try self.drawSnapshotImpl(true, renderer, geometry, target_pane, snapshot, first, row, false, clip);
                         }
                         continue;
@@ -331,6 +332,7 @@ pub const Canvas = struct {
                     row += 1;
                     while (row < snapshot.rows and self.row_generations[row] != snapshot.row_generations[row] and (!narrow or snapshot.row_damage[row] == null)) row += 1;
                     const row_clip: c.SDL_Rect = .{ .x = 0, .y = @intCast(@as(u32, first) * snapshot.cell_height), .w = snapshot.surface.width, .h = @intCast(@as(u32, row - first) * snapshot.cell_height) };
+                    if (!opaqueBackground(snapshot.background)) try clearContentClip(renderer, row_clip);
                     try self.drawSnapshot(renderer, geometry, target_pane, snapshot, first, row, false, row_clip);
                 }
             }
@@ -365,15 +367,7 @@ pub const Canvas = struct {
                     .w = snapshot.surface.width,
                     .h = @intCast(@as(u32, row - first) * snapshot.cell_height),
                 };
-                // Clear even transparent backgrounds before reassembling the
-                // same clipped stacking order. A blended background cannot
-                // erase retained glyph alpha from the previous phase.
-                if (!c.SDL_SetRenderClipRect(renderer, &clip) or
-                    !c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_NONE) or
-                    !c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0)) return error.SDLTexture;
-                const rect: c.SDL_FRect = .{ .x = 0, .y = @floatFromInt(clip.y), .w = @floatFromInt(clip.w), .h = @floatFromInt(clip.h) };
-                if (!c.SDL_RenderFillRect(renderer, &rect) or
-                    !c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND)) return error.SDLTexture;
+                try clearContentClip(renderer, clip);
                 try self.drawSnapshot(renderer, geometry, target_pane, snapshot, first, row, false, clip);
             }
             if (!c.SDL_SetRenderClipRect(renderer, null) or !c.SDL_SetRenderTarget(renderer, previous_target)) return error.SDLTexture;
@@ -592,6 +586,30 @@ pub const Canvas = struct {
         self.content_revision = null;
         self.visual_context = null;
         self.text_blink_visible = null;
+    }
+
+    fn opaqueBackground(command: output_commands.Command) bool {
+        return command == .solid and command.solid.color.a == 255;
+    }
+
+    // A translucent background cannot erase retained ink by source-over.
+    // Rebuild only the damaged cut from transparent pixels, in the same
+    // stacking order as a full repaint. Opaque ordinary repairs skip this.
+    fn clearContentClip(renderer: *c.SDL_Renderer, clip: c.SDL_Rect) !void {
+        if (!c.SDL_SetRenderClipRect(renderer, &clip) or
+            !c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_NONE)) return error.SDLTexture;
+        // zig-audit: acknowledge discard
+        // reason: Restore the content blend policy even after a failed clear.
+        errdefer _ = c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND);
+        if (!c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0)) return error.SDLTexture;
+        const rect: c.SDL_FRect = .{
+            .x = @floatFromInt(clip.x),
+            .y = @floatFromInt(clip.y),
+            .w = @floatFromInt(clip.w),
+            .h = @floatFromInt(clip.h),
+        };
+        if (!c.SDL_RenderFillRect(renderer, &rect) or
+            !c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND)) return error.SDLTexture;
     }
 
     fn beginCommands(renderer: *c.SDL_Renderer, geometry: *Geometry) !void {
@@ -2571,5 +2589,91 @@ test "split selection draws both runs without painting their gap" {
         var red: u8 = 0;
         try std.testing.expect(c.SDL_ReadSurfacePixel(surface, x, 5, &red, null, null, null));
         try std.testing.expect(if (index == 2) red == 0 else red > 0);
+    }
+}
+
+test "WezTerm RGBA pixels compose once through retained narrow and missed-cut repairs" {
+    const output = @import("howl_vt_output");
+    const allocator = std.testing.allocator;
+    const font = try @import("howl_text").FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 20 },
+    });
+    defer font.deinit();
+    const owner = try output.Terminal.init(allocator, font);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: Every scoped immutable snapshot releases before the owner.
+    defer owner.deinit() catch unreachable;
+    try owner.resize(3, 8);
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(256, 128, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const reference_surface = c.SDL_CreateSurface(256, 128, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(reference_surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const reference_renderer = c.SDL_CreateSoftwareRenderer(reference_surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(reference_renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(reference_renderer, c.SDL_BLENDMODE_BLEND));
+    var retained = Canvas.init(allocator);
+    defer retained.deinit();
+    var fresh = Canvas.init(allocator);
+    defer fresh.deinit();
+    const geometry = try allocator.create(Geometry);
+    defer allocator.destroy(geometry);
+    geometry.* = .{};
+    const cuts = [_][]const u8{
+        "\x1b[?25l\x1b]11;#0000ff\x07\x1b[38:6:255:0:0:128;48:6:0:255:0:64m█\x1b[38:6:255:0:0:0m█\x1b[0m",
+        "\x1b]11;rgba:00/00/ff/80\x07",
+        "\x1b[1;1H\x1b[0m ",
+        "\x1b[2;1H\x1b[38:6:0:255:0:128m█",
+        "\x1b[1;2H\x1b[0m ",
+        "\x1b]11;rgba:00/00/00/00\x07",
+        "\x1b[2;1H\x1b[0m ",
+    };
+    for (cuts, 0..) |bytes, index| {
+        if (index == 4) {
+            // Miss an accepted frame: the latest narrow band is insufficient.
+            try owner.feed("\x1b[3;1H\x1b[38:6:255:255:255:128m█");
+            try owner.flush();
+        }
+        try owner.feed(bytes);
+        try owner.flush();
+        const held = try owner.hold();
+        // zig-audit: acknowledge catch_unreachable
+        // reason: Each iteration owns exactly this lease.
+        defer owner.release(held) catch unreachable;
+        const snap = &held.snapshot;
+        try std.testing.expect(snap.surface.width <= 256 and snap.surface.height <= 128);
+        if (index == 2) try std.testing.expect(snap.row_damage[0] != null);
+        if (index == 4) try std.testing.expect(snap.content_revision > retained.content_revision.? + 1);
+        try retained.applySnapshotResources(renderer, 1, snap);
+        try fresh.applySnapshotResources(reference_renderer, 1, snap);
+        fresh.invalidateContent();
+        const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snap.surface.width), .h = @floatFromInt(snap.surface.height) };
+        try retained.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, snap);
+        try fresh.drawCut(reference_renderer, geometry, pane, 1, .hidden, 1, null, snap);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        try std.testing.expect(c.SDL_RenderPresent(reference_renderer));
+        for (0..snap.surface.height) |y| for (0..snap.surface.width) |x| {
+            var actual: [4]u8 = undefined;
+            var expected: [4]u8 = undefined;
+            try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &actual[0], &actual[1], &actual[2], &actual[3]));
+            try std.testing.expect(c.SDL_ReadSurfacePixel(reference_surface, @intCast(x), @intCast(y), &expected[0], &expected[1], &expected[2], &expected[3]));
+            try std.testing.expectEqualDeep(expected, actual);
+        };
+        if (index == 0) {
+            // Independent source-over oracle for fully covered block ink:
+            // green@64 over blue, followed by red@128 (or red@0).
+            const expected = [_][4]u8{ .{ 128, 32, 95, 255 }, .{ 0, 64, 191, 255 }, .{ 0, 0, 255, 255 } };
+            for (expected, 0..) |pixel, col| {
+                var actual: [4]u8 = undefined;
+                const x: i32 = @intCast(col * snap.cell_width + snap.cell_width / 2);
+                try std.testing.expect(c.SDL_ReadSurfacePixel(surface, x, snap.cell_height / 2, &actual[0], &actual[1], &actual[2], &actual[3]));
+                for (pixel, actual) |want, got| try std.testing.expect(@abs(@as(i16, want) - got) <= 2);
+            }
+        }
     }
 }
