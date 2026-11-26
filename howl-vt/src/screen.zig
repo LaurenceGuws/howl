@@ -1694,6 +1694,7 @@ pub const Screen = struct {
     }
 
     fn applyFlowMove(self: *Screen, event: Screen.Action) void {
+        self.breakUnicodeStream();
         self.wrap_pending = false;
         switch (event) {
             .line_feed => {
@@ -1740,6 +1741,7 @@ pub const Screen = struct {
     }
 
     fn applyCursorBack(self: *Screen, count: u16, requested: ReverseWrap) void {
+        self.breakUnicodeStream();
         const wrap: ReverseWrap = if (self.auto_wrap) requested else .none;
         var remaining = count;
         if (wrap != .none and self.wrap_pending) remaining -|= 1;
@@ -3436,19 +3438,16 @@ pub const Screen = struct {
                 (!self.unicode_core and properties.isSpacingMark() and properties.width() > 0));
         const narrows = !self.unicode_core and !lead_cell.explicit_width and cp == 0xfe0e and
             lead_cell.width == 2 * @as(u16, lead_height) and presentation_base;
-        if (widens and
-            self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
-        {
-            return false;
-        }
+        const widening = if (widens)
+            self.planGraphicPlacementFrom(2, self.cursorRightBoundaryAt(anchor_row, anchor_col), anchor_row, anchor_col, false) orelse return false
+        else
+            null;
 
-        // Widening at the right edge can scroll. Reserve before appending the
-        // selector or moving the existing grapheme so retry cannot duplicate it.
+        // The placement plan accounts for every obstructing lower strip,
+        // including a scroll reached only after skipping several rows.
+        // Reserve history before the selector can change the old lead.
         var history: ?history_store_mod.Store.Prepared = null;
-        if (grow and widens and
-            self.auto_wrap and anchor_col == self.cursorRightBoundaryAt(anchor_row, anchor_col) and
-            self.cursor.row == self.scrollBottom())
-        {
+        if (grow and widening != null and widening.?.scrolls) {
             history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Capacity => return error.HistoryCapacity,
@@ -3482,8 +3481,9 @@ pub const Screen = struct {
         }
         lead_cell.combining_len = combining_index + 1;
         var final_width = lead_cell.width;
-        if (widens) {
-            self.widenPresentation(anchor_row, anchor_col, &history);
+        var final_pos: GraphicPosition = .{ .row = anchor_row, .col = anchor_col };
+        if (widening) |placement| {
+            final_pos = self.widenPresentation(anchor_row, anchor_col, placement, &history);
             final_width = 2;
         } else if (narrows) {
             self.narrowPresentation(anchor_row, anchor_col);
@@ -3498,140 +3498,61 @@ pub const Screen = struct {
         }
         // Combining and presentation-width edits are uncommon enough that the
         // scan hint can safely fall back to the canonical full-row calculation.
-        const changed = self.noteRowRangeChange(anchor_row, anchor_row + lead_height - 1, true);
-        if (self.unicode_core and widens) {
-            // Widening may have moved the lead across the right margin.
-            if (self.previousLeadCellPos()) |new_pos| {
-                const new_cell = cells[self.rowStart(new_pos.row) + new_pos.col];
-                self.rememberUnicodeOrigin(new_pos.row - new_cell.y, new_pos.col - new_cell.x);
-            } else self.unicode_origin = null;
-        } else self.rememberUnicodeOrigin(anchor_row, anchor_col);
+        const changed = self.noteRowRangeChange(final_pos.row, final_pos.row + lead_height - 1, true);
+        self.rememberUnicodeOrigin(final_pos.row, final_pos.col);
         return changed;
     }
 
-    fn widenPresentation(self: *Screen, row: u16, col: u16, history: *?history_store_mod.Store.Prepared) void {
-        const right = self.cursorRightBoundaryAt(row, col);
-        const cells = self.cells orelse return;
-        if (col == right) {
-            const lead_index = self.rowStart(row) + col;
-            const lead = cells[@intCast(lead_index)];
-            const destination_col: u16 = if (self.auto_wrap)
-                if (self.left_right_margin_mode) self.left_margin else 0
-            else
-                col - 1;
-            if (!self.auto_wrap) {
-                const destination = self.rowStart(row) + destination_col;
-                const destination_cleared =
-                    self.clearReplacementOwnershipAt(row, destination_col);
-                std.debug.assert(destination_cleared or
-                    cells[@intCast(destination)].combining_len == 0);
-                self.scalars.?.move(
-                    lead_index,
-                    lead.combining_len,
-                    destination,
-                    cells[@intCast(destination)].combining_len,
-                    // zig-audit: acknowledge panic
-                    // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                ) catch @panic("accepted presentation relocation scalar mismatch");
-                var moved = lead;
-                moved.width = 2;
-                moved.semantic_width = true;
-                cells[@intCast(destination)] = moved;
-                cells[@intCast(lead_index)] = .{
-                    .codepoint = 0,
-                    .width = 2,
-                    .x = 1,
-                    .semantic_width = true,
-                    .attrs = moved.attrs,
-                };
-                self.wrap_pending = false;
-                self.cursor.setColByClient(right);
-                return;
-            }
-
+    fn widenPresentation(self: *Screen, row: u16, col: u16, placement: GraphicPlacement, history: *?history_store_mod.Store.Prepared) GraphicPosition {
+        const cells = self.cells.?;
+        const lead_index = self.rowStart(row) + col;
+        var lead = cells[lead_index];
+        std.debug.assert(row == self.cursor.row and lead.width == 1 and lead.height == 1);
+        const relocates = placement.feeds != 0 or placement.col != col;
+        if (relocates) {
+            // The complete scalar sequence fits the already admitted range.
+            // Clear its old coordinate before any row moves, then reinstall
+            // that same bounded sequence with the released storage.
             var cluster: [scalar_storage.maximum_scalars]u32 = undefined;
             const accepted = self.cellScalarsAt(row, col, &cluster);
             clearAcceptedTail(&self.scalars.?, lead_index, lead.combining_len);
-            cells[@intCast(lead_index)] = blank_cell;
-            self.setRowWrapped(row, true);
-            self.lineFeedWithHistory(history);
-            self.cursor.setColByClient(destination_col);
-            const destination = self.rowStart(self.cursor.row) + destination_col;
-            const continuation = destination + 1;
-            const destination_cleared = self.clearReplacementOwnershipAt(
-                self.cursor.row,
-                destination_col,
-            );
-            std.debug.assert(destination_cleared or
-                cells[@intCast(destination)].combining_len == 0);
-            const continuation_cleared = self.clearReplacementOwnershipAt(
-                self.cursor.row,
-                destination_col + 1,
-            );
-            std.debug.assert(continuation_cleared or
-                cells[@intCast(continuation)].combining_len == 0);
-            var moved = lead;
-            moved.width = 2;
-            moved.semantic_width = true;
-            cells[@intCast(destination)] = moved;
+            cells[lead_index] = blank_cell;
+            self.forgetRowScanEnd(row);
+            self.markRowChanged(row);
+            self.commitPlannedGraphicPlacement(placement, history);
+            const destination = self.rowStart(self.cursor.row) + placement.col;
+            // zig-audit: acknowledge discard
+            // reason: Replacement ownership cleanup is mandatory even when the target was already blank.
+            _ = self.clearReplacementOwnershipAt(self.cursor.row, placement.col);
+            // zig-audit: acknowledge discard
+            // reason: The second cell must also relinquish any previous scalar or cluster ownership.
+            _ = self.clearReplacementOwnershipAt(self.cursor.row, placement.col + 1);
             if (accepted.len > scalar_storage.inline_scalars) {
-                self.scalars.?.set(
-                    destination,
-                    0,
-                    accepted[scalar_storage.inline_scalars..],
+                self.scalars.?.set(destination, 0, accepted[scalar_storage.inline_scalars..]) catch
                     // zig-audit: acknowledge panic
-                    // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                ) catch @panic("accepted presentation relocation lost capacity");
+                    // reason: The exact admitted scalar range was released above; reinstalling it cannot require growth.
+                    @panic("accepted presentation relocation lost capacity");
             }
-            cells[@intCast(continuation)] = .{
-                .codepoint = 0,
-                .width = 2,
-                .x = 1,
-                .semantic_width = true,
-                .attrs = moved.attrs,
-            };
-            // Width-changing grapheme relocation owns this newly written row.
-            // Replacement clearing may be a no-op when the destination was
-            // already blank, so the committed lead/continuation write itself
-            // must advance non-consuming row provenance.
-            self.markRowChanged(self.cursor.row);
-            const after = destination_col + 2;
-            if (after <= right) {
-                self.cursor.setColByClient(after);
-            } else {
-                self.cursor.setColByClient(right);
-                self.wrap_pending = true;
-            }
-            return;
+        } else {
+            // zig-audit: acknowledge discard
+            // reason: The retained lead stays in place; clear its new continuation unconditionally.
+            _ = self.clearReplacementOwnershipAt(row, col + 1);
         }
-        const next_col = col + 1;
-        const next_index = self.rowStart(row) + next_col;
-        // Widening replaces the neighboring cell regardless of its shape.
-        // Clearing only multicell clusters leaves ordinary-cell scalar
-        // ownership behind (and falsely asserts for occupied ASCII cells).
-        // zig-audit: acknowledge discard
-        // reason: Cleanup must execute even for an already blank destination; its changed flag is not an ownership invariant.
-        _ = self.clearReplacementOwnershipAt(row, next_col);
-        const lead_index = self.rowStart(row) + col;
-        cells[@intCast(lead_index)].width = 2;
-        cells[@intCast(lead_index)].semantic_width = true;
-        cells[@intCast(next_index)] = .{
+        const destination = self.rowStart(self.cursor.row) + placement.col;
+        lead.width = 2;
+        lead.semantic_width = true;
+        cells[destination] = lead;
+        cells[destination + 1] = .{
             .codepoint = 0,
             .width = 2,
             .x = 1,
             .semantic_width = true,
-            .attrs = cells[@intCast(lead_index)].attrs,
+            .attrs = lead.attrs,
         };
-        if (self.cursor.row == row and !self.wrap_pending and
-            self.cursor.col == next_col)
-        {
-            if (next_col < right) {
-                self.cursor.setColByClient(next_col + 1);
-            } else {
-                self.cursor.setColByClient(right);
-                if (self.auto_wrap) self.wrap_pending = true;
-            }
-        }
+        const after = placement.col + 2;
+        self.wrap_pending = after > placement.right and self.auto_wrap;
+        self.cursor.setColByClient(@min(after, placement.right));
+        return .{ .row = self.cursor.row, .col = placement.col };
     }
 
     fn narrowPresentation(self: *Screen, row: u16, col: u16) void {
@@ -4217,15 +4138,19 @@ pub const Screen = struct {
     // bottom-margin scroll exposes an empty span, so at most one history
     // reservation is required for horizontal placement.
     fn planGraphicPlacement(self: *const Screen, width: u16, initial_right: u16) ?GraphicPlacement {
+        return self.planGraphicPlacementFrom(width, initial_right, self.cursor.row, self.cursor.col, self.wrap_pending);
+    }
+
+    fn planGraphicPlacementFrom(self: *const Screen, width: u16, initial_right: u16, start_row: u16, start_col: u16, wrap_pending: bool) ?GraphicPlacement {
         const left = self.leftBoundary();
         if (@as(u32, left) + width > @as(u32, initial_right) + 1) return null;
         const bottom = self.scrollBottom();
         const wrap_right = if (self.left_right_margin_mode) self.right_margin else self.cols - 1;
-        var row = self.cursor.row;
-        var col = self.cursor.col;
+        var row = start_row;
+        var col = start_col;
         var right = initial_right;
         var feeds: u16 = 0;
-        var pending = self.wrap_pending and self.auto_wrap and col == right;
+        var pending = wrap_pending and self.auto_wrap and col == right;
         while (true) {
             const fits = @as(u32, left) + width <= @as(u32, right) + 1;
             if (fits and !pending) {
@@ -4290,10 +4215,14 @@ pub const Screen = struct {
         else
             null;
         defer self.discardPreparedHistory(&history);
+        self.commitPlannedGraphicPlacement(placement, &history);
+    }
+
+    fn commitPlannedGraphicPlacement(self: *Screen, placement: GraphicPlacement, history: *?history_store_mod.Store.Prepared) void {
         self.wrap_pending = false;
         for (0..placement.feeds) |_| {
             self.setRowWrapped(self.cursor.row, true);
-            self.lineFeedWithHistory(&history);
+            self.lineFeedWithHistory(history);
             self.cursor.setColByClient(self.leftBoundary());
         }
         self.cursor.setColByClient(placement.col);
@@ -4347,6 +4276,7 @@ pub const Screen = struct {
 
     /// Commits an immediately prepared LF or NEL without allocating history.
     pub fn commitLineFeed(self: *Screen, prepared: *PreparedLineFeed, next_line: bool) void {
+        self.breakUnicodeStream();
         self.wrap_pending = false;
         self.setRowWrapped(self.cursor.row, false);
         if (next_line) self.cursor.setColByClient(0);

@@ -2571,3 +2571,102 @@ test "Unicode Core distinguishes addressed overwrite from consecutive grapheme i
     try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(2, 2).width);
     try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(2, 3));
 }
+
+test "VS16 relocation shares complete-span placement with ordinary and sized text" {
+    for ([_]bool{ false, true }) |negotiated| {
+        for ([_]bool{ false, true }) |edge| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 4);
+            defer terminal.deinit();
+            if (negotiated) try feed(&terminal, "\x1b[?2027h");
+            // The second row's lower continuations protect A. At the edge,
+            // promotion wraps to that row; in the interior it must skip A.
+            try feedChanged(&terminal, if (edge) "\x1b[1;1H\x1b]66;s=2:w=2;A\x07" else "\x1b[1;3H\x1b]66;s=2:w=2;A\x07");
+            try feedChanged(&terminal, if (edge) "\x1b[1;8H☺" else "\x1b[2;2H☺");
+            try feedChanged(&terminal, "\u{fe0f}\u{301}");
+            const view = terminal.semanticView(0);
+            try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, if (edge) 0 else 2));
+            const start: u16 = if (edge) 0 else 2;
+            for (start..start + 4) |col| {
+                try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, @intCast(col)).y);
+                try std.testing.expectEqual(@as(u8, 4), view.cellInfoAt(1, @intCast(col)).width);
+            }
+            const destination: u16 = if (edge) 4 else 6;
+            var scalars: [24]u21 = undefined;
+            try std.testing.expectEqualSlices(u21, &.{ 0x263a, 0xfe0f, 0x301 }, view.cellScalarsAt(1, destination, &scalars));
+            try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(1, destination).width);
+            try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, destination + 1).x);
+            try std.testing.expectEqual(@as(u21, 0), view.cellAt(if (edge) 0 else 1, if (edge) 7 else 1));
+            try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+            try std.testing.expectEqual(@as(u16, if (edge) 6 else 7), view.cursor_col);
+        }
+    }
+}
+
+test "Unicode Core VS16 preflights obstructed-row history relocation and resumes exactly once" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 3, 8, 4);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "\x1b[?2027h\x1b[1;2H\x1b]66;s=3:w=2;A\x07\x1b[2;8H☺");
+    const initial = terminal.semanticView(0);
+    const generation = [_]u64{ initial.rowGeneration(0).?, initial.rowGeneration(1).?, initial.rowGeneration(2).? };
+    const sequence = terminal.semanticSequence();
+    const prefix = try terminal.feedAtServiceBoundary("\xef\xb8", 1);
+    try std.testing.expectEqual(@as(usize, 2), prefix.consumed);
+    failing.fail_index = failing.alloc_index;
+    const blocked = try terminal.feedAtServiceBoundary("\x8f\u{301}X", 2);
+    try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    var scalars: [24]u21 = undefined;
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{0x263a}, view.cellScalarsAt(1, 7, &scalars));
+    try std.testing.expectEqual(@as(u32, 0), view.history_count);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 7), view.cursor_col);
+    for (generation, 0..) |value, row| try std.testing.expectEqual(value, view.rowGeneration(@intCast(row)).?);
+    const again = try terminal.feedAtServiceBoundary("\u{301}X", 3);
+    try std.testing.expectEqual(@as(usize, 0), again.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, again.input_blocked.?);
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try terminal.feedAtServiceBoundary("\u{301}X", 4);
+    try std.testing.expectEqual(@as(usize, 3), resumed.consumed);
+    try std.testing.expect(resumed.input_blocked == null and !resumed.summary.historyLost());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 1), view.history_count);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(1).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(1, 6).y);
+    try std.testing.expectEqualSlices(u21, &.{ 0x263a, 0xfe0f, 0x301 }, view.cellScalarsAt(2, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(2, 2));
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+}
+
+test "Unicode Core cursor restoration retires consecutive ownership even at unchanged coordinates" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 12, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "\x1b[?2027h🇿\x1b7\x1b8🇦");
+    var scalars: [24]u21 = undefined;
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{0x1f1ff}, view.cellScalarsAt(0, 0, &scalars));
+    try std.testing.expectEqualSlices(u21, &.{0x1f1e6}, view.cellScalarsAt(0, 2, &scalars));
+    try std.testing.expectEqual(@as(u16, 4), view.cursor_col);
+    try feedChanged(&terminal, "\x1b[2;1H🇿\x1b[2;3H🇦\x1b[2;5H\u{301}");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{0x1f1e6}, view.cellScalarsAt(1, 2, &scalars));
+    try feedChanged(&terminal, "\x1b[3;1HA\x1b[3;2H\u{301}B");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{'A'}, view.cellScalarsAt(2, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(2, 1));
+}
+
+test "Unicode Core mode save restore and query preserve both reply profiles" {
+    for ([_]bool{ false, true }) |eight| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 8, 0);
+        defer terminal.deinit();
+        if (eight) try feed(&terminal, "\x1b G");
+        const wire = if (eight) "\x9b?2027$p\x9b?2027h\x9b?2027s\x9b?2027l\x9b?2027$p\x9b?2027r\x9b?2027$p" else "\x1b[?2027$p\x1b[?2027h\x1b[?2027s\x1b[?2027l\x1b[?2027$p\x1b[?2027r\x1b[?2027$p";
+        try feed(&terminal, wire);
+        try std.testing.expectEqualStrings(if (eight) "\x9b?2027;2$y\x9b?2027;2$y\x9b?2027;1$y" else "\x1b[?2027;2$y\x1b[?2027;2$y\x1b[?2027;1$y", terminal.replyBytes());
+        try feedChanged(&terminal, "😐\u{fe0e}");
+        try std.testing.expectEqual(@as(u8, 2), terminal.semanticView(0).cellInfoAt(0, 0).width);
+    }
+}

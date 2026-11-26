@@ -7682,6 +7682,7 @@ pub const Terminal = struct {
     fn restoreCursorInformation(self: *Terminal, payload: []const u8) bool {
         const info = parseCursorInformation(payload) orelse return false;
         const active = self.screen_state.active();
+        active.breakUnicodeStream();
         const cursor_before = active.cursor;
         const attrs_before = active.current_attrs;
         const wrap_before = active.wrap_pending;
@@ -7799,6 +7800,7 @@ pub const Terminal = struct {
 
     fn restoreCursorState(self: *Terminal) void {
         const active = self.screen_state.active();
+        active.breakUnicodeStream();
         const savepoint = self.activeSavepointConst();
         active.wrap_pending = false;
         if (!savepoint.valid) {
