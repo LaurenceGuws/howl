@@ -6028,6 +6028,10 @@ pub const Terminal = struct {
     pub const MouseButton = input.MouseButton;
     /// Bounds committed text carried by one physical-key event.
     pub const maximum_key_text_bytes = input.max_text_bytes;
+    /// Bounds one committed text-only event, not a physical key.
+    pub const maximum_committed_text_bytes = input.max_committed_text_bytes;
+    /// Validates committed text before ownership transfer and bounds its wire size.
+    pub const committedTextCapacity = input.committedTextCapacity;
     /// Provides caller-owned fixed scratch storage for allocation-free input encoding.
     pub const InputScratch = input.Scratch;
     /// Bounds legacy key bytes while always leaving room for Meta escape prefixing.
@@ -8552,9 +8556,9 @@ pub const Terminal = struct {
 
     /// Encode one caller input event according to current terminal modes.
     ///
-    /// Non-paste results borrow `scratch` or event bytes. Paste encoding may
-    /// allocate through `allocator`; callers must always call `deinit` on the
-    /// returned value. Paste length overflow is reported separately from
+    /// Key/mouse/focus results borrow scratch or event bytes. Paste and
+    /// committed text may allocate through allocator; callers must always
+    /// call deinit on the returned value. Length overflow is separate from
     /// allocator exhaustion. Mouse input may also fail while retaining a
     /// bounded locator report; failure preserves pending output and report
     /// latches.
@@ -8567,6 +8571,10 @@ pub const Terminal = struct {
         self.requireNoPreparedResize();
         return switch (event) {
             .bytes => |bytes| .{ .bytes = bytes },
+            .committed_text => |text| if (self.modes.keyboard_action_mode)
+                .{}
+            else
+                try input.encodeCommittedText(allocator, text, self.kitty.activeScreenConst(self.screen_state.alt_active).keyboard.flags),
             .key => |key| .{ .bytes = try self.encodeKeyInput(scratch, key) },
             .mouse => |mouse| .{ .bytes = try self.encodeMouseInput(scratch, mouse) },
             .focus => |focus| .{ .bytes = self.encodeFocusInput(scratch, focus) },

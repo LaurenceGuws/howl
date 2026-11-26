@@ -52,9 +52,33 @@ pub const Service = struct {
 const WriteQueue = struct {
     bytes: [write_queue_bytes]u8 = undefined,
     count: usize = 0,
+    // At most one already encoded commit. It follows the fixed FIFO and
+    // blocks later input/replies until retired, without enlarging idle panes.
+    tail: vt.Terminal.EncodedInput = .{},
+    tail_offset: usize = 0,
 
     fn remaining(self: *const WriteQueue) usize {
-        return self.bytes.len - self.count;
+        return if (self.tail.bytes.len != 0) 0 else self.bytes.len - self.count;
+    }
+
+    fn pending(self: *const WriteQueue) []const u8 {
+        return if (self.count != 0) self.bytes[0..self.count] else self.tail.bytes[self.tail_offset..];
+    }
+
+    fn pendingCount(self: *const WriteQueue) usize {
+        return self.count + self.tail.bytes.len - self.tail_offset;
+    }
+
+    fn clear(self: *WriteQueue) void {
+        self.count = 0;
+        self.tail.deinit();
+        self.tail_offset = 0;
+    }
+
+    fn adopt(self: *WriteQueue, encoded: *vt.Terminal.EncodedInput) void {
+        std.debug.assert(self.tail.bytes.len == 0 and encoded.allocator != null);
+        self.tail = encoded.*;
+        encoded.* = .{};
     }
     fn append(self: *WriteQueue, bytes: []const u8) error{WriteQueueFull}!void {
         if (bytes.len > self.remaining()) return error.WriteQueueFull;
@@ -62,9 +86,14 @@ const WriteQueue = struct {
         self.count += bytes.len;
     }
     fn consume(self: *WriteQueue, count: usize) void {
-        std.debug.assert(count <= self.count);
-        std.mem.copyForwards(u8, self.bytes[0 .. self.count - count], self.bytes[count..self.count]);
-        self.count -= count;
+        std.debug.assert(count <= self.pending().len);
+        if (self.count != 0) {
+            std.mem.copyForwards(u8, self.bytes[0 .. self.count - count], self.bytes[count..self.count]);
+            self.count -= count;
+        } else {
+            self.tail_offset += count;
+            if (self.tail_offset == self.tail.bytes.len) self.clear();
+        }
     }
 };
 
@@ -121,6 +150,7 @@ pub const Core = struct {
 
     /// Borrowed output must be destroyed before this canonical owner.
     pub fn deinit(self: *Core) void {
+        self.writes.clear();
         self.terminal.deinit();
         self.transport.deinit();
         self.* = undefined;
@@ -151,6 +181,23 @@ pub const Core = struct {
     /// machinery is not copied because the app has no streaming paste caller.
     pub fn input(self: *Core, event: vt.Terminal.InputEvent) InputError!void {
         if (self.write_closed) return error.ChildClosed;
+        if (self.writes.tail.bytes.len != 0) return error.WriteQueueFull;
+        if (event == .committed_text) {
+            if (event.committed_text.len > input_event_limit) return error.KeyTextLimit;
+            if (self.terminal.replyBytes().len > self.writes.remaining()) return error.WriteQueueFull;
+            var scratch: vt.Terminal.InputScratch = undefined;
+            var encoded = try self.terminal.encodeInput(self.allocator, &scratch, event);
+            defer encoded.deinit();
+            const room = self.writes.remaining() - self.terminal.replyBytes().len;
+            if (encoded.bytes.len > room and encoded.allocator == null) return error.WriteQueueFull;
+            try self.collectReplies();
+            if (encoded.bytes.len <= self.writes.remaining()) {
+                try self.writes.append(encoded.bytes);
+            } else {
+                self.writes.adopt(&encoded);
+            }
+            return;
+        }
         const admission = try inputAdmissionBytes(event);
         const required = std.math.add(usize, admission, self.terminal.replyBytes().len) catch
             return error.WriteQueueFull;
@@ -178,7 +225,7 @@ pub const Core = struct {
     }
     /// Accepted input or replies await PTY writability.
     pub fn writePending(self: *const Core) bool {
-        return !self.write_closed and self.writes.count != 0;
+        return !self.write_closed and self.writes.pendingCount() != 0;
     }
 
     /// Capacity reclaimed by PTY writes lets the worker retry its retained FIFO head.
@@ -219,8 +266,8 @@ pub const Core = struct {
 
     fn markWriteClosed(self: *Core) void {
         self.write_closed = true;
-        self.undelivered_bytes +|= self.writes.count;
-        self.writes.count = 0;
+        self.undelivered_bytes +|= self.writes.pendingCount();
+        self.writes.clear();
         // Final child output can still arrive. Mandatory replies are no longer
         // deliverable, so account for them without blocking its read-side drain.
         // zig-audit: acknowledge catch_unreachable
@@ -269,7 +316,7 @@ pub const Core = struct {
                 self.read_start = 0;
                 self.read_end = count;
                 try self.processBuffered(timestamp_ns, &synchronized_output);
-                if (self.read_start != self.read_end or self.writes.count != 0) break;
+                if (self.read_start != self.read_end or self.writePending()) break;
                 if (self.terminal.consequenceHead() != null) break;
             }
         }
@@ -339,7 +386,7 @@ fn pixelExtent(cells: u16, pixels: u32) error{InvalidDimensions}!u16 {
 
 fn inputAdmissionBytes(event: vt.Terminal.InputEvent) error{WriteQueueFull}!usize {
     return switch (event) {
-        .bytes => |bytes| bytes.len,
+        .bytes, .committed_text => |bytes| bytes.len,
         .paste => |bytes| std.math.add(usize, bytes.len, 12) catch return error.WriteQueueFull,
         .key, .mouse, .focus => @sizeOf(vt.Terminal.InputScratch),
     };
@@ -348,13 +395,14 @@ fn inputAdmissionBytes(event: vt.Terminal.InputEvent) error{WriteQueueFull}!usiz
 // zig-audit: acknowledge anytype
 // reason: Production specializes for Owned PTY; scripted writers prove partial and error progress.
 fn flushWrites(owner: anytype, queue: *WriteQueue) pty.WriteError!void {
+    const bytes = queue.pending();
     var calls: usize = 0;
     var written: usize = 0;
     defer if (written != 0) queue.consume(written);
-    while (calls < write_calls_per_turn and written < write_bytes_per_turn and written < queue.count) {
+    while (calls < write_calls_per_turn and written < write_bytes_per_turn and written < bytes.len) {
         calls += 1;
-        const budget = @min(queue.count - written, write_bytes_per_turn - written);
-        const accepted = owner.write(queue.bytes[written..][0..budget]) catch |failure| switch (failure) {
+        const budget = @min(bytes.len - written, write_bytes_per_turn - written);
+        const accepted = owner.write(bytes[written..][0..budget]) catch |failure| switch (failure) {
             error.Interrupted => continue,
             error.WouldBlock => return,
             else => return failure,
@@ -784,4 +832,107 @@ test "Rex buffered PTY reports reach the host in order without pressure drops" {
     }
     try std.testing.expectEqual(@as(usize, 12), seen);
     try std.testing.expectEqual(@as(usize, 0), core.read_end);
+}
+
+test "large Kitty committed text stays behind earlier replies and ahead of later input under pressure" {
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+    defer core.writes.clear();
+    try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 8, 0);
+    defer core.terminal.deinit();
+    try std.testing.expect((try core.terminal.feed("\x1b[=31u\x1b[?u")).stateChanged());
+    try core.writes.append("before");
+    const text = try allocator.alloc(u8, input_event_limit);
+    defer allocator.free(text);
+    @memset(text, 'z');
+    var scratch: vt.Terminal.InputScratch = .{};
+    var expected = try core.terminal.encodeInput(allocator, &scratch, .{ .committed_text = text });
+    defer expected.deinit();
+    try core.input(.{ .committed_text = text });
+    @memset(text, '?');
+    try std.testing.expect(core.writePending());
+    try std.testing.expectEqual(@as(usize, 0), core.writeRoom());
+    try std.testing.expectEqualStrings("before\x1b[?31u", core.writes.pending());
+    try std.testing.expectEqual(4 * input_event_limit + 5, core.writes.tail.bytes.len);
+    try std.testing.expectEqualStrings(expected.bytes, core.writes.tail.bytes);
+    try std.testing.expect((try core.terminal.feed("\x1b[=0u\x1b[5n")).stateChanged());
+    try std.testing.expectError(error.WriteQueueFull, core.input(.{ .bytes = "after" }));
+    try std.testing.expectError(error.WriteQueueFull, core.input(.{ .committed_text = "late" }));
+    try std.testing.expectError(error.WriteQueueFull, core.collectReplies());
+    try std.testing.expectEqualStrings("\x1b[0n", core.terminal.replyBytes());
+
+    const Writer = struct {
+        output: []u8,
+        count: usize = 0,
+        calls: usize = 0,
+        fn write(self: *@This(), bytes: []const u8) pty.WriteError!usize {
+            self.calls += 1;
+            if (self.calls % 3 == 0) return error.WouldBlock;
+            const n = @min(bytes.len, 8191);
+            @memcpy(self.output[self.count..][0..n], bytes[0..n]);
+            self.count += n;
+            return n;
+        }
+    };
+    const prefix = "before\x1b[?31u";
+    const out = try allocator.alloc(u8, prefix.len + expected.bytes.len);
+    defer allocator.free(out);
+    var writer: Writer = .{ .output = out };
+    for (0..100) |_| {
+        if (!core.writePending()) break;
+        try core.flushWriteTurn(&writer);
+        if (core.writePending()) try std.testing.expectEqual(@as(usize, 0), core.writeRoom());
+    }
+    try std.testing.expect(!core.writePending());
+    try std.testing.expectEqual(out.len, writer.count);
+    try std.testing.expectEqualStrings(prefix, out[0..prefix.len]);
+    try std.testing.expectEqualStrings(expected.bytes, out[prefix.len..]);
+    try std.testing.expect(core.writes.tail.allocator == null);
+    try core.input(.{ .committed_text = "late" });
+    try core.input(.{ .bytes = "after" });
+    try std.testing.expectEqualStrings("\x1b[0nlateafter", core.writes.pending());
+}
+
+test "large Kitty committed text allocation failure and child closure retain exact accounting" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = failing.allocator(), .transport = undefined, .terminal = undefined };
+    defer core.writes.clear();
+    try vt.Terminal.initWithHistoryInto(&core.terminal, failing.allocator(), 2, 8, 0);
+    defer core.terminal.deinit();
+    try std.testing.expect((try core.terminal.feed("\x1b[=31u\x1b[?u")).stateChanged());
+    try core.writes.append("before");
+    const text = try allocator.alloc(u8, input_event_limit);
+    defer allocator.free(text);
+    @memset(text, 'z');
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, core.input(.{ .committed_text = text }));
+    try std.testing.expectEqualStrings("before", core.writes.pending());
+    try std.testing.expectEqualStrings("\x1b[?31u", core.terminal.replyBytes());
+    try std.testing.expect(core.writes.tail.allocator == null);
+    failing.fail_index = std.math.maxInt(usize);
+    try core.input(.{ .committed_text = text });
+    const count = core.writes.pendingCount();
+    const Writer = struct {
+        calls: usize = 0,
+        fn write(self: *@This(), bytes: []const u8) pty.WriteError!usize {
+            self.calls += 1;
+            if (self.calls == 1) return bytes.len;
+            if (self.calls == 2) return @min(bytes.len, 17);
+            return error.ChildClosed;
+        }
+    };
+    var writer: Writer = .{};
+    const prefix_len = core.writes.pending().len;
+    try core.flushWriteTurn(&writer);
+    try core.flushWriteTurn(&writer);
+    try std.testing.expect(core.write_closed);
+    try std.testing.expectEqual(count - prefix_len - 17, core.undelivered_bytes);
+    try std.testing.expect(!core.writePending());
+    try std.testing.expect(core.writes.tail.allocator == null);
+    try std.testing.expect(core.readAdmissible());
 }

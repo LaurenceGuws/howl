@@ -444,6 +444,12 @@ const State = struct {
         var task = supplied;
         const bytes = taskBytes(task);
         if (bytes.len > pty_vt.input_event_limit) return error.InputLimit;
+        if (task == .input and task.input == .committed_text) {
+            const extent = try vt.Terminal.committedTextCapacity(bytes);
+            std.debug.assert(extent <= 4 * bytes.len + 5);
+        }
+        if (task == .input and task.input == .key and bytes.len > vt.Terminal.maximum_key_text_bytes)
+            return error.InputLimit;
         // Associated text shares the bounded owned byte lane; legacy fallback text is not submitted by this host.
         if (task == .input and task.input == .key and
             task.input.key.legacy_text.len != 0)
@@ -452,10 +458,11 @@ const State = struct {
             const owned = try self.allocator.dupe(u8, bytes);
             switch (task.input) {
                 .bytes => task.input.bytes = owned,
+                .committed_text => task.input.committed_text = owned,
                 .paste => task.input.paste = owned,
                 .key => task.input.key.text = owned,
                 // zig-audit: acknowledge unreachable
-                // reason: taskBytes can return nonempty bytes only for these three input tags, and no mutation changes the active tag before this switch.
+                // reason: taskBytes can return nonempty bytes only for these four input tags, and no mutation changes the active tag before this switch.
                 else => unreachable,
             }
         }
@@ -1118,7 +1125,7 @@ const State = struct {
 fn taskBytes(task: Task) []const u8 {
     if (task != .input) return "";
     return switch (task.input) {
-        .bytes => |bytes| bytes,
+        .bytes, .committed_text => |bytes| bytes,
         .paste => |bytes| bytes,
         .key => |key| key.text,
         else => "",
@@ -1128,7 +1135,7 @@ fn taskBytes(task: Task) []const u8 {
 fn inputActivity(task: Task) bool {
     if (task != .input) return false;
     return switch (task.input) {
-        .bytes, .paste => |bytes| bytes.len != 0,
+        .bytes, .paste, .committed_text => |bytes| bytes.len != 0,
         .key => |key| key.action != .release and switch (key.key) {
             .unicode => true,
             .named => |named| switch (named) {
@@ -2933,4 +2940,45 @@ test "OSC 9 live worker publishes nullable progress independently of Rex records
         try std.testing.expectEqual(@as(u8, if (case.rex) 1 else 0), observed.program_status.count);
         try std.testing.expect(observed.failure == null);
     }
+}
+
+test "live maximum Kitty text commit reaches child intact before later input" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const n = pty_vt.input_event_limit;
+    const command = try std.fmt.allocPrint(std.testing.allocator, "stty raw -echo; printf '\\033[=31u\\033]0;READY\\007'; hash=$(dd bs={d} count=1 iflag=fullblock 2>/dev/null | sha256sum | cut -d' ' -f1); next=$(dd bs=4 count=1 iflag=fullblock 2>/dev/null); printf '\\033]0;%s-%s\\007' \"$hash\" \"$next\"; sleep 30", .{4 * n + 5});
+    defer std.testing.allocator.free(command);
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 0,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const text = try std.testing.allocator.alloc(u8, n);
+    defer std.testing.allocator.free(text);
+    @memset(text, 'z');
+    try std.testing.expectError(error.InvalidText, owner.submit(.{ .input = .{ .committed_text = "\x1b" } }));
+    try std.testing.expectError(error.InvalidUtf8, owner.submit(.{ .input = .{ .committed_text = "\xff" } }));
+    try std.testing.expectError(error.InputLimit, owner.submit(.{ .input = .{ .key = .{ .key = try vt.Terminal.Key.initUnicode('z'), .text = text } } }));
+    try std.testing.expect(!owner.takeInputActivity());
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("\x1b[0;;122");
+    for (1..n) |_| hash.update(":122");
+    hash.update("u");
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    var expected_buf: [80]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf, "{s}-DONE", .{&hex});
+    try owner.submit(.{ .input = .{ .committed_text = text } });
+    @memset(text, '?');
+    try owner.submit(.{ .input = .{ .bytes = "DONE" } });
+    try waitTitle(owner, expected);
+    try std.testing.expect(owner.takeInputActivity());
+    try std.testing.expect(owner.snapshot().failure == null);
 }

@@ -138,11 +138,12 @@ pub const FocusEvent = enum {
 
 /// Caller input borrowed by one terminal encoding call.
 ///
-/// `bytes` carries committed text, while `key` carries a named or validated
-/// Unicode physical-key event for terminal keyboard protocol encoding. Byte
-/// and paste slices must remain valid until `Terminal.encodeInput` returns.
+/// Raw bytes bypass keyboard encoding; committed text has no known physical
+/// key identity and follows negotiated keyboard modes. All borrowed slices
+/// must remain valid until Terminal.encodeInput returns.
 pub const Event = union(enum) {
     bytes: []const u8,
+    committed_text: []const u8,
     key: KeyEvent,
     mouse: MouseEvent,
     focus: FocusEvent,
@@ -248,6 +249,9 @@ pub const Action = enum(u2) { press = 1, repeat = 2, release = 3 };
 
 /// Bounds committed key text accepted by one physical key event.
 pub const max_text_bytes: u8 = 64;
+
+/// Bounds one committed text event independently of physical key metadata.
+pub const max_committed_text_bytes = 64 * 1024;
 
 /// Complete modifier state accepted by terminal keyboard and mouse protocols.
 ///
@@ -493,18 +497,57 @@ fn encodeKittyEvent(
             try builder.decimal(@backingInt(action));
         }
     }
-    if (add_text) {
-        var view = std.unicode.Utf8View.initUnchecked(text);
-        var iterator = view.iterator();
-        var first = true;
-        while (iterator.nextCodepoint()) |codepoint| {
-            try builder.append(if (first) ";" else ":");
-            first = false;
-            try builder.decimal(codepoint);
-        }
-    }
+    if (add_text) try appendAssociatedText(&builder, text);
     try builder.append(&.{identity.trailer});
     return builder.written();
+}
+
+// One shared associated-text field writer for physical and text-only events.
+fn appendAssociatedText(builder: *Builder, text: []const u8) error{EncodingLimit}!void {
+    var view = std.unicode.Utf8View.initUnchecked(text);
+    var iterator = view.iterator();
+    var first = true;
+    while (iterator.nextCodepoint()) |codepoint| {
+        try builder.append(if (first) ";" else ":");
+        first = false;
+        try builder.decimal(codepoint);
+    }
+}
+
+/// Validates a text-only event and returns its largest possible encoded extent.
+/// C0/C1/DEL belong to explicit key or raw-byte input, not committed text.
+pub fn committedTextCapacity(text: []const u8) error{ KeyTextLimit, InvalidUtf8, InvalidText }!usize {
+    if (text.len > max_committed_text_bytes) return error.KeyTextLimit;
+    const view = std.unicode.Utf8View.init(text) catch return error.InvalidUtf8;
+    if (text.len == 0) return 0;
+    var iterator = view.iterator();
+    // Four-byte prefix, one separator per codepoint, and final u.
+    var extent: usize = 5;
+    while (iterator.nextCodepoint()) |scalar| {
+        if (scalar < 32 or (scalar >= 127 and scalar <= 159)) return error.InvalidText;
+        extent += 2 + @as(usize, std.math.log10_int(scalar));
+    }
+    std.debug.assert(extent <= 4 * text.len + 5);
+    return extent;
+}
+
+/// Exact admission and allocation failures for a committed text event.
+pub const CommittedTextError = PasteError || error{ KeyTextLimit, InvalidUtf8, InvalidText };
+
+/// Encodes one complete committed text event, without fabricating modifiers
+/// or physical key identity. The allocated wire length is exact.
+pub fn encodeCommittedText(allocator: std.mem.Allocator, text: []const u8, flags: u8) CommittedTextError!Encoded {
+    const capacity = try committedTextCapacity(text);
+    if (capacity == 0 or flags & 8 == 0) return .{ .bytes = text };
+    if (flags & 16 == 0) return .{ .bytes = "\x1b[0u" };
+    const bytes = try allocator.alloc(u8, capacity);
+    errdefer allocator.free(bytes);
+    var builder = Builder.init(bytes);
+    builder.append("\x1b[0;") catch return error.LengthOverflow;
+    appendAssociatedText(&builder, text) catch return error.LengthOverflow;
+    builder.append("u") catch return error.LengthOverflow;
+    std.debug.assert(builder.written().len == capacity);
+    return .{ .allocator = allocator, .bytes = bytes };
 }
 
 const KittyIdentity = struct { code: u32, trailer: u8 = 'u' };

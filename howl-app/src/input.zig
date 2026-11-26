@@ -154,6 +154,12 @@ pub const Keyboard = struct {
         };
     }
 
+    /// A composition no longer identifies one physical key. Only nonempty
+    /// preedit starts this fence; SDL also emits empty caret acknowledgments.
+    pub fn beginComposition(self: *Keyboard) void {
+        self.pending_text = null;
+    }
+
     /// Attaches SDL's committed text to the physical key requested by report-all.
     /// The worker copies the bytes before SDL may retire this event.
     pub fn commitText(self: *Keyboard, text: []const u8) !bool {

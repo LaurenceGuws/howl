@@ -4734,3 +4734,63 @@ test "Kitty typed committed text preserves multiple scalars and unknown key iden
         try std.testing.expectEqualStrings(case.bytes, encoded.bytes);
     }
 }
+
+test "Kitty pure committed text obeys canonical negotiated mode without inventing a key" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    const text = "é界😀";
+    for (0..32) |flags| {
+        var wire: [24]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&wire, "\x1b[={d}u", .{flags}));
+        var encoded = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .committed_text = text });
+        defer encoded.deinit();
+        const expected = if (flags & 8 == 0) text else if (flags & 16 == 0) "\x1b[0u" else "\x1b[0;;233:30028:128512u";
+        try std.testing.expectEqualStrings(expected, encoded.bytes);
+        try std.testing.expectEqual(flags & 24 == 24, encoded.allocator != null);
+        var empty = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .committed_text = "" });
+        defer empty.deinit();
+        try std.testing.expectEqualStrings("", empty.bytes);
+    }
+    try feed(&terminal, "\x1b[?47h");
+    var legacy = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .committed_text = text });
+    defer legacy.deinit();
+    try std.testing.expectEqualStrings(text, legacy.bytes);
+    try feed(&terminal, "\x1b[?47l\x1b[2h");
+    var locked = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .committed_text = text });
+    defer locked.deinit();
+    try std.testing.expectEqualStrings("", locked.bytes);
+    var raw = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .bytes = "raw\n" });
+    defer raw.deinit();
+    try std.testing.expectEqualStrings("raw\n", raw.bytes);
+}
+
+test "Kitty committed text validates exact expanded extent and allocation failure" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    try feed(&terminal, "\x1b[=31u");
+    const maximum = Terminal.maximum_committed_text_bytes;
+    const text = try std.testing.allocator.alloc(u8, maximum + 1);
+    defer std.testing.allocator.free(text);
+    @memset(text, 'z');
+    try std.testing.expectError(error.KeyTextLimit, Terminal.committedTextCapacity(text));
+    try std.testing.expectEqual(4 * maximum + 5, try Terminal.committedTextCapacity(text[0..maximum]));
+    var no_storage: [0]u8 = .{};
+    var fixed = std.heap.FixedBufferAllocator.init(&no_storage);
+    try std.testing.expectError(error.OutOfMemory, terminal.encodeInput(fixed.allocator(), &scratch, .{ .committed_text = text[0..maximum] }));
+    var encoded = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .committed_text = text[0..maximum] });
+    defer encoded.deinit();
+    try std.testing.expectEqual(4 * maximum + 5, encoded.bytes.len);
+    try std.testing.expectEqualStrings("\x1b[0;;122", encoded.bytes[0..8]);
+    for (1..maximum) |i| try std.testing.expectEqualStrings(":122", encoded.bytes[4 + i * 4 ..][0..4]);
+    try std.testing.expectEqual(@as(u8, 'u'), encoded.bytes[encoded.bytes.len - 1]);
+    try std.testing.expectError(error.InvalidUtf8, Terminal.committedTextCapacity("\xc0\x80"));
+    for (0..160) |scalar| {
+        if (scalar >= 32 and scalar < 127) continue;
+        var bytes: [4]u8 = undefined;
+        const len = try std.unicode.utf8Encode(@intCast(scalar), &bytes);
+        try std.testing.expectError(error.InvalidText, Terminal.committedTextCapacity(bytes[0..len]));
+    }
+    try std.testing.expectEqual(@as(usize, 12), try Terminal.committedTextCapacity("😀"));
+}

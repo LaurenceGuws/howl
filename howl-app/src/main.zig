@@ -1486,7 +1486,9 @@ pub const App = struct {
             },
             c.SDL_EVENT_TEXT_EDITING => {
                 if (!self.focused or !self.preedit.accepts(value.edit.timestamp)) return;
-                try self.preedit.set(std.mem.span(value.edit.text), value.edit.start, value.edit.length);
+                const text = std.mem.span(value.edit.text);
+                if (text.len != 0) self.keyboard.beginComposition();
+                try self.preedit.set(text, value.edit.start, value.edit.length);
             },
             c.SDL_EVENT_TEXT_INPUT => {
                 if (!self.focused or !self.preedit.accepts(value.text.timestamp)) return;
@@ -1501,7 +1503,7 @@ pub const App = struct {
                     if (!e.recording) try e.append(text);
                 } else if (self.palette) |*p| {
                     try p.append(text);
-                } else if (self.pane().finder != null) try self.findAppend(text) else try self.pane().submit(.{ .input = .{ .bytes = text } });
+                } else if (self.pane().finder != null) try self.findAppend(text) else try self.pane().submit(.{ .input = .{ .committed_text = text } });
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (mouseButton(value.button.button)) |button|
                 try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState()), value.button.clicks),
@@ -3118,7 +3120,7 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     defer threaded.deinit();
     const owner = try terminal.Terminal.create(test_allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
-        .command = "printf '\\033[2;5H\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; sleep 30",
+        .command = "printf '\\033[2;5H\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; read step; stty raw -echo; printf '\\033[=31u\\033]0;IME-READY\\007'; value=$(dd bs=1 count=15 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\033]0;%s\\007' \"$value\"; sleep 30",
         .rows = 4,
         .columns = 20,
         .history_rows = 8,
@@ -3206,8 +3208,10 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     try app.openPalette(true);
     try std.testing.expect(app.palette == null);
     event_value.text.timestamp = 202;
-    event_value.text.text = "COMMITTED\n";
+    event_value.text.text = "COMMITTED";
     try app.event(event_value);
+    // The newline is an explicit key, not an IME text scalar.
+    try owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter } } } });
     attempts = 0;
     while (attempts < 5000) : (attempts += 1) {
         const status = owner.snapshot();
@@ -3275,6 +3279,37 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     event_value.button = .{ .type = c.SDL_EVENT_MOUSE_BUTTON_UP, .reserved = 0, .timestamp = 301, .windowID = c.SDL_GetWindowID(window), .which = 0, .button = c.SDL_BUTTON_LEFT, .down = false, .clicks = 1, .padding = 0, .x = 0, .y = 0 };
     try app.event(event_value);
     try std.testing.expect(app.capture == null);
+
+    // A text commit with no physical key must follow negotiated report-all,
+    // even when the worker receives it after a mode transition.
+    try owner.submit(.{ .input = .{ .bytes = "next\n" } });
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "IME-READY")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    app.focused = true;
+    var key_event: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
+    key_event.key = c.SDLK_A;
+    key_event.scancode = c.SDL_SCANCODE_A;
+    try std.testing.expect((try app.keyboard.route(key_event, true, owner, null, false)) == .handled);
+    try std.testing.expect(app.keyboard.pending_text != null);
+    event_value.edit = .{ .type = c.SDL_EVENT_TEXT_EDITING, .reserved = 0, .timestamp = 302, .windowID = c.SDL_GetWindowID(window), .text = "é界", .start = 2, .length = 0 };
+    try app.event(event_value);
+    try std.testing.expect(app.keyboard.pending_text == null);
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 303, .windowID = c.SDL_GetWindowID(window), .text = "é界" };
+    try app.event(event_value);
+    const expected = std.fmt.bytesToHex("\x1b[0;;233:30028u", .lower);
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (std.mem.eql(u8, status.title[0..status.title_len], &expected)) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
 }
 
 test "failed settings save restores fonts without changing canonical history or held leases; acceptance preserves pane overrides" {
@@ -4137,8 +4172,9 @@ test "tab rename owns text, follows its tab, resets and never leaks a commit to 
     event_value.key.key = c.SDLK_S;
     event_value.key.scancode = c.SDL_SCANCODE_S;
     try app.event(event_value);
-    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 201, .windowID = c.SDL_GetWindowID(window), .text = "sentinel\n" };
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 201, .windowID = c.SDL_GetWindowID(window), .text = "sentinel" };
     try app.event(event_value);
+    try owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter } } } });
     attempts = 0;
     while (attempts < 5000) : (attempts += 1) {
         const status = owner.snapshot();

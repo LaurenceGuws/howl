@@ -171,6 +171,7 @@ pub fn inputCapacity(event: Terminal.InputEvent) Error!usize {
     return switch (event) {
         .paste => |bytes| if (bytes.len > c.HVT_MAX_INPUT_BYTES) error.ResourceLimit else bytes.len + c.HVT_PASTE_EXTRA_BYTES,
         .bytes => |bytes| if (bytes.len > c.HVT_MAX_INPUT_BYTES) error.ResourceLimit else bytes.len,
+        .committed_text => |bytes| Terminal.committedTextCapacity(bytes),
         else => c.HVT_INPUT_BUFFER_BYTES,
     };
 }
@@ -189,7 +190,7 @@ pub fn encode(value: *Owner, event: Terminal.InputEvent, output: []u8) Error!usi
     const extent = try inputCapacity(event);
     if (output.len < extent) return error.BufferTooSmall;
     switch (event) {
-        .paste, .bytes => |bytes| try checkDisjoint(bytes, output[0..extent]),
+        .paste, .bytes, .committed_text => |bytes| try checkDisjoint(bytes, output[0..extent]),
         else => {},
     }
     const storage = state(value);

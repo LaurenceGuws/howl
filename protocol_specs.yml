@@ -9371,6 +9371,15 @@ specifications:
       - file: howl-vt/src/input.zig
         test: Kitty event parameter covers every factual modifier combination
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty pure committed text obeys canonical negotiated mode without inventing a key
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: SDL composition stays local, uses its caret area and clears before pane input ownership changes
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: live maximum Kitty text commit reaches child intact before later input
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
@@ -9391,6 +9400,14 @@ specifications:
           method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
             PTY with synthetic SDL events; no blanket FULL promotion
           baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
+        howl_qualification_20261126_keyboard_04:
+          scope: 'Pure text without known key follows canonical current-bank enhancement state across all32 documented flag
+            combinations: legacy UTF-8, report-all only CSI0u, report-all plus associated text CSI0;;codepoints u. Nonempty
+            SDL preedit invalidates pending physical identity; actual child sees correct pure text. No complete physical functional
+            key or IME implementation claim.'
+          method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
+            pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
+          baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9413,6 +9430,24 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty typed committed text preserves multiple scalars and unknown key identity
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty pure committed text obeys canonical negotiated mode without inventing a key
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty committed text validates exact expanded extent and allocation failure
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: SDL composition stays local, uses its caret area and clears before pane input ownership changes
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: large Kitty committed text stays behind earlier replies and ahead of later input under pressure
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: large Kitty committed text allocation failure and child closure retain exact accounting
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: live maximum Kitty text commit reaches child intact before later input
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_02:
           scope: Typed report-all plus associated-text input with no known key identity encodes key0 and both UTF-8 codepoints
@@ -9421,6 +9456,15 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_04:
+          scope: Pure committed text uses key0 with no fabricated modifiers and shared decimal field writer, exact UTF8 scalars.
+            VT maximum65536 input bytes; host keeps existing65524-byte admission, one owned encoded tail only when fixed queue
+            cannot fit. C0/C1/DEL rejected in typed text admission, explicit raw bytes and keys unchanged. Maximum ASCII expansion,
+            all65 forbidden controls, invalid UTF8, allocation failure, ordered partial writes, closure accounting, live maximum
+            commit digest and subsequent sentinel verified.
+          method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
+            pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
+          baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
     - id: legacy
       section: Legacy key event encoding
       level: defined
@@ -9473,6 +9517,12 @@ specifications:
       - file: howl-app/src/input.zig
         test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty pure committed text obeys canonical negotiated mode without inventing a key
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: SDL composition stays local, uses its caret area and clears before pane input ownership changes
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Legacy arrows restored after LazyGit negotiation exit and bank return; legacy lock modifier omitted. Existing
@@ -9492,6 +9542,14 @@ specifications:
           method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
             PTY with synthetic SDL events; no blanket FULL promotion
           baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
+        howl_qualification_20261126_keyboard_04:
+          scope: Printable text-only input remains borrowed complete UTF8 without report-all; raw input remains explicit and
+            bypasses keyboard encoding. New committed-text lane rejects control-bearing and invalid UTF8 payloads at admission;
+            legacy raw control bytes and explicit Enter are still admitted. KAM suppression on semantic committed text, no
+            raw-byte change.
+          method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
+            pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
+          baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
     - id: event-envelope
       section: docs/keyboard-protocol.rst:125-146
       level: defined
@@ -9522,6 +9580,21 @@ specifications:
       - file: howl-app/src/input.zig
         test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty pure committed text obeys canonical negotiated mode without inventing a key
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty committed text validates exact expanded extent and allocation failure
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: SDL composition stays local, uses its caret area and clears before pane input ownership changes
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: large Kitty committed text stays behind earlier replies and ahead of later input under pressure
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: live maximum Kitty text commit reaches child intact before later input
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
@@ -9542,6 +9615,13 @@ specifications:
           method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
             PTY with synthetic SDL events; no blanket FULL promotion
           baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
+        howl_qualification_20261126_keyboard_04:
+          scope: Text-only event preserves exact one-frame CSI0;;codepoints u grammar and complete scalar boundaries, no release
+            or alternate fabricated; empty text no output. Large encoded event retains one frozen wire image across mode changes
+            and PTY pressure, later replies/input cannot overtake.
+          method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
+            pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
+          baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined
