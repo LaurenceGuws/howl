@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const scalar_storage = @import("scalar_storage.zig");
+const unicode = @import("unicode_17.zig");
 
 /// Largest OSC 66 cell height admitted by this grammar.
 pub const maximum_scale: u8 = 7;
@@ -48,71 +49,87 @@ pub fn parse(payload: []const u8) ?Value {
     return result;
 }
 
-/// Reports controls ignored while projecting OSC 66 text into cell clusters.
-pub fn isIgnoredCodepoint(codepoint: u21) bool {
-    return codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f);
-}
+/// One bounded, complete block and its original text-byte offset.
+pub const Cluster = struct {
+    start: usize = 0,
+    width: u8 = 0,
+    count: u8 = 0,
+    scalars: [scalar_storage.maximum_scalars]u21 = undefined,
 
-/// Reports codepoints retained as trailing marks in OSC 66's bounded cluster model.
-pub fn isTrailingCombiningCodepoint(codepoint: u21) bool {
-    return switch (codepoint) {
-        0x0300...0x036F,
-        0x0483...0x0489,
-        0x0591...0x05BD,
-        0x05BF,
-        0x05C1...0x05C2,
-        0x05C4...0x05C5,
-        0x0610...0x061A,
-        0x064B...0x065F,
-        0x0670,
-        0x06D6...0x06DC,
-        0x06DF...0x06E4,
-        0x06E7...0x06E8,
-        0x06EB...0x06EC,
-        0x0730...0x074A,
-        0x07EB...0x07F3,
-        0x0816...0x0819,
-        0x081B...0x0823,
-        0x0825...0x0827,
-        0x0829...0x082D,
-        0x0951...0x0954,
-        0x0F82...0x0F83,
-        0x0F86...0x0F87,
-        0x135D...0x135F,
-        0x17DD,
-        0x193A,
-        0x1A17,
-        0x1A75...0x1A7C,
-        0x1B6B...0x1B73,
-        0x1CD0...0x1CD2,
-        0x1CDA...0x1CDB,
-        0x1CE0,
-        0x1AB0...0x1AFF,
-        0x1DC0...0x1DFF,
-        0x20D0...0x20FF,
-        0x2CEF...0x2CF1,
-        0x2DE0...0x2DFF,
-        0xA66F,
-        0xA67C...0xA67D,
-        0xA6F0...0xA6F1,
-        0xA8E0...0xA8F1,
-        0xAAB0,
-        0xAAB2...0xAAB3,
-        0xAAB7...0xAAB8,
-        0xAABE...0xAABF,
-        0xAAC1,
-        0x200C...0x200D,
-        0xFE00...0xFE0F,
-        0xFE20...0xFE2F,
-        0x10A0F,
-        0x10A38,
-        0x1D185...0x1D189,
-        0x1D1AA...0x1D1AD,
-        0x1D242...0x1D244,
-        0xE0100...0xE01EF,
-        => true,
-        else => false,
-    };
+    /// Borrows the admitted scalar sequence of this complete block.
+    pub fn text(self: *const Cluster) []const u21 {
+        return self.scalars[0..self.count];
+    }
+};
+
+/// Shared admission and emission iterator. Natural width uses the same
+/// generated properties and UAX29 state machine as ordinary terminal text.
+pub const Clusters = struct {
+    utf8: std.unicode.Utf8Iterator,
+    explicit_width: u8,
+    grapheme: unicode.GraphemeState = .{},
+
+    /// Reports a cluster exceeding the canonical scalar-storage bound.
+    pub const Error = error{ScalarLimit};
+
+    /// Input is a validated UTF-8 slice, bounded by parse().
+    pub fn init(value: Value) Clusters {
+        return .{
+            .utf8 = std.unicode.Utf8View.initUnchecked(value.text).iterator(),
+            .explicit_width = value.width,
+        };
+    }
+
+    /// Returns one block; at a boundary the next scalar remains unread.
+    /// State is retained across boundaries (including regional indicators).
+    pub fn next(self: *Clusters) Error!?Cluster {
+        var cluster: Cluster = .{};
+        var previous: ?unicode.Properties = null;
+        while (true) {
+            const start = self.utf8.i;
+            const cp = self.utf8.nextCodepoint() orelse break;
+            // The explicit-width lane preserves its existing safe-text
+            // filtering; its application-supplied width always wins.
+            if (isControl(cp)) continue;
+            if (self.explicit_width == 0) {
+                const props = unicode.properties(cp);
+                if (props.isInvalid()) continue;
+                const stepped = self.grapheme.step(props);
+                const width = props.width();
+                if (cluster.count != 0 and width != 0 and !stepped.joinsCurrent()) {
+                    self.utf8.i = start;
+                    break;
+                }
+                self.grapheme = stepped;
+                if (cluster.count == 0) {
+                    if (width == 0) continue;
+                    cluster.width = if (width == 2) 2 else 1;
+                } else if (stepped.joinsCurrent()) {
+                    // Measure the completed grapheme before scaling it,
+                    // as the author does for an in-command natural block.
+                    if (cp == 0xfe0f and cluster.width == 1 and previous.?.isEmojiPresentationBase()) {
+                        cluster.width = 2;
+                    } else if (cp == 0xfe0e and cluster.width == 2 and previous.?.isEmojiPresentationBase()) {
+                        cluster.width = 1;
+                    } else if (props.isSpacingMark() and width > 0 and cluster.width == 1) {
+                        cluster.width = 2;
+                    }
+                }
+                previous = props;
+            } else {
+                cluster.width = self.explicit_width;
+            }
+            if (cluster.count == 0) cluster.start = start;
+            if (cluster.count == scalar_storage.maximum_scalars) return error.ScalarLimit;
+            cluster.scalars[cluster.count] = cp;
+            cluster.count += 1;
+        }
+        return if (cluster.count == 0) null else cluster;
+    }
+};
+
+fn isControl(codepoint: u21) bool {
+    return codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f);
 }
 
 fn parseNumber(bytes: []const u8) ?u32 {
@@ -127,20 +144,10 @@ fn parseNumber(bytes: []const u8) ?u32 {
 }
 
 fn validText(value: Value) bool {
-    var iterator = std.unicode.Utf8View.initUnchecked(value.text).iterator();
-    var cluster_len: u8 = 0;
-    var cluster_count: usize = 0;
-    while (iterator.nextCodepoint()) |codepoint| {
-        if (isIgnoredCodepoint(codepoint)) continue;
-        if (value.width == 0 and cluster_len != 0 and !isTrailingCombiningCodepoint(codepoint)) {
-            cluster_count += 1;
-            cluster_len = 0;
-        }
-        if (cluster_len == scalar_storage.maximum_scalars) return false;
-        cluster_len += 1;
-    }
-    if (cluster_len != 0) cluster_count += 1;
-    return cluster_count != 0 and (value.width == 0 or cluster_count == 1);
+    var clusters = Clusters.init(value);
+    var found = false;
+    while (clusters.next() catch return false) |_| found = true;
+    return found;
 }
 
 test "OSC 66 fields parse clamp and retain borrowed text exactly" {
@@ -189,13 +196,29 @@ test "OSC 66 cluster admission distinguishes implicit and explicit width" {
     try std.testing.expect(parse(&explicit) == null);
 }
 
-test "OSC 66 trailing-combining classification preserves selected boundaries" {
-    try std.testing.expect(isTrailingCombiningCodepoint(0x0301));
-    try std.testing.expect(isTrailingCombiningCodepoint(0x200d));
-    try std.testing.expect(isTrailingCombiningCodepoint(0xE0100));
-    try std.testing.expect(!isTrailingCombiningCodepoint('a'));
-    try std.testing.expect(!isTrailingCombiningCodepoint(0x1F600));
-    try std.testing.expect(isIgnoredCodepoint(0x1f));
-    try std.testing.expect(isIgnoredCodepoint(0x80));
-    try std.testing.expect(!isIgnoredCodepoint(' '));
+test "OSC 66 natural cluster iteration retains exact offsets and rejects overflowing clusters" {
+    const value = parse(";\u{301}A\u{200b}界\u{ffff}B").?;
+    var clusters = Clusters.init(value);
+    const first = (try clusters.next()).?;
+    try std.testing.expectEqual(@as(usize, 2), first.start);
+    try std.testing.expectEqual(@as(u8, 1), first.width);
+    try std.testing.expectEqualSlices(u21, &.{ 'A', 0x200b }, first.text());
+    const second = (try clusters.next()).?;
+    try std.testing.expectEqual(@as(usize, 6), second.start);
+    try std.testing.expectEqual(@as(u8, 2), second.width);
+    try std.testing.expectEqualSlices(u21, &.{0x754c}, second.text());
+    const third = (try clusters.next()).?;
+    try std.testing.expectEqual(@as(usize, 12), third.start);
+    try std.testing.expectEqualSlices(u21, &.{'B'}, third.text());
+    try std.testing.expect((try clusters.next()) == null);
+    try std.testing.expect(parse(";\u{301}\u{200b}\u{ffff}") == null);
+
+    const prefix = ";A";
+    var payload: [prefix.len + 2 * scalar_storage.maximum_scalars]u8 = undefined;
+    @memcpy(payload[0..prefix.len], prefix);
+    for (0..scalar_storage.maximum_scalars) |index| {
+        @memcpy(payload[prefix.len + 2 * index ..][0..2], "\u{301}");
+    }
+    try std.testing.expect(parse(payload[0 .. payload.len - 2]) != null);
+    try std.testing.expect(parse(&payload) == null);
 }

@@ -32,6 +32,7 @@ const GraphemeBreak = enum(u4) {
     lf = 4,
     control = 5,
     extend = 6,
+    spacing_mark = 8,
     l = 9,
     v = 10,
     t = 11,
@@ -76,6 +77,12 @@ pub const Properties = struct {
 
     fn graphemeBreak(self: Properties) GraphemeBreak {
         return @fromBackingInt(@intCast(@as(u4, @truncate(self.value >> 25))));
+    }
+
+    /// Reports the generated nonzero-width SpacingMark class used for
+    /// Thai/Lao SARA AM widening in the text-sizing algorithm.
+    pub fn isSpacingMark(self: Properties) bool {
+        return self.graphemeBreak() == .spacing_mark;
     }
 
     /// Reports the generated Grapheme_Cluster_Break Extend class.

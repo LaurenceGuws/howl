@@ -3037,62 +3037,21 @@ pub const Screen = struct {
         std.debug.assert(offset <= parsed.text.len);
         var result: SizedTextProgress = .{ .next_offset = offset };
         if (offset == parsed.text.len) return result;
-        var iterator = std.unicode.Utf8View.initUnchecked(parsed.text[offset..]).iterator();
-        if (parsed.width != 0) {
-            var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
-            var count: u8 = 0;
-            while (iterator.nextCodepoint()) |cp| {
-                if (sized_text.isIgnoredCodepoint(cp)) continue;
-                scalars[count] = cp;
-                count += 1;
-            }
-            if (count != 0) {
-                result.changed = if (grow)
-                    self.writeSizedCluster(parsed, scalars[0..count], parsed.width, true) catch |failure| {
-                        result.blocked = failure;
-                        return result;
-                    }
-                else
-                    self.writeSizedCluster(parsed, scalars[0..count], parsed.width, false);
-            }
-            result.next_offset = parsed.text.len;
-            return result;
-        }
-
-        var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
-        var count: u8 = 0;
-        var cluster_start = offset;
-        while (true) {
-            const byte_start = offset + iterator.i;
-            const cp = iterator.nextCodepoint() orelse break;
-            if (sized_text.isIgnoredCodepoint(cp)) continue;
-            if (count != 0 and !sized_text.isTrailingCombiningCodepoint(cp)) {
-                const changed = if (grow)
-                    self.writeSizedCluster(parsed, scalars[0..count], 1, true) catch |failure| {
-                        result.next_offset = cluster_start;
-                        result.blocked = failure;
-                        return result;
-                    }
-                else
-                    self.writeSizedCluster(parsed, scalars[0..count], 1, false);
-                result.changed = changed or result.changed;
-                count = 0;
-                cluster_start = byte_start;
-            } else if (count == 0) {
-                cluster_start = byte_start;
-            }
-            scalars[count] = cp;
-            count += 1;
-        }
-        if (count != 0) {
+        // Replaying the bounded cluster iterator from the beginning keeps
+        // RI parity and zero-width attachment identical on every retry.
+        var clusters = sized_text.Clusters.init(parsed);
+        // zig-audit: acknowledge catch_unreachable
+        // reason: parse() validated the entire payload using this exact iterator.
+        while (clusters.next() catch unreachable) |cluster| {
+            if (cluster.start < offset) continue;
             const changed = if (grow)
-                self.writeSizedCluster(parsed, scalars[0..count], 1, true) catch |failure| {
-                    result.next_offset = cluster_start;
+                self.writeSizedCluster(parsed, cluster.text(), cluster.width, true) catch |failure| {
+                    result.next_offset = cluster.start;
                     result.blocked = failure;
                     return result;
                 }
             else
-                self.writeSizedCluster(parsed, scalars[0..count], 1, false);
+                self.writeSizedCluster(parsed, cluster.text(), cluster.width, false);
             result.changed = changed or result.changed;
         }
         result.next_offset = parsed.text.len;

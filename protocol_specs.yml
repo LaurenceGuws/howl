@@ -10701,6 +10701,9 @@ specifications:
       - file: howl-vt/src/screen.zig
         test: growing OSC 66 resumes at the first uncommitted cluster
         relation: protocol-family
+      - file: howl-vt/src/sized_text.zig
+        test: OSC 66 natural cluster iteration retains exact offsets and rejects overflowing clusters
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: 'Enforce author sender text-byte maximum as receiver admission policy: 4096 text bytes excluding metadata,
@@ -10712,6 +10715,14 @@ specifications:
             and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
             FULL promotion
           baseline: a54d459fe81985a580470341aa21b573dbeb3660
+        howl_qualification_20261126_text_size_02:
+          scope: Existing 4096-byte bound and UTF8 validation retained, natural clusters validated by the same iterator used
+            for writing, 24-scalar cluster admission and exact original byte offsets proven. Explicit safe-text filtering
+            retained; invalid natural noncharacters now filtered. No complete malformed UTF8 recovery claim.
+          method: Pinned Kitty a79f376 docs/text-sizing-protocol.rst, screen.c variable-width command and wcswidth.c; generated
+            property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
+            byte-offset/admission and retained pressure proofs; no blanket FULL promotion
+          baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
     - id: scale
       section: How it works
       level: defined
@@ -10737,6 +10748,12 @@ specifications:
       - file: howl-vt/src/sized_text.zig
         test: OSC 66 fields parse clamp and retain borrowed text exactly
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 natural width uses Unicode graphemes and scaled cell occupancy
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 implicit selectors and spacing marks measure clusters while explicit width wins
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: All49 explicit s=1..7,w=1..7 pairs crossed with full/half-size rendering metadata (98 cases), exact s*w by
@@ -10747,6 +10764,14 @@ specifications:
             and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
             FULL promotion
           baseline: a54d459fe81985a580470341aa21b573dbeb3660
+        howl_qualification_20261126_text_size_02:
+          scope: 'Natural-width clusters use generated properties rather than the old fixed one-cell assumption: scaled CJK
+            and emoji occupy four columns by two rows at s2, combining and Indic clusters retain two columns by two rows.
+            Whole text explicit-width lane preserves requested occupancy. No independent pixel/raster claim.'
+          method: Pinned Kitty a79f376 docs/text-sizing-protocol.rst, screen.c variable-width command and wcswidth.c; generated
+            property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
+            byte-offset/admission and retained pressure proofs; no blanket FULL promotion
+          baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
     - id: fraction
       section: Fractional scaling
       level: defined
@@ -10925,6 +10950,37 @@ specifications:
         boundary determines append/new cell; zero-width attaches to previous even at boundary, discarded without previous.
         Nonzero SpacingMark U+0E33/U+0EB3 can widen prior single unscaled implicit-width cell. Exact algorithm dependency
         remains to qualify.'
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 natural width uses Unicode graphemes and scaled cell occupancy
+        relation: protocol-family
+      - file: howl-vt/src/sized_text.zig
+        test: OSC 66 natural cluster iteration retains exact offsets and rejects overflowing clusters
+        relation: protocol-family
+      - file: howl-vt/src/unicode_17.zig
+        test: Unicode 17 generated transitions pass Kitty's complete grapheme proof
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 service resumes from the retained parser payload under scalar pressure
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: growing OSC 66 resumes at the first uncommitted cluster
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_02:
+          scope: OSC66 natural-width admission and emission now share one bounded cluster iterator driven by existing generated
+            Unicode17 properties and UAX29 state transitions. Pinned author char-props-data.h and GraphemeBreakTest.json are
+            byte-identical to the generator inputs. Every split of a mixed ASCII/CJK/combining/ZWJ/modifier/flag/Hangul/Indic
+            command preserves exact scalars and cluster geometry. Leading zero-width scalars without an in-command base discarded,
+            zero-width boundary scalar appended to preceding in-command cluster, natural invalid noncharacter skipped. Same
+            iterator preflights entire text, rejects >24 scalars per cluster before drawing, and replays from beginning on
+            retry to retain original boundaries/offsets. Retained pressure witnesses still verify exact resume. Malformed
+            UTF8 whole-command rejection retained; ordinary-stream maximal-subpart, cross-command/wrapped-line attachment
+            and all scalar/terminal-control interactions remain separately unqualified.
+          method: Pinned Kitty a79f376 docs/text-sizing-protocol.rst, screen.c variable-width command and wcswidth.c; generated
+            property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
+            byte-offset/admission and retained pressure proofs; no blanket FULL promotion
+          baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
     - id: scalar-width
       section: docs/text-sizing-protocol.rst:426-461
       level: defined
@@ -10932,6 +10988,33 @@ specifications:
       rule: 'Priority: regional indicators width2; EAW W/F and specified CJK ranges unless A width2; Basic_Emoji excluding
         FE0F-required sequences and leading modifier/tag/flag codepoints width2; M/Cf and emoji modifiers width0; other width1.
         Exact ranges and pinned Unicode data dependency still require enumeration.'
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 natural width uses Unicode graphemes and scaled cell occupancy
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 implicit selectors and spacing marks measure clusters while explicit width wins
+        relation: protocol-family
+      - file: howl-vt/src/sized_text.zig
+        test: OSC 66 natural cluster iteration retains exact offsets and rejects overflowing clusters
+        relation: protocol-family
+      - file: howl-vt/src/unicode_17.zig
+        test: Unicode 17 generated properties preserve width and presentation values
+        relation: protocol-family
+      - file: howl-vt/src/unicode_17.zig
+        test: Unicode 17 generated transitions pass Kitty's complete grapheme proof
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_02:
+          scope: Natural OSC66 clusters start at generated scalar width1 or2, then measure joined presentation/spacing adjustments
+            before integer scaling; generated property data and complete grapheme corpus match pinned author hashes. CJK,
+            emoji ZWJ, RI pairs, Hangul and Indic sample exact widths verified. Unassigned negative-width defaults follow
+            existing ordinary writer convention except invalid filtered. No complete independently enumerated scalar class
+            proof, no claim for every compound sequence or source-wide Unicode behavior.
+          method: Pinned Kitty a79f376 docs/text-sizing-protocol.rst, screen.c variable-width command and wcswidth.c; generated
+            property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
+            byte-offset/admission and retained pressure proofs; no blanket FULL promotion
+          baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
     - id: variation-selectors
       section: docs/text-sizing-protocol.rst:465-496
       level: defined
@@ -10939,6 +11022,28 @@ specifications:
       rule: Implicit-width emoji shrink2->1 for VS15 under Basic_Emoji rule; VS16 grows eligible single unscaled cell1->2.
         Explicit w never resized by selectors or spacing marks. Wrapped wide emoji narrowed by VS15 does not move back to
         previous line.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 implicit selectors and spacing marks measure clusters while explicit width wins
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 natural width uses Unicode graphemes and scaled cell occupancy
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width and scale matrix preserves fractional occupancy and cursor position
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_02:
+          scope: Within one OSC66 command, natural block width is measured before scaling, following pinned author variable-width
+            measurement. VS16 promotes eligible narrow base; VS15 narrows eligible wide base; Thai/Lao positive-width SpacingMark
+            widens narrow base. Explicit w wins inside command for selectors and spacing marks. Actual cell/scalar/cursor
+            geometry proof. Cross-command following selector, ordinary streaming edge relocation and explicit-width persistence
+            across subsequent writes remain unqualified; no claim of the normative streamed VS15 wrap behavior from premeasured
+            blocks.
+          method: Pinned Kitty a79f376 docs/text-sizing-protocol.rst, screen.c variable-width command and wcswidth.c; generated
+            property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
+            byte-offset/admission and retained pressure proofs; no blanket FULL promotion
+          baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
   kitty_pointer:
     title: Kitty mouse pointer shape control
     author: Kovid Goyal / kitty

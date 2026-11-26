@@ -2082,3 +2082,69 @@ test "OSC 66 author CPR detection and single-cell cursor movement survive every 
         try std.testing.expectEqual(@as(u8, 2), terminal.semanticView(0).cellInfoAt(1, 3).height);
     }
 }
+
+test "OSC 66 natural width uses Unicode graphemes and scaled cell occupancy" {
+    const wire = "\x1b]66;s=2;A界e\u{301}👩🏽‍💻🇿🇦\u{1100}\u{1161}\u{11a8}\u{915}\u{94d}\u{937}Z\x1b\\";
+    const cases = [_]struct { scalars: []const u21, width: u8 }{
+        .{ .scalars = &.{'A'}, .width = 2 },
+        .{ .scalars = &.{0x754c}, .width = 4 },
+        .{ .scalars = &.{ 'e', 0x301 }, .width = 2 },
+        .{ .scalars = &.{ 0x1f469, 0x1f3fd, 0x200d, 0x1f4bb }, .width = 4 },
+        .{ .scalars = &.{ 0x1f1ff, 0x1f1e6 }, .width = 4 },
+        .{ .scalars = &.{ 0x1100, 0x1161, 0x11a8 }, .width = 4 },
+        .{ .scalars = &.{ 0x915, 0x94d, 0x937 }, .width = 2 },
+        .{ .scalars = &.{'Z'}, .width = 2 },
+    };
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 32, 0);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        const view = terminal.semanticView(0);
+        var col: u16 = 0;
+        var scalars: [24]u21 = undefined;
+        for (cases) |case| {
+            try std.testing.expectEqualSlices(u21, case.scalars, view.cellScalarsAt(0, col, &scalars));
+            for (0..2) |row| {
+                for (0..case.width) |x| {
+                    const cell = view.cellInfoAt(@intCast(row), col + @as(u16, @intCast(x)));
+                    try std.testing.expectEqual(case.width, cell.width);
+                    try std.testing.expectEqual(@as(u8, 2), cell.height);
+                    try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+                    try std.testing.expectEqual(@as(u8, @intCast(row)), cell.y);
+                    if (row != 0 or x != 0) try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+                }
+            }
+            col += case.width;
+        }
+        try std.testing.expectEqual(col, view.cursor_col);
+        try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+    }
+}
+
+test "OSC 66 implicit selectors and spacing marks measure clusters while explicit width wins" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 32, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "\x1b]66;;☺\u{fe0f}😐\u{fe0e}\u{e01}\u{e33}\u{e81}\u{eb3}X\x07");
+    const view = terminal.semanticView(0);
+    const cases = [_]struct { col: u16, width: u8, text: []const u21 }{
+        .{ .col = 0, .width = 2, .text = &.{ 0x263a, 0xfe0f } },
+        .{ .col = 2, .width = 1, .text = &.{ 0x1f610, 0xfe0e } },
+        .{ .col = 3, .width = 2, .text = &.{ 0xe01, 0xe33 } },
+        .{ .col = 5, .width = 2, .text = &.{ 0xe81, 0xeb3 } },
+        .{ .col = 7, .width = 1, .text = &.{'X'} },
+    };
+    var scalars: [24]u21 = undefined;
+    for (cases) |case| {
+        try std.testing.expectEqual(case.width, view.cellInfoAt(0, case.col).width);
+        try std.testing.expectEqualSlices(u21, case.text, view.cellScalarsAt(0, case.col, &scalars));
+    }
+    try std.testing.expectEqual(@as(u16, 8), view.cursor_col);
+    try feedChanged(&terminal, "\x1b[2;1H\x1b]66;w=1;☺\u{fe0f}\u{e33}\x07\x1b]66;w=3;😐\u{fe0e}\x07");
+    const explicit = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 4), explicit.cursor_col);
+    try std.testing.expectEqual(@as(u8, 1), explicit.cellInfoAt(1, 0).width);
+    try std.testing.expectEqualSlices(u21, &.{ 0x263a, 0xfe0f, 0xe33 }, explicit.cellScalarsAt(1, 0, &scalars));
+    try std.testing.expectEqual(@as(u8, 3), explicit.cellInfoAt(1, 1).width);
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f610, 0xfe0e }, explicit.cellScalarsAt(1, 1, &scalars));
+}
