@@ -32581,6 +32581,403 @@ reconciliation:
       when different. Preserve requested index0..15, separate ANSI variants from palette slots, and original color grammar.
       Do not copy pinned index omission. Exact response color serialization, incoming terminator policy and all set/query
       admission remain later qualification; no new palette or host configuration policy.'
+- id: ecma48-dcsm-reset-state-wording
+  wire: CSI 9 h/l
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: ecma48-table6-polarity
+    effect: 'Resolve historical ECMA-48 DCSM polarity: if supported, SM9 selects DATA, RM9 PRESENTATION, per section7.2 and
+      Table6. Implicit BDSM makes affected operations use data regardless of DCSM; ignore the contradictory parenthesis calling
+      DATA reset in7.3.4(c). This does not select a separately mutable presentation component. In the proposed modern terminal-wg
+      level1 profile, logical/model coordinates remain authoritative even in explicit mode. Do not import presentation-coordinate
+      mutation solely by selecting historical polarity. DCSM targeting, fixed status and transition behavior remain separate.'
+    selected_source_profiles:
+    - ecma48.mode-dcsm
+  selects:
+    dcsm.polarity: effect
+  competing_interpretations_retained:
+  - ecma48.dcsm-reset-wording
+  reason: ECMA48 7.1 and7.2 define reset first and set second, Table6 and7.2.3 give PRESENTATION then DATA. The conflicting
+    parenthesis can be isolated without altering effective implicit DATA behavior. VTE0.84.1 modes.py explicitly documents
+    its fixed DATA profile distinct from ECMA reset default. No external corrigendum claimed.
+  evidence_basis: Explicit source-internal reconciliation; no new historical implementation mandate.
+  source_clauses:
+  - clause: ecma48.dcsm-reset-wording
+    wire: CSI 9 h/l when BDSM implicit
+    section: 7.3.4(c), interaction of BDSM and DCSM
+    source_revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+  - clause: ecma48.mode-dcsm
+    wire: CSI 9 h / CSI 9 l
+    section: 7.2.3
+    source_revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: ecma48-dcsm-reset-state-wording
+    status: material-originating-extension-conflict
+    wire: CSI 9 h/l
+    original_author_sources:
+    - clause: ecma48.mode-dcsm
+      meaning: Table6 and 7.2.3 order identify presentation reset, data set.
+    - clause: ecma48.dcsm-reset-wording
+      meaning: 7.3.4(c) explicitly calls DATA reset state.
+    question: Recheck original standard and any corrigenda, preserve ignored DCSM while implicit; no new semantics selected.
+    decision: null
+    applies_to:
+      clauses:
+      - ecma48.dcsm-reset-wording
+      - ecma48.mode-dcsm
+      scope: CSI 9 h/l
+  applies_to:
+    clauses:
+    - ecma48.dcsm-reset-wording
+    - ecma48.mode-dcsm
+    scope: 'Resolve historical ECMA-48 DCSM polarity: if supported, SM9 selects DATA, RM9 PRESENTATION, per section7.2 and
+      Table6. Implicit BDSM makes affected operations use data regardless of DCSM; ignore the contradictory parenthesis calling
+      DATA reset in7.3.4(c). This does not select a separately mutable presentation component. In the proposed modern terminal-wg
+      level1 profile, logical/model coordinates remain authoritative even in explicit mode. Do not import presentation-coordinate
+      mutation solely by selecting historical polarity. DCSM targeting, fixed status and transition behavior remain separate.'
+- id: bidi-bdsm-default-ecma-vs-recommendation
+  wire: CSI 8 h/l default and reset
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: terminal-wg-implicit-default
+    effect: For terminal-wg bidi level1, SM8 enables implicit terminal bidi/shaping; RM8 selects explicit application-managed
+      visual-order input. Initialize current BDSM implicit/set and restore current mode on generic terminal resets. Apply
+      paragraph-scoped changes according to first-logical-position/current-mode rules; no retroactive rewrite of stored text
+      or presumed reordering of all retained history. Autodetection, direction defaults, per-reset lifetime, level2 controls,
+      and actual targeting remain separate.
+    selected_source_profiles:
+    - terminal_wg_bidi.bdsm
+    - terminal_wg_bidi.model-view
+    - terminal_wg_bidi.current-mode
+  selects:
+    bidi.bdsm-default: effect
+  competing_interpretations_retained:
+  - ecma48.mode-bdsm
+  reason: ECMA48 7.1 recommends reset initial state, not a mandate. Egmont v0.1 explicitly favors implicit default/reset so
+    ordinary bidi-unaware output needs no negotiation. VTE writable BDSM default True corroborates. Explicit mode follows
+    proposal's horizontal cell-order projection, not ECMA's full data/presentation model.
+  evidence_basis: Explicit modern author recommendation with independent maintained implementation corroboration.
+  source_clauses:
+  - clause: ecma48.mode-bdsm
+    wire: CSI 8 h / CSI 8 l
+    section: 7.2.1
+    source_revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+  - clause: terminal_wg_bidi.bdsm
+    wire: CSI 8 h / CSI 8 l
+    section: 90-escape-sequences / Implicit vs. explicit
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  - clause: terminal_wg_bidi.current-mode
+    wire: per-paragraph mode updates
+    section: 90-escape-sequences / How these escape sequences apply
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  - clause: terminal_wg_bidi.model-view
+    wire: all incoming terminal operations
+    section: 20-display-only / BiDi is display-only
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: bidi-bdsm-default-ecma-vs-recommendation
+    status: material-originating-extension-conflict
+    wire: CSI 8 h/l default and reset
+    original_author_sources:
+    - clause: ecma48.mode-bdsm
+      meaning: ECMA7.1 recommends reset initial state (explicit) when implementing modes.
+    - clause: terminal_wg_bidi.bdsm
+      meaning: Proposal default implicit and generic reset restores set.
+    question: Explicitly select initialization/reset contract, not assume same wire establishes identical mode model.
+    decision: null
+    applies_to:
+      clauses:
+      - ecma48.mode-bdsm
+      - terminal_wg_bidi.bdsm
+      scope: CSI 8 h/l default and reset
+  applies_to:
+    clauses:
+    - ecma48.mode-bdsm
+    - terminal_wg_bidi.bdsm
+    - terminal_wg_bidi.current-mode
+    - terminal_wg_bidi.model-view
+    scope: For terminal-wg bidi level1, SM8 enables implicit terminal bidi/shaping; RM8 selects explicit application-managed
+      visual-order input. Initialize current BDSM implicit/set and restore current mode on generic terminal resets. Apply
+      paragraph-scoped changes according to first-logical-position/current-mode rules; no retroactive rewrite of stored text
+      or presumed reordering of all retained history. Autodetection, direction defaults, per-reset lifetime, level2 controls,
+      and actual targeting remain separate.
+- id: bidi-scp-ecma-vs-recommendation
+  wire: CSI Ps1 ; Ps2 SP k
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: terminal-wg-paragraph-scp
+    effect: 'Select horizontal terminal-wg SCP: path0 or omitted restores configured fallback/base direction,1 LTR,2 RTL.
+      Effect0 or omitted applies paragraph properties without moving logical cursor or rewriting data. Update current direction
+      on each admitted request and current paragraph only at first logical position, including repeated setting of current
+      value. Effects1/2 unsupported: reject whole request without direction mutation, cursor motion or data rewrite. SPD aliases,
+      vertical orientations, exact parameter grammar and broader paragraph lifecycle remain separate.'
+    selected_source_profiles:
+    - terminal_wg_bidi.scp
+    - terminal_wg_bidi.current-mode
+    - terminal_wg_bidi.model-view
+  selects:
+    bidi.scp-profile: effect
+  competing_interpretations_retained:
+  - ecma48.scp
+  reason: ECMA48 8.3.111 has no defaults and effect1/2 update components and move positions. Egmont supplies defaults0 and
+    no-motion effect0, discourages view-to-model rewrite. VTE only collects first selector and maps0 to LTR with FIXME configured
+    default; corroboration is partial. Preserve stable model and paragraph properties.
+  evidence_basis: Explicit modern profile; reject-whole unsupported effect is a deliberate Howl negative-admission choice,
+    not author-mandated behavior.
+  source_clauses:
+  - clause: ecma48.scp
+    wire: CSI Ps1;Ps2 SP k
+    section: 8.3.111
+    source_revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+  - clause: terminal_wg_bidi.current-mode
+    wire: per-paragraph mode updates
+    section: 90-escape-sequences / How these escape sequences apply
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  - clause: terminal_wg_bidi.model-view
+    wire: all incoming terminal operations
+    section: 20-display-only / BiDi is display-only
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  - clause: terminal_wg_bidi.scp
+    wire: CSI [ Ps1 [ ; Ps2 ] ] SP k
+    section: 90-escape-sequences / LTR vs. RTL
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: bidi-scp-ecma-vs-recommendation
+    status: material-originating-extension-conflict
+    wire: CSI Ps1 ; Ps2 SP k
+    original_author_sources:
+    - clause: ecma48.scp
+      meaning: No parameter defaults; path1/2, effect0 unspecified or effects1/2 update model/presentation and position.
+    - clause: terminal_wg_bidi.scp
+      meaning: Path0/omission defaults, effect0 specific paragraph scope without cursor movement; 1/2 not required.
+    question: Keep original and modern profiles distinct. Review terminal-specific application rules before selection.
+    decision: null
+    applies_to:
+      clauses:
+      - ecma48.scp
+      - terminal_wg_bidi.scp
+      scope: CSI Ps1 ; Ps2 SP k
+  applies_to:
+    clauses:
+    - ecma48.scp
+    - terminal_wg_bidi.current-mode
+    - terminal_wg_bidi.model-view
+    - terminal_wg_bidi.scp
+    scope: 'Select horizontal terminal-wg SCP: path0 or omitted restores configured fallback/base direction,1 LTR,2 RTL. Effect0
+      or omitted applies paragraph properties without moving logical cursor or rewriting data. Update current direction on
+      each admitted request and current paragraph only at first logical position, including repeated setting of current value.
+      Effects1/2 unsupported: reject whole request without direction mutation, cursor motion or data rewrite. SPD aliases,
+      vertical orientations, exact parameter grammar and broader paragraph lifecycle remain separate.'
+- id: bidi-spacing-mark-order-open
+  wire: spacing marks in reverse visual output
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: base-before-spacing-mark-approach-a
+    effect: 'In explicit bidi output choose Approach A: application emits base followed by associated spacing mark(s), even
+      when base groups are emitted in reverse visual order. Preserve association and scalar order in canonical data; visual
+      reordering/shaping must not attach mark to another base. Distinguish ordering from grapheme segmentation, cell allocation,
+      Mc width, glyph placement and Unicode version. No universal extra-cell rule or complete script roster selected. Do not
+      heuristically attach mark-first stream to later base solely because display RTL.'
+    selected_source_profiles:
+    - terminal_wg_bidi.spacing-marks-a
+  selects:
+    bidi.spacing-mark-order: effect
+  competing_interpretations_retained:
+  - terminal_wg_bidi.spacing-marks-b
+  reason: Egmont combining chapter presents A/B as unresolved, favors A as cleaner and compatible with model-layer combination
+    and Mn/Me order. B needs neighbor inference. A avoids renderer heuristics owning canonical data. Historical Pango/browser
+    comparison not independently reverified.
+  evidence_basis: Explicit Howl decision on author-open proposal, not finalized standard.
+  source_clauses:
+  - clause: terminal_wg_bidi.spacing-marks-a
+    wire: base then Mc in reverse visual output
+    section: 50-combining / Spacing marks / Approach A
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  - clause: terminal_wg_bidi.spacing-marks-b
+    wire: Mc then base in reverse visual output
+    section: 50-combining / Spacing marks / Approach B
+    source_revision: v0.1 2019-01-29; git cc8686a93c8cc2f25a2f68f79c01b4822111509c 2019-01-31
+    url: https://gitlab.freedesktop.org/terminal-wg/bidi/-/blob/cc8686a93c8cc2f25a2f68f79c01b4822111509c/docs/30-recommendation/90-escape-sequences.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: bidi-spacing-mark-order-open
+    status: material-originating-extension-conflict
+    wire: spacing marks in reverse visual output
+    original_author_sources:
+    - clause: terminal_wg_bidi.spacing-marks-a
+      meaning: Base followed by spacing mark even in reverse output.
+    - clause: terminal_wg_bidi.spacing-marks-b
+      meaning: Spacing mark before base when emitting reverse-order text.
+    question: Author explicitly leaves unresolved, no concrete new control or selected interpretation.
+    decision: null
+    applies_to:
+      clauses:
+      - terminal_wg_bidi.spacing-marks-a
+      - terminal_wg_bidi.spacing-marks-b
+      scope: spacing marks in reverse visual output
+  applies_to:
+    clauses:
+    - terminal_wg_bidi.spacing-marks-a
+    - terminal_wg_bidi.spacing-marks-b
+    scope: 'In explicit bidi output choose Approach A: application emits base followed by associated spacing mark(s), even
+      when base groups are emitted in reverse visual order. Preserve association and scalar order in canonical data; visual
+      reordering/shaping must not attach mark to another base. Distinguish ordering from grapheme segmentation, cell allocation,
+      Mc width, glyph placement and Unicode version. No universal extra-cell rule or complete script roster selected. Do not
+      heuristically attach mark-first stream to later base solely because display RTL.'
+- id: unicode-core-vs-mintty-2027
+  wire: CSI ? 2027 h/l and U+FE0E
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: contour-unicode-core-negotiation
+    effect: 'Select Contour Terminal Unicode Core draft revision1 for private mode2027: SET enables grapheme/emoji guarantees,
+      RESET disables negotiated contract; DECRQM truthfully reports availability/current state. Enabled nonbreaking stream
+      input extends cluster at same grid origin without cursor advance except VS16 width promotion; addressed overwrite replaces
+      rather than concatenates. Emoji presentation occupies two cells, including ZWJ and unavailable-glyph fallback without
+      extra advances. VS16 forces width2 and may wrap; VS15 changes presentation without narrowing existing width. RIS and
+      DECSTR disable negotiated mode. Do not adopt Mintty''s VS15 forced width1 or locale wcwidth toggle as equivalent. Disabled-mode
+      behavior must be deterministically specified before targeting; draft unspecified does not mandate second width engine
+      or license nondeterminism. Retain WezTerm permanent-set and Foot build/config-gated profiles as evidence. Unicode version,
+      cluster admission, margin transaction, reset lifetime, query reporting, bidi separation and actual implementation scope
+      remain qualification questions.'
+    selected_source_profiles:
+    - contour_unicode_core.mode
+    - contour_unicode_core.clusters
+    - contour_unicode_core.overwrite
+    - contour_unicode_core.emoji
+    - contour_unicode_core.vs16
+    - contour_unicode_core.vs15
+    - contour_unicode_core.reset
+  selects:
+    unicode-core.2027-profile: effect
+  competing_interpretations_retained:
+  - mintty_controls.emoji-width-mode
+  - mintty_controls.emoji-width-rules
+  reason: Exact Christian Parpart revision1 specifies negotiated UAX29 continuation, overwrite, width and reset rules; Contour
+    docs exclude RTL. Mintty wiki warns no agreed common width spec and pinned termout narrows FE0E. Foot mode branch alone
+    does not establish all guarantees; WezTerm earlier observation permanently enabled. Choose coherent original draft rather
+    than merge divergent width modes.
+  evidence_basis: Explicit draft-profile choice, not a finalized standard or independent-majority claim. Related clause applicability
+    deliberately expanded for approval.
+  source_clauses:
+  - clause: contour_unicode_core.clusters
+    wire: consecutively written codepoints in mode2027
+    section: Semantics / Grapheme Cluster
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: contour_unicode_core.emoji
+    wire: emoji-presentation and ZWJ clusters
+    section: Semantics / Emoji
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: contour_unicode_core.mode
+    wire: CSI ? 2027 h / CSI ? 2027 l
+    section: Feature and Mode State Detection; Mode Switching
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: contour_unicode_core.overwrite
+    wire: cursor movement then write to existing cluster
+    section: Semantics / Grapheme Cluster
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: contour_unicode_core.reset
+    wire: RIS / DECSTR
+    section: Semantics / Terminal Reset
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: contour_unicode_core.vs15
+    wire: U+FE0E
+    section: Semantics / Variation Selector15
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: contour_unicode_core.vs16
+    wire: U+FE0F
+    section: Semantics / Variation Selector16
+    source_revision: Draft revision1, 2021-09-06; git 64f53851ceab9a3cf08db4939bcaef75a0899573
+    url: https://github.com/contour-terminal/terminal-unicode-core/blob/64f53851ceab9a3cf08db4939bcaef75a0899573/spec/terminal-unicode-core.tex
+  - clause: mintty_controls.emoji-width-mode
+    wire: CSI ? 2027 h/l / CSI ? 7769 h/l
+    section: Emoji width mode
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  - clause: mintty_controls.emoji-width-rules
+    wire: emoji scalar and sequence width under emoji mode
+    section: Emoji width mode
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: unicode-core-vs-mintty-2027
+    status: material-originating-extension-conflict
+    wire: CSI ? 2027 h/l and U+FE0E
+    original_author_sources:
+    - clause: contour_unicode_core.mode
+      meaning: Author draft enables grapheme cluster guarantees; reset returns legacy.
+    - clause: contour_unicode_core.vs15
+      meaning: VS15 changes presentation without narrowing.
+    - clause: mintty_controls.emoji-width-mode
+      meaning: Mode2027 fixed emoji width; reset locale wcwidth.
+    - clause: mintty_controls.emoji-width-rules
+      meaning: VS15 forces single cell; VS16 double.
+    question: Select explicit supported width/cluster profile and reset/overwrite behavior; WezTerm permanently-enabled observation
+      also retained. Do not infer identical semantics from same mode number.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_unicode_core.mode
+      - contour_unicode_core.vs15
+      - mintty_controls.emoji-width-mode
+      - mintty_controls.emoji-width-rules
+      scope: CSI ? 2027 h/l and U+FE0E
+  applies_to:
+    clauses:
+    - contour_unicode_core.clusters
+    - contour_unicode_core.emoji
+    - contour_unicode_core.mode
+    - contour_unicode_core.overwrite
+    - contour_unicode_core.reset
+    - contour_unicode_core.vs15
+    - contour_unicode_core.vs16
+    - mintty_controls.emoji-width-mode
+    - mintty_controls.emoji-width-rules
+    scope: 'Select Contour Terminal Unicode Core draft revision1 for private mode2027: SET enables grapheme/emoji guarantees,
+      RESET disables negotiated contract; DECRQM truthfully reports availability/current state. Enabled nonbreaking stream
+      input extends cluster at same grid origin without cursor advance except VS16 width promotion; addressed overwrite replaces
+      rather than concatenates. Emoji presentation occupies two cells, including ZWJ and unavailable-glyph fallback without
+      extra advances. VS16 forces width2 and may wrap; VS15 changes presentation without narrowing existing width. RIS and
+      DECSTR disable negotiated mode. Do not adopt Mintty''s VS15 forced width1 or locale wcwidth toggle as equivalent. Disabled-mode
+      behavior must be deterministically specified before targeting; draft unspecified does not mandate second width engine
+      or license nondeterminism. Retain WezTerm permanent-set and Foot build/config-gated profiles as evidence. Unicode version,
+      cluster admission, margin transaction, reset lifetime, query reporting, bidi separation and actual implementation scope
+      remain qualification questions.'
 pending_reconciliation:
 - id: iterm-feature-mouse-button-table
   status: material-originating-extension-conflict
@@ -32615,66 +33012,6 @@ pending_reconciliation:
     - iterm2_feature_reporting.file
     - iterm2_feature_reporting.focus
     scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
-- id: ecma48-dcsm-reset-state-wording
-  status: material-originating-extension-conflict
-  wire: CSI 9 h/l
-  original_author_sources:
-  - clause: ecma48.mode-dcsm
-    meaning: Table6 and 7.2.3 order identify presentation reset, data set.
-  - clause: ecma48.dcsm-reset-wording
-    meaning: 7.3.4(c) explicitly calls DATA reset state.
-  question: Recheck original standard and any corrigenda, preserve ignored DCSM while implicit; no new semantics selected.
-  decision: null
-  applies_to:
-    clauses:
-    - ecma48.dcsm-reset-wording
-    - ecma48.mode-dcsm
-    scope: CSI 9 h/l
-- id: bidi-bdsm-default-ecma-vs-recommendation
-  status: material-originating-extension-conflict
-  wire: CSI 8 h/l default and reset
-  original_author_sources:
-  - clause: ecma48.mode-bdsm
-    meaning: ECMA7.1 recommends reset initial state (explicit) when implementing modes.
-  - clause: terminal_wg_bidi.bdsm
-    meaning: Proposal default implicit and generic reset restores set.
-  question: Explicitly select initialization/reset contract, not assume same wire establishes identical mode model.
-  decision: null
-  applies_to:
-    clauses:
-    - ecma48.mode-bdsm
-    - terminal_wg_bidi.bdsm
-    scope: CSI 8 h/l default and reset
-- id: bidi-scp-ecma-vs-recommendation
-  status: material-originating-extension-conflict
-  wire: CSI Ps1 ; Ps2 SP k
-  original_author_sources:
-  - clause: ecma48.scp
-    meaning: No parameter defaults; path1/2, effect0 unspecified or effects1/2 update model/presentation and position.
-  - clause: terminal_wg_bidi.scp
-    meaning: Path0/omission defaults, effect0 specific paragraph scope without cursor movement; 1/2 not required.
-  question: Keep original and modern profiles distinct. Review terminal-specific application rules before selection.
-  decision: null
-  applies_to:
-    clauses:
-    - ecma48.scp
-    - terminal_wg_bidi.scp
-    scope: CSI Ps1 ; Ps2 SP k
-- id: bidi-spacing-mark-order-open
-  status: material-originating-extension-conflict
-  wire: spacing marks in reverse visual output
-  original_author_sources:
-  - clause: terminal_wg_bidi.spacing-marks-a
-    meaning: Base followed by spacing mark even in reverse output.
-  - clause: terminal_wg_bidi.spacing-marks-b
-    meaning: Spacing mark before base when emitting reverse-order text.
-  question: Author explicitly leaves unresolved, no concrete new control or selected interpretation.
-  decision: null
-  applies_to:
-    clauses:
-    - terminal_wg_bidi.spacing-marks-a
-    - terminal_wg_bidi.spacing-marks-b
-    scope: spacing marks in reverse visual output
 - id: teraterm-rectangle-omission-defaults
   status: material-originating-extension-conflict
   wire: CSI Pt ; Pl ; Pb ; Pr $ z/{
@@ -32778,28 +33115,6 @@ pending_reconciliation:
     - mlterm_drcs_sixel_v3.mapping-code-observation
     - mlterm_drcs_sixel_v3.mapping-v3
     scope: DRCSMMv3 mapping domain and carry
-- id: unicode-core-vs-mintty-2027
-  status: material-originating-extension-conflict
-  wire: CSI ? 2027 h/l and U+FE0E
-  original_author_sources:
-  - clause: contour_unicode_core.mode
-    meaning: Author draft enables grapheme cluster guarantees; reset returns legacy.
-  - clause: contour_unicode_core.vs15
-    meaning: VS15 changes presentation without narrowing.
-  - clause: mintty_controls.emoji-width-mode
-    meaning: Mode2027 fixed emoji width; reset locale wcwidth.
-  - clause: mintty_controls.emoji-width-rules
-    meaning: VS15 forces single cell; VS16 double.
-  question: Select explicit supported width/cluster profile and reset/overwrite behavior; WezTerm permanently-enabled observation
-    also retained. Do not infer identical semantics from same mode number.
-  decision: null
-  applies_to:
-    clauses:
-    - contour_unicode_core.mode
-    - contour_unicode_core.vs15
-    - mintty_controls.emoji-width-mode
-    - mintty_controls.emoji-width-rules
-    scope: CSI ? 2027 h/l and U+FE0E
 - id: gip-readme-vs-draft-envelope
   status: material-originating-extension-conflict
   wire: DCS u/r/s/d versus DCS ! g
