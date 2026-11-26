@@ -6211,6 +6211,8 @@ pub const Terminal = struct {
         cursor_text: ?Terminal.Rgb,
         selection_background: ?Terminal.Rgb,
         selection_foreground: ?Terminal.Rgb,
+        /// Retained visual-bell preference; no host flash is implied.
+        visual_bell: ?Terminal.Rgb = null,
         /// Borrowed by host presentation; the VT parser never blends cells.
         transparent_background: [8]?properties.TransparentBackgroundColor = @splat(null),
         reverse_screen: bool,
@@ -8280,6 +8282,7 @@ pub const Terminal = struct {
             .cursor_text = active.cursor.cursor_text_color orelse colors.cursor_text,
             .selection_background = colors.selection_background,
             .selection_foreground = colors.selection_foreground,
+            .visual_bell = colors.visual_bell,
             .transparent_background = colors.transparent_background,
             .reverse_screen = self.modes.reverse_screen_mode,
         };

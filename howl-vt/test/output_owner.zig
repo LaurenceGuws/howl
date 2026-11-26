@@ -2160,3 +2160,34 @@ test "wide scaled underline chunks retain native pattern phase inside a narrow a
     }
     try std.testing.expectEqual(@as(i32, snap.cell_width) * 14, end);
 }
+
+test "transparent colour metadata retains explicit alpha and host fallback without dimming opaque output" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(2, 8);
+    try owner.feed("\x1b[?25l\x1b]11;#112233\x07\x1b[48;2;68;85;102mX\x1b[0mY");
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const before = held.?.snapshot.background;
+    const row = try a.dupe(output.commands.Command, held.?.snapshot.backgrounds[0]);
+    defer a.free(row);
+    try owner.feed("\x1b]21;transparent_background_color1=#112233@-0.5;transparent_background_color2=#445566@0.25;transparent_background_color1=?;transparent_background_color2=?\x07");
+    try owner.flush();
+    try std.testing.expect(held.?.snapshot.transparent_background[0] == null);
+    try std.testing.expectEqualDeep(before, held.?.snapshot.background);
+    try std.testing.expectEqualSlices(output.commands.Command, row, held.?.snapshot.backgrounds[0]);
+    try owner.release(held.?);
+    held = null;
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expectEqual(@as(?f32, null), next.snapshot.transparent_background[0].?.opacity);
+    try std.testing.expectEqual(@as(?f32, 0.25), next.snapshot.transparent_background[1].?.opacity);
+    try std.testing.expectEqualDeep(before, next.snapshot.background);
+    try std.testing.expectEqualSlices(output.commands.Command, row, next.snapshot.backgrounds[0]);
+    try std.testing.expectEqual(@as(u8, 255), next.snapshot.background.solid.color.a);
+    for (next.snapshot.backgrounds[0]) |command| try std.testing.expectEqual(@as(u8, 255), command.solid.color.a);
+    try std.testing.expectEqualStrings("\x1b]21;transparent_background_color1=rgb:11/22/33@1.0000;transparent_background_color2=rgb:44/55/66@0.2471\x1b\\", owner.replyBytes());
+}

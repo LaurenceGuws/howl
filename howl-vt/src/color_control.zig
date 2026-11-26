@@ -261,7 +261,7 @@ const color_osc_max_bytes = 18;
 
 const TerminalColorState = properties.ColorState;
 
-const SpecialKey = enum { foreground, background, cursor, cursor_text, selection_background, selection_foreground };
+const SpecialKey = enum { foreground, background, cursor, cursor_text, selection_background, selection_foreground, visual_bell };
 const DynamicKey = enum {
     foreground,
     background,
@@ -413,11 +413,52 @@ fn parseColorWithIntensity(value: []const u8, policy: IntensityPolicy) ?Rgb {
     if (std.mem.startsWith(u8, color_text, "#")) return parseHashColor(color_text[1..]);
     if (std.mem.startsWith(u8, color_text, "rgb:")) return parseRgbColor(color_text[4..]);
     if (std.mem.startsWith(u8, color_text, "rgbi:")) return parseRgbiColor(color_text[5..], policy);
-    if (std.ascii.eqlIgnoreCase(color_text, "black")) return .{ .r = 0, .g = 0, .b = 0 };
-    if (std.ascii.eqlIgnoreCase(color_text, "red")) return .{ .r = 255, .g = 0, .b = 0 };
-    if (std.ascii.eqlIgnoreCase(color_text, "green")) return .{ .r = 0, .g = 255, .b = 0 };
-    if (std.ascii.eqlIgnoreCase(color_text, "blue")) return .{ .r = 0, .g = 0, .b = 255 };
-    if (std.ascii.eqlIgnoreCase(color_text, "white")) return .{ .r = 255, .g = 255, .b = 255 };
+    return namedColor(color_text);
+}
+
+// Independently sourced X.Org colour facts. Compact offsets into a
+// sorted immutable table avoid one pointer/length pair per alias.
+const named_color_data = @embedFile("data/color-names.txt");
+const NamedColor = struct { offset: u16, len: u8, rgb: Rgb };
+const named_colors = blk: {
+    @setEvalBranchQuota(100000);
+    var entries: [std.mem.count(u8, named_color_data, "\n")]NamedColor = undefined;
+    var lines = std.mem.splitScalar(u8, named_color_data, '\n');
+    var offset: usize = 0;
+    var count: usize = 0;
+    while (lines.next()) |line| {
+        if (line.len == 0) break;
+        std.debug.assert(line.len > 7 and line[6] == ' ');
+        const name = line[7..];
+        if (count != 0) {
+            const prior = entries[count - 1];
+            std.debug.assert(std.mem.order(u8, named_color_data[prior.offset..][0..prior.len], name) == .lt);
+        }
+        entries[count] = .{
+            .offset = @intCast(offset + 7),
+            .len = @intCast(name.len),
+            .rgb = parseHashColor(line[0..6]) orelse @compileError("invalid named colour"),
+        };
+        count += 1;
+        offset += line.len + 1;
+    }
+    std.debug.assert(count == entries.len);
+    std.debug.assert(offset == named_color_data.len);
+    break :blk entries;
+};
+
+fn namedColor(name: []const u8) ?Rgb {
+    var low: usize = 0;
+    var high = named_colors.len;
+    while (low < high) {
+        const mid = low + (high - low) / 2;
+        const entry = named_colors[mid];
+        switch (std.ascii.orderIgnoreCase(name, named_color_data[entry.offset..][0..entry.len])) {
+            .lt => high = mid,
+            .gt => low = mid + 1,
+            .eq => return entry.rgb,
+        }
+    }
     return null;
 }
 
@@ -524,6 +565,7 @@ fn specialColorKey(key: []const u8) ?SpecialKey {
     if (std.mem.eql(u8, key, "cursor_text")) return .cursor_text;
     if (std.mem.eql(u8, key, "selection_background")) return .selection_background;
     if (std.mem.eql(u8, key, "selection_foreground")) return .selection_foreground;
+    if (std.mem.eql(u8, key, "visual_bell")) return .visual_bell;
     return null;
 }
 
@@ -549,7 +591,6 @@ fn kittyTransparentBackgroundIndex(key: []const u8) ?usize {
 // Reports whether a borrowed Kitty color name is known to the OSC grammar.
 fn isKnownColorKey(key: []const u8) bool {
     if (specialColorKey(key) != null) return true;
-    if (std.mem.eql(u8, key, "visual_bell")) return true;
     if (kittyTransparentBackgroundIndex(key) != null) return true;
     return kittyPaletteIndex(key) != null;
 }
@@ -564,6 +605,7 @@ fn colorForKey(colors: *const TerminalColorState, key: []const u8) ?Rgb {
         .cursor_text => colors.cursor_text,
         .selection_background => colors.selection_background,
         .selection_foreground => colors.selection_foreground,
+        .visual_bell => colors.visual_bell,
     };
     return null;
 }
@@ -784,6 +826,7 @@ fn resetColorKey(colors: *TerminalColorState, key: []const u8, defaults: *const 
         .cursor_text => colors.cursor_text = defaults.cursor_text,
         .selection_background => colors.selection_background = defaults.selection_background,
         .selection_foreground => colors.selection_foreground = defaults.selection_foreground,
+        .visual_bell => colors.visual_bell = defaults.visual_bell,
     };
 }
 
@@ -818,6 +861,7 @@ fn setSpecialColor(colors: *TerminalColorState, key: SpecialKey, color: Rgb) voi
         .cursor_text => colors.cursor_text = color,
         .selection_background => colors.selection_background = color,
         .selection_foreground => colors.selection_foreground = color,
+        .visual_bell => colors.visual_bell = color,
     }
 }
 
@@ -829,6 +873,7 @@ fn setSpecialColorDynamic(colors: *TerminalColorState, key: []const u8) void {
         .cursor_text => colors.cursor_text = null,
         .selection_background => colors.selection_background = null,
         .selection_foreground => colors.selection_foreground = null,
+        .visual_bell => colors.visual_bell = null,
     };
 }
 
@@ -1196,4 +1241,24 @@ test "iTerm SetColors remains presentation-state only" {
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
     try std.testing.expectEqual(Rgb{ .r = 0xab, .g = 0xcd, .b = 0xef }, colors.palette[1]);
+}
+
+test "all 783 independently sourced colour names resolve with exact RGB and bounded case folding" {
+    try std.testing.expectEqual(@as(usize, 783), named_colors.len);
+    var lines = std.mem.splitScalar(u8, named_color_data, '\n');
+    var count: usize = 0;
+    while (lines.next()) |line| {
+        if (line.len == 0) break;
+        const rgb_value = try std.fmt.parseUnsigned(u24, line[0..6], 16);
+        const expected: Rgb = .{ .r = @truncate(rgb_value >> 16), .g = @truncate(rgb_value >> 8), .b = @truncate(rgb_value) };
+        const name = line[7..];
+        var uppercase: [32]u8 = undefined;
+        for (name, 0..) |byte, index| uppercase[index] = std.ascii.toUpper(byte);
+        try std.testing.expectEqual(@as(?Rgb, expected), parseColor(name));
+        try std.testing.expectEqual(@as(?Rgb, expected), parseColorWithIntensity(uppercase[0..name.len], .clip));
+        count += 1;
+    }
+    try std.testing.expectEqual(named_colors.len, count);
+    for ([_][]const u8{ "", "aliceblu", "alicebluex", "gray101", "alice\x00blue", "dark  slate gray", "notacolour", "z" }) |invalid|
+        try std.testing.expectEqual(@as(?Rgb, null), namedColor(invalid));
 }

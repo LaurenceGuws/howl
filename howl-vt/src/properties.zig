@@ -34,6 +34,8 @@ pub const ColorState = struct {
     cursor_text: ?Rgb = null,
     selection_background: ?Rgb = null,
     selection_foreground: ?Rgb = null,
+    /// Optional visual bell colour preference; the host owns whether to flash.
+    visual_bell: ?Rgb = null,
     /// Eight fixed program/configuration slots, copied by the existing
     /// bounded color stack and reset with the other transient OSC overrides.
     transparent_background: [8]?TransparentBackgroundColor = @splat(null),

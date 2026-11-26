@@ -3617,3 +3617,66 @@ test "Kitty OSC 21 clipped set and dynamic unset roll back together on reply pre
     try std.testing.expectEqual(Rgb{ .r = 0, .g = 128, .b = 255 }, terminal.presentation().foreground);
     try std.testing.expect(terminal.presentation().transparent_background[0] == null);
 }
+
+test "Kitty named colours preserve X11 values and case insensitive aliases" {
+    const wire = "\x1b]21;foreground=AliceBlue;foreground=?;background=Dark Slate Gray;background=?;cursor=DebianRed;cursor=?;selection_foreground=GrEy42;selection_foreground=?;17=OrangeRed4;17=?;18=web green;18=?;transparent_background_color1=RebeccaPurple@0.5;transparent_background_color1=?\x07";
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        try std.testing.expectEqualStrings(
+            "\x1b]21;foreground=rgb:f0/f8/ff;background=rgb:2f/4f/4f;cursor=rgb:d7/07/51;selection_foreground=rgb:6b/6b/6b;17=rgb:8b/25/00;18=rgb:00/80/00;transparent_background_color1=rgb:66/33/99@0.4980\x1b\\",
+            terminal.replyBytes(),
+        );
+        const before = terminal.presentation();
+        try consumeReplies(&terminal);
+        try std.testing.expect(!(try terminal.feed("\x1b]21;foreground=aliceblu;17=OrangeRed4x;cursor=not a color\x07")).stateChanged());
+        try std.testing.expectEqualDeep(before, terminal.presentation());
+        try feed(&terminal, "\x1b]4;19;LightGoldenrodYellow;19;?\x07");
+        try std.testing.expectEqualStrings("\x1b]4;19;rgb:fafa/fafa/d2d2\x07", terminal.replyBytes());
+    }
+}
+
+test "Kitty visual bell colour has exact dynamic reset stack and query lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]21;visual_bell=?;visual_bell=#123456;visual_bell=?;visual_bell=;visual_bell=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;visual_bell=;visual_bell=rgb:12/34/56;visual_bell=\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b]21;visual_bell=#abcdef\x07\x1b]30001\x1b\\\x1b]21;visual_bell=;visual_bell=?\x07\x1b[?1049h\x1b]30101\x1b\\\x1b]21;visual_bell=?\x07\x1b[?1049l\x1b]21;visual_bell=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;visual_bell=\x1b\\\x1b]21;visual_bell=rgb:ab/cd/ef\x1b\\\x1b]21;visual_bell=rgb:ab/cd/ef\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b]21;visual_bell;visual_bell=?\x07\x1b]21;visual_bell=#123456\x07\x1bc\x1b]21;visual_bell=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;visual_bell=\x1b\\\x1b]21;visual_bell=\x1b\\", terminal.replyBytes());
+}
+
+test "visual bell configured colour remains distinct from snapshots and automatic preference" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.visual_bell = .{ .r = 9, .g = 8, .b = 7 };
+    terminal.setColorDefaults(defaults);
+    try std.testing.expectEqual(defaults.visual_bell, terminal.presentation().visual_bell);
+    try feed(&terminal, "\x1b]21;visual_bell=orange\x07\x1b]30001\x1b\\");
+    const saved = terminal.presentation();
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 255, .g = 165, .b = 0 }), saved.visual_bell);
+    defaults.visual_bell = .{ .r = 1, .g = 2, .b = 3 };
+    terminal.setColorDefaults(defaults);
+    try feed(&terminal, "\x1b]30101\x1b\\");
+    try std.testing.expectEqual(saved.visual_bell, terminal.presentation().visual_bell);
+    try feed(&terminal, "\x1b]21;visual_bell=;visual_bell=?\x07");
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().visual_bell);
+    try std.testing.expectEqualStrings("\x1b]21;visual_bell=\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b]21;visual_bell;visual_bell=?\x07");
+    try std.testing.expectEqual(defaults.visual_bell, terminal.presentation().visual_bell);
+    try std.testing.expectEqualStrings("\x1b]21;visual_bell=rgb:01/02/03\x1b\\", terminal.replyBytes());
+    // Setting preference does not manufacture a BEL or host flash request.
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try feed(&terminal, "\x07");
+    const bell = terminal.consequenceHead().?.bell;
+    try terminal.consumeConsequence(bell.id);
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqual(defaults.visual_bell, terminal.presentation().visual_bell);
+}
