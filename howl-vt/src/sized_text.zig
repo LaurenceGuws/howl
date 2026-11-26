@@ -9,6 +9,9 @@ const scalar_storage = @import("scalar_storage.zig");
 /// Largest OSC 66 cell height admitted by this grammar.
 pub const maximum_scale: u8 = 7;
 
+/// Author wire bound applies to text bytes, not the metadata prefix.
+pub const maximum_text_bytes: usize = 4096;
+
 /// Borrows one validated OSC 66 payload and its clamped presentation fields.
 pub const Value = struct {
     text: []const u8,
@@ -24,6 +27,7 @@ pub const Value = struct {
 pub fn parse(payload: []const u8) ?Value {
     const separator = std.mem.indexOfScalar(u8, payload, ';') orelse return null;
     var result = Value{ .text = payload[separator + 1 ..] };
+    if (result.text.len > maximum_text_bytes) return null;
     var fields = std.mem.splitScalar(u8, payload[0..separator], ':');
     while (fields.next()) |field| {
         if (field.len == 0) continue;

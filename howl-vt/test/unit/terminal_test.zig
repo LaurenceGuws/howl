@@ -1323,7 +1323,17 @@ test "OSC 66 service resumes from the retained parser payload under scalar press
         const header = "\x1b]66;s=1;";
         @memcpy(payload[0..header.len], header);
         var length: usize = header.len;
-        for (0..450) |_| {
+        for (0..210) |_| {
+            @memcpy(payload[length..][0..cluster.len], cluster);
+            length += cluster.len;
+        }
+        // Seed accepted storage with a separate legal command before arming
+        // the failure. The second command still commits a prefix then retries.
+        try feed(terminal, payload[0..length]);
+        try feed(terminal, terminator);
+        try std.testing.expectEqual(@as(u16, 210), terminal.semanticView(0).cursor_col);
+        length = header.len;
+        for (0..240) |_| {
             @memcpy(payload[length..][0..cluster.len], cluster);
             length += cluster.len;
         }
@@ -1959,5 +1969,116 @@ test "synchronized begin facts survive fragmented legacy and DEC framing without
             try std.testing.expect(!empty.synchronized_output.began and !empty.synchronized_output.ended);
             try std.testing.expectEqualStrings("", terminal.replyBytes());
         }
+    }
+}
+
+test "OSC 66 text byte limit excludes metadata and rejects an oversized command atomically" {
+    const ascii: [4097]u8 = @splat('A');
+    // A 4096-byte command is valid even though its metadata adds more bytes.
+    // Use a 2-byte scalar to distinguish byte length from scalar count.
+    var utf8: [4098]u8 = undefined;
+    for (0..2049) |i| @memcpy(utf8[2 * i ..][0..2], "é");
+    for ([_][]const u8{ "\x07", "\x1b\\", "\x9c" }) |terminator| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 65, 64, 0);
+        defer terminal.deinit();
+        const before = terminal.semanticSequence();
+        try feed(&terminal, "\x1b]66;s=1:w=0;");
+        try feed(&terminal, &ascii);
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expect(!(try terminal.feed(terminator)).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try feed(&terminal, "\x1b]66;s=1:w=0;");
+        try feed(&terminal, &utf8);
+        try std.testing.expect(!(try terminal.feed(terminator)).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try feed(&terminal, "\x1b]66;s=1:w=0;");
+        try feed(&terminal, utf8[0..4096]);
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try feedChanged(&terminal, terminator);
+        const view = terminal.semanticView(0);
+        for (0..32) |row| for (0..64) |col|
+            try std.testing.expectEqual(@as(u21, 0xe9), view.cellAt(@intCast(row), @intCast(col)));
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(32, 0));
+        try feedChanged(&terminal, "Z");
+        try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(32, 0));
+    }
+}
+
+test "OSC 66 honours pending right-margin wrap across separate completed commands" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 4, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "ABCD\x1b]66;w=1;E\x07");
+    try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 'E'), terminal.semanticView(0).cellAt(1, 0));
+    try feedChanged(&terminal, "\x1b]66;;FGH\x07\x1b]66;w=1;I\x1b\\");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'H'), view.cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 'I'), view.cellAt(2, 0));
+    try feedChanged(&terminal, "\x1b[?7l\x1b[3;4H\x1b]66;w=1;J\x07\x1b]66;w=1;K\x07");
+    try std.testing.expectEqual(@as(u21, 'K'), terminal.semanticView(0).cellAt(2, 3));
+}
+
+test "OSC 66 explicit width and scale matrix preserves fractional occupancy and cursor position" {
+    // All explicit widths and integer scales defined by the author.
+    // Fractional rendering metadata must not alter canonical occupancy.
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 8, 56, 0);
+    defer terminal.deinit();
+    for (1..8) |scale| {
+        for (1..8) |width| {
+            for ([_]bool{ false, true }) |fractional| {
+                try feed(&terminal, "\x1bc");
+                const vertical = (scale + width) % 3;
+                const horizontal = (scale * width) % 3;
+                var wire: [96]u8 = undefined;
+                const command = if (fractional)
+                    try std.fmt.bufPrint(&wire, "\x1b]66;s={d}:w={d}:n=1:d=2:v={d}:h={d};Hi\x1b\\", .{ scale, width, vertical, horizontal })
+                else
+                    try std.fmt.bufPrint(&wire, "\x1b]66;s={d}:w={d};Hi\x07", .{ scale, width });
+                try feedChanged(&terminal, command);
+                const physical_width = scale * width;
+                const view = terminal.semanticView(0);
+                try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+                try std.testing.expectEqual(@as(u16, @intCast(physical_width)), view.cursor_col);
+                for (0..scale) |row| {
+                    for (0..physical_width) |col| {
+                        const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+                        try std.testing.expectEqual(@as(u8, @intCast(physical_width)), cell.width);
+                        try std.testing.expectEqual(@as(u8, @intCast(scale)), cell.height);
+                        try std.testing.expectEqual(@as(u8, @intCast(row)), cell.y);
+                        try std.testing.expectEqual(@as(u8, @intCast(col)), cell.x);
+                        try std.testing.expectEqual(@as(u4, if (fractional) 1 else 0), cell.subscale_n);
+                        try std.testing.expectEqual(@as(u4, if (fractional) 2 else 0), cell.subscale_d);
+                        try std.testing.expectEqual(@as(u2, if (fractional) @intCast(vertical) else 0), cell.vertical_align);
+                        try std.testing.expectEqual(@as(u2, if (fractional) @intCast(horizontal) else 0), cell.horizontal_align);
+                        if (row == 0 and col == 0) {
+                            try std.testing.expectEqual(@as(u32, 'H'), cell.codepoint);
+                            try std.testing.expectEqual(@as(u8, 1), cell.combining_len);
+                            try std.testing.expectEqual(@as(u32, 'i'), cell.combining[0]);
+                        } else {
+                            try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+                            try std.testing.expectEqual(@as(u8, 0), cell.combining_len);
+                        }
+                    }
+                }
+                try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, @intCast(physical_width)));
+                try std.testing.expectEqual(@as(u21, 0), view.cellAt(@intCast(scale), 0));
+            }
+        }
+    }
+}
+
+test "OSC 66 author CPR detection and single-cell cursor movement survive every input split" {
+    const probe = "\r\x1b[6n\x1b]66;w=2; \x07\x1b[6n\x1b]66;s=2; \x1b\\\x1b[6n";
+    for (0..probe.len + 1) |split| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 12, 0);
+        defer terminal.deinit();
+        try feed(&terminal, probe[0..split]);
+        try feed(&terminal, probe[split..]);
+        try std.testing.expectEqualStrings("\x1b[1;1R\x1b[1;3R\x1b[1;5R", terminal.replyBytes());
+        try terminal.consumeReplyBytes(terminal.replyBytes().len);
+        // Interior coordinates are ordinary grid cells, not cluster anchors.
+        try feedChanged(&terminal, "\x1b[1;3H\x1b[C\x1b[6n\x1b[B\x1b[6n\x1b[D\x1b[6n\x1b[A\x1b[6n");
+        try std.testing.expectEqualStrings("\x1b[1;4R\x1b[2;4R\x1b[2;3R\x1b[1;3R", terminal.replyBytes());
+        try std.testing.expectEqual(@as(u8, 2), terminal.semanticView(0).cellInfoAt(1, 3).height);
     }
 }

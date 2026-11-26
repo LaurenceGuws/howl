@@ -10689,6 +10689,29 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 malformed and overlong cell text preserve terminal state
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 text byte limit excludes metadata and rejects an oversized command atomically
+        relation: protocol-family
+      - file: howl-vt/src/sized_text.zig
+        test: OSC 66 rejects malformed fields numbers UTF8 and empty visible text
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 service resumes from the retained parser payload under scalar pressure
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: growing OSC 66 resumes at the first uncommitted cluster
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_01:
+          scope: 'Enforce author sender text-byte maximum as receiver admission policy: 4096 text bytes excluding metadata,
+            rejecting larger commands before canonical screen mutation. ASCII4097 and UTF8 4098 rejected, exact UTF8 4096
+            accepted with metadata, BEL/ST/C1 ST, exact terminator and following ordinary byte. Existing generic 8KiB parser
+            ceiling and 24-scalar cell bound remain; no universal safe-UTF8/invalid-scalar or malformed separator claim. Old
+            450-cluster pressure witnesses split into legal 210/240 commands, preserving accepted prefix/retry proof.'
+          method: Pinned Kitty a79f376 author text-sizing-protocol.rst SHA256 499f84a5992d565f89eb8b22c982179624d39b0f954af69f0571bb76221c7fb0
+            and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
+            FULL promotion
+          baseline: a54d459fe81985a580470341aa21b573dbeb3660
     - id: scale
       section: How it works
       level: defined
@@ -10705,6 +10728,25 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: OSC 66 malformed and overlong cell text preserve terminal state
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width and scale matrix preserves fractional occupancy and cursor position
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 author CPR detection and single-cell cursor movement survive every input split
+        relation: protocol-family
+      - file: howl-vt/src/sized_text.zig
+        test: OSC 66 fields parse clamp and retain borrowed text exactly
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_01:
+          scope: All49 explicit s=1..7,w=1..7 pairs crossed with full/half-size rendering metadata (98 cases), exact s*w by
+            s occupancy, complete lead/continuation provenance and cursor advance. Pinned author screen_handle_multicell_command
+            clamping retained. Natural-width ASCII and selected combining behavior witnessed separately; implicit-wide Unicode
+            segmentation and complete repertoire remain unqualified.
+          method: Pinned Kitty a79f376 author text-sizing-protocol.rst SHA256 499f84a5992d565f89eb8b22c982179624d39b0f954af69f0571bb76221c7fb0
+            and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
+            FULL promotion
+          baseline: a54d459fe81985a580470341aa21b573dbeb3660
     - id: fraction
       section: Fractional scaling
       level: defined
@@ -10718,6 +10760,25 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.text_size
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width and scale matrix preserves fractional occupancy and cursor position
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: fractional single-row text remains drawable in history
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: fractional generated and colour glyphs survive history
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_01:
+          scope: Full and n=1,d=2 metadata leave occupancy identical across all49 explicit integer scales/widths, selected
+            valid v/h values retained on every cell. Existing font-backed history/generated/color glyph projection witnesses
+            linked. No exhaustive fractional pixel-layout, invalid n/d or all alignment combination claim. Preserve pinned
+            implementation clamping behavior; source bounds not silently widened as normative.
+          method: Pinned Kitty a79f376 author text-sizing-protocol.rst SHA256 499f84a5992d565f89eb8b22c982179624d39b0f954af69f0571bb76221c7fb0
+            and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
+            FULL promotion
+          baseline: a54d459fe81985a580470341aa21b573dbeb3660
     - id: editing
       section: Wrapping and overwriting behavior
       level: defined
@@ -10753,12 +10814,43 @@ specifications:
       rule: CPR before and after w=2 space and s=2 space; unchanged unsupported, respective +2 advance indicates width and
         scale support.
       source_locator: docs/text-sizing-protocol.rst:257-271
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 author CPR detection and single-cell cursor movement survive every input split
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_01:
+          scope: Exact author CPR probe CR, DSR6, w=2 space, DSR6, s=2 space, DSR6 yields row1 columns1,3,5 in every two-part
+            split, with BEL and ESC ST. Width and integer scale geometry supported in selected ASCII probe.
+          method: Pinned Kitty a79f376 author text-sizing-protocol.rst SHA256 499f84a5992d565f89eb8b22c982179624d39b0f954af69f0571bb76221c7fb0
+            and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
+            FULL promotion
+          baseline: a54d459fe81985a580470341aa21b573dbeb3660
     - id: cursor-interaction
       section: docs/text-sizing-protocol.rst:282-296
       level: defined
       wire: ordinary cursor controls / OSC 66
       rule: Single-cell cursor motion includes multicell interior; creation advances s*w on same row. Cursor presentation
         covering complete block recommended.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width and scale matrix preserves fractional occupancy and cursor position
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 author CPR detection and single-cell cursor movement survive every input split
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_01:
+          scope: Explicit matrix advances same-row cursor s*w with room remaining; CPR proves single-cell movement through
+            the top and lower continuation of scaled block across every split. Existing cursor output projection remains per-cell;
+            recommended full-block painted cursor not qualified.
+          method: Pinned Kitty a79f376 author text-sizing-protocol.rst SHA256 499f84a5992d565f89eb8b22c982179624d39b0f954af69f0571bb76221c7fb0
+            and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
+            FULL promotion
+          baseline: a54d459fe81985a580470341aa21b573dbeb3660
     - id: horizontal-edits
       section: docs/text-sizing-protocol.rst:307-325
       level: defined
@@ -10786,6 +10878,38 @@ specifications:
       wire: OSC 66 / DECAWM / resize
       rule: Discard multicell block larger than screen in either dimension, including after resize. With wrap enabled move
         to next line if width does not fit; without wrap move cursor back enough to fit before drawing.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 honours pending right-margin wrap across separate completed commands
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 text byte limit excludes metadata and rejects an oversized command atomically
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 service resumes from the retained parser payload under scalar pressure
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: growing OSC 66 resumes at the first uncommitted cluster
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: narrowing discards oversized OSC 66 text without restoring it on widening
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: one-row OSC 66 widths reflow atomically and unfit blocks are discarded
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: multi-row OSC 66 resumes after a wrap and partial history admission
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_01:
+          scope: Pending right-margin wrap honoured before next sized block, including width1 after ordinary output and successive
+            OSC66 commands; nonwrap rightmost replacement retained. Exact legal multibyte maximum writes every cell across
+            row boundaries. Existing oversize/reflow/history-pressure tests retained. Wider multiline overwrite/margin/resize
+            interactions remain separately scoped.
+          method: Pinned Kitty a79f376 author text-sizing-protocol.rst SHA256 499f84a5992d565f89eb8b22c982179624d39b0f954af69f0571bb76221c7fb0
+            and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
+            FULL promotion
+          baseline: a54d459fe81985a580470341aa21b573dbeb3660
     - id: overwrite-order
       section: docs/text-sizing-protocol.rst:234-253
       level: defined

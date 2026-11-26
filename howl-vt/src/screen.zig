@@ -3126,10 +3126,11 @@ pub const Screen = struct {
                 self.scalars.?.prepare(values) catch return false;
         }
         defer if (prepared_tail) |*prepared| prepared.deinit();
+        // A pending wrap means the logical insertion point is past the
+        // rightmost cell even for an incoming one-cell sized block.
+        const wraps = self.auto_wrap and (self.wrap_pending or self.cursor.col + physical_width - 1 > right);
         var history: ?history_store_mod.Store.Prepared = null;
-        if (grow and self.auto_wrap and
-            self.cursor.row == self.scrollBottom() and self.cursor.col + physical_width - 1 > right)
-        {
+        if (grow and wraps and self.cursor.row == self.scrollBottom()) {
             history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Capacity => return error.HistoryCapacity,
@@ -3138,16 +3139,14 @@ pub const Screen = struct {
         defer self.discardPreparedHistory(&history);
 
         var changed = self.cancelPendingWrap();
-        if (self.cursor.col + physical_width - 1 > right) {
-            if (self.auto_wrap) {
-                self.setRowWrapped(self.cursor.row, true);
-                self.lineFeedWithHistory(&history);
-                self.cursor.setColByClient(left);
-                changed = true;
-            } else {
-                self.cursor.setColByClient(right - physical_width + 1);
-                changed = true;
-            }
+        if (wraps) {
+            self.setRowWrapped(self.cursor.row, true);
+            self.lineFeedWithHistory(&history);
+            self.cursor.setColByClient(left);
+            changed = true;
+        } else if (self.cursor.col + physical_width - 1 > right) {
+            self.cursor.setColByClient(right - physical_width + 1);
+            changed = true;
         }
         const bottom = self.scrollBottom();
         if (self.cursor.row + height - 1 > bottom) {
@@ -8977,7 +8976,16 @@ test "growing OSC 66 resumes at the first uncommitted cluster" {
     var payload: [8192]u8 = undefined;
     @memcpy(payload[0..4], "s=1;");
     var length: usize = 4;
-    for (0..450) |_| {
+    for (0..210) |_| {
+        @memcpy(payload[length..][0..cluster.len], cluster);
+        length += cluster.len;
+    }
+    const seed = screen.writeSizedTextGrowing(payload[0..length], 0);
+    try std.testing.expect(seed.changed and seed.blocked == null);
+    try std.testing.expectEqual(length - 4, seed.next_offset);
+    try std.testing.expectEqual(@as(u16, 210), screen.cursor.col);
+    length = 4;
+    for (0..240) |_| {
         @memcpy(payload[length..][0..cluster.len], cluster);
         length += cluster.len;
     }
