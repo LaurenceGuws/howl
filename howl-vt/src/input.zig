@@ -456,8 +456,15 @@ fn encodeKittyEvent(
     var builder = Builder.init(buf);
     try builder.append("\x1b[");
     const identity = kittyIdentityForKey(key);
-    try builder.decimal(identity.code);
-    if (flags & 4 != 0 and (shifted != null or alternate != null)) {
+    const add_alternates = flags & 4 != 0 and (shifted != null or alternate != null);
+    const add_action = flags & 2 != 0 and action != .press;
+    const add_text = flags & 16 != 0 and flags & 8 != 0 and text.len != 0;
+    // Functional letter keys omit the default first parameter only when
+    // there are no modifiers or other fields (Kitty keyboard protocol).
+    if (identity.code != 1 or identity.trailer == 'u' or identity.trailer == '~' or
+        !mod.none() or add_alternates or add_action or add_text)
+        try builder.decimal(identity.code);
+    if (add_alternates) {
         try builder.append(":");
         if (shifted) |value| try builder.decimal(value);
         if (alternate) |value| {
@@ -465,8 +472,6 @@ fn encodeKittyEvent(
             try builder.decimal(value);
         }
     }
-    const add_action = flags & 2 != 0 and action != .press;
-    const add_text = flags & 16 != 0 and flags & 8 != 0 and text.len != 0;
     if (!mod.none() or add_action or add_text) {
         try builder.append(";");
         if (!mod.none() or add_action) try builder.decimal(mod.protocolParameter());

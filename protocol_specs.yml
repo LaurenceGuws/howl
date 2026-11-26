@@ -9182,6 +9182,20 @@ specifications:
       - file: howl-vt/src/input.zig
         test: basic Kitty disambiguates modified Unicode without changing printable text
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty LazyGit negotiation omits default cursor key number without losing lock modifiers
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty functional letter keys omit default first field only without additional fields
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_01:
+          scope: Observed LazyGit =1u after alternate entry and DECCKM set. Unmodified arrow letter form omits default1; Num
+            Lock129 remains encoded. Exit restores legacy behavior. Actual installed LazyGit0.66.3/tcell3.6.0 byte A/B independently
+            confirms old CSI1B is ignored while canonical CSI B and Num Lock CSI1;129B advance selected commits.
+          method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
+            no blanket FULL promotion
+          baseline: da742dda0dec062bbe63229201a68a87dd9c80db
     - id: event-types
       section: Report event types
       level: defined
@@ -9201,6 +9215,16 @@ specifications:
       - file: howl-vt/src/input.zig
         test: event reporting leaves text keys and recovery controls usable without report-all
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty functional letter keys omit default first field only without additional fields
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_01:
+          scope: Letter-key press without modifiers or additional fields omits first parameter; repeat/release with reporting
+            enabled retains 1;1:2 and 1;1:3 respectively. No general event repertoire qualification.
+          method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
+            no blanket FULL promotion
+          baseline: da742dda0dec062bbe63229201a68a87dd9c80db
     - id: alternate-keys
       section: Report alternate keys
       level: defined
@@ -9236,6 +9260,15 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.csi.kitty_set
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty functional letter keys omit default first field only without additional fields
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_01:
+          scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
+          method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
+            no blanket FULL promotion
+          baseline: da742dda0dec062bbe63229201a68a87dd9c80db
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9295,6 +9328,19 @@ specifications:
       - file: howl-vt/src/input.zig
         test: legacy shift identity ignores num lock
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty LazyGit negotiation omits default cursor key number without losing lock modifiers
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty functional letter keys omit default first field only without additional fields
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_01:
+          scope: Legacy arrows restored after LazyGit negotiation exit and bank return; legacy lock modifier omitted. Existing
+            CSI-u/tilde identity grammar retained.
+          method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
+            no blanket FULL promotion
+          baseline: da742dda0dec062bbe63229201a68a87dd9c80db
     - id: event-envelope
       section: docs/keyboard-protocol.rst:125-146
       level: defined
@@ -9303,12 +9349,41 @@ specifications:
       - CSI u
       rule: Decimal fields semicolon separated, subfields colon separated; only primary key mandatory. Text vs encoded event
         depends on progressive flags.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty LazyGit negotiation omits default cursor key number without losing lock modifiers
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty functional letter keys omit default first field only without additional fields
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_01:
+          scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
+            Corrected typed encoder, nine letter identities and unchanged F3/insert tilde fields. No general envelope FULL
+            claim.
+          method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
+            no blanket FULL promotion
+          baseline: da742dda0dec062bbe63229201a68a87dd9c80db
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined
       wire: modifier-field = 1 + bitmask
       rule: Shift1 Alt2 Ctrl4 Super8 Hyper16 Meta32 CapsLock64 NumLock128; omitted defaults1. Actual modifier state includes
         current press/release and other side still pressed.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty LazyGit negotiation omits default cursor key number without losing lock modifiers
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty functional letter keys omit default first field only without additional fields
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_keyboard_01:
+          scope: Unmodified default omits number, Ctrl5 and Num Lock129 retained for letter-key forms. No change to modifier
+            mapping or SDL lock reporting.
+          method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
+            no blanket FULL promotion
+          baseline: da742dda0dec062bbe63229201a68a87dd9c80db
     - id: feature-detection
       section: docs/keyboard-protocol.rst:441-458
       level: defined

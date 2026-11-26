@@ -4561,3 +4561,59 @@ test "pointer reporting interest includes DEC locator and leaves one-shot consum
     write(&terminal, "\x1bc");
     try std.testing.expect(!observation.pointerReportingRequested());
 }
+
+test "Kitty LazyGit negotiation omits default cursor key number without losing lock modifiers" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    // Observed in both Captain's failing and successful asciinema exchanges.
+    try feed(&terminal, "\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?1049h\x1b[=1u\x1b[?1h");
+    try std.testing.expectEqualStrings("\x1b[B", encodeKey(&terminal, .{ .named = .down }, .{}));
+    try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
+    try std.testing.expectEqualStrings("\x1b[1;129B", encodeKey(&terminal, .{ .named = .down }, .{ .num_lock = true }));
+    try std.testing.expectEqualStrings("\x1b[1;129A", encodeKey(&terminal, .{ .named = .up }, .{ .num_lock = true }));
+    try feed(&terminal, "\x1b[?1l\x1b[=0u\x1b[?1049l");
+    try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
+    try std.testing.expectEqualStrings("\x1b[B", encodeKey(&terminal, .{ .named = .down }, .{ .num_lock = true }));
+}
+
+test "Kitty functional letter keys omit default first field only without additional fields" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    const cases = [_]struct { key: Terminal.Key, final: u8 }{
+        .{ .key = .{ .named = .up }, .final = 'A' },
+        .{ .key = .{ .named = .down }, .final = 'B' },
+        .{ .key = .{ .named = .right }, .final = 'C' },
+        .{ .key = .{ .named = .left }, .final = 'D' },
+        .{ .key = .{ .named = .home }, .final = 'H' },
+        .{ .key = .{ .named = .end }, .final = 'F' },
+        .{ .key = .{ .named = .f1 }, .final = 'P' },
+        .{ .key = .{ .named = .f2 }, .final = 'Q' },
+        .{ .key = .{ .named = .f4 }, .final = 'S' },
+    };
+    for ([_][]const u8{ "\x1b[=1u", "\x1b[=2u", "\x1b[=8u", "\x1b[=31u" }) |mode| {
+        try feed(&terminal, mode);
+        for (cases) |case| {
+            try std.testing.expectEqualStrings(&.{ 0x1b, '[', case.final }, encodeKey(&terminal, case.key, .{}));
+            var expected: [32]u8 = undefined;
+            const modified = try std.fmt.bufPrint(&expected, "\x1b[1;129{c}", .{case.final});
+            try std.testing.expectEqualStrings(modified, encodeKey(&terminal, case.key, .{ .num_lock = true }));
+            const ctrl = try std.fmt.bufPrint(&expected, "\x1b[1;5{c}", .{case.final});
+            try std.testing.expectEqualStrings(ctrl, encodeKey(&terminal, case.key, .{ .control = true }));
+        }
+        try std.testing.expectEqualStrings("\x1b[13~", encodeKey(&terminal, .{ .named = .f3 }, .{}));
+        try std.testing.expectEqualStrings("\x1b[2~", encodeKey(&terminal, .{ .named = .insert }, .{}));
+    }
+    for (cases) |case| {
+        var expected: [32]u8 = undefined;
+        var repeated = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = case.key, .action = .repeat } });
+        defer repeated.deinit();
+        try std.testing.expectEqualStrings(try std.fmt.bufPrint(&expected, "\x1b[1;1:2{c}", .{case.final}), repeated.bytes);
+        var released = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = case.key, .action = .release } });
+        defer released.deinit();
+        try std.testing.expectEqualStrings(try std.fmt.bufPrint(&expected, "\x1b[1;1:3{c}", .{case.final}), released.bytes);
+    }
+}
