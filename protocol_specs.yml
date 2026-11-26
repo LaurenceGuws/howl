@@ -30675,22 +30675,870 @@ reconciliation:
     deccara.bare: bare
     deccara.coordinates-only: coordinates_only
     deccara.explicit-zero: explicit_zero
-pending_reconciliation:
 - id: contour-osc60-font-vs-xterm-allowed
-  status: material-originating-extension-conflict
   wire: OSC 60 ST
-  original_author_sources:
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: xterm-allowed-features
+    effect: OSC 60 only. Select xterm's empty-payload allowed-feature query; accept no nonempty Contour font-setting payload
+      under this namespace. Return only actual allowed categories when targeted; host policy and exact reply grammar remain
+      qualification work.
+    selected_source_profiles:
+    - xterm_controls.allowed-feature-query
+  selects:
+    osc.60.namespace: effect
+  competing_interpretations_retained:
+  - contour_font_settings.query
+  - contour_font_settings.set
+  reason: The complete empty query is indistinguishable. Xterm's policy introspection and Contour's font metadata require
+    different response schemas. Select one; do not infer a cross-protocol setter from a failed query.
+  evidence_basis: Explicit product choice; no majority established.
+  source_clauses:
   - clause: contour_font_settings.query
-    meaning: Font settings reply; pinned implementation returns size and font families.
+    wire: OSC 60 ST
+    section: Font settings; Screen.cpp:3280-3323
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/font-settings.md
+  - clause: contour_font_settings.set
+    wire: OSC 60 ; size ; regular ; bold ; italic ; bold-italic [ ; emoji ] ST
+    section: Font settings; Screen.cpp:3280-3323
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/docs/vt-extensions/font-settings.md
   - clause: xterm_controls.allowed-feature-query
-    meaning: Allowed runtime feature categories, not fonts.
-  question: Which OSC60 profile to select? Distinguish set form and Contour documented vs implemented response fields.
-  decision: null
+    wire: OSC 60 (BEL | ST)
+    section: Operating System Commands, lines 2171-2190
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: contour-osc60-font-vs-xterm-allowed
+    status: material-originating-extension-conflict
+    wire: OSC 60 ST
+    original_author_sources:
+    - clause: contour_font_settings.query
+      meaning: Font settings reply; pinned implementation returns size and font families.
+    - clause: xterm_controls.allowed-feature-query
+      meaning: Allowed runtime feature categories, not fonts.
+    question: Which OSC60 profile to select? Distinguish set form and Contour documented vs implemented response fields.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_font_settings.query
+      - xterm_controls.allowed-feature-query
+      scope: OSC 60 ST
   applies_to:
     clauses:
     - contour_font_settings.query
+    - contour_font_settings.set
     - xterm_controls.allowed-feature-query
-    scope: OSC 60 ST
+    scope: OSC 60 only. Select xterm's empty-payload allowed-feature query; accept no nonempty Contour font-setting payload
+      under this namespace. Return only actual allowed categories when targeted; host policy and exact reply grammar remain
+      qualification work.
+- id: osc50-konsole-profile-vs-xterm-font
+  wire: OSC 50 ; text ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: xterm-font-namespace
+    effect: OSC 50 belongs to xterm font selection/query. No Konsole arbitrary profile mutation or CursorShape carve-out;
+      cursor style has DECSCUSR. Treat font operations as host requests only, subject to later targeting and policy. Invalid
+      font payload cannot fall back to profile changes.
+    selected_source_profiles:
+    - xterm_controls.font-operations
+  selects:
+    osc.50.namespace: effect
+  competing_interpretations_retained:
+  - konsole_profiles.profile
+  - konsole_profiles.cursor-shape
+  reason: The xterm font operand is general text, so property=value cannot be assumed disjoint. Several modern adopters implement
+    CursorShape alone, but that is not full Konsole profile support. Prefer one source grammar.
+  evidence_basis: 'Explicit choice, not a claim of independent majority. Tradeoff: legacy OSC 50 CursorShape producers would
+    not receive that operation.'
+  source_clauses:
+  - clause: konsole_profiles.cursor-shape
+    wire: OSC 50 ; CursorShape=N ST
+    section: Vt102Emulation.cpp:1604-1621; Enumeration.h:73-81
+    source_revision: git a24c3d71be3684f24d030aa2dbe9bd723d985233
+    url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Vt102Emulation.cpp
+  - clause: konsole_profiles.profile
+    wire: OSC 50 ; property=value [ ; property=value ... ] ST
+    section: Vt102Emulation.cpp:1586-1670; Session.h:465-477; Session.cpp:719-722
+    source_revision: git a24c3d71be3684f24d030aa2dbe9bd723d985233
+    url: https://raw.githubusercontent.com/KDE/konsole/a24c3d71be3684f24d030aa2dbe9bd723d985233/src/Vt102Emulation.cpp
+  - clause: xterm_controls.font-operations
+    wire: OSC 50 ; Pt (BEL | ST)
+    section: Operating System Commands, lines 2126-2141
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc50-konsole-profile-vs-xterm-font
+    status: material-originating-extension-conflict
+    wire: OSC 50 ; text ST
+    original_author_sources:
+    - clause: konsole_profiles.profile
+      meaning: Konsole recognizes property=value profile changes including CursorShape.
+    - clause: xterm_controls.font-operations
+      meaning: xterm treats text as font selection/query.
+    question: Author explicitly acknowledges collision. Preserve historical iTerm2 OSC50 predecessor as further evidence obligation;
+      select neither host font nor profile operation yet.
+    decision: null
+    applies_to:
+      clauses:
+      - konsole_profiles.profile
+      - xterm_controls.font-operations
+      scope: OSC 50 ; text ST
+  applies_to:
+    clauses:
+    - konsole_profiles.cursor-shape
+    - konsole_profiles.profile
+    - xterm_controls.font-operations
+    scope: OSC 50 belongs to xterm font selection/query. No Konsole arbitrary profile mutation or CursorShape carve-out; cursor
+      style has DECSCUSR. Treat font operations as host requests only, subject to later targeting and policy. Invalid font
+      payload cannot fall back to profile changes.
+- id: osc9-iterm-notification-vs-conemu-dispatch
+  wire: OSC 9 ; numeric-subcommand [ ; payload ] ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: reserve-conemu-known-subcommands
+    effect: 'OSC 9: reserve exact first payload-field tokens 1 through 12 (canonical decimal spelling, including bare forms)
+      for the documented ConEmu subcommands. Undefined, unsupported, or malformed recognized subcommands are ignored/rejected
+      in that namespace; never reinterpret as notification. All other ordinary text uses iTerm2 notification grammar. This
+      is dispatch selection only; preserve every ConEmu source and do not select sleep, process launch, environment disclosure,
+      macros or any other host operation by reservation. Progress-state4 and omitted-percent decision remains separate.'
+    selected_source_profiles:
+    - iterm2_osc1337.notification
+    reservation_only_clauses:
+    - conemu_osc9.sleep
+    - conemu_osc9.message-box
+    - conemu_osc9.tab-title
+    - conemu_osc9.progress
+    - conemu_osc9.wait-key
+    - conemu_osc9.gui-macro
+    - conemu_osc9.run-process
+    - conemu_osc9.environment-output
+    - conemu_osc9.cwd
+    - conemu_osc9.xterm-emulation
+    - conemu_osc9.comment
+    - conemu_osc9.prompt-mark
+    reservation_boundary: Reservation does not select any of the reserved ConEmu host operations or progress-state semantics.
+  selects:
+    osc.9.namespace: effect
+  competing_interpretations_retained: []
+  reason: 'Existing implementations disagree: Kitty recognizes cwd9;9 then notifications, WezTerm special-cases progress9;4,
+    Ghostty attempts ConEmu first, Terminology dispatches numeric forms separately. No common full grammar. Explicit reservation
+    prevents unsupported numeric commands becoming unrelated notification requests.'
+  evidence_basis: 'Explicit namespace rule, not originating universal grammar. Tradeoff: bare notification consisting of a
+    reserved number is no longer treated as ordinary text.'
+  source_clauses:
+  - clause: conemu_osc9.comment
+    wire: OSC 9 ; 11 ; text ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.cwd
+    wire: OSC 9 ; 9 ; path ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.environment-output
+    wire: OSC 9 ; 8 ; name ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.gui-macro
+    wire: OSC 9 ; 6 ; text ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.message-box
+    wire: OSC 9 ; 2 ; text ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.progress
+    wire: OSC 9 ; 4 ; state ; progress ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.prompt-mark
+    wire: OSC 9 ; 12 ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.run-process
+    wire: OSC 9 ; 7 ; command ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.sleep
+    wire: OSC 9 ; 1 ; ms ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.tab-title
+    wire: OSC 9 ; 3 ; text ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.wait-key
+    wire: OSC 9 ; 5 ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: conemu_osc9.xterm-emulation
+    wire: OSC 9 ; 10 [ ; n ] ST
+    section: ConEmu specific OSC table, HTML lines 768-832
+    source_revision: Published ANSI escape-code table observed 2026-11-25
+    url: https://conemu.github.io/en/AnsiEscapeCodes.html
+  - clause: iterm2_osc1337.notification
+    wire: OSC 9 ; message ST
+    section: Post a notification
+    source_revision: iTerm2 documentation 3.6, observed 2026-11-23
+    url: https://iterm2.com/3.6/documentation-escape-codes.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc9-iterm-notification-vs-conemu-dispatch
+    status: material-originating-extension-conflict
+    wire: OSC 9 ; numeric-subcommand [ ; payload ] ST
+    original_author_sources:
+    - clause: iterm2_osc1337.notification
+      meaning: iTerm2 simple notification text occupies whole OSC9 payload; later iTerm2 adopts special progress9;4.
+    - clause: conemu_osc9.tab-title
+      meaning: ConEmu interprets numeric subcommand3 as tab title, not notification.
+    - clause: conemu_osc9.comment
+      meaning: ConEmu interprets numeric subcommand11 as ignored comment.
+    question: Review full numeric subcommand admission and compatibility profiles, preserving host-effect boundaries. Existing
+      progress selection not changed; no arbitrary host operation selected.
+    decision: null
+    applies_to:
+      clauses:
+      - conemu_osc9.comment
+      - conemu_osc9.tab-title
+      - iterm2_osc1337.notification
+      scope: OSC 9 ; numeric-subcommand [ ; payload ] ST
+  applies_to:
+    clauses:
+    - conemu_osc9.comment
+    - conemu_osc9.cwd
+    - conemu_osc9.environment-output
+    - conemu_osc9.gui-macro
+    - conemu_osc9.message-box
+    - conemu_osc9.progress
+    - conemu_osc9.prompt-mark
+    - conemu_osc9.run-process
+    - conemu_osc9.sleep
+    - conemu_osc9.tab-title
+    - conemu_osc9.wait-key
+    - conemu_osc9.xterm-emulation
+    - iterm2_osc1337.notification
+    scope: 'OSC 9: reserve exact first payload-field tokens 1 through 12 (canonical decimal spelling, including bare forms)
+      for the documented ConEmu subcommands. Undefined, unsupported, or malformed recognized subcommands are ignored/rejected
+      in that namespace; never reinterpret as notification. All other ordinary text uses iTerm2 notification grammar. This
+      is dispatch selection only; preserve every ConEmu source and do not select sleep, process launch, environment disclosure,
+      macros or any other host operation by reservation. Progress-state4 and omitted-percent decision remains separate.'
+- id: osc72-domterm-html-vs-kitty-dnd
+  wire: OSC 72 ; payload ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: kitty-dnd-only
+    effect: OSC 72 uses Kitty DnD grammar and defined query/chunk/operation forms. Invalid or unsupported DnD never falls
+      through to HTML insertion. DomTerm HTML interpretation remains source-only for this selector, independent of terminator.
+      Host permissions and DnD payload qualification separate.
+    selected_source_profiles:
+    - kitty_dnd.envelope
+  selects:
+    osc.72.namespace: effect
+  competing_interpretations_retained:
+  - domterm_wire.html-insert
+  reason: DomTerm dispatch unconditionally calls HTML scrubber, not an evidenced HTML-prefix discriminator. Kitty uses metadata
+    and payload. Both may admit overlapping text. Native cell terminal need not select a browser DOM protocol.
+  evidence_basis: Explicit scope choice; not automatic xterm priority.
+  source_clauses:
+  - clause: domterm_wire.html-insert
+    wire: OSC 72 ; HTML-fragment BEL
+    section: Wire byte protocol / Miscellaneous sequences
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: kitty_dnd.envelope
+    wire: OSC 72 ; metadata ; payload ST / payloadless operations as individually defined
+    section: lines 9-35,490-533
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/dnd-protocol.rst
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc72-domterm-html-vs-kitty-dnd
+    status: material-originating-extension-conflict
+    wire: OSC 72 ; payload ST
+    original_author_sources:
+    - clause: domterm_wire.html-insert
+      meaning: DomTerm documented HTML; pinned parser calls scrub/insert without selector-level discrimination.
+    - clause: kitty_dnd.envelope
+      meaning: Kitty metadata and Base64 drag/drop payload.
+    question: Trace author coordination and any actual disjoint admission rule. Do not assume HTML angle-bracket discriminator
+      exists in pinned DomTerm.
+    decision: null
+    applies_to:
+      clauses:
+      - domterm_wire.html-insert
+      - kitty_dnd.envelope
+      scope: OSC 72 ; payload ST
+  applies_to:
+    clauses:
+    - domterm_wire.html-insert
+    - kitty_dnd.envelope
+    scope: OSC 72 uses Kitty DnD grammar and defined query/chunk/operation forms. Invalid or unsupported DnD never falls through
+      to HTML insertion. DomTerm HTML interpretation remains source-only for this selector, independent of terminator. Host
+      permissions and DnD payload qualification separate.
+- id: osc721-domterm-vs-urxvt
+  wire: OSC 721 ; payload ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: urxvt-viewport-strict-decimal
+    effect: OSC 721 selects viewport-down for one complete nonempty ASCII decimal nonnegative count; explicit parsed zero
+      alone selects scrollback clear. Invalid/overflow/nondecimal/multiple-field input has no history or viewport effect;
+      no HTML fallback. Exact bound and ownership to qualify before targeting. Explicitly reject urxvt atoi permissiveness;
+      OSC720 remains separate for later symmetric qualification.
+    selected_source_profiles:
+    - urxvt.viewport-down
+  selects:
+    osc.721.namespace: effect
+  competing_interpretations_retained:
+  - domterm_wire.html-replace
+  reason: urxvt docs define numeric lines or zero. Code atoi converts arbitrary text to zero, so accepting a DomTerm key can
+    erase history. Adopt documented meaning without unsafe coercion; proposed malformed admission is a deliberate Howl choice,
+    not original code equivalence.
+  evidence_basis: Explicit choice of namespace and negative-admission rule.
+  source_clauses:
+  - clause: domterm_wire.html-replace
+    wire: OSC 721 ; key ; HTML-fragment BEL
+    section: Wire byte protocol / Miscellaneous sequences
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: urxvt.viewport-down
+    wire: OSC 721 ; lines (BEL | ST)
+    section: XTerm Operating System Commands / 721
+    source_revision: 9.31; release archive SHA-256
+    url: https://deb.debian.org/debian/pool/main/r/rxvt-unicode/rxvt-unicode_9.31.orig.tar.bz2
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc721-domterm-vs-urxvt
+    status: material-originating-extension-conflict
+    wire: OSC 721 ; payload ST
+    original_author_sources:
+    - clause: domterm_wire.html-replace
+      meaning: DomTerm key;HTML replacement.
+    - clause: urxvt.viewport-down
+      meaning: urxvt decimal viewport movement; atoi zero clears history.
+    question: Determine disjoint grammar and malformed handling explicitly; current urxvt conversion can turn nonnumeric key
+      into history clear.
+    decision: null
+    applies_to:
+      clauses:
+      - domterm_wire.html-replace
+      - urxvt.viewport-down
+      scope: OSC 721 ; payload ST
+  applies_to:
+    clauses:
+    - domterm_wire.html-replace
+    - urxvt.viewport-down
+    scope: OSC 721 selects viewport-down for one complete nonempty ASCII decimal nonnegative count; explicit parsed zero alone
+      selects scrollback clear. Invalid/overflow/nondecimal/multiple-field input has no history or viewport effect; no HTML
+      fallback. Exact bound and ownership to qualify before targeting. Explicitly reject urxvt atoi permissiveness; OSC720
+      remains separate for later symmetric qualification.
+- id: osc110-118-domterm-pretty-vs-xterm-reset
+  wire: OSC 110..118 ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: xterm-dynamic-color-reset
+    effect: OSC 110..118 retains xterm's corresponding dynamic-color reset semantics, bare or empty payload as source permits.
+      Nonempty payload must not reset colors or switch to DomTerm pretty-printing. No separate block/indent/break profile
+      selected. OSC119 outside collision remains unchanged.
+    selected_source_profiles:
+    - xterm_controls.dynamic-colors-reset
+  selects:
+    osc.110-118.namespace: effect
+  competing_interpretations_retained:
+  - domterm_wire.logical-block-start
+  - domterm_wire.logical-block-end
+  - domterm_wire.indent-current
+  - domterm_wire.indent-block
+  - domterm_wire.prefix
+  - domterm_wire.conditional-breaks
+  reason: Bare 110,111,115..118 are true same-wire collisions; 112..114 indentation/prefix carry operands. A mixed pretty-printing
+    profile is not coherent with the chosen reset namespace. Independent active adopters use the common reset subset, but
+    no majority established for every rare slot.
+  evidence_basis: Strong compatibility evidence for common reset slots; explicit full-range selection.
+  source_clauses:
+  - clause: domterm_wire.conditional-breaks
+    wire: OSC 115|116|117|118 [ ; JSON-prebreak , JSON-postbreak , JSON-nonbreak ] BEL
+    section: Wire byte protocol / Pretty-printing
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: domterm_wire.indent-block
+    wire: OSC 113 ; amount BEL
+    section: Wire byte protocol / Pretty-printing
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: domterm_wire.indent-current
+    wire: OSC 112 ; amount BEL
+    section: Wire byte protocol / Pretty-printing
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: domterm_wire.logical-block-end
+    wire: OSC 111 BEL
+    section: Wire byte protocol / Pretty-printing
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: domterm_wire.logical-block-start
+    wire: OSC 110 [ ; JSON-prefix ] BEL
+    section: Wire byte protocol / Pretty-printing
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: domterm_wire.prefix
+    wire: OSC 114 ; JSON-prefix BEL
+    section: Wire byte protocol / Pretty-printing
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: xterm_controls.dynamic-colors-reset
+    wire: OSC Ps (BEL | ST)
+    section: Operating System Commands, lines 2243-2254
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc110-118-domterm-pretty-vs-xterm-reset
+    status: material-originating-extension-conflict
+    wire: OSC 110..118 ST
+    original_author_sources:
+    - clause: domterm_wire.logical-block-start
+      meaning: DomTerm OSC110 starts block; empty form valid.
+    - clause: domterm_wire.logical-block-end
+      meaning: OSC111 closes block.
+    - clause: domterm_wire.conditional-breaks
+      meaning: OSC115..118 bare line-break controls.
+    - clause: xterm_controls.dynamic-colors-reset
+      meaning: Same selectors reset dynamic colors, bare or empty semicolon forms.
+    question: Preserve exact overlapping empty forms, and distinguish argument-bearing DomTerm indentation forms; no priority
+      selection.
+    decision: null
+    applies_to:
+      clauses:
+      - domterm_wire.conditional-breaks
+      - domterm_wire.logical-block-end
+      - domterm_wire.logical-block-start
+      - xterm_controls.dynamic-colors-reset
+      scope: OSC 110..118 ST
+  applies_to:
+    clauses:
+    - domterm_wire.conditional-breaks
+    - domterm_wire.indent-block
+    - domterm_wire.indent-current
+    - domterm_wire.logical-block-end
+    - domterm_wire.logical-block-start
+    - domterm_wire.prefix
+    - xterm_controls.dynamic-colors-reset
+    scope: OSC 110..118 retains xterm's corresponding dynamic-color reset semantics, bare or empty payload as source permits.
+      Nonempty payload must not reset colors or switch to DomTerm pretty-printing. No separate block/indent/break profile
+      selected. OSC119 outside collision remains unchanged.
+- id: osc10-rxvt-menu-vs-xterm-color
+  wire: OSC 10 ; payload ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: xterm-dynamic-colors
+    effect: OSC 10 follows xterm's foreground and successive dynamic color set/query grammar; invalid color payload does not
+      become a menu operation. Other dynamic colors retain existing source definitions. No host menu behavior selected.
+    selected_source_profiles:
+    - xterm_controls.dynamic-colors
+  selects:
+    osc.10.namespace: effect
+  competing_interpretations_retained:
+  - rxvt.legacy-menubar
+  reason: rxvt 2.7.10 explicitly disables its old menu dispatch in the preserved source because of security concerns. Kitty,
+    Foot, st, Rio, xterm.js and others independently route modern dynamic colors. Clear routine direction without depending
+    on exact rendering, host policy or every subparameter.
+  evidence_basis: Strong independently maintained reference agreement on overlapping family; group sign-off retained.
+  source_clauses:
+  - clause: rxvt.legacy-menubar
+    wire: OSC 10 ; menu-command (BEL | ST)
+    section: XTerm Operating System Commands; menuBar
+    source_revision: 2.7.10, 26 March 2003; release archive SHA-256
+    url: https://archive.debian.org/debian/pool/main/r/rxvt/rxvt_2.7.10.orig.tar.gz
+  - clause: xterm_controls.dynamic-colors
+    wire: OSC Ps ; spec [ ; spec ... ] (BEL | ST)
+    section: Operating System Commands, lines 2067-2115
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc10-rxvt-menu-vs-xterm-color
+    status: material-originating-extension-conflict
+    wire: OSC 10 ; payload ST
+    original_author_sources:
+    - clause: rxvt.legacy-menubar
+      meaning: Historical rxvt compile-option menu commands.
+    - clause: xterm_controls.dynamic-colors
+      meaning: xterm dynamic foreground and successive colors.
+    question: Review exact legacy menu grammar, potential overlap and host policy; do not dispatch solely by number.
+    decision: null
+    applies_to:
+      clauses:
+      - rxvt.legacy-menubar
+      - xterm_controls.dynamic-colors
+      scope: OSC 10 ; payload ST
+  applies_to:
+    clauses:
+    - rxvt.legacy-menubar
+    - xterm_controls.dynamic-colors
+    scope: OSC 10 follows xterm's foreground and successive dynamic color set/query grammar; invalid color payload does not
+      become a menu operation. Other dynamic colors retain existing source definitions. No host menu behavior selected.
+- id: osc21-dec-title-vs-kitty-colors
+  wire: OSC 21 ; payload ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: kitty-named-color-namespace
+    effect: OSC 21 uses published Kitty named-color set/query/reset grammar, no title fallback including unknown color fields
+      or malformed payload. OSC0/2 title controls remain separate. Original DEC session title and Microsoft adoption retained;
+      no host policy or complete color-admission selection beyond namespace.
+    selected_source_profiles:
+    - kitty_color.set
+    - kitty_color.query
+    - kitty_color.named-slots
+    - kitty_color.reset-dynamic
+    - kitty_color.unknown-query-field
+  selects:
+    osc.21.namespace: effect
+  competing_interpretations_retained:
+  - dec_vt520.session-title
+  - microsoft_terminal_profiles.session-title-profile
+  reason: DEC title can be arbitrary text including color-looking strings; Kitty also admits bare names for reset. Payload
+    heuristics would misinterpret some legitimate inputs. Select Kitty because named-color operations are distinct functionality,
+    while standard window titles already have OSC0/2; original DEC session-specific metadata remains a documented alternative.
+  evidence_basis: Explicit product choice; no clear majority asserted.
+  source_clauses:
+  - clause: dec_vt520.session-title
+    wire: OSC 21 ; name ST
+    section: 5-156 DECSWT; summary Appendix
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  - clause: kitty_color.named-slots
+    wire: OSC 21 ; key=value ST
+    section: docs/color-stack.rst:58-82
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/color-stack.rst
+  - clause: kitty_color.query
+    wire: OSC 21 ; name=? ST
+    section: Querying current color values
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/color-stack.rst
+  - clause: kitty_color.reset-dynamic
+    wire: OSC 21 ; key / key= / key=value / key=? (BEL | ST)
+    section: docs/color-stack.rst:124-147
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/color-stack.rst
+  - clause: kitty_color.set
+    wire: OSC 21 ; name=color ST
+    section: Setting and querying colors
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/color-stack.rst
+  - clause: kitty_color.unknown-query-field
+    wire: OSC 21 ; unknown=unpadded-base64(field-name) ST
+    section: docs/color-stack.rst:106-121
+    source_revision: git a79f376b85fd95e3dfd0589877123996bacd4184
+    url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/docs/color-stack.rst
+  - clause: microsoft_terminal_profiles.session-title-profile
+    wire: OSC 21 ; title (BEL | ST)
+    section: OutputStateMachineEngine OSC dispatch
+    source_revision: git 9853bc96076e811cef5eab4469095fc9be58201e
+    url: https://github.com/microsoft/terminal/blob/9853bc96076e811cef5eab4469095fc9be58201e/src/terminal/parser/OutputStateMachineEngine.hpp
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: osc21-dec-title-vs-kitty-colors
+    status: material-originating-extension-conflict
+    wire: OSC 21 ; payload ST
+    original_author_sources:
+    - clause: dec_vt520.session-title
+      meaning: DEC session title unrestricted descriptive text within length30.
+    - clause: microsoft_terminal_profiles.session-title-profile
+      meaning: Windows dispatches title setting.
+    - clause: kitty_color.set
+      meaning: Kitty named color key=value operations.
+    - clause: kitty_color.query
+      meaning: Kitty named color queries.
+    question: Resolve overlapping payload grammar explicitly; no assumption that color-looking title can be disambiguated
+      without policy.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt520.session-title
+      - kitty_color.query
+      - kitty_color.set
+      - microsoft_terminal_profiles.session-title-profile
+      scope: OSC 21 ; payload ST
+  applies_to:
+    clauses:
+    - dec_vt520.session-title
+    - kitty_color.named-slots
+    - kitty_color.query
+    - kitty_color.reset-dynamic
+    - kitty_color.set
+    - kitty_color.unknown-query-field
+    - microsoft_terminal_profiles.session-title-profile
+    scope: OSC 21 uses published Kitty named-color set/query/reset grammar, no title fallback including unknown color fields
+      or malformed payload. OSC0/2 title controls remain separate. Original DEC session title and Microsoft adoption retained;
+      no host policy or complete color-admission selection beyond namespace.
+- id: esc-right-brace-terminology-vs-ls2r
+  wire: ESC }
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: ecma35-ls2r
+    effect: ESC } is a complete LS2R in the ECMA35 profile; when GR is not targeted or applicable, consume the complete control
+      without entering NUL-string collection. No Terminology interpretation in this profile. Full encoding and character-set
+      implementation scope separate.
+    selected_source_profiles:
+    - ecma35.locking-shift-gr
+  selects:
+    esc.right-brace.framing: effect
+  competing_interpretations_retained:
+  - terminology_extensions.envelope
+  reason: 'The collision happens before payload parsing: looking for NUL could swallow subsequent text and controls. Original
+    standard and xterm/other ISO2022 adopters establish a complete control. Do not add implicit profile guessing.'
+  evidence_basis: Explicit product scope choice consistent with originating standard.
+  source_clauses:
+  - clause: ecma35.locking-shift-gr
+    wire: ESC ~ / ESC } / ESC |
+    section: 8.3.2 and 8.3.3
+    source_revision: 6th edition, December 1994; identical to ISO/IEC 2022:1994
+    url: https://ecma-international.org/wp-content/uploads/ECMA-35_6th_edition_december_1994.pdf
+  - clause: terminology_extensions.envelope
+    wire: ESC } UTF-8-command NUL
+    section: README / Extended escapes / Available commands
+    source_revision: git 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/README.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: esc-right-brace-terminology-vs-ls2r
+    status: material-originating-extension-conflict
+    wire: ESC }
+    original_author_sources:
+    - clause: terminology_extensions.envelope
+      meaning: Starts UTF8 command extending until NUL.
+    - clause: ecma35.locking-shift-gr
+      meaning: Complete LS2R locking shift into GR at right brace.
+    question: Resolve framing/profile selection before consuming subsequent text. Do not assume delayed NUL is safe in original
+      ISO2022 profile.
+    decision: null
+    applies_to:
+      clauses:
+      - ecma35.locking-shift-gr
+      - terminology_extensions.envelope
+      scope: ESC }
+  applies_to:
+    clauses:
+    - ecma35.locking-shift-gr
+    - terminology_extensions.envelope
+    scope: ESC } is a complete LS2R in the ECMA35 profile; when GR is not targeted or applicable, consume the complete control
+      without entering NUL-string collection. No Terminology interpretation in this profile. Full encoding and character-set
+      implementation scope separate.
+- id: private20-terminology-newline-vs-overstrike
+  wire: CSI ? 20 h/l
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: mintty-private20-overstrike
+    effect: Private ?20 retains the documented overstrike profile; never acts as newline alias. Standard LNM20 remains unchanged.
+      Originating VK100 source remains unresolved; select only documented Mintty adoption meaning, not every historical VK100
+      behavior or actual targeting.
+    selected_source_profiles:
+    - mintty_controls.overstrike
+  selects:
+    dec-private.20.meaning: effect
+  competing_interpretations_retained:
+  - terminology_extensions.newline-private-profile
+  reason: Standard selector20 already has established newline meaning. Private alias duplicates it and collides with documented
+    overstrike. Keep distinct namespaces rather than accept both. No claim earliest VK100 attribution verified.
+  evidence_basis: Explicit choice between documented adopting profiles, no majority established.
+  source_clauses:
+  - clause: mintty_controls.overstrike
+    wire: 'CSI 8 : 7 m / CSI 28 m / CSI ? 20 h/l'
+    section: Overstrike
+    source_revision: wiki git 951dd5cc92d88e930c8ff143d92a5aec6730413d (2026-06-09, 3.8.3)
+    url: https://github.com/mintty/mintty/wiki/CtrlSeqs
+  - clause: terminology_extensions.newline-private-profile
+    wire: CSI ? 20 h / CSI ? 20 l
+    section: termptyesc.c:_handle_esc_csi_reset_mode
+    source_revision: git 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/README.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: private20-terminology-newline-vs-overstrike
+    status: material-originating-extension-conflict
+    wire: CSI ? 20 h/l
+    original_author_sources:
+    - clause: terminology_extensions.newline-private-profile
+      meaning: Private20 selects CRLF mode in pinned code.
+    - clause: mintty_controls.overstrike
+      meaning: Private20 controls overstrike, VK100 lineage.
+    question: Trace original private assignments and choose scope explicitly; standard LNM20 unaffected.
+    decision: null
+    applies_to:
+      clauses:
+      - mintty_controls.overstrike
+      - terminology_extensions.newline-private-profile
+      scope: CSI ? 20 h/l
+  applies_to:
+    clauses:
+    - mintty_controls.overstrike
+    - terminology_extensions.newline-private-profile
+    scope: Private ?20 retains the documented overstrike profile; never acts as newline alias. Standard LNM20 remains unchanged.
+      Originating VK100 source remains unresolved; select only documented Mintty adoption meaning, not every historical VK100
+      behavior or actual targeting.
+- id: standard1-terminology-cursor-vs-gatm
+  wire: CSI 1 h/l
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: ecma48-gatm
+    effect: Standard mode1 is ECMA48 GATM. DEC private ?1 continues to control application cursor keys. Do not turn unsupported
+      GATM into a cursor-key alias. Exact guarded-area support/targeting remains separate.
+    selected_source_profiles:
+    - ecma48.mode-gatm
+  selects:
+    ansi.1.meaning: effect
+  competing_interpretations_retained:
+  - terminology_extensions.cursor-keys-standard-profile
+  reason: Source-defined standard mode1 is occupied. Terminology's alternate assignment is an adopter observation, not an
+    independently established original extension. Distinguish namespaces.
+  evidence_basis: Explicit original-standard choice; not a claim GATM implemented.
+  source_clauses:
+  - clause: ecma48.mode-gatm
+    wire: CSI Pm h / CSI Pm l
+    section: 7.2.7
+    source_revision: 5th edition, June 1991
+    url: https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf
+  - clause: terminology_extensions.cursor-keys-standard-profile
+    wire: CSI 1 h / CSI 1 l
+    section: termptyesc.c:_handle_esc_csi_reset_mode
+    source_revision: git 347d414d4595aa9a0f6d9fffd47490adc1cb112d
+    url: https://github.com/borisfaure/terminology/blob/347d414d4595aa9a0f6d9fffd47490adc1cb112d/README.md
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: standard1-terminology-cursor-vs-gatm
+    status: material-originating-extension-conflict
+    wire: CSI 1 h/l
+    original_author_sources:
+    - clause: terminology_extensions.cursor-keys-standard-profile
+      meaning: Pinned nonprivate1 selects application cursor keys.
+    - clause: ecma48.mode-gatm
+      meaning: Standard GATM guarded area transfer mode.
+    question: Verify originating mode1 assignment and possible adopting alias; no selected behavior.
+    decision: null
+    applies_to:
+      clauses:
+      - ecma48.mode-gatm
+      - terminology_extensions.cursor-keys-standard-profile
+      scope: CSI 1 h/l
+  applies_to:
+    clauses:
+    - ecma48.mode-gatm
+    - terminology_extensions.cursor-keys-standard-profile
+    scope: Standard mode1 is ECMA48 GATM. DEC private ?1 continues to control application cursor keys. Do not turn unsupported
+      GATM into a cursor-key alias. Exact guarded-area support/targeting remains separate.
+- id: contour-stp-vs-dec-state-restore
+  wire: DCS $ p payload ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    namespace_choice: dec-state-restore-namespace
+    effect: DCS $ p reserved for DEC state restoration profiles; only explicitly supported formats1/2 and applicable conformance
+      levels may restore state. Omitted/zero and unsupported formats must not trigger profile change. No Contour parameterless
+      STP interpretation. Model-specific payload, partial failure semantics and actual supported formats to qualify later;
+      neither format automatically targeted.
+    selected_source_profiles:
+    - dec_vt420.terminal-state-restore
+    - dec_vt520.color-state-restore
+  selects:
+    dcs.dollar-p.namespace: effect
+  competing_interpretations_retained:
+  - contour_dispatch_profiles.terminal-profile
+  reason: DEC defines zero as error/ignore; Contour registers zero-argument profile change. Mixing them would allow invalid
+    restore payload to become an unrelated host profile mutation. Preserve numeric profiles and separate host authority.
+  evidence_basis: Explicit scope selection.
+  source_clauses:
+  - clause: contour_dispatch_profiles.terminal-profile
+    wire: DCS $ p name ST
+    section: Functions.h STP; Screen::hookSTP; TerminalSession::setTerminalProfile; example vt-set-profile
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+  - clause: dec_vt420.terminal-state-restore
+    wire: DCS Ps $ p data ST
+    section: Chapter12 pp246-247 / DECRSTS
+    source_revision: second edition, February 1992, EK-VT420-RM.002
+    url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+  - clause: dec_vt520.color-state-restore
+    wire: DCS 2 $ p Pc;Pu;Px;Py;Pz [ / ... ] ST
+    section: 5-118 DECRSTS color table
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: contour-stp-vs-dec-state-restore
+    status: material-originating-extension-conflict
+    wire: DCS $ p payload ST
+    original_author_sources:
+    - clause: dec_vt420.terminal-state-restore
+      meaning: Original DEC restores specified state, omitted/zero invalid.
+    - clause: contour_dispatch_profiles.terminal-profile
+      meaning: Contour zero-param header requests host profile name.
+    question: Determine exact grammar separation and profile scope; do not interpret malformed DEC restore as a host mutation.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_dispatch_profiles.terminal-profile
+      - dec_vt420.terminal-state-restore
+      scope: DCS $ p payload ST
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.terminal-profile
+    - dec_vt420.terminal-state-restore
+    - dec_vt520.color-state-restore
+    scope: DCS $ p reserved for DEC state restoration profiles; only explicitly supported formats1/2 and applicable conformance
+      levels may restore state. Omitted/zero and unsupported formats must not trigger profile change. No Contour parameterless
+      STP interpretation. Model-specific payload, partial failure semantics and actual supported formats to qualify later;
+      neither format automatically targeted.
+pending_reconciliation:
 - id: contour-sgr-slot-vs-xterm-stack
   status: material-originating-extension-conflict
   wire: 'CSI # { / CSI # }'
@@ -30869,41 +31717,6 @@ pending_reconciliation:
     - bothner_semantic_prompts.error-option
     - bothner_semantic_prompts.finish
     scope: OSC 133 ; D or Z ; err=value ST
-- id: osc50-konsole-profile-vs-xterm-font
-  status: material-originating-extension-conflict
-  wire: OSC 50 ; text ST
-  original_author_sources:
-  - clause: konsole_profiles.profile
-    meaning: Konsole recognizes property=value profile changes including CursorShape.
-  - clause: xterm_controls.font-operations
-    meaning: xterm treats text as font selection/query.
-  question: Author explicitly acknowledges collision. Preserve historical iTerm2 OSC50 predecessor as further evidence obligation;
-    select neither host font nor profile operation yet.
-  decision: null
-  applies_to:
-    clauses:
-    - konsole_profiles.profile
-    - xterm_controls.font-operations
-    scope: OSC 50 ; text ST
-- id: osc9-iterm-notification-vs-conemu-dispatch
-  status: material-originating-extension-conflict
-  wire: OSC 9 ; numeric-subcommand [ ; payload ] ST
-  original_author_sources:
-  - clause: iterm2_osc1337.notification
-    meaning: iTerm2 simple notification text occupies whole OSC9 payload; later iTerm2 adopts special progress9;4.
-  - clause: conemu_osc9.tab-title
-    meaning: ConEmu interprets numeric subcommand3 as tab title, not notification.
-  - clause: conemu_osc9.comment
-    meaning: ConEmu interprets numeric subcommand11 as ignored comment.
-  question: Review full numeric subcommand admission and compatibility profiles, preserving host-effect boundaries. Existing
-    progress selection not changed; no arbitrary host operation selected.
-  decision: null
-  applies_to:
-    clauses:
-    - conemu_osc9.comment
-    - conemu_osc9.tab-title
-    - iterm2_osc1337.notification
-    scope: OSC 9 ; numeric-subcommand [ ; payload ] ST
 - id: vte-termprop-key-component-count
   status: material-originating-extension-conflict
   wire: OSC 666 property key
@@ -31060,75 +31873,6 @@ pending_reconciliation:
     - dec_vt420.selective-erase-rect
     - teraterm_ime.rectangle-defaults
     scope: CSI Pt ; Pl ; Pb ; Pr $ z/{
-- id: osc72-domterm-html-vs-kitty-dnd
-  status: material-originating-extension-conflict
-  wire: OSC 72 ; payload ST
-  original_author_sources:
-  - clause: domterm_wire.html-insert
-    meaning: DomTerm documented HTML; pinned parser calls scrub/insert without selector-level discrimination.
-  - clause: kitty_dnd.envelope
-    meaning: Kitty metadata and Base64 drag/drop payload.
-  question: Trace author coordination and any actual disjoint admission rule. Do not assume HTML angle-bracket discriminator
-    exists in pinned DomTerm.
-  decision: null
-  applies_to:
-    clauses:
-    - domterm_wire.html-insert
-    - kitty_dnd.envelope
-    scope: OSC 72 ; payload ST
-- id: osc721-domterm-vs-urxvt
-  status: material-originating-extension-conflict
-  wire: OSC 721 ; payload ST
-  original_author_sources:
-  - clause: domterm_wire.html-replace
-    meaning: DomTerm key;HTML replacement.
-  - clause: urxvt.viewport-down
-    meaning: urxvt decimal viewport movement; atoi zero clears history.
-  question: Determine disjoint grammar and malformed handling explicitly; current urxvt conversion can turn nonnumeric key
-    into history clear.
-  decision: null
-  applies_to:
-    clauses:
-    - domterm_wire.html-replace
-    - urxvt.viewport-down
-    scope: OSC 721 ; payload ST
-- id: osc110-118-domterm-pretty-vs-xterm-reset
-  status: material-originating-extension-conflict
-  wire: OSC 110..118 ST
-  original_author_sources:
-  - clause: domterm_wire.logical-block-start
-    meaning: DomTerm OSC110 starts block; empty form valid.
-  - clause: domterm_wire.logical-block-end
-    meaning: OSC111 closes block.
-  - clause: domterm_wire.conditional-breaks
-    meaning: OSC115..118 bare line-break controls.
-  - clause: xterm_controls.dynamic-colors-reset
-    meaning: Same selectors reset dynamic colors, bare or empty semicolon forms.
-  question: Preserve exact overlapping empty forms, and distinguish argument-bearing DomTerm indentation forms; no priority
-    selection.
-  decision: null
-  applies_to:
-    clauses:
-    - domterm_wire.conditional-breaks
-    - domterm_wire.logical-block-end
-    - domterm_wire.logical-block-start
-    - xterm_controls.dynamic-colors-reset
-    scope: OSC 110..118 ST
-- id: osc10-rxvt-menu-vs-xterm-color
-  status: material-originating-extension-conflict
-  wire: OSC 10 ; payload ST
-  original_author_sources:
-  - clause: rxvt.legacy-menubar
-    meaning: Historical rxvt compile-option menu commands.
-  - clause: xterm_controls.dynamic-colors
-    meaning: xterm dynamic foreground and successive colors.
-  question: Review exact legacy menu grammar, potential overlap and host policy; do not dispatch solely by number.
-  decision: null
-  applies_to:
-    clauses:
-    - rxvt.legacy-menubar
-    - xterm_controls.dynamic-colors
-    scope: OSC 10 ; payload ST
 - id: domterm-resize-document-order
   status: material-originating-extension-conflict
   wire: CSI 8 ; P1 ; P2 ; mode t
@@ -31266,74 +32010,6 @@ pending_reconciliation:
     - mintty_rendition.vertical-align
     - wezterm_rendition_profile.vertical-align
     scope: CSI 73 ; 74 m
-- id: osc21-dec-title-vs-kitty-colors
-  status: material-originating-extension-conflict
-  wire: OSC 21 ; payload ST
-  original_author_sources:
-  - clause: dec_vt520.session-title
-    meaning: DEC session title unrestricted descriptive text within length30.
-  - clause: microsoft_terminal_profiles.session-title-profile
-    meaning: Windows dispatches title setting.
-  - clause: kitty_color.set
-    meaning: Kitty named color key=value operations.
-  - clause: kitty_color.query
-    meaning: Kitty named color queries.
-  question: Resolve overlapping payload grammar explicitly; no assumption that color-looking title can be disambiguated without
-    policy.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt520.session-title
-    - kitty_color.query
-    - kitty_color.set
-    - microsoft_terminal_profiles.session-title-profile
-    scope: OSC 21 ; payload ST
-- id: esc-right-brace-terminology-vs-ls2r
-  status: material-originating-extension-conflict
-  wire: ESC }
-  original_author_sources:
-  - clause: terminology_extensions.envelope
-    meaning: Starts UTF8 command extending until NUL.
-  - clause: ecma35.locking-shift-gr
-    meaning: Complete LS2R locking shift into GR at right brace.
-  question: Resolve framing/profile selection before consuming subsequent text. Do not assume delayed NUL is safe in original
-    ISO2022 profile.
-  decision: null
-  applies_to:
-    clauses:
-    - ecma35.locking-shift-gr
-    - terminology_extensions.envelope
-    scope: ESC }
-- id: private20-terminology-newline-vs-overstrike
-  status: material-originating-extension-conflict
-  wire: CSI ? 20 h/l
-  original_author_sources:
-  - clause: terminology_extensions.newline-private-profile
-    meaning: Private20 selects CRLF mode in pinned code.
-  - clause: mintty_controls.overstrike
-    meaning: Private20 controls overstrike, VK100 lineage.
-  question: Trace original private assignments and choose scope explicitly; standard LNM20 unaffected.
-  decision: null
-  applies_to:
-    clauses:
-    - mintty_controls.overstrike
-    - terminology_extensions.newline-private-profile
-    scope: CSI ? 20 h/l
-- id: standard1-terminology-cursor-vs-gatm
-  status: material-originating-extension-conflict
-  wire: CSI 1 h/l
-  original_author_sources:
-  - clause: terminology_extensions.cursor-keys-standard-profile
-    meaning: Pinned nonprivate1 selects application cursor keys.
-  - clause: ecma48.mode-gatm
-    meaning: Standard GATM guarded area transfer mode.
-  question: Verify originating mode1 assignment and possible adopting alias; no selected behavior.
-  decision: null
-  applies_to:
-    clauses:
-    - ecma48.mode-gatm
-    - terminology_extensions.cursor-keys-standard-profile
-    scope: CSI 1 h/l
 - id: decsr-zero-confirmation-vt520-vs-std070
   status: material-originating-extension-conflict
   wire: CSI 0 + p
@@ -31403,18 +32079,3 @@ pending_reconciliation:
     - good_image_protocol.name
     - good_image_protocol.upload
     scope: DCS ! g o=u ... ,s;body ST
-- id: contour-stp-vs-dec-state-restore
-  status: material-originating-extension-conflict
-  wire: DCS $ p payload ST
-  original_author_sources:
-  - clause: dec_vt420.terminal-state-restore
-    meaning: Original DEC restores specified state, omitted/zero invalid.
-  - clause: contour_dispatch_profiles.terminal-profile
-    meaning: Contour zero-param header requests host profile name.
-  question: Determine exact grammar separation and profile scope; do not interpret malformed DEC restore as a host mutation.
-  decision: null
-  applies_to:
-    clauses:
-    - contour_dispatch_profiles.terminal-profile
-    - dec_vt420.terminal-state-restore
-    scope: DCS $ p payload ST
