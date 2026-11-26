@@ -21,6 +21,7 @@ pub const Keyboard = struct {
     suppress_text: bool = false,
     pending_text: ?c.SDL_Scancode = null,
     pending_repeat: bool = false,
+    last_mods: c.SDL_Keymod = c.SDL_KMOD_NONE,
 
     /// Routes one key lifecycle to its original owner, regardless of later modifier state.
     pub fn route(
@@ -32,6 +33,7 @@ pub const Keyboard = struct {
         overlay: bool,
     ) !Route {
         if (event.scancode >= self.held.len) return .handled;
+        self.last_mods = event.mod;
         const entry = &self.held[event.scancode];
         if (!press) {
             if (self.pending_text == event.scancode) self.pending_text = null;
@@ -45,8 +47,12 @@ pub const Keyboard = struct {
             }
             return .handled;
         }
-        self.suppress_text = false;
-        self.pending_text = null;
+        const named = namedKey(event.key);
+        const modifier = if (named) |key| isModifier(key) else false;
+        if (!modifier) {
+            self.suppress_text = false;
+            self.pending_text = null;
+        }
         if (event.repeat) {
             switch (entry.kind) {
                 .application => {
@@ -68,7 +74,7 @@ pub const Keyboard = struct {
                         self.pending_repeat = true;
                         return .handled;
                     }
-                    self.suppress_text = true;
+                    if (!modifier) self.suppress_text = true;
                     if (status.failure == null and !status.closed)
                         try owner.submit(.{ .input = .{ .key = .{ .key = entry.key.?, .mods = semanticModifiers(event.mod), .action = .repeat } } });
                     return .handled;
@@ -89,7 +95,9 @@ pub const Keyboard = struct {
         const status = owner.snapshot();
         if (status.failure != null or status.closed) return .handled;
         const mods = semanticModifiers(event.mod);
-        const key: VT.Key = if (namedKey(event.key)) |named| .{ .named = named } else if ((mods.control or mods.alt or mods.super) and event.key >= 0x20 and event.key < 0x7f)
+        const report_all = status.interaction != null and status.interaction.?.kitty_keyboard_flags & 8 != 0;
+        if (modifier and !report_all) return .handled;
+        const key: VT.Key = if (named) |identity| .{ .named = identity } else if ((mods.control or mods.alt or mods.super) and event.key >= 0x20 and event.key < 0x7f)
             try VT.Key.initUnicode(@intCast(event.key))
         else {
             entry.* = .{ .kind = .text };
@@ -104,13 +112,16 @@ pub const Keyboard = struct {
         };
         try owner.submit(.{ .input = .{ .key = .{ .key = key, .mods = mods, .action = .press } } });
         entry.* = .{ .kind = .terminal, .target = owner, .key = key, .mods = mods };
-        self.suppress_text = true;
+        if (!modifier) self.suppress_text = true;
         return .handled;
     }
 
     /// Retires held terminal keys when keyboard ownership changes; application chords remain owned.
     pub fn releaseTerminal(self: *Keyboard) !void {
         self.pending_text = null;
+        // Retire logical terminal holds in order without altering SDL's
+        // factual physical state. Preserve the other side and locked bits.
+        var mods = self.last_mods;
         for (&self.held) |*entry| {
             if (entry.kind == .text) {
                 entry.* = .{};
@@ -121,8 +132,10 @@ pub const Keyboard = struct {
             entry.* = .{};
             const owner = previous.target.?;
             const status = owner.snapshot();
+            const key = previous.key.?;
+            if (key == .named) mods &= ~modifierSideMask(key.named);
             if (status.failure == null and !status.closed)
-                try owner.submit(.{ .input = .{ .key = .{ .key = previous.key.?, .mods = previous.mods, .action = .release } } });
+                try owner.submit(.{ .input = .{ .key = .{ .key = key, .mods = semanticModifiers(mods), .action = .release } } });
         }
     }
 
@@ -176,6 +189,24 @@ pub fn semanticModifiers(mod: c.SDL_Keymod) VT.InputModifier {
     };
 }
 
+fn modifierSideMask(key: VT.NamedKey) c.SDL_Keymod {
+    return switch (key) {
+        .left_shift => c.SDL_KMOD_LSHIFT,
+        .right_shift => c.SDL_KMOD_RSHIFT,
+        .left_control => c.SDL_KMOD_LCTRL,
+        .right_control => c.SDL_KMOD_RCTRL,
+        .left_alt => c.SDL_KMOD_LALT,
+        .right_alt => c.SDL_KMOD_RALT,
+        .left_super => c.SDL_KMOD_LGUI,
+        .right_super => c.SDL_KMOD_RGUI,
+        else => c.SDL_KMOD_NONE,
+    };
+}
+
+fn isModifier(key: VT.NamedKey) bool {
+    return modifierSideMask(key) != c.SDL_KMOD_NONE or key == .caps_lock or key == .num_lock;
+}
+
 /// Named physical keys, including function, lock and keypad identities.
 pub fn namedKey(key: c.SDL_Keycode) ?VT.NamedKey {
     return switch (key) {
@@ -205,6 +236,14 @@ pub fn namedKey(key: c.SDL_Keycode) ?VT.NamedKey {
         c.SDLK_F10 => .f10,
         c.SDLK_F11 => .f11,
         c.SDLK_F12 => .f12,
+        c.SDLK_LSHIFT => .left_shift,
+        c.SDLK_RSHIFT => .right_shift,
+        c.SDLK_LCTRL => .left_control,
+        c.SDLK_RCTRL => .right_control,
+        c.SDLK_LALT => .left_alt,
+        c.SDLK_RALT => .right_alt,
+        c.SDLK_LGUI => .left_super,
+        c.SDLK_RGUI => .right_super,
         c.SDLK_CAPSLOCK => .caps_lock,
         c.SDLK_NUMLOCKCLEAR => .num_lock,
         c.SDLK_KP_0 => .keypad_0,
@@ -247,14 +286,14 @@ test "an app paste chord owns repeat and release after its modifiers change" {
     try std.testing.expect((try keyboard.route(event, false, null, null, false)) == .handled);
 }
 
-test "overlay and unclaimed releases cannot become terminal keys; standalone modifiers stay withheld" {
+test "overlay and unclaimed releases cannot become terminal keys" {
     var keyboard: Keyboard = .{};
     var event: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
     event.scancode = c.SDL_SCANCODE_F5;
     event.key = c.SDLK_F5;
     try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .overlay);
     try std.testing.expect((try keyboard.route(event, false, null, null, false)) == .handled);
-    try std.testing.expect(namedKey(c.SDLK_LCTRL) == null);
+    try std.testing.expectEqual(@as(?VT.NamedKey, .left_control), namedKey(c.SDLK_LCTRL));
     try std.testing.expectEqual(@as(?VT.NamedKey, .keypad_enter), namedKey(c.SDLK_KP_ENTER));
 }
 
@@ -344,4 +383,78 @@ test "changing overlay owners fences held Enter before the new editor opens" {
     try std.testing.expect((try keyboard.route(event, false, null, null, true)) == .handled);
     event.repeat = false;
     try std.testing.expect((try keyboard.route(event, true, null, null, true)) == .overlay);
+}
+
+test "Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const expected = "\x1b[57442;5u\x1b[57448;5u\x1b[57442;5:3u\x1b[57448;1:3u" ++
+        "\x1b[57441;2u\x1b[57447;2u\x1b[57441;2:3u\x1b[57447;1:3u" ++
+        "\x1b[57358;65u\x1b[57358;65:3u\x1b[57360;193u\x1b[57360;193:3u";
+    const command = try std.fmt.allocPrint(std.testing.allocator, "stty raw -echo; printf '\\033[=0u\\033]0;LEGACY\\007'; first=$(dd bs=1 count=1 2>/dev/null); printf '\\033[=31u\\033]7501;state=done:id=job\\007\\033]0;READY\\007'; value=$(dd bs=1 count={d} 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\033]0;%s-%s\\007' \"$first\" \"$value\"; sleep 30", .{expected.len});
+    defer std.testing.allocator.free(command);
+    const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 4,
+        .columns = 80,
+        .history_rows = 8,
+    }, .{
+        .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+    }, c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    const Check = struct {
+        fn wait(t: *terminal.Terminal, io: std.Io, title: []const u8) !void {
+            for (0..5000) |_| {
+                const status = t.snapshot();
+                if (status.failure) |failure| return failure;
+                if (std.mem.eql(u8, status.title[0..status.title_len], title)) return;
+                try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+            }
+            return error.Timeout;
+        }
+        fn event(k: *Keyboard, t: *terminal.Terminal, scan: c.SDL_Scancode, key: c.SDL_Keycode, mods: c.SDL_Keymod, press: bool) !void {
+            var e: c.SDL_KeyboardEvent = std.mem.zeroes(c.SDL_KeyboardEvent);
+            e.scancode = scan;
+            e.key = key;
+            e.mod = mods;
+            try std.testing.expect((try k.route(e, press, t, null, false)) == .handled);
+            try std.testing.expect(!k.consumeText());
+        }
+    };
+    var keyboard: Keyboard = .{};
+    try Check.wait(owner, threaded.io(), "LEGACY");
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_LCTRL, c.SDLK_LCTRL, c.SDL_KMOD_LCTRL, true);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_LCTRL, c.SDLK_LCTRL, c.SDL_KMOD_NONE, false);
+    try std.testing.expect(!owner.takeInputActivity());
+    try owner.submit(.{ .input = .{ .bytes = "x" } });
+    try Check.wait(owner, threaded.io(), "READY");
+    try std.testing.expect(owner.takeInputActivity());
+    try std.testing.expectEqual(@as(?VT.ProgramStatus.State, .done), owner.snapshot().program_status.state);
+
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_LCTRL, c.SDLK_LCTRL, c.SDL_KMOD_LCTRL, true);
+    try std.testing.expectEqual(Kind.terminal, keyboard.held[c.SDL_SCANCODE_LCTRL].kind);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_RCTRL, c.SDLK_RCTRL, c.SDL_KMOD_CTRL, true);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_LCTRL, c.SDLK_LCTRL, c.SDL_KMOD_RCTRL, false);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_RCTRL, c.SDLK_RCTRL, c.SDL_KMOD_NONE, false);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_LSHIFT, c.SDLK_LSHIFT, c.SDL_KMOD_LSHIFT, true);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_RSHIFT, c.SDLK_RSHIFT, c.SDL_KMOD_SHIFT, true);
+    try keyboard.releaseTerminal();
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_LSHIFT, c.SDLK_LSHIFT, c.SDL_KMOD_RSHIFT, false);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_RSHIFT, c.SDLK_RSHIFT, c.SDL_KMOD_NONE, false);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_CAPSLOCK, c.SDLK_CAPSLOCK, c.SDL_KMOD_CAPS, true);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_CAPSLOCK, c.SDLK_CAPSLOCK, c.SDL_KMOD_CAPS, false);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_NUMLOCKCLEAR, c.SDLK_NUMLOCKCLEAR, c.SDL_KMOD_CAPS | c.SDL_KMOD_NUM, true);
+    try Check.event(&keyboard, owner, c.SDL_SCANCODE_NUMLOCKCLEAR, c.SDLK_NUMLOCKCLEAR, c.SDL_KMOD_CAPS | c.SDL_KMOD_NUM, false);
+    const expected_hex = std.fmt.bytesToHex(expected, .lower);
+    try Check.wait(owner, threaded.io(), "x-" ++ expected_hex);
+    try std.testing.expect(!owner.takeInputActivity());
+    try std.testing.expectEqual(@as(?VT.ProgramStatus.State, .done), owner.snapshot().program_status.state);
 }

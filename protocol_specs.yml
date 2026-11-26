@@ -9274,6 +9274,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty typed committed text preserves multiple scalars and unknown key identity
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
+        relation: protocol-family
+      - file: howl-vt/src/input.zig
+        test: Kitty event parameter covers every factual modifier combination
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key press without modifiers or additional fields omits first parameter; repeat/release with reporting
@@ -9287,6 +9293,13 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_03:
+          scope: All 256 typed modifier masks for each of press/repeat/release, exact event fields and omitted default. Headless
+            SDL router to real PTY proves independent left/right Control release, synthetic two-sided Shift retirement and
+            no duplicate subsequent release. No full event repertoire claim.
+          method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
+            PTY with synthetic SDL events; no blanket FULL promotion
+          baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
     - id: alternate-keys
       section: Report alternate keys
       level: defined
@@ -9309,6 +9322,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty alternate identity is shifted only with Shift and never decorates named keys
         relation: protocol-family
+      - file: howl-vt/src/input.zig
+        test: Kitty alternate identity rejects non-Unicode scalars only in emitted fields
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_02:
           scope: Shifted identity included only with active Shift; base-layout-only retains empty shifted subfield, zero alternatives
@@ -9317,6 +9333,13 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_03:
+          scope: Emitted shifted and base-layout identities reject surrogate endpoints and values above Unicode max through
+            existing typed InvalidText error. Valid boundary scalars retained; unselected/unused metadata not promoted to
+            a rejection. Actual SDL layout identity discovery remains separate.
+          method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
+            PTY with synthetic SDL events; no blanket FULL promotion
+          baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
     - id: all-keys
       section: Report all keys as escape codes
       level: defined
@@ -9342,6 +9365,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty typed committed text preserves multiple scalars and unknown key identity
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
+        relation: protocol-family
+      - file: howl-vt/src/input.zig
+        test: Kitty event parameter covers every factual modifier combination
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
@@ -9355,6 +9384,13 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_03:
+          scope: SDL routes side-specific Shift/Control/Alt/Super and lock identities in negotiated report-all; live PTY proof
+            covers both Control and Shift sides, Caps/Num Lock. Legacy modifier presses/release remain silent and do not consume
+            text. No Hyper/Meta or other absent SDL functional identities implied.
+          method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
+            PTY with synthetic SDL events; no blanket FULL promotion
+          baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9434,6 +9470,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty typed committed text preserves multiple scalars and unknown key identity
         relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Legacy arrows restored after LazyGit negotiation exit and bank return; legacy lock modifier omitted. Existing
@@ -9447,6 +9486,12 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_03:
+          scope: Live legacy phase verifies standalone modifier press/release produces no bytes or input activity before a
+            raw sentinel. No new legacy operation.
+          method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
+            PTY with synthetic SDL events; no blanket FULL promotion
+          baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
     - id: event-envelope
       section: docs/keyboard-protocol.rst:125-146
       level: defined
@@ -9468,6 +9513,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty typed committed text preserves multiple scalars and unknown key identity
         relation: protocol-family
+      - file: howl-vt/src/input.zig
+        test: Kitty alternate identity rejects non-Unicode scalars only in emitted fields
+        relation: protocol-family
+      - file: howl-vt/src/input.zig
+        test: Kitty event parameter covers every factual modifier combination
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
@@ -9482,6 +9536,12 @@ specifications:
           method: Pinned Kitty author documentation and encoder/screen/parser implementation a79f376; deterministic typed
             VT red/green and ReleaseFast root gates; no blanket FULL promotion
           baseline: 9938e796741eec6f618e5a0dc7a043698b8e0188
+        howl_qualification_20261126_keyboard_03:
+          scope: Unicode scalar validation of selected alternate fields; full decimal modifier and action field matrix. Live
+            SDL/PTY bytes preserve other held side and locked state, without inventing text or duplicate releases.
+          method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
+            PTY with synthetic SDL events; no blanket FULL promotion
+          baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined
@@ -9495,6 +9555,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty functional letter keys omit default first field only without additional fields
         relation: protocol-family
+      - file: howl-vt/src/input.zig
+        test: Kitty event parameter covers every factual modifier combination
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: Kitty live modifier lifecycle preserves both sides and does not acknowledge Rex
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Unmodified default omits number, Ctrl5 and Num Lock129 retained for letter-key forms. No change to modifier
@@ -9502,6 +9568,14 @@ specifications:
           method: Pinned Kitty author source a79f376; red/green typed VT tests and isolated installed LazyGit PTY byte comparison;
             no blanket FULL promotion
           baseline: da742dda0dec062bbe63229201a68a87dd9c80db
+        howl_qualification_20261126_keyboard_03:
+          scope: Exhaustive typed mask domain 0..255 crossed with press/repeat/release (768), exact 1+mask parameter. SDL
+            post-event mask forwarded, both sides retained through actual release and logical focus cleanup. Modifier-only
+            events and releases use the existing input-activity predicate; live proof preserves completed Rex status. Compositor
+            state consistency not qualified.
+          method: Pinned Kitty author keyboard protocol a79f376, SDL reference 7bbd9d5, typed VT red/green and actual child
+            PTY with synthetic SDL events; no blanket FULL promotion
+          baseline: 12f8bef65cd26f8e32736c047bcc2a933bcf93dd
     - id: feature-detection
       section: docs/keyboard-protocol.rst:441-458
       level: defined

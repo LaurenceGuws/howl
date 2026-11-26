@@ -821,7 +821,7 @@ const State = struct {
                 try self.core.input(input);
                 // Explicit user input acknowledges unseen completed/failed
                 // statuses, but must not remove a still-blocked request.
-                if (input == .bytes or input == .paste or input == .key) {
+                if (inputActivity(task)) {
                     if (self.program_status_index.seenByUser())
                         self.program_status_changed_pending = true;
                     if (self.viewport.offset != 0) self.output_gate.pending = true;

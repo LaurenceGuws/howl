@@ -459,7 +459,7 @@ fn encodeKittyEvent(
     alternate: ?u21,
     text: []const u8,
     flags: u8,
-) error{EncodingLimit}![]const u8 {
+) error{ EncodingLimit, InvalidText }![]const u8 {
     if (buf.len < max_kitty_encoded_bytes) return error.EncodingLimit;
     var builder = Builder.init(buf);
     try builder.append("\x1b[");
@@ -467,6 +467,8 @@ fn encodeKittyEvent(
     const report_alternates = flags & 4 != 0 and key == .unicode;
     const shifted_key = if (report_alternates and mod.shift and (shifted orelse 0) != 0) shifted else null;
     const base_key = if (report_alternates and (alternate orelse 0) != 0) alternate else null;
+    if (shifted_key) |value| if (!std.unicode.utf8ValidCodepoint(value)) return error.InvalidText;
+    if (base_key) |value| if (!std.unicode.utf8ValidCodepoint(value)) return error.InvalidText;
     const add_alternates = shifted_key != null or base_key != null;
     const add_action = flags & 2 != 0 and action != .press;
     const add_text = flags & 16 != 0 and flags & 8 != 0 and text.len != 0;
@@ -1465,5 +1467,36 @@ test "event reporting leaves text keys and recovery controls usable without repo
         try std.testing.expectEqualStrings("\r", try encodeEvent(&buf, .{ .named = .enter }, .{}, .press, null, null, "", "", false, false, 0, 0, flags));
         try std.testing.expectEqualStrings("", try encodeEvent(&buf, .{ .named = .enter }, .{}, .release, null, null, "", "", false, false, 0, 0, flags));
         try std.testing.expectEqualStrings("\x1b[1;1:3A", try encodeEvent(&buf, .{ .named = .up }, .{}, .release, null, null, "", "", false, false, 0, 0, flags));
+    }
+}
+
+test "Kitty alternate identity rejects non-Unicode scalars only in emitted fields" {
+    var buf: [max_kitty_encoded_bytes]u8 = undefined;
+    const key = try InputKey.initUnicode('a');
+    for ([_]u21{ 0xd800, 0xdfff, 0x110000, 0x1fffff }) |invalid| {
+        try std.testing.expectError(error.InvalidText, encodeEvent(&buf, key, .{ .shift = true, .control = true }, .press, invalid, null, "", "", false, false, 0, 0, 31));
+        try std.testing.expectError(error.InvalidText, encodeEvent(&buf, key, .{ .control = true }, .press, null, invalid, "", "", false, false, 0, 0, 31));
+        try std.testing.expectEqualStrings("\x1b[97;5u", try encodeEvent(&buf, key, .{ .control = true }, .press, invalid, null, "", "", false, false, 0, 0, 31));
+        try std.testing.expectEqualStrings("\x1b[97;5u", try encodeEvent(&buf, key, .{ .control = true }, .press, null, invalid, "", "", false, false, 0, 0, 1));
+        try std.testing.expectEqualStrings("\x1b[A", try encodeEvent(&buf, .{ .named = .up }, .{}, .press, invalid, invalid, "", "", false, false, 0, 0, 31));
+    }
+    try std.testing.expectEqualStrings("\x1b[97:1114111:55295;6u", try encodeEvent(&buf, key, .{ .shift = true, .control = true }, .press, 0x10ffff, 0xd7ff, "", "", false, false, 0, 0, 31));
+}
+
+test "Kitty event parameter covers every factual modifier combination" {
+    var buf: [max_kitty_encoded_bytes]u8 = undefined;
+    const key = try InputKey.initUnicode('a');
+    for (0..256) |mask| {
+        const mod: Modifier = @bitCast(@as(u8, @intCast(mask)));
+        var expected: [48]u8 = undefined;
+        for ([_]Action{ .press, .repeat, .release }) |action| {
+            const bytes = if (mask == 0 and action == .press)
+                "\x1b[97u"
+            else if (action == .press)
+                try std.fmt.bufPrint(&expected, "\x1b[97;{d}u", .{mask + 1})
+            else
+                try std.fmt.bufPrint(&expected, "\x1b[97;{d}:{d}u", .{ mask + 1, @backingInt(action) });
+            try std.testing.expectEqualStrings(bytes, try encodeEvent(&buf, key, mod, action, null, null, "", "", false, false, 0, 0, 31));
+        }
     }
 }
