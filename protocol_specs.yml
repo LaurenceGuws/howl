@@ -32978,6 +32978,670 @@ reconciliation:
       or license nondeterminism. Retain WezTerm permanent-set and Foot build/config-gated profiles as evidence. Unicode version,
       cluster admission, margin transaction, reset lifetime, query reporting, bidi separation and actual implementation scope
       remain qualification questions.'
+- id: teraterm-rectangle-omission-defaults
+  wire: CSI Pt ; Pl ; Pb ; Pr $ z/{
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: dec-page-rectangle-defaults
+    effect: DECERA and DECSERA omitted borders default top/left1 and bottom/right active page limits, not current cursor.
+      Interpret coordinates with DECOM and original rectangle clipping; cursor remains unchanged. DECERA erases characters
+      and visual attributes, DECSERA only erasable characters while retaining rendition/protection; line attributes unchanged.
+      Explicit-zero, inverted rectangles, wide-cell and exact DECOM/margin admission remain separate qualification. No changes
+      to already accepted DECCARA selectors or other rectangle operations.
+    selected_source_profiles:
+    - dec_vt420.erase-rect
+    - dec_vt420.selective-erase-rect
+  selects:
+    rectangle.erase-defaults: effect
+  competing_interpretations_retained:
+  - teraterm_ime.rectangle-defaults
+  reason: VT420 Chapter9 pp164-166 explicitly specifies all four defaults, DECOM, page-bound clipping and no cursor movement.
+    Both pinned Tera Term4/5 tables give cursor-position defaults. Preserve originating page semantics rather than generalize
+    Tera Term's alternative; a bare rectangle erase has a materially different extent.
+  evidence_basis: Explicit original DEC choice; no independent majority claim.
+  source_clauses:
+  - clause: dec_vt420.erase-rect
+    wire: CSI Pt ; Pl ; Pb ; Pr $ z
+    section: Rectangular Area Operations / Erase Rectangular Area, p164
+    source_revision: second edition, February 1992, EK-VT420-RM.002
+    url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+  - clause: dec_vt420.selective-erase-rect
+    wire: CSI Pt ; Pl ; Pb ; Pr $ {
+    section: Rectangular Area Operations / Selective Erase Rectangular Area, p165
+    source_revision: second edition, February 1992, EK-VT420-RM.002
+    url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+  - clause: teraterm_ime.rectangle-defaults
+    wire: CSI Pt ; Pl ; Pb ; Pr $ z / CSI Pt ; Pl ; Pb ; Pr $ {
+    section: CSI Sequence / DECERA and DECSERA
+    source_revision: Manual4, Git 90019d9086eb21da8903e91ea5536eda319aed81 (byte-match to prior observation)
+    url: https://raw.githubusercontent.com/TeraTermProject/teratermproject.github.io/90019d9086eb21da8903e91ea5536eda319aed81/manual/4/en/about/ctrlseq.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: teraterm-rectangle-omission-defaults
+    status: material-originating-extension-conflict
+    wire: CSI Pt ; Pl ; Pb ; Pr $ z/{
+    original_author_sources:
+    - clause: dec_vt420.erase-rect
+      meaning: Original DEC area selection uses defined top-left and lower-right defaults.
+    - clause: dec_vt420.selective-erase-rect
+      meaning: Original selective rectangle uses original area grammar.
+    - clause: teraterm_ime.rectangle-defaults
+      meaning: Tera Term published defaults each border current cursor.
+    question: Trace exact original and Tera Term missing/zero parameter handling before selecting any new interpretation;
+      prior accepted behavior not superseded.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt420.erase-rect
+      - dec_vt420.selective-erase-rect
+      - teraterm_ime.rectangle-defaults
+      scope: CSI Pt ; Pl ; Pb ; Pr $ z/{
+  applies_to:
+    clauses:
+    - dec_vt420.erase-rect
+    - dec_vt420.selective-erase-rect
+    - teraterm_ime.rectangle-defaults
+    scope: DECERA and DECSERA omitted borders default top/left1 and bottom/right active page limits, not current cursor. Interpret
+      coordinates with DECOM and original rectangle clipping; cursor remains unchanged. DECERA erases characters and visual
+      attributes, DECSERA only erasable characters while retaining rendition/protection; line attributes unchanged. Explicit-zero,
+      inverted rectangles, wide-cell and exact DECOM/margin admission remain separate qualification. No changes to already
+      accepted DECCARA selectors or other rectangle operations.
+- id: domterm-resize-document-order
+  wire: CSI 8 ; P1 ; P2 ; mode t
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: rows-before-columns
+    effect: CSI8;rows;columns[;mode]t uses row/height count first, column/width count second. Retain DomTerm printed columns-first
+      form as documentation discrepancy. Optional DomTerm replay mode is not selected as a host resize capability or replay
+      policy. Existing CSI14 text-area geometry decision unchanged; defaults, zero, resize authority, actual committed resize
+      and host permissions remain qualification matters.
+    selected_source_profiles:
+    - xterm_controls.window-operation-extensions
+    - domterm_wire.resize-replay
+  selects:
+    domterm.resize-order: effect
+  competing_interpretations_retained: []
+  reason: Pinned DomTerm manual line7030 prints columns then rows; its parser lines1248-1253 obtains height from parameter1
+    and width from parameter2, consistent with xterm CSI8. The discrepancy can be isolated to operand order without inferring
+    full DomTerm replay support.
+  evidence_basis: Original xterm order corroborated by competing author's actual parser.
+  source_clauses:
+  - clause: domterm_wire.resize-replay
+    wire: CSI 8 ; rows ; columns [ ; mode ] t
+    section: Wire byte protocol / Window operations
+    source_revision: git 7f7a402d9781187769a4e84551da7c7fc212f6b5
+    url: https://github.com/PerBothner/DomTerm/blob/7f7a402d9781187769a4e84551da7c7fc212f6b5/doc/DomTerm.texi
+  - clause: xterm_controls.window-operation-extensions
+    wire: CSI Ps [ ; Pm ; Pm ] t
+    section: XTWINOPS, ctlseqs 1616-1696; history table 3720-3749
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: domterm-resize-document-order
+    status: material-originating-extension-conflict
+    wire: CSI 8 ; P1 ; P2 ; mode t
+    original_author_sources:
+    - clause: domterm_wire.resize-replay
+      meaning: Manual says columns then rows; pinned parser gets rows then columns.
+    - clause: xterm_controls.window-operation-extensions
+      meaning: xterm rows then columns.
+    question: Source documentation inconsistency; preserve pinned actual observation and review author intent. Existing window
+      geometry decisions unchanged.
+    decision: null
+    applies_to:
+      clauses:
+      - domterm_wire.resize-replay
+      - xterm_controls.window-operation-extensions
+      scope: CSI 8 ; P1 ; P2 ; mode t
+  applies_to:
+    clauses:
+    - domterm_wire.resize-replay
+    - xterm_controls.window-operation-extensions
+    scope: CSI8;rows;columns[;mode]t uses row/height count first, column/width count second. Retain DomTerm printed columns-first
+      form as documentation discrepancy. Optional DomTerm replay mode is not selected as a host resize capability or replay
+      policy. Existing CSI14 text-area geometry decision unchanged; defaults, zero, resize authority, actual committed resize
+      and host permissions remain qualification matters.
+- id: rlogin-sixel-background-vs-dec
+  wire: DCS P1 ; P2 ; P3 q sixels ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: dec-original-sixel-background
+    effect: For standalone DEC Sixel DCS q, P2 omitted/0/2 sets zero-bit pixel positions to current background; P2=1 preserves
+      existing pixel colors at zero bits. Do not choose RLogin complementary background, DECTID-dependent white initialization
+      or P2=5 OR extension as part of this selection. Exact composition, retained pixel ownership and unsupported P2 admission
+      remain qualification. Keep DRCS-Sixel Pt3 image tiling distinct (v2 explicitly does not support P2=1). Existing accepted
+      Sixel macro aspect remains unchanged.
+    selected_source_profiles:
+    - dec_sixel.background
+  selects:
+    sixel.background: effect
+  competing_interpretations_retained:
+  - rlogin_extensions.sixel-background-profile
+  reason: Original VT330/340 Graphics Programming May1988 Sixel parameter table explicitly distinguishes default0/2 background
+    painting and1 unchanged pixels. RLogin author documents materially different background/complement profiles. Selecting
+    original semantics avoids treating transparent holes as replacement color. No new OR compositing semantics selected.
+  evidence_basis: Original DEC source profile; explicit rejection of competing background meaning, not a blanket selection
+    of all Sixel extensions.
+  source_clauses:
+  - clause: dec_sixel.background
+    wire: P2=0|1|2
+    section: 2.14 / Sixel Data Format, page 96
+    source_revision: 2nd edition, May 1988 (EK-VT3XX-HR-002)
+    url: https://vt100.net/dec/ek-vt3xx-hr-002.pdf
+  - clause: rlogin_extensions.sixel-background-profile
+    wire: DCS P1 ; P2 ; ... q sixels ST
+    section: DCS table / DECSIXEL Pn2
+    source_revision: 2.32.0; git 85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097
+    url: https://github.com/kmiya-culti/RLogin/blob/85f9ec25f6f408157bc45a6b53ab7a6a2f4b4097/docs/ctrlcode.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: rlogin-sixel-background-vs-dec
+    status: material-originating-extension-conflict
+    wire: DCS P1 ; P2 ; P3 q sixels ST
+    original_author_sources:
+    - clause: dec_sixel.background
+      meaning: Original P2=1 preserves existing pixel colors;0/2 paint unset pixels.
+    - clause: rlogin_extensions.sixel-background-profile
+      meaning: RLogin P2=1 initializes complement of text background for color profile; other settings vary with DECTID.
+    question: Trace precise RLogin background and OR-mode semantics; do not replace accepted original Sixel interpretation.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_sixel.background
+      - rlogin_extensions.sixel-background-profile
+      scope: DCS P1 ; P2 ; P3 q sixels ST
+  applies_to:
+    clauses:
+    - dec_sixel.background
+    - rlogin_extensions.sixel-background-profile
+    scope: For standalone DEC Sixel DCS q, P2 omitted/0/2 sets zero-bit pixel positions to current background; P2=1 preserves
+      existing pixel colors at zero bits. Do not choose RLogin complementary background, DECTID-dependent white initialization
+      or P2=5 OR extension as part of this selection. Exact composition, retained pixel ownership and unsupported P2 admission
+      remain qualification. Keep DRCS-Sixel Pt3 image tiling distinct (v2 explicitly does not support P2=1). Existing accepted
+      Sixel macro aspect remains unchanged.
+- id: drcs-font-buffer-vt420-vt520
+  wire: DECDLD Pfn=0/1/2
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: vt520-two-buffer-with-vt420-compatible-allocation
+    effect: For original monochrome DEC DRCS select VT520's two soft-set slots per session by default. In two-slot mode Pfn0
+      selects first empty or slot1 if full;1/2 explicitly select slot; others ignored. Apply documented replacement and latest
+      matching Dscs semantics. Select DECDLDA1 one-slot VT420 compatibility (Pfn0/1 select slot1,2 unavailable), DECDLDA2
+      two-slot profile. No cross-session shared font store. Exact slot reduction/expansion lifetime, reset, geometry, allocation
+      policy, color terminal profile and Pt3 extended image namespace remain qualification; no actual font allocation or targeting
+      implied.
+    selected_source_profiles:
+    - dec_vt520.drcs-buffer-profile
+    - dec_vt520.drcs-allocation
+  selects:
+    drcs.buffer-profile: effect
+  competing_interpretations_retained:
+  - dec_vt420.drcs-buffer
+  reason: VT420 one buffer is a subset of later VT520 documented profile. VT520 table5-2 defines automatic slot selection
+    and replacement; DECDLDA5-47 expressly identifies one as VT420-compatible and two as default. Prefer one bounded versioned
+    resource contract with documented compatibility mode. One-slot treatment of Pfn2 is an explicit proposed unavailable-slot
+    rule, not a proven transition from the manual.
+  evidence_basis: Explicit later DEC model selection with documented compatibility allocation; expanded applicability to DECDLDA
+    requires approval.
+  source_clauses:
+  - clause: dec_vt420.drcs-buffer
+    wire: Pfn=0|1
+    section: Chapter 5 p116 / Pfn
+    source_revision: second edition, February 1992, EK-VT420-RM.002
+    url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+  - clause: dec_vt520.drcs-allocation
+    wire: CSI Ps , z
+    section: ANSI Control Functions p5-47 / DECDLDA
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  - clause: dec_vt520.drcs-buffer-profile
+    wire: DCS Pfn ; Pcn ; Pe ; Pcmw ; Pss ; Pu ; Pcmh ; Pcss { Dscs glyphs ST
+    section: ANSI Control Functions pp5-39..41 / DECDLD
+    source_revision: July 1994; EK-VT520-RM. A01
+    url: https://vt100.net/dec/ek-vt520-rm.pdf
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: drcs-font-buffer-vt420-vt520
+    status: material-originating-extension-conflict
+    wire: DECDLD Pfn=0/1/2
+    original_author_sources:
+    - clause: dec_vt420.drcs-buffer
+      meaning: 0/1 alias one buffer per session.
+    - clause: dec_vt520.drcs-buffer-profile
+      meaning: 0 first empty or1;1/2 select buffer.
+    question: Select explicitly supported model profile and replacement rules; do not merge allocator semantics.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt420.drcs-buffer
+      - dec_vt520.drcs-buffer-profile
+      scope: DECDLD Pfn=0/1/2
+  applies_to:
+    clauses:
+    - dec_vt420.drcs-buffer
+    - dec_vt520.drcs-allocation
+    - dec_vt520.drcs-buffer-profile
+    scope: For original monochrome DEC DRCS select VT520's two soft-set slots per session by default. In two-slot mode Pfn0
+      selects first empty or slot1 if full;1/2 explicitly select slot; others ignored. Apply documented replacement and latest
+      matching Dscs semantics. Select DECDLDA1 one-slot VT420 compatibility (Pfn0/1 select slot1,2 unavailable), DECDLDA2
+      two-slot profile. No cross-session shared font store. Exact slot reduction/expansion lifetime, reset, geometry, allocation
+      policy, color terminal profile and Pt3 extended image namespace remain qualification; no actual font allocation or targeting
+      implied.
+- id: drcs-94-endpoints-vs-unicode-mapping-v2
+  wire: DECDLD Pcss=0, Pcn=0/95
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: version-specific-drcs-endpoints
+    effect: Keep three independent endpoint contracts. Original DEC text/full-cell 94-set loads ignore positions0 and95 (0x20/0x7f),96-set
+      loads allow both. Pt3 DRCS-Sixel mapping v2 retains documented 96 tile positions0x20..0x7f even in its 94-set profile,
+      including defined forward carry; do not leak v2 exception into ordinary 94-set loading. Pt3 v3 admits only mapped characters0x21..0x7e
+      and Pcss0; Pcn0 or omitted starts at0x21 (mlterm v3 emitter uses0; RLogin author explicitly reports lower-bound adjustment),
+      Pcn95 or higher rejects the v3 mapping request before mutation. Do not map space/DEL endpoints or reinterpret invalid
+      v3 as v2. Exact carry/exhaustion and lifetime governed by separate mapping boundary decision. No new normal ISO2022
+      or tiling algorithm selected.
+    selected_source_profiles:
+    - dec_vt420.drcs-character-range
+    - mlterm_drcs_sixel_v2.carry
+    - mlterm_drcs_sixel_v3.mapping-v3
+    - mlterm_drcs_sixel_v3.envelope
+  selects:
+    drcs.version-endpoints: effect
+  competing_interpretations_retained: []
+  reason: Original DEC 94/96 load range is explicit; v2 document deliberately uses endpoint-inclusive tile allocation. v3
+    issue152 and published mapping change to 94 glyph positions. mlterm drcssixel-v3.c:151 actually emits Pcn0; RLogin Nov29
+    comment clamps below first character. Rejecting v3 Pcn0 would break author's own emitter. Preserve this distinct start
+    normalization; rejecting upper invalid starting position is a deliberate Howl admission choice rather than assume both
+    implementations do so.
+  evidence_basis: Version-specific source semantics plus explicit bounded negative admission. No invented uniform endpoint
+    policy.
+  source_clauses:
+  - clause: dec_vt420.drcs-character-range
+    wire: Pcn ; ... ; Pcss
+    section: Chapter 5 pp116,120 / Pcn and Pcss
+    source_revision: second edition, February 1992, EK-VT420-RM.002
+    url: https://vt100.net/mirror/mds-199909/cd3/term/vt420rm2.pdf
+  - clause: mlterm_drcs_sixel_v2.carry
+    wire: glyph allocation across Dscs
+    section: DRCS-SIXEL version 2 / note2
+    source_revision: git d774c4245ffd1b69a7551392b1ee386090829dc0
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v2
+  - clause: mlterm_drcs_sixel_v3.envelope
+    wire: DCS Pfn ; Pcn ; Pe ; Pcmw ; Pss ; 3 ; Pcmh ; 0 { SP X F [ P1 ; P2 ; P3 q ] sixels ST
+    section: DRCS-SIXEL version 3
+    source_revision: git d774c4245ffd1b69a7551392b1ee386090829dc0; author discussion 2025-11-27..2025-12-01
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v3
+  - clause: mlterm_drcs_sixel_v3.mapping-v3
+    wire: U=0x100000+((X-0x20)*63+(F-0x40))*94+(C-0x21)
+    section: DRCSMMv3
+    source_revision: git d774c4245ffd1b69a7551392b1ee386090829dc0; author discussion 2025-11-27..2025-12-01
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v3
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: drcs-94-endpoints-vs-unicode-mapping-v2
+    status: material-originating-extension-conflict
+    wire: DECDLD Pcss=0, Pcn=0/95
+    original_author_sources:
+    - clause: dec_vt420.drcs-character-range
+      meaning: Original94 set excludes 20/7F positions.
+    - clause: mlterm_drcs_sixel_v2.carry
+      meaning: Version2 uses all96 tile positions including20/7F even for94 set.
+    - clause: mlterm_drcs_sixel_v3.mapping-v3
+      meaning: Version3 deliberately changes to94 positions21..7E.
+    question: Keep Pt3 extension geometry distinct from original monochrome font loading, and determine version-specific endpoint
+      admission.
+    decision: null
+    applies_to:
+      clauses:
+      - dec_vt420.drcs-character-range
+      - mlterm_drcs_sixel_v2.carry
+      - mlterm_drcs_sixel_v3.mapping-v3
+      scope: DECDLD Pcss=0, Pcn=0/95
+  applies_to:
+    clauses:
+    - dec_vt420.drcs-character-range
+    - mlterm_drcs_sixel_v2.carry
+    - mlterm_drcs_sixel_v3.envelope
+    - mlterm_drcs_sixel_v3.mapping-v3
+    scope: Keep three independent endpoint contracts. Original DEC text/full-cell 94-set loads ignore positions0 and95 (0x20/0x7f),96-set
+      loads allow both. Pt3 DRCS-Sixel mapping v2 retains documented 96 tile positions0x20..0x7f even in its 94-set profile,
+      including defined forward carry; do not leak v2 exception into ordinary 94-set loading. Pt3 v3 admits only mapped characters0x21..0x7e
+      and Pcss0; Pcn0 or omitted starts at0x21 (mlterm v3 emitter uses0; RLogin author explicitly reports lower-bound adjustment),
+      Pcn95 or higher rejects the v3 mapping request before mutation. Do not map space/DEL endpoints or reinterpret invalid
+      v3 as v2. Exact carry/exhaustion and lifetime governed by separate mapping boundary decision. No new normal ISO2022
+      or tiling algorithm selected.
+- id: drcs-v3-plane-boundary
+  wire: DRCSMMv3 mapping domain and carry
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: v3-complete-set-domain
+    effect: 'Use v3 formula only for first697 complete 94-character sets: I=0x20, X=0x20..0x2b, F=0x40..0x7e, ordinal=(X-0x20)*63+(F-0x40)<697,
+      C=0x21..0x7e. Mapped code points U+100000..U+10FFED inclusive (65518). Forward/inverse check the same bounds. SP + C
+      is last complete set. Do not map partial SP + D set, remaining plane16 values or noncharacters U+10FFFE/10FFFF. For
+      mapped Pt3 load crossing last supported position reject whole load before glyph/association mutation; do not silently
+      wrap or overwrite earlier allocations. Nonmapped DRCS designation beyond this range is a separate unselected mode. Later
+      published larger X/F tuple domain and full-plane range retained as source alternatives; no claim later author mandates
+      this conservative stop rule.'
+    selected_source_profiles:
+    - mlterm_drcs_sixel_v3.draft-v3-domain
+    - mlterm_drcs_sixel_v3.mapping-v3
+  selects:
+    drcs.v3-domain: effect
+  competing_interpretations_retained:
+  - mlterm_drcs_sixel_v3.mapping-code-observation
+  reason: Hayaki Saito's original issue152 draft explicitly specifies 697 complete sets ending10FFED; later RLogin summary
+    and mlterm document allow a broader tuple range, with formula capable of exceeding Unicode. The later range would include
+    a partial final set and two noncharacters. Pinned code forward mapping lacks explicit end check. A complete-set bijection
+    preserves 94-glyph structure and avoids partial-font allocation ambiguity; sacrifices only16 additional private-use scalars.
+    Stop rather than implicit cyclic overwrite. Exact allocation failure is proposed Howl behavior.
+  evidence_basis: Explicit conservative source-version choice; no latest-author consensus claimed. Complete-set capacity and
+    inverse formula checked arithmetically.
+  source_clauses:
+  - clause: mlterm_drcs_sixel_v3.draft-v3-domain
+    wire: DRCSMMv3 draft PUA range
+    section: RLogin issue152 original draft, 2025-11-27; followup 2025-11-28
+    source_revision: git d774c4245ffd1b69a7551392b1ee386090829dc0; author discussion 2025-11-27..2025-12-01
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v3
+  - clause: mlterm_drcs_sixel_v3.mapping-code-observation
+    wire: DRCSMMv3 conversion and tile carry
+    section: vt_drcs.c:181-275; vt_parser.c:2385-2436
+    source_revision: git d774c4245ffd1b69a7551392b1ee386090829dc0; author discussion 2025-11-27..2025-12-01
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v3
+  - clause: mlterm_drcs_sixel_v3.mapping-v3
+    wire: U=0x100000+((X-0x20)*63+(F-0x40))*94+(C-0x21)
+    section: DRCSMMv3
+    source_revision: git d774c4245ffd1b69a7551392b1ee386090829dc0; author discussion 2025-11-27..2025-12-01
+    url: https://github.com/arakiken/mlterm/blob/d774c4245ffd1b69a7551392b1ee386090829dc0/drcssixel/DRCS-SIXEL-v3
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: drcs-v3-plane-boundary
+    status: material-originating-extension-conflict
+    wire: DRCSMMv3 mapping domain and carry
+    original_author_sources:
+    - clause: mlterm_drcs_sixel_v3.draft-v3-domain
+      meaning: Earlier draft697 full sets ending10FFED, later glyph allocation outside mapping unspecified.
+    - clause: mlterm_drcs_sixel_v3.mapping-v3
+      meaning: Later published U range100000..10FFFF, X through2F yields additional designation combinations.
+    - clause: mlterm_drcs_sixel_v3.mapping-code-observation
+      meaning: Forward formula does not show plane upper-bound check; carry through full X roster.
+    question: Resolve source revision applicability, final partial repertoire, noncharacters U+10FFFE/10FFFF and overflow/exhaustion
+      behavior without assuming all X/F/C tuples map to valid Unicode.
+    decision: null
+    applies_to:
+      clauses:
+      - mlterm_drcs_sixel_v3.draft-v3-domain
+      - mlterm_drcs_sixel_v3.mapping-code-observation
+      - mlterm_drcs_sixel_v3.mapping-v3
+      scope: DRCSMMv3 mapping domain and carry
+  applies_to:
+    clauses:
+    - mlterm_drcs_sixel_v3.draft-v3-domain
+    - mlterm_drcs_sixel_v3.mapping-code-observation
+    - mlterm_drcs_sixel_v3.mapping-v3
+    scope: 'Use v3 formula only for first697 complete 94-character sets: I=0x20, X=0x20..0x2b, F=0x40..0x7e, ordinal=(X-0x20)*63+(F-0x40)<697,
+      C=0x21..0x7e. Mapped code points U+100000..U+10FFED inclusive (65518). Forward/inverse check the same bounds. SP + C
+      is last complete set. Do not map partial SP + D set, remaining plane16 values or noncharacters U+10FFFE/10FFFF. For
+      mapped Pt3 load crossing last supported position reject whole load before glyph/association mutation; do not silently
+      wrap or overwrite earlier allocations. Nonmapped DRCS designation beyond this range is a separate unselected mode. Later
+      published larger X/F tuple domain and full-plane range retained as source alternatives; no claim later author mandates
+      this conservative stop rule.'
+- id: gip-readme-vs-draft-envelope
+  wire: DCS u/r/s/d versus DCS ! g
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: gip-formal-draft-envelope
+    effect: Select exact GIP LaTeX draft revision0 DCS ! g with operation header o=u/r/s/d/q. Do not admit older README separate
+      DCS finals u/r/s/d as GIP aliases. Missing/unknown operation ignored within this complete string; use exact operation
+      value rather than first-character fallback. Other DCS families unchanged. Parser limits, cancellation, flag grammar
+      and draft targeting remain separate.
+    selected_source_profiles:
+    - good_image_protocol.envelope
+    - contour_dispatch_profiles.gip-parser-profile
+  selects:
+    gip.envelope: effect
+  competing_interpretations_retained:
+  - good_image_protocol.readme-older-envelope
+  reason: The pinned formal proposal and actual Contour function registry agree on !g envelope and operation header. README
+    at same revision retains obsolete-looking separate finals. Earlier working-group issue chronology remains unverified;
+    this choice does not assert an alias ever implemented or identify earliest proposal. Current formal draft is sufficient
+    for choosing the envelope.
+  evidence_basis: Explicit formal-draft choice with pinned implementation corroboration.
+  source_clauses:
+  - clause: contour_dispatch_profiles.gip-parser-profile
+    wire: DCS ! g message ST
+    section: MessageParser.cpp/h; Screen::hookGoodImageProtocol
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+  - clause: good_image_protocol.envelope
+    wire: DCS ! g o=operation[,headers][;body] ST
+    section: Syntax
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  - clause: good_image_protocol.readme-older-envelope
+    wire: DCS u|r|s|d message ST
+    section: README Protocol Synopsis (same repository revision)
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: gip-readme-vs-draft-envelope
+    status: material-originating-extension-conflict
+    wire: DCS u/r/s/d versus DCS ! g
+    original_author_sources:
+    - clause: good_image_protocol.readme-older-envelope
+      meaning: README lists separate DCS final bytes.
+    - clause: good_image_protocol.envelope
+      meaning: Exact draft uses !g and operation header.
+    - clause: contour_dispatch_profiles.gip-parser-profile
+      meaning: Pinned Contour route uses !g.
+    question: Trace earlier working-group proposal and revision chronology; do not assume legacy finals are accepted.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_dispatch_profiles.gip-parser-profile
+      - good_image_protocol.envelope
+      - good_image_protocol.readme-older-envelope
+      scope: DCS u/r/s/d versus DCS ! g
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.gip-parser-profile
+    - good_image_protocol.envelope
+    - good_image_protocol.readme-older-envelope
+    scope: Select exact GIP LaTeX draft revision0 DCS ! g with operation header o=u/r/s/d/q. Do not admit older README separate
+      DCS finals u/r/s/d as GIP aliases. Missing/unknown operation ignored within this complete string; use exact operation
+      value rather than first-character fallback. Other DCS families unchanged. Parser limits, cancellation, flag grammar
+      and draft targeting remain separate.
+- id: gip-required-format-vs-default
+  wire: DCS ! g o=u without f
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: gip-explicit-format-required
+    effect: Require explicit f=1/2/3/4 for both named upload o=u and one-shot upload/render o=s. f=1 explicitly selects Auto;
+      missing f silently ignores entire operation even when status requested, with no resource or visible mutation. Present
+      but invalid f never defaults to Auto or RGB; for otherwise admitted request with requested status use invalid-data status2.
+      Keep missing-format precedence over subsequent validation. Named-upload requirement is explicit in draft; applying same
+      requirement to oneshot is a proposed uniform Howl contract based on combined-parameter semantics, not explicit oneshot
+      omission text. Full flag syntax, payload limits and actual implementation targeting separate.
+    selected_source_profiles:
+    - good_image_protocol.upload
+    - good_image_protocol.oneshot
+    - good_image_protocol.formats
+  selects:
+    gip.format-admission: effect
+  competing_interpretations_retained:
+  - contour_dispatch_profiles.gip-upload-profile
+  - contour_dispatch_profiles.gip-render-query-profile
+  reason: Draft upload syntax explicitly requires f and says omission silently ignored. One-shot lists same formats and is
+    combined upload/render. Contour toImageFormat defaults missing to Auto; oneshot invalid explicit format can fall through
+    value_or RGB. Require deliberate selection and avoid guessing malformed data's format. Auto remains expressible as f=1.
+  evidence_basis: Published named-upload contract plus explicitly proposed consistent oneshot admission; no claim source settles
+    every malformed form.
+  source_clauses:
+  - clause: contour_dispatch_profiles.gip-render-query-profile
+    wire: DCS ! g o=r|s|q ... ST
+    section: Screen::parseGipRenderParams, handleGipRender/Query/Oneshot
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+  - clause: contour_dispatch_profiles.gip-upload-profile
+    wire: DCS ! g o=u ... ST
+    section: Screen::handleGipUpload, toImageFormat, uploadImage
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+  - clause: good_image_protocol.formats
+    wire: f=1|2|3|4
+    section: Supported Image Formats; Data Validation
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  - clause: good_image_protocol.oneshot
+    wire: DCS ! g o=s,f=format[,w=width,h=height,r=rows,c=cols,a=alignment,z=resize,u,s,l,L=layer];!base64 ST
+    section: Semantics / Upload and Render Image; Syntax
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  - clause: good_image_protocol.upload
+    wire: DCS ! g o=u,n=name,f=format[,w=width,h=height][,s];!base64 ST
+    section: Semantics / Upload Image; Syntax / Upload Image
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: gip-required-format-vs-default
+    status: material-originating-extension-conflict
+    wire: DCS ! g o=u without f
+    original_author_sources:
+    - clause: good_image_protocol.upload
+      meaning: Author draft explicitly requires f, missing silently ignored.
+    - clause: contour_dispatch_profiles.gip-upload-profile
+      meaning: Pinned toImageFormat defaults Auto if absent.
+    question: Select admission and response for omitted/invalid format, including oneshot, only after source reconciliation.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_dispatch_profiles.gip-upload-profile
+      - good_image_protocol.upload
+      scope: DCS ! g o=u without f
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.gip-render-query-profile
+    - contour_dispatch_profiles.gip-upload-profile
+    - good_image_protocol.formats
+    - good_image_protocol.oneshot
+    - good_image_protocol.upload
+    scope: Require explicit f=1/2/3/4 for both named upload o=u and one-shot upload/render o=s. f=1 explicitly selects Auto;
+      missing f silently ignores entire operation even when status requested, with no resource or visible mutation. Present
+      but invalid f never defaults to Auto or RGB; for otherwise admitted request with requested status use invalid-data status2.
+      Keep missing-format precedence over subsequent validation. Named-upload requirement is explicit in draft; applying same
+      requirement to oneshot is a proposed uniform Howl contract based on combined-parameter semantics, not explicit oneshot
+      omission text. Full flag syntax, payload limits and actual implementation targeting separate.
+- id: gip-upload-status-validation
+  wire: DCS ! g o=u ... ,s;body ST
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: gip-status-after-actual-resource-admission
+    effect: For GIP named upload, missing/invalid name (not ASCII alphanumeric/underscore length1..512) silently ignores request
+      even with status requested, consistent with draft. Missing f remains silently ignored per separate choice. For otherwise
+      admitted upload requesting status:0 only after successful validated decode and accepted image resource/name association;2
+      malformed/corrupt/unsupported image data, bad format, empty body or dimension mismatch;3 resource limit exceeded. Failed
+      upload must leave existing named association and placed image references intact; no partial replacement or success on
+      logged decode failure. No ordinary status if not requested. Exact flag admission, accounting/eviction transaction and
+      error priority when several defects present remain separate qualification; proposed failed-replacement atomicity is
+      explicit Howl constraint. Do not infer full oneshot placement/status behavior from this named-upload choice.
+    selected_source_profiles:
+    - good_image_protocol.upload
+    - good_image_protocol.name
+    - good_image_protocol.status
+  selects:
+    gip.upload-status: effect
+  competing_interpretations_retained:
+  - contour_dispatch_profiles.gip-upload-profile
+  reason: Formal draft name paragraph demands silent ignore; upload response table distinguishes invalid data and resource
+    failure from successful upload. Contour validates name but returns2 with s, and calls void uploadImage then sends0 even
+    when PNG decode path can fail; no explicit status3 in handler. Success must correspond to actual admitted resource, not
+    successful parser return. Retain author code discrepancy and preserve live references on failure.
+  evidence_basis: Explicit formal-draft status contract with additional no-partial-replacement invariant; not an observed
+    runtime proof or blanket host allocation requirement.
+  source_clauses:
+  - clause: contour_dispatch_profiles.gip-upload-profile
+    wire: DCS ! g o=u ... ST
+    section: Screen::handleGipUpload, toImageFormat, uploadImage
+    source_revision: git 829ff29e1d19053e83952fa6ffd48679abd53e4a
+    url: https://github.com/contour-terminal/contour/blob/829ff29e1d19053e83952fa6ffd48679abd53e4a/src/vtbackend/Screen.cpp
+  - clause: good_image_protocol.name
+    wire: n=identifier
+    section: Semantics / Image Name Constraints
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  - clause: good_image_protocol.status
+    wire: DCS ! g s=0|1|2|3 ST
+    section: Syntax / Upload and Render response tables
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  - clause: good_image_protocol.upload
+    wire: DCS ! g o=u,n=name,f=format[,w=width,h=height][,s];!base64 ST
+    section: Semantics / Upload Image; Syntax / Upload Image
+    source_revision: git 83e4827d024c227661077b502bdb88ed12706174
+    url: https://github.com/contour-terminal/terminal-good-image-protocol/blob/83e4827d024c227661077b502bdb88ed12706174/spec/vt-good-image-protocol.tex
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: gip-upload-status-validation
+    status: material-originating-extension-conflict
+    wire: DCS ! g o=u ... ,s;body ST
+    original_author_sources:
+    - clause: good_image_protocol.upload
+      meaning: Status0 requires upload success,2 invalid including corrupt data,3 resource limit.
+    - clause: good_image_protocol.name
+      meaning: Invalid names silently ignored in source paragraph.
+    - clause: contour_dispatch_profiles.gip-upload-profile
+      meaning: Invalid name with s returns2; PNG decode failure can log without preventing status0; no explicit limit status3.
+    question: Resolve invalid-name status and successful resource admission, preserving draft and pinned implementation distinction.
+      No policy choice.
+    decision: null
+    applies_to:
+      clauses:
+      - contour_dispatch_profiles.gip-upload-profile
+      - good_image_protocol.name
+      - good_image_protocol.upload
+      scope: DCS ! g o=u ... ,s;body ST
+  applies_to:
+    clauses:
+    - contour_dispatch_profiles.gip-upload-profile
+    - good_image_protocol.name
+    - good_image_protocol.status
+    - good_image_protocol.upload
+    scope: For GIP named upload, missing/invalid name (not ASCII alphanumeric/underscore length1..512) silently ignores request
+      even with status requested, consistent with draft. Missing f remains silently ignored per separate choice. For otherwise
+      admitted upload requesting status:0 only after successful validated decode and accepted image resource/name association;2
+      malformed/corrupt/unsupported image data, bad format, empty body or dimension mismatch;3 resource limit exceeded. Failed
+      upload must leave existing named association and placed image references intact; no partial replacement or success on
+      logged decode failure. No ordinary status if not requested. Exact flag admission, accounting/eviction transaction and
+      error priority when several defects present remain separate qualification; proposed failed-replacement atomicity is
+      explicit Howl constraint. Do not infer full oneshot placement/status behavior from this named-upload choice.
 pending_reconciliation:
 - id: iterm-feature-mouse-button-table
   status: material-originating-extension-conflict
@@ -33012,158 +33676,3 @@ pending_reconciliation:
     - iterm2_feature_reporting.file
     - iterm2_feature_reporting.focus
     scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
-- id: teraterm-rectangle-omission-defaults
-  status: material-originating-extension-conflict
-  wire: CSI Pt ; Pl ; Pb ; Pr $ z/{
-  original_author_sources:
-  - clause: dec_vt420.erase-rect
-    meaning: Original DEC area selection uses defined top-left and lower-right defaults.
-  - clause: dec_vt420.selective-erase-rect
-    meaning: Original selective rectangle uses original area grammar.
-  - clause: teraterm_ime.rectangle-defaults
-    meaning: Tera Term published defaults each border current cursor.
-  question: Trace exact original and Tera Term missing/zero parameter handling before selecting any new interpretation; prior
-    accepted behavior not superseded.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt420.erase-rect
-    - dec_vt420.selective-erase-rect
-    - teraterm_ime.rectangle-defaults
-    scope: CSI Pt ; Pl ; Pb ; Pr $ z/{
-- id: domterm-resize-document-order
-  status: material-originating-extension-conflict
-  wire: CSI 8 ; P1 ; P2 ; mode t
-  original_author_sources:
-  - clause: domterm_wire.resize-replay
-    meaning: Manual says columns then rows; pinned parser gets rows then columns.
-  - clause: xterm_controls.window-operation-extensions
-    meaning: xterm rows then columns.
-  question: Source documentation inconsistency; preserve pinned actual observation and review author intent. Existing window
-    geometry decisions unchanged.
-  decision: null
-  applies_to:
-    clauses:
-    - domterm_wire.resize-replay
-    - xterm_controls.window-operation-extensions
-    scope: CSI 8 ; P1 ; P2 ; mode t
-- id: rlogin-sixel-background-vs-dec
-  status: material-originating-extension-conflict
-  wire: DCS P1 ; P2 ; P3 q sixels ST
-  original_author_sources:
-  - clause: dec_sixel.background
-    meaning: Original P2=1 preserves existing pixel colors;0/2 paint unset pixels.
-  - clause: rlogin_extensions.sixel-background-profile
-    meaning: RLogin P2=1 initializes complement of text background for color profile; other settings vary with DECTID.
-  question: Trace precise RLogin background and OR-mode semantics; do not replace accepted original Sixel interpretation.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_sixel.background
-    - rlogin_extensions.sixel-background-profile
-    scope: DCS P1 ; P2 ; P3 q sixels ST
-- id: drcs-font-buffer-vt420-vt520
-  status: material-originating-extension-conflict
-  wire: DECDLD Pfn=0/1/2
-  original_author_sources:
-  - clause: dec_vt420.drcs-buffer
-    meaning: 0/1 alias one buffer per session.
-  - clause: dec_vt520.drcs-buffer-profile
-    meaning: 0 first empty or1;1/2 select buffer.
-  question: Select explicitly supported model profile and replacement rules; do not merge allocator semantics.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt420.drcs-buffer
-    - dec_vt520.drcs-buffer-profile
-    scope: DECDLD Pfn=0/1/2
-- id: drcs-94-endpoints-vs-unicode-mapping-v2
-  status: material-originating-extension-conflict
-  wire: DECDLD Pcss=0, Pcn=0/95
-  original_author_sources:
-  - clause: dec_vt420.drcs-character-range
-    meaning: Original94 set excludes 20/7F positions.
-  - clause: mlterm_drcs_sixel_v2.carry
-    meaning: Version2 uses all96 tile positions including20/7F even for94 set.
-  - clause: mlterm_drcs_sixel_v3.mapping-v3
-    meaning: Version3 deliberately changes to94 positions21..7E.
-  question: Keep Pt3 extension geometry distinct from original monochrome font loading, and determine version-specific endpoint
-    admission.
-  decision: null
-  applies_to:
-    clauses:
-    - dec_vt420.drcs-character-range
-    - mlterm_drcs_sixel_v2.carry
-    - mlterm_drcs_sixel_v3.mapping-v3
-    scope: DECDLD Pcss=0, Pcn=0/95
-- id: drcs-v3-plane-boundary
-  status: material-originating-extension-conflict
-  wire: DRCSMMv3 mapping domain and carry
-  original_author_sources:
-  - clause: mlterm_drcs_sixel_v3.draft-v3-domain
-    meaning: Earlier draft697 full sets ending10FFED, later glyph allocation outside mapping unspecified.
-  - clause: mlterm_drcs_sixel_v3.mapping-v3
-    meaning: Later published U range100000..10FFFF, X through2F yields additional designation combinations.
-  - clause: mlterm_drcs_sixel_v3.mapping-code-observation
-    meaning: Forward formula does not show plane upper-bound check; carry through full X roster.
-  question: Resolve source revision applicability, final partial repertoire, noncharacters U+10FFFE/10FFFF and overflow/exhaustion
-    behavior without assuming all X/F/C tuples map to valid Unicode.
-  decision: null
-  applies_to:
-    clauses:
-    - mlterm_drcs_sixel_v3.draft-v3-domain
-    - mlterm_drcs_sixel_v3.mapping-code-observation
-    - mlterm_drcs_sixel_v3.mapping-v3
-    scope: DRCSMMv3 mapping domain and carry
-- id: gip-readme-vs-draft-envelope
-  status: material-originating-extension-conflict
-  wire: DCS u/r/s/d versus DCS ! g
-  original_author_sources:
-  - clause: good_image_protocol.readme-older-envelope
-    meaning: README lists separate DCS final bytes.
-  - clause: good_image_protocol.envelope
-    meaning: Exact draft uses !g and operation header.
-  - clause: contour_dispatch_profiles.gip-parser-profile
-    meaning: Pinned Contour route uses !g.
-  question: Trace earlier working-group proposal and revision chronology; do not assume legacy finals are accepted.
-  decision: null
-  applies_to:
-    clauses:
-    - contour_dispatch_profiles.gip-parser-profile
-    - good_image_protocol.envelope
-    - good_image_protocol.readme-older-envelope
-    scope: DCS u/r/s/d versus DCS ! g
-- id: gip-required-format-vs-default
-  status: material-originating-extension-conflict
-  wire: DCS ! g o=u without f
-  original_author_sources:
-  - clause: good_image_protocol.upload
-    meaning: Author draft explicitly requires f, missing silently ignored.
-  - clause: contour_dispatch_profiles.gip-upload-profile
-    meaning: Pinned toImageFormat defaults Auto if absent.
-  question: Select admission and response for omitted/invalid format, including oneshot, only after source reconciliation.
-  decision: null
-  applies_to:
-    clauses:
-    - contour_dispatch_profiles.gip-upload-profile
-    - good_image_protocol.upload
-    scope: DCS ! g o=u without f
-- id: gip-upload-status-validation
-  status: material-originating-extension-conflict
-  wire: DCS ! g o=u ... ,s;body ST
-  original_author_sources:
-  - clause: good_image_protocol.upload
-    meaning: Status0 requires upload success,2 invalid including corrupt data,3 resource limit.
-  - clause: good_image_protocol.name
-    meaning: Invalid names silently ignored in source paragraph.
-  - clause: contour_dispatch_profiles.gip-upload-profile
-    meaning: Invalid name with s returns2; PNG decode failure can log without preventing status0; no explicit limit status3.
-  question: Resolve invalid-name status and successful resource admission, preserving draft and pinned implementation distinction.
-    No policy choice.
-  decision: null
-  applies_to:
-    clauses:
-    - contour_dispatch_profiles.gip-upload-profile
-    - good_image_protocol.name
-    - good_image_protocol.upload
-    scope: DCS ! g o=u ... ,s;body ST
