@@ -27621,6 +27621,33 @@ specifications:
           sha256: de95ad6125e66849b37365234ec4399ace7b2bdb297b4067d5200b219a055341
           location: set_mode_from_const INBAND_RESIZE_NOTIFICATION
           meaning: Every SET invokes notify_child_of_resize callback, RESET only flag; actual report geometry/timing not proven.
+        howl_qualification_20261126_resize_01:
+          scope: Every SET occurrence emits the current report, including repeated SET in a group and enabled restore. Disabled/reset
+            path emits no resize report. Grouped enable saturation and allocation failures preserve existing mode and replies.
+            Live local worker child verifies initial and repeated SET, RESET then later grid change.
+          method: Preserved Rockorager author Markdown SHA256 30f0f454fb20bfc21b0d3ebeee989c02bffffcc9cf4cc19432ccefd2dfc7f1e8;
+            red-green native owner and actual C peer; deterministic allocation/rollback/pressure proofs and actual local PTY
+            worker child; no blanket FULL promotion
+          baseline: 0f604e8b17ccd88d5b9251ea3e846d4a02654428
+      test_locations:
+      - file: howl-vt/src/terminal.zig
+        test: mode2048 repeated enable reports unknown pixels without any resize
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: mode2048 grouped repeated enables preserve reply framing and all occurrences
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: mode2048 grouped enable failure leaves all modes and pending replies untouched
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: mode2048 enable allocation failure is transactional and reusable
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: in-band resize mode emits transactional iTerm2 and Kitty reports
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: live in-band resize reports follow committed grid and font geometry before later input
+        relation: protocol-family
     - id: detection
       section: Detection and Enabling
       level: defined
@@ -27637,6 +27664,22 @@ specifications:
       - kind: related
         clause: dec_vt420.report-mode
         role: reply
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: in-band resize mode emits transactional iTerm2 and Kitty reports
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: live in-band resize reports follow committed grid and font geometry before later input
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_resize_01:
+          scope: DECRQM returns exact supported state2 before enable, state1 after enable, state2 after reset, with dollar
+            intermediate. Actual child witnesses reply ordering around repeated enable; DECSTR resets mode. No unsupported-mode
+            example spelling copied.
+          method: Preserved Rockorager author Markdown SHA256 30f0f454fb20bfc21b0d3ebeee989c02bffffcc9cf4cc19432ccefd2dfc7f1e8;
+            red-green native owner and actual C peer; deterministic allocation/rollback/pressure proofs and actual local PTY
+            worker child; no blanket FULL promotion
+          baseline: 0f604e8b17ccd88d5b9251ea3e846d4a02654428
     - id: report
       section: Reports
       level: defined
@@ -27665,6 +27708,41 @@ specifications:
           location: 44-60
           meaning: Pinned encoder emits CSI48;rows;cols;rows*cell_height;cols*cell_width t, corroborating wire format. Host
             lifecycle separately qualified.
+        howl_qualification_20261126_resize_01:
+          scope: Exact CSI48 rows/columns/text-height/text-width report with unknown pixels zero and known pixels computed
+            from committed lattice excluding surface padding. Native zero-pair preserves prior known pixels and now reports
+            those same pixels; native C peer checks exact report. Pixel-only and topology changes, seven/eight-bit reply forms,
+            and actual worker font/grid geometry validated. Receiving-client unknown colon subparameter handling and remote
+            consumers not qualified.
+          method: Preserved Rockorager author Markdown SHA256 30f0f454fb20bfc21b0d3ebeee989c02bffffcc9cf4cc19432ccefd2dfc7f1e8;
+            red-green native owner and actual C peer; deterministic allocation/rollback/pressure proofs and actual local PTY
+            worker child; no blanket FULL promotion
+          baseline: 0f604e8b17ccd88d5b9251ea3e846d4a02654428
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: in-band resize mode emits transactional iTerm2 and Kitty reports
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: mode2048 repeated enable reports unknown pixels without any resize
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: mode2048 grouped repeated enables preserve reply framing and all occurrences
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: prepared resize commits exact eight-bit report once
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native resize preserves pixels on zero pair and commits pixel-only identity
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: pixel-only geometry prepare preserves storage through every allocation failure and discard
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: live in-band resize reports follow committed grid and font geometry before later input
+        relation: protocol-family
+      - file: howl-pty/src/howl_pty.zig
+        test: PTY pixel extents start and resize atomically without a renderer dependency
+        relation: protocol-family
     - id: ordering
       section: Implementation Notes
       level: defined
@@ -27679,6 +27757,46 @@ specifications:
       - kind: related
         clause: rockorager_resize.report
         role: ordering
+      test_locations:
+      - file: howl-app/src/terminal.zig
+        test: live in-band resize reports follow committed grid and font geometry before later input
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: app canonical PTY resize failure discards prepared VT without changing geometry
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: pixel-only geometry prepare preserves storage through every allocation failure and discard
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: pixel geometry prepare preserves state through every allocation failure and discard
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: terminal resize report allocation failures preserve state
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: in-band resize report saturation preserves dimensions and pending output
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: prepared resize commits exact eight-bit report once
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native resize preserves pixels on zero pair and commits pixel-only identity
+        relation: protocol-family
+      - file: howl-pty/src/howl_pty.zig
+        test: PTY pixel extents start and resize atomically without a renderer dependency
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_resize_01:
+          scope: Prepared VT resize reserves report and geometry atomically; commit publishes after successful PTY ioctl,
+            preserves earlier reply bytes, and failure/discard leaves geometry and replies unchanged. Native zero-pair reports
+            preserved lattice, allocation and bounded reply saturation proofs linked. Real local child verifies report bytes
+            ahead of later raw sentinel and reads current TTY rows/columns, including same-grid font change; PTY owner separately
+            proves actual pixel extents via TIOCGWINSZ. Low-level cell-pixel setter outside resize transaction and nonlocal
+            output owners not qualified.
+          method: Preserved Rockorager author Markdown SHA256 30f0f454fb20bfc21b0d3ebeee989c02bffffcc9cf4cc19432ccefd2dfc7f1e8;
+            red-green native owner and actual C peer; deterministic allocation/rollback/pressure proofs and actual local PTY
+            worker child; no blanket FULL promotion
+          baseline: 0f604e8b17ccd88d5b9251ea3e846d4a02654428
   rockorager_visibility:
     title: Private Mode for Terminal Visibility Reports
     author: Rockorager

@@ -395,8 +395,11 @@ int main(void) {
     CHECK(hvt_observe(value,0,&before)==HVT_OK);
     CHECK(hvt_resize(value,4,16,0,20)==HVT_INVALID_ARGUMENT);
     CHECK(hvt_observe(value,0,&after)==HVT_OK && memcmp(&before,&after,sizeof before)==0);
+    CHECK(feed_all(value,"\033[?2048h")==HVT_OK && drain(value)==HVT_OK);
     CHECK(hvt_resize(value,4,16,0,0)==HVT_OK);
     CHECK(hvt_observe(value,0,&state)==HVT_OK && state.cell_width==10 && state.cell_height==20);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==strlen("\033[48;4;16;80;160t") && memcmp(bytes,"\033[48;4;16;80;160t",count)==0);
+    CHECK(drain(value)==HVT_OK && feed_all(value,"\033[?2048l")==HVT_OK);
     CHECK(feed_all(value,"\033[H\033[2Jalpha e\xcc\x81 \xe7\x95\x8c\r\n\033]8;;https://example.invalid/vt\007\xe7\x95\x8c\033]8;;\007\r\n\033[8msecret\033[0m public")==HVT_OK);
     CHECK(hvt_search(value,(const uint8_t *)"alpha",5,0,0,0,0,&match)==HVT_OK && match.found && match.start_column==0 && match.end_column==4);
     CHECK(hvt_expand_selection(value,HVT_SELECTION_WORD,0,match.row,1,16,0,&range)==HVT_OK && range.found && range.end_column==4);

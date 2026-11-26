@@ -2981,3 +2981,75 @@ test "live maximum Kitty text commit reaches child intact before later input" {
     try std.testing.expect(owner.takeInputActivity());
     try std.testing.expect(owner.snapshot().failure == null);
 }
+
+test "live in-band resize reports follow committed grid and font geometry before later input" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const command = "stty raw -echo; printf '\\033[?2048$p\\033[?2048;2048h\\033[?2048$p\\033]0;READY\\007'; " ++
+        "report() { IFS= read -r wire || exit 1; printf '\\033]0;%s-%s\\007' \"$(stty size)\" \"$(printf '%s' \"$wire\" | od -v -An -tx1 | tr -d ' \\n')\"; }; " ++
+        "report; report; report; IFS= read -r ack || exit 1; printf '\\033[?2048l\\033[?2048$p\\033]0;DISABLED\\007'; report; sleep 30";
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    const Check = struct {
+        fn report(t: *Terminal, rows: u16, cols: u16, cell: commands.Size, initial: bool) !void {
+            var report_buf: [96]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&report_buf, "\x1b[48;{d};{d};{d};{d}t", .{
+                rows, cols, @as(u32, rows) * cell.height, @as(u32, cols) * cell.width,
+            });
+            var bytes_buf: [256]u8 = undefined;
+            const bytes = if (initial)
+                try std.fmt.bufPrint(&bytes_buf, "\x1b[?2048;2$y{s}{s}\x1b[?2048;1$y", .{ wire, wire })
+            else
+                wire;
+            var title_buf: [512]u8 = undefined;
+            // bytesToHex returns an array for fixed slices; print the exact
+            // dynamic byte slice into a bounded output instead.
+            var encoded: [512]u8 = undefined;
+            const digits = "0123456789abcdef";
+            for (bytes, 0..) |byte, i| {
+                encoded[2 * i] = digits[byte >> 4];
+                encoded[2 * i + 1] = digits[byte & 15];
+            }
+            const title = try std.fmt.bufPrint(&title_buf, "{d} {d}-{s}", .{ rows, cols, encoded[0 .. bytes.len * 2] });
+            try t.submit(.{ .input = .{ .bytes = "\n" } });
+            try wait(t, title);
+        }
+        fn wait(t: *Terminal, expected: []const u8) !void {
+            waitTitle(t, expected) catch |failure| {
+                const status = t.snapshot();
+                std.debug.print("resize proof expected title={s}; actual title={s}\n", .{ expected, status.title[0..status.title_len] });
+                return failure;
+            };
+        }
+    };
+    try waitTitle(owner, "READY");
+    const initial = try owner.reconfigure(testPresentation(), null);
+    try std.testing.expectEqual(@as(u16, 4), initial.rows);
+    try std.testing.expectEqual(@as(u16, 20), initial.columns);
+    try Check.report(owner, initial.rows, initial.columns, initial.cell_size, true);
+
+    var larger = testPresentation();
+    larger.text.private.regular.path.size = .{ .pixels = 22 };
+    const font = try owner.reconfigure(larger, null);
+    try std.testing.expectEqual(initial.rows, font.rows);
+    try std.testing.expectEqual(initial.columns, font.columns);
+    try std.testing.expect(!std.meta.eql(initial.cell_size, font.cell_size));
+    try Check.report(owner, font.rows, font.columns, font.cell_size, false);
+
+    try owner.submit(.{ .resize = .{ .rows = 6, .columns = 23 } });
+    try Check.report(owner, 6, 23, font.cell_size, false);
+    try owner.submit(.{ .input = .{ .bytes = "disable\n" } });
+    try Check.wait(owner, "DISABLED");
+    try owner.submit(.{ .resize = .{ .rows = 7, .columns = 24 } });
+    try owner.submit(.{ .input = .{ .bytes = "done\n" } });
+    try Check.wait(owner, "7 24-1b5b3f323034383b322479646f6e65");
+    try std.testing.expect(owner.snapshot().failure == null);
+}

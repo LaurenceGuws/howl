@@ -95,9 +95,16 @@ test "native resize preserves pixels on zero pair and commits pixel-only identit
     const pixels = owner.observe(value, 0);
     try std.testing.expect(pixels.rows == 2 and pixels.columns == 8 and pixels.cell_width == 12 and pixels.cell_height == 24);
     try std.testing.expectEqual(before.terminal_revision + 1, pixels.terminal_revision);
+    try feedAll(value, "\x1b[?2048h");
+    try owner.consumeReplies(value, try pending(value));
+    try feedAll(value, "\x1b[5n");
     try owner.resize(value, 3, 10, 0, 0);
     const preserved = owner.observe(value, 0);
     try std.testing.expect(preserved.cell_width == 12 and preserved.cell_height == 24);
+    var bytes: [128]u8 = undefined;
+    var required: usize = 0;
+    try owner.copyReplies(value, &bytes, &required);
+    try std.testing.expectEqualStrings("\x1b[0n\x1b[48;3;10;72;120t", bytes[0..required]);
     try std.testing.expectError(error.InvalidArgument, owner.resize(value, 3, 10, 0, 24));
     try std.testing.expectEqualDeep(preserved, owner.observe(value, 0));
 }

@@ -663,7 +663,9 @@ test "app canonical PTY resize failure discards prepared VT without changing geo
     try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 4, 8);
     defer core.terminal.deinit();
     try core.terminal.setCellPixelSize(8, 16);
-    try std.testing.expect((try core.terminal.feed("A")).stateChanged());
+    try std.testing.expect((try core.terminal.feed("A\x1b[?2048h\x1b[5n")).stateChanged());
+    const prior = "\x1b[48;2;4;32;32t\x1b[0n";
+    try std.testing.expectEqualStrings(prior, core.terminal.replyBytes());
     const before = core.terminal.semanticSequence();
     var transport: ResizeTransport = .{};
     const target: vt.Terminal.CellPixelSize = .{ .width = 9, .height = 17 };
@@ -677,6 +679,8 @@ test "app canonical PTY resize failure discards prepared VT without changing geo
     try std.testing.expectEqual(@as(u32, 16), core.terminal.cellPixelSize().?.height);
     try std.testing.expectEqual(@as(u21, 'A'), core.terminal.semanticView(0).cellAt(0, 0));
 
+    try std.testing.expectEqualStrings(prior, core.terminal.replyBytes());
+
     transport.fail = false;
     try core.resizeGeometryWith(&transport, 3, 5, target);
     try std.testing.expectEqual(@as(usize, 2), transport.calls);
@@ -688,6 +692,7 @@ test "app canonical PTY resize failure discards prepared VT without changing geo
     try std.testing.expectEqual(@as(u16, 5), core.terminal.semanticView(0).cols);
     try std.testing.expectEqual(@as(u32, 9), core.terminal.cellPixelSize().?.width);
     try std.testing.expectEqual(@as(u32, 17), core.terminal.cellPixelSize().?.height);
+    try std.testing.expectEqualStrings(prior ++ "\x1b[48;3;5;51;45t", core.terminal.replyBytes());
     try std.testing.expectEqual(@as(u21, 'A'), core.terminal.semanticView(0).cellAt(0, 0));
     try std.testing.expectError(error.InvalidDimensions, core.resizeGeometryWith(&transport, 3, 5, .{ .width = 65535, .height = 17 }));
     try std.testing.expectEqual(@as(usize, 2), transport.calls);

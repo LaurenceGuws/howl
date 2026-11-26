@@ -7285,7 +7285,10 @@ pub const Terminal = struct {
             if (cell.width == 0 or cell.height == 0) return error.InvalidDimensions;
         }
         var report_bytes: [98]u8 = undefined;
-        const report_len = self.prepareResizeReport(rows, cols, cell_pixels, &report_bytes);
+        // An omitted cell pair preserves the existing lattice. Format the
+        // report from the geometry that the prepared transaction will commit.
+        const report_pixels = if (cell_pixels != null) cell_pixels else self.cellPixelSize();
+        const report_len = self.prepareResizeReport(rows, cols, report_pixels, &report_bytes);
         var prepared_replies = replies.Buffer.init(self.allocator);
         errdefer prepared_replies.deinit();
         prepared_replies.copyEncodingFrom(&self.reply_buffer);
