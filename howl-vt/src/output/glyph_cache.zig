@@ -204,7 +204,9 @@ const AtlasKey = union(enum) {
     },
     underline_pattern: struct {
         width: u16,
-        height: u16,
+        numerator: u16 = 1,
+        denominator: u16 = 1,
+        phase: u8 = 0,
         dashed: bool,
     },
     generated: struct {
@@ -1101,21 +1103,38 @@ pub fn resolveSmoothWaveAtlas(
     return cacheAtlas(impl, key, width, height, 0, top, pixels);
 }
 
-/// Resolves one cell-sized dotted or dashed underline into the alpha atlas.
-pub fn resolveUnderlinePatternAtlas(atlas: *Atlas, width: u16, height: u16, dashed: bool, raster_scratch: []u8) AtlasError!AtlasRaster {
-    if (width == 0 or height == 0) return error.InvalidSize;
-    const required = std.math.mul(usize, width, height) catch return error.RasterTooLarge;
-    if (required > raster_scratch.len) return error.BufferTooSmall;
+/// Resolves one horizontal coverage mask, stretched vertically by the
+/// caller. Nonintegral scaling packs the union of rounded segments directly
+/// when it fits the bounded atlas; larger destinations use native-resolution
+/// ink and the same sampling policy as other scaled glyph masks.
+pub fn resolveUnderlinePatternAtlas(atlas: *Atlas, width: u16, numerator: u16, denominator: u16, dashed: bool, phase: u8, raster_scratch: []u8) AtlasError!AtlasRaster {
+    if (width == 0 or numerator == 0 or denominator == 0) return error.InvalidSize;
     const impl = atlasImpl(atlas);
-    const key = AtlasKey{ .underline_pattern = .{ .width = width, .height = height, .dashed = dashed } };
+    const extent = (@as(u32, width) * numerator + denominator - 1) / denominator;
+    const step: u32 = if (dashed) 5 else 2;
+    const length: u32 = if (dashed) 3 else 1;
+    if (phase >= step) return error.InvalidSize;
+    const native = numerator % denominator == 0 or extent > impl.config.width or phase != 0;
+    const n: u16 = if (native) 1 else numerator;
+    const d: u16 = if (native) 1 else denominator;
+    const mask_width: u16 = if (native) width else @intCast(extent);
+    if (mask_width > impl.config.width) return error.GlyphTooLarge;
+    if (mask_width > raster_scratch.len) return error.BufferTooSmall;
+    const key = AtlasKey{ .underline_pattern = .{ .width = width, .numerator = n, .denominator = d, .phase = phase, .dashed = dashed } };
     if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
-    const pixels = raster_scratch[0..required];
-    const step: usize = if (dashed) 5 else 2;
-    const length: usize = if (dashed) 3 else 1;
-    for (0..height) |y| for (0..width) |x| {
-        pixels[y * width + x] = if (x % step < length) 255 else 0;
-    };
-    return cacheAtlas(impl, key, width, height, 0, 0, pixels);
+    const pixels = raster_scratch[0..mask_width];
+    if (native) {
+        for (pixels, 0..) |*pixel, x| pixel.* = if ((x + phase) % step < length) 255 else 0;
+    } else {
+        @memset(pixels, 0);
+        var offset: u32 = 0;
+        while (offset < width) : (offset += step) {
+            const start = offset * n / d;
+            const ink = (@min(length, width - offset) * n + d - 1) / d;
+            @memset(pixels[start..@min(mask_width, start + ink)], 255);
+        }
+    }
+    return cacheAtlas(impl, key, mask_width, 1, 0, 0, pixels);
 }
 
 /// Resolves one implemented code-defined glyph into the fixed alpha atlas.
@@ -1194,7 +1213,7 @@ fn atlasIdentity(key: AtlasKey) AtlasIdentity {
     return switch (key) {
         .font => |v| .{ .low = @as(u64, v.glyph_id) | (@as(u64, v.face_index) << 32) | (@as(u64, @backingInt(v.variant)) << 40), .high = @as(u64, v.fit_width) << 32 },
         .smooth_wave => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.thickness) << 16) | (@as(u64, v.line_height) << 32), .high = 1 << 16 },
-        .underline_pattern => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.height) << 16) | (@as(u64, @intFromBool(v.dashed)) << 32), .high = 3 << 16 },
+        .underline_pattern => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.numerator) << 16) | (@as(u64, v.denominator) << 32) | (@as(u64, @intFromBool(v.dashed)) << 48) | (@as(u64, v.phase) << 49), .high = 3 << 16 },
         .generated => |v| .{ .low = @as(u64, v.codepoint) | (@as(u64, v.width) << 32) | (@as(u64, v.height) << 48), .high = (2 << 16) | @as(u64, v.sizing.scale) | (@as(u64, v.sizing.subscale_n) << 8) | (@as(u64, v.sizing.subscale_d) << 12) },
     };
 }
@@ -1237,10 +1256,12 @@ test "atlas lookup matches generic key equality and first match across all varia
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .subscale_n = 1, .subscale_d = 2 } } },
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .subscale_n = 1, .subscale_d = 3 } } },
         .{ .generated = .{ .codepoint = std.math.maxInt(u32), .width = std.math.maxInt(u16), .height = std.math.maxInt(u16), .sizing = .{ .scale = 255, .subscale_n = 14, .subscale_d = 15 } } },
-        .{ .underline_pattern = .{ .width = 10, .height = 1, .dashed = false } },
-        .{ .underline_pattern = .{ .width = 10, .height = 1, .dashed = true } },
-        .{ .underline_pattern = .{ .width = 11, .height = 1, .dashed = false } },
-        .{ .underline_pattern = .{ .width = 10, .height = 2, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .dashed = true } },
+        .{ .underline_pattern = .{ .width = 11, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .numerator = 2, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .denominator = 2, .dashed = false } },
+        .{ .underline_pattern = .{ .width = 10, .phase = 1, .dashed = false } },
         .{ .smooth_wave = .{ .width = std.math.maxInt(u16), .thickness = std.math.maxInt(u16), .line_height = std.math.maxInt(u16) } },
         .{ .smooth_wave = .{ .width = 10, .thickness = 1, .line_height = 20 } },
         .{ .smooth_wave = .{ .width = 11, .thickness = 1, .line_height = 20 } },
@@ -1797,4 +1818,60 @@ test "atlas height ceiling rejects impossible ink without discarding admitted pi
     for (impl.alpha.pixels.?) |value| try std.testing.expectEqual(@as(u8, 77), value);
     try std.testing.expect(impl.color.pixels == null);
     try std.testing.expect(findAtlasIndex(impl, key) == null);
+}
+
+test "underline coverage masks retain rounded segment union and bounded native phase" {
+    const atlas = try initAtlas(std.testing.allocator, .{ .regular = undefined }, .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, .{ .width = 32, .height = 32, .entry_capacity = 24 });
+    defer deinitAtlas(atlas);
+    var scratch: [32]u8 = undefined;
+    const cases = [_]struct { n: u16, d: u16, mask_width: u16, exact: bool }{
+        .{ .n = 1, .d = 1, .mask_width = 11, .exact = false },
+        .{ .n = 2, .d = 1, .mask_width = 11, .exact = false },
+        .{ .n = 1, .d = 2, .mask_width = 6, .exact = true },
+        .{ .n = 2, .d = 3, .mask_width = 8, .exact = true },
+        .{ .n = 5, .d = 3, .mask_width = 19, .exact = true },
+        .{ .n = 1, .d = 7, .mask_width = 2, .exact = true },
+        .{ .n = 7, .d = 2, .mask_width = 11, .exact = false },
+    };
+    for ([_]bool{ false, true }) |dashed| {
+        const step: usize = if (dashed) 5 else 2;
+        const ink: usize = if (dashed) 3 else 1;
+        for (cases) |case| {
+            const raster = try resolveUnderlinePatternAtlas(atlas, 11, case.n, case.d, dashed, 0, &scratch);
+            try std.testing.expectEqual(case.mask_width, raster.width);
+            try std.testing.expectEqual(@as(u16, 1), raster.height);
+            const before = atlasEntryCount(atlas);
+            try std.testing.expectEqualDeep(raster, try resolveUnderlinePatternAtlas(atlas, 11, case.n, case.d, dashed, 0, &scratch));
+            try std.testing.expectEqual(before, atlasEntryCount(atlas));
+            const pixels = atlasImpl(atlas).alpha.pixels.?;
+            for (0..raster.width) |x| {
+                var covered = false;
+                if (case.exact) {
+                    var segment: usize = 0;
+                    while (segment < 11) : (segment += step) {
+                        const left = segment * case.n / case.d;
+                        const extent = (@min(ink, 11 - segment) * case.n + case.d - 1) / case.d;
+                        covered = covered or (x >= left and x < left + extent);
+                    }
+                } else covered = x % step < ink;
+                const at = @as(usize, raster.atlas_y) * 32 + raster.atlas_x + x;
+                try std.testing.expectEqual(@as(u8, if (covered) 255 else 0), pixels[at]);
+            }
+        }
+        for (0..step) |phase| {
+            const raster = try resolveUnderlinePatternAtlas(atlas, 7, 1, 1, dashed, @intCast(phase), &scratch);
+            const pixels = atlasImpl(atlas).alpha.pixels.?;
+            for (0..7) |x| {
+                const at = @as(usize, raster.atlas_y) * 32 + raster.atlas_x + x;
+                try std.testing.expectEqual(@as(u8, if ((x + phase) % step < ink) 255 else 0), pixels[at]);
+            }
+        }
+    }
+    const before = atlasEntryCount(atlas);
+    try std.testing.expectError(error.GlyphTooLarge, resolveUnderlinePatternAtlas(atlas, 33, 1, 1, false, 0, &scratch));
+    try std.testing.expectError(error.InvalidSize, resolveUnderlinePatternAtlas(atlas, 11, 1, 0, false, 0, &scratch));
+    try std.testing.expectEqual(before, atlasEntryCount(atlas));
 }

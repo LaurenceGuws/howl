@@ -74,14 +74,17 @@ pub fn Emitter(comptime instrumented: bool) type {
             }
             var bg = try resolve(cell.attrs.bg, p, false);
             if (cell.attrs.reverse != p.reverse_screen) std.mem.swap(frame.Color, &fg, &bg);
-            if (cell.attrs.dim) fg.a = @intCast((@as(u16, fg.a) * 55 + 50) / 100);
             // Default decoration colour follows the effective text
             // foreground, including reverse video and bold defaults.
             // An explicitly assigned underline colour is independent.
-            const underline_color = if (cell.attrs.underline_color.kind == .default)
+            var underline_color = if (cell.attrs.underline_color.kind == .default)
                 fg
             else
                 try resolve(cell.attrs.underline_color, p, true);
+            if (cell.attrs.dim) {
+                fg.a = @intCast((@as(u16, fg.a) * 55 + 50) / 100);
+                underline_color.a = @intCast((@as(u16, underline_color.a) * 55 + 50) / 100);
+            }
             return .{ .fg = fg, .bg = bg, .underline = underline_color };
         }
         fn variant(a: VT.CellAttrs) cache.FontVariant {
@@ -147,61 +150,6 @@ pub fn Emitter(comptime instrumented: bool) type {
         fn solid(counter: if (instrumented) ?*u64 else void, output: []frame.Command, used: *usize, rect: frame.Rect, clip: frame.Rect, color: frame.Color) !void {
             const visible = (try frame.intersectRects(rect, clip)) orelse return;
             try append(counter, output, used, .{ .solid = .{ .rect = visible, .color = color } });
-        }
-
-        fn underline(
-            ctx: Context,
-            output: []frame.Command,
-            used: *usize,
-            allocation: frame.Rect,
-            y: i32,
-            thickness: u16,
-            line_height: u16,
-            style: @FieldType(@FieldType(VT.Cell, "attrs"), "underline_style"),
-            color: frame.Color,
-        ) !void {
-            const height = @max(@as(u16, 1), thickness);
-            switch (style) {
-                .straight, .double => {
-                    try solid(ctx.command_bytes_written, output, used, .{ .x = allocation.x, .y = y, .width = allocation.width, .height = height }, allocation, color);
-                    if (style == .double) {
-                        try solid(ctx.command_bytes_written, output, used, .{
-                            .x = allocation.x,
-                            .y = y + height + 1,
-                            .width = allocation.width,
-                            .height = height,
-                        }, allocation, color);
-                    }
-                },
-                .dotted, .dashed => {
-                    const pattern = try cache.resolveUnderlinePatternAtlas(ctx.atlas, allocation.width, height, style == .dashed, ctx.raster);
-                    const destination: frame.Rect = .{ .x = allocation.x, .y = y, .width = pattern.width, .height = pattern.height };
-                    // zig-audit: acknowledge discard
-                    // reason: Empty intersections produce no visible decoration command.
-                    _ = (try frame.intersectRects(destination, allocation)) orelse return;
-                    const size = cache.atlasSize(ctx.atlas);
-                    try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
-                        .destination = destination,
-                        .clip = allocation,
-                        .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = pattern.atlas_x, .y = pattern.atlas_y, .width = pattern.width, .height = pattern.height } },
-                        .color = color,
-                    } });
-                },
-                .curly => {
-                    const wave = try cache.resolveSmoothWaveAtlas(ctx.atlas, allocation.width, height, line_height, ctx.raster);
-                    const destination: frame.Rect = .{ .x = allocation.x, .y = y - wave.top, .width = wave.width, .height = wave.height };
-                    // zig-audit: acknowledge discard
-                    // reason: Empty intersections produce no visible decoration command.
-                    _ = (try frame.intersectRects(destination, allocation)) orelse return;
-                    const size = cache.atlasSize(ctx.atlas);
-                    try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
-                        .destination = destination,
-                        .clip = allocation,
-                        .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } },
-                        .color = color,
-                    } });
-                },
-            }
         }
 
         /// Writes private caller staging only; on error its prefix is unspecified.
@@ -374,14 +322,12 @@ pub fn Emitter(comptime instrumented: bool) type {
                 if (needsScale(cell)) {
                     if (retained_row < cell.y) continue;
                     const lead = screen.retainedCellInfoAt(retained_row - cell.y, @intCast(col)) orelse return error.UnsupportedScene;
-                    if (lead.codepoint != 0) try appendScaledDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
+                    if (lead.codepoint != 0) try appendDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
                     continue;
                 }
                 if (cell.codepoint == 0) continue;
                 const c = shared_colors orelse try colors(cell, p);
-                const allocation: frame.Rect = .{ .x = @as(i32, @intCast(col)) * ctx.cell_width, .y = 0, .width = ctx.cell_width * cell.width, .height = ctx.cell_height };
-                if (cell.attrs.underline) try underline(ctx, output, &used, allocation, line_offset + metrics.underline_y, metrics.underline_height, metrics.line_height, cell.attrs.underline_style, c.underline);
-                if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, &used, .{ .x = allocation.x, .y = line_offset + metrics.strike_y, .width = allocation.width, .height = @max(@as(u16, 1), metrics.strike_height) }, allocation, c.fg);
+                try appendDecorations(ctx, output, &used, cell, col, 0, row_clip, line_offset, metrics, c);
             };
             const decoration_end = used;
             var scalars: [scalar_limit]u32 = undefined;
@@ -578,45 +524,105 @@ pub fn Emitter(comptime instrumented: bool) type {
             };
         }
 
-        // Project scaled decorations into each row-local strip.
-        fn appendScaledDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
+        // Fit the complete decoration before clipping a physical strip.
+        // A tiny fractional rectangle cannot represent an arbitrarily
+        // thick or widely separated line; keep the admitted ink visible.
+        fn fitDecoration(rect: frame.Rect, area: frame.Rect) frame.Rect {
+            var fitted = rect;
+            fitted.height = @min(rect.height, area.height);
+            fitted.y = std.math.clamp(rect.y, area.y, area.y + @as(i32, area.height - fitted.height));
+            return fitted;
+        }
+
+        fn decorationMask(ctx: Context, output: []frame.Command, used: *usize, raster: cache.AtlasRaster, destination: frame.Rect, clip: frame.Rect, color: frame.Color) BuildError!void {
+            if (try frame.intersectRects(destination, clip) == null) return;
+            const size = cache.atlasSize(ctx.atlas);
+            try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{
+                .destination = destination,
+                .clip = clip,
+                .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                .color = color,
+            } });
+        }
+
+        fn patternedDecoration(ctx: Context, output: []frame.Command, used: *usize, sizing: ScaledLayout, destination: frame.Rect, clip: frame.Rect, dashed: bool, color: frame.Color) BuildError!void {
+            const atlas_width = cache.atlasSize(ctx.atlas).width;
+            if (sizing.base_width <= atlas_width or (sizing.numerator % sizing.denominator != 0 and destination.width <= atlas_width)) {
+                const pattern = try cache.resolveUnderlinePatternAtlas(ctx.atlas, sizing.base_width, sizing.numerator, sizing.denominator, dashed, 0, ctx.raster);
+                return decorationMask(ctx, output, used, pattern, destination, clip, color);
+            }
+            // One native-resolution chunk per base cell at most. This
+            // preserves the global pattern phase without inflating the
+            // row command ceiling with the font's pixel width.
+            var offset: u16 = 0;
+            while (offset < sizing.base_width) {
+                const width = @min(ctx.cell_width, sizing.base_width - offset);
+                const after = offset + width;
+                const left = @as(u32, offset) * sizing.numerator / sizing.denominator;
+                const right = if (after == sizing.base_width)
+                    @as(u32, destination.width)
+                else
+                    @as(u32, after) * sizing.numerator / sizing.denominator;
+                if (left < right) {
+                    var segment = destination;
+                    segment.x += @intCast(left);
+                    segment.width = @intCast(right - left);
+                    const phase: u8 = @intCast(offset % @as(u16, if (dashed) 5 else 2));
+                    const pattern = try cache.resolveUnderlinePatternAtlas(ctx.atlas, width, 1, 1, dashed, phase, ctx.raster);
+                    try decorationMask(ctx, output, used, pattern, segment, clip, color);
+                }
+                offset = after;
+            }
+        }
+
+        // Ordinary and scaled cells share one decoration geometry and mask
+        // owner. Every row sees the same complete layout, then clips its strip.
+        fn appendDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
             const sizing = try scaledLayout(ctx, cell, col, row_offset);
-            const clip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
+            const area = sizing.render_area;
+            const clip = (try frame.intersectRects(area, row_clip)) orelse return;
             if (cell.attrs.underline) {
                 const height = @max(@as(u16, 1), metrics.underline_height);
                 const y = line_offset + metrics.underline_y;
+                const raw: frame.Rect = .{ .x = sizing.allocation.x, .y = y, .width = sizing.base_width, .height = height };
+                const line = try sizing.transform(raw);
                 switch (cell.attrs.underline_style) {
-                    .straight, .double => {
-                        try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = y, .width = sizing.base_width, .height = height }), clip, resolved.underline);
-                        if (cell.attrs.underline_style == .double)
-                            try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = y + height + 1, .width = sizing.base_width, .height = height }), clip, resolved.underline);
+                    .straight => try solid(ctx.command_bytes_written, output, used, fitDecoration(line, area), clip, resolved.underline),
+                    .double => {
+                        if (area.height == 1) {
+                            try solid(ctx.command_bytes_written, output, used, fitDecoration(line, area), clip, resolved.underline);
+                        } else {
+                            const gap_min: u16 = if (area.height >= 3) 1 else 0;
+                            const thickness = @min(line.height, (area.height - gap_min) / 2);
+                            const gap = @min(try scaledExtent(1, sizing.numerator, sizing.denominator), area.height - 2 * thickness);
+                            var pair = line;
+                            pair.height = 2 * thickness + gap;
+                            pair = fitDecoration(pair, area);
+                            var first = pair;
+                            first.height = thickness;
+                            var second = first;
+                            second.y += @as(i32, thickness) + gap;
+                            try solid(ctx.command_bytes_written, output, used, first, clip, resolved.underline);
+                            try solid(ctx.command_bytes_written, output, used, second, clip, resolved.underline);
+                        }
                     },
                     .dotted, .dashed => {
-                        // Transform each segment, rather than scaling a bitmap:
-                        // fractional rounding is defined per rectangle.
-                        const step: usize = if (cell.attrs.underline_style == .dotted) 2 else 5;
-                        const width: usize = if (cell.attrs.underline_style == .dotted) 1 else 3;
-                        var offset: usize = 0;
-                        while (offset < sizing.base_width) : (offset += step) {
-                            try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{
-                                .x = sizing.allocation.x + @as(i32, @intCast(offset)),
-                                .y = y,
-                                .width = @intCast(@min(width, sizing.base_width - offset)),
-                                .height = height,
-                            }), clip, resolved.underline);
+                        const destination = fitDecoration(line, area);
+                        if (try frame.intersectRects(destination, clip) != null) {
+                            try patternedDecoration(ctx, output, used, sizing, destination, clip, cell.attrs.underline_style == .dashed, resolved.underline);
                         }
                     },
                     .curly => {
                         const wave = try cache.resolveSmoothWaveAtlas(ctx.atlas, sizing.base_width, height, metrics.line_height, ctx.raster);
-                        const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = y - wave.top, .width = wave.width, .height = wave.height });
-                        if (try frame.intersectRects(destination, clip) != null) {
-                            const size = cache.atlasSize(ctx.atlas);
-                            try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{ .destination = destination, .clip = clip, .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = wave.atlas_x, .y = wave.atlas_y, .width = wave.width, .height = wave.height } }, .color = resolved.underline } });
-                        }
+                        const destination = fitDecoration(try sizing.transform(.{ .x = sizing.allocation.x, .y = y - wave.top, .width = wave.width, .height = wave.height }), area);
+                        try decorationMask(ctx, output, used, wave, destination, clip, resolved.underline);
                     },
                 }
             }
-            if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = line_offset + metrics.strike_y, .width = sizing.base_width, .height = @max(@as(u16, 1), metrics.strike_height) }), clip, resolved.fg);
+            if (cell.attrs.strikethrough) {
+                const strike = try sizing.transform(.{ .x = sizing.allocation.x, .y = line_offset + metrics.strike_y, .width = sizing.base_width, .height = @max(@as(u16, 1), metrics.strike_height) });
+                try solid(ctx.command_bytes_written, output, used, fitDecoration(strike, area), clip, resolved.fg);
+            }
         }
 
         // Project a live scaled cluster into one row-local strip. Retaining

@@ -517,11 +517,13 @@ test "automatic command bound admits a dense fractional dotted row" {
     const held = try owner.hold();
     defer unpin(owner, held);
     const count = held.snapshot.backgrounds[0].len + held.snapshot.decorations[0].len + held.snapshot.glyphs[0].len;
-    // The prior automatic cap allowed only 512 * (1 shaped glyph + 4) + 1024.
-    try std.testing.expect(count > 512 * 5 + 1024);
+    // Each occupied fractional cell contributes exactly one mask and
+    // one shaped glyph, regardless of font width or number of dots.
+    try std.testing.expectEqual(@as(usize, 512), held.snapshot.decorations[0].len);
+    try std.testing.expectEqual(@as(usize, 512 * 2), count);
 }
 
-test "automatic row limit follows replacement font width" {
+test "automatic row limit is independent of replacement font width" {
     const Candidate = @import("output_state").State(false);
     var threaded = std.Io.Threaded.init(a, .{});
     defer threaded.deinit();
@@ -539,7 +541,7 @@ test "automatic row limit follows replacement font width" {
     var replacement = try direct.stageWorkingShared(large, .{}, 24, 80);
     defer direct.discardWorking(&replacement);
     direct.commitWorking(&replacement);
-    try std.testing.expect(direct.command_limit > before);
+    try std.testing.expectEqual(before, direct.command_limit);
     var back = try direct.stageWorkingShared(small, .{}, 24, 80);
     defer direct.discardWorking(&back);
     direct.commitWorking(&back);

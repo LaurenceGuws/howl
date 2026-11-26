@@ -2066,3 +2066,97 @@ test "Kitty underline style projections have distinct bounded ink and preserve e
         };
     }
 }
+
+test "Kitty double underline remains visible at small font and fractional heights" {
+    for ([_]u16{ 4, 6, 8, 12, 24 }) |pixels| {
+        const f = try font(pixels);
+        defer f.deinit();
+        const owner = try output.Terminal.init(a, f);
+        defer destroy(owner);
+        try owner.resize(3, 8);
+        try owner.feed("\x1b[?25l\x1b[4:2mX\x1b[2;1H\x1b]66;s=1:n=1:d=7:v=1;X\x07");
+        try owner.flush();
+        const held = try owner.hold();
+        defer release(owner, held);
+        const snap = held.snapshot;
+        for ([_]u16{ snap.cell_height, (snap.cell_height + 6) / 7 }, 0..) |height, row| {
+            const lines = snap.decorations[row];
+            try std.testing.expectEqual(@as(usize, if (height >= 2) 2 else 1), lines.len);
+            const top = if (row == 0) @as(i32, 0) else @as(i32, snap.cell_height - height);
+            for (lines) |line| {
+                try std.testing.expect(line == .solid);
+                try std.testing.expect(line.solid.rect.height != 0);
+                try std.testing.expect(line.solid.rect.y >= top);
+                try std.testing.expect(line.solid.rect.y + @as(i32, line.solid.rect.height) <= snap.cell_height);
+            }
+            if (height >= 2) {
+                const first_end = lines[0].solid.rect.y + @as(i32, lines[0].solid.rect.height);
+                try std.testing.expect(first_end <= lines[1].solid.rect.y);
+                if (height >= 3) try std.testing.expect(first_end < lines[1].solid.rect.y);
+            }
+        }
+    }
+}
+
+test "Kitty dim underline and strike share text opacity without losing explicit RGB" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(5, 12);
+    try owner.feed("\x1b[?25l\x1b[38;2;10;20;30;48;2;40;50;60;2;9;4;58;2;70;80;90mA\x1b[7mB\x1b[59mC\x1b[22mD\x1b[2m\x1b[2;1H\x1b[58;2;70;80;90;4:4mX\x1b[3;1H\x1b]66;s=2;Y\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const Color = output.commands.Color;
+    const fg: Color = .{ .r = 10, .g = 20, .b = 30, .a = 140 };
+    const bg: Color = .{ .r = 40, .g = 50, .b = 60, .a = 140 };
+    const ul: Color = .{ .r = 70, .g = 80, .b = 90, .a = 140 };
+    const plain: Color = .{ .r = 40, .g = 50, .b = 60, .a = 255 };
+    const expected = [_]Color{ ul, fg, ul, bg, bg, bg, plain, plain };
+    try std.testing.expectEqual(expected.len, held.snapshot.decorations[0].len);
+    for (expected, held.snapshot.decorations[0]) |color, line| try std.testing.expectEqual(color, line.solid.color);
+    var masks: usize = 0;
+    for (held.snapshot.decorations[1..4]) |strip| for (strip) |line| {
+        switch (line) {
+            .alpha_mask => |mask| {
+                try std.testing.expectEqual(ul, mask.color);
+                masks += 1;
+            },
+            .solid => |solid_line| try std.testing.expectEqual(bg, solid_line.color),
+            else => return error.UnexpectedDecoration,
+        }
+    };
+    try std.testing.expect(masks >= 2);
+}
+
+test "wide scaled underline chunks retain native pattern phase inside a narrow atlas" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 32, .height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(3, 16);
+    try owner.feed("\x1b[?25l\x1b[4:5m\x1b]66;s=2:w=7;X\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const snap = held.snapshot;
+    try std.testing.expect(snap.cell_width * 7 > snap.atlas_width);
+    try std.testing.expectEqual(@as(usize, 7), snap.decorations[1].len);
+    var end: i32 = 0;
+    for (snap.decorations[1], 0..) |cmd, index| {
+        try std.testing.expect(cmd == .alpha_mask);
+        const mask = cmd.alpha_mask;
+        try std.testing.expectEqual(end, mask.destination.x);
+        try std.testing.expectEqual(snap.cell_width * 2, mask.destination.width);
+        end += mask.destination.width;
+        const source = mask.resource.source.?;
+        try std.testing.expectEqual(snap.cell_width, source.width);
+        try std.testing.expectEqual(@as(u16, 1), source.height);
+        for (0..source.width) |x| {
+            const at = @as(usize, source.y) * snap.atlas_width + source.x + x;
+            try std.testing.expectEqual(@as(u8, if ((index * snap.cell_width + x) % 5 < 3) 255 else 0), snap.atlas_pixels[at]);
+        }
+    }
+    try std.testing.expectEqual(@as(i32, snap.cell_width) * 14, end);
+}

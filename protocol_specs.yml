@@ -10766,6 +10766,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Unicode Core searches later joined faces without collapsing explicit width strings
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty double underline remains visible at small font and fractional heights
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: wide scaled underline chunks retain native pattern phase inside a narrow atlas
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic command bound admits a dense fractional dotted row
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: All49 explicit s=1..7,w=1..7 pairs crossed with full/half-size rendering metadata (98 cases), exact s*w by
@@ -10800,6 +10809,15 @@ specifications:
             pinned Kitty text sizing, actual configured HarfBuzz/FreeType red-green font fixtures and bounded Text/output
             tests; no blanket FULL promotion
           baseline: 181102767c9bc78f764e60d4f701132f1f200cc5
+        howl_qualification_20261127_underline_02:
+          scope: Actual scaled underline geometry retains cell ownership while fitting small-height double lines and preserving
+            wide explicit block mask phase in a narrow atlas. Bounded native chunks at most one per base cell; automatic row
+            command limit depends on shaping capacity rather than font width. No change to canonical OSC66 occupancy or glyph
+            placement.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang effective_text_alpha; deterministic output-owner/shared red-green and atlas coverage/phase
+            proofs; local geometry and resource bounds stated, no blanket FULL promotion
+          baseline: e09393d868f4fbd9c18e8341335ea3589d679a82
     - id: fraction
       section: Fractional scaling
       level: defined
@@ -10828,6 +10846,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: OSC 66 streamed VS15 narrows complete natural rectangles without moving them to a prior row
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty double underline remains visible at small font and fractional heights
+        relation: protocol-family
+      - file: howl-vt/src/output/glyph_cache.zig
+        test: underline coverage masks retain rounded segment union and bounded native phase
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic command bound admits a dense fractional dotted row
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: wide scaled underline chunks retain native pattern phase inside a narrow atlas
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: Full and n=1,d=2 metadata leave occupancy identical across all49 explicit integer scales/widths, selected
@@ -10849,6 +10879,16 @@ specifications:
           method: Pinned Kitty a79f376 text-sizing-protocol.rst variation selectors/fractional scaling and screen.c halve_multicell_width/draw_combining_char;
             VT and independent font-backed output red-green geometry witnesses; no blanket FULL promotion
           baseline: f8c15bf66412b043c39679a2dd29c41c21f46ce1
+        howl_qualification_20261127_underline_02:
+          scope: Shared decoration projection fits complete line geometry within fractional render area before clipping individual
+            strips. Dotted/dashed masks preserve rounded-segment union at admitted nonintegral widths and native phase at
+            wide bounds; dense half-scale actual output emits one mask per occupied cell. Exact fractional ink beyond atlas-width
+            boundary uses native-resolution sampling instead of requiring larger resources. Physical pixel sampling and every
+            fractional combination remain unqualified.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang effective_text_alpha; deterministic output-owner/shared red-green and atlas coverage/phase
+            proofs; local geometry and resource bounds stated, no blanket FULL promotion
+          baseline: e09393d868f4fbd9c18e8341335ea3589d679a82
     - id: editing
       section: Wrapping and overwriting behavior
       level: defined
@@ -20347,6 +20387,22 @@ specifications:
             and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
             live terminfo inspection; no blanket FULL promotion
           baseline: 88bd0b39c6c47482cc062979731d305e92859828
+        howl_qualification_20261127_underline_02:
+          scope: 'Ordinary and sized decorations share one geometry owner. Fit complete line geometry before clipping row
+            strips; double retains disjoint lines with a gap where at least three vertical pixels exist, adjacent one-pixel
+            lines at height2, single line at height1. Actual small-font matrix4/6/8/12/24px with ordinary and one-seventh
+            fractional geometry. Dotted/dashed coverage now uses one horizontal alpha mask stretched vertically: for admitted
+            nonintegral extent the mask is the exact union of prior floor-position/ceil-width segments, preventing repeated
+            opacity blend at overlaps. Integral scales and oversized destination masks use native-resolution sampling, with
+            phase-preserving cell-width chunks when the base span exceeds atlas width. Exact coverage/phase/cache identity
+            oracle and actual wide integer-scaled narrow-atlas output proof. Dense512-cell 48px half-scale dotted row reduces11776
+            decoration commands to512, and automatic per-column ceiling is independent of pixel width. Source masks may still
+            require atlas admission, fractional native sampling may differ from exact destination rounding at the oversized
+            boundary; not an exhaustive tiny-font style or physical pixel-rendering claim.'
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang effective_text_alpha; deterministic output-owner/shared red-green and atlas coverage/phase
+            proofs; local geometry and resource bounds stated, no blanket FULL promotion
+          baseline: e09393d868f4fbd9c18e8341335ea3589d679a82
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: Kitty underline styles and colour lifetime survive every wire split and both C1 profiles
@@ -20362,6 +20418,21 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/output_owner.zig
         test: full-width dotted underline stays within the ordinary row command bound
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty double underline remains visible at small font and fractional heights
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: wide scaled underline chunks retain native pattern phase inside a narrow atlas
+        relation: protocol-family
+      - file: howl-vt/src/output/glyph_cache.zig
+        test: underline coverage masks retain rounded segment union and bounded native phase
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic command bound admits a dense fractional dotted row
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic row limit is independent of replacement font width
         relation: protocol-family
     - id: color
       section: lines 22-27
@@ -20392,6 +20463,15 @@ specifications:
             and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
             live terminfo inspection; no blanket FULL promotion
           baseline: 88bd0b39c6c47482cc062979731d305e92859828
+        howl_qualification_20261127_underline_02:
+          scope: Dim rendition now modulates both independently resolved explicit underline alpha and effective foreground
+            alpha by the existing55% policy; RGB remains unchanged. Ordinary reverse/default/explicit and scaled dotted+strike
+            tests verify exact alpha140 for opaque source and alpha255 after reset22. Existing explicit colour/palette history
+            and reset proofs retained.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang effective_text_alpha; deterministic output-owner/shared red-green and atlas coverage/phase
+            proofs; local geometry and resource bounds stated, no blanket FULL promotion
+          baseline: e09393d868f4fbd9c18e8341335ea3589d679a82
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: Kitty underline styles and colour lifetime survive every wire split and both C1 profiles
@@ -20407,6 +20487,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: SGR retains exact rendition and colon color state'
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty dim underline and strike share text opacity without losing explicit RGB
         relation: protocol-family
     - id: reset-color
       section: lines 29-32
@@ -20455,6 +20538,9 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty indexed underline colours refresh in history without mutating a held frame
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty dim underline and strike share text opacity without losing explicit RGB
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_underline_01:
           scope: Shared decoration resolver obtains default underline colour from the effective cell foreground after cell
@@ -20467,6 +20553,15 @@ specifications:
             and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
             live terminfo inspection; no blanket FULL promotion
           baseline: 88bd0b39c6c47482cc062979731d305e92859828
+        howl_qualification_20261127_underline_02:
+          scope: Effective foreground and independently specified underline RGB survive reverse video; explicit underline
+            now shares text opacity under SGR2 without taking foreground RGB, and strike uses effective foreground. Actual
+            ordinary/scale2 output tests verify colour and alpha, including reset59/reset22. Hyperlink/selection/physical
+            renderer policy remains separately scoped.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang effective_text_alpha; deterministic output-owner/shared red-green and atlas coverage/phase
+            proofs; local geometry and resource bounds stated, no blanket FULL promotion
+          baseline: e09393d868f4fbd9c18e8341335ea3589d679a82
     - id: detection
       section: lines 36-37
       level: defined
