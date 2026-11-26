@@ -161,7 +161,9 @@ typedef struct hvt_request_string { uint8_t operation, _reserved[7]; } hvt_reque
  * parse/retained message. id/title/msg offsets and lengths index the bytes
  * returned by hvt_copy_request_payload for the same occurrence_id. App is
  * a validated ASCII name, title/msg are base64 encoded; UTF-8 decoding and
- * presentation policy remain with the native caller.
+ * presentation policy remain with the native caller. Absent title/msg have
+ * zero offset and length; present empty text has a nonzero offset and zero
+ * length (the offset may equal payload_len).
  * PROMPT_STARTED is an ordered OSC 133 A lifecycle event with empty payload.
  * No pointer survives consume/reset; old queued reset_generation is retained.
  * This arm fits the original 32-byte v2 union without changing its layout. */

@@ -253,6 +253,19 @@ static int program_status_proof(void) {
     CHECK(hvt_consume_request(value,occurrence)==HVT_OK);
     CHECK(hvt_consume_request(value,occurrence)==HVT_STALE_REQUEST);
 
+    CHECK(feed_all(value,"\033]7501;state=working:title=QQ==:title=:msg= \007")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
+        && current.data.program_status.title_len==0 && current.data.program_status.title_offset>0
+        && current.data.program_status.msg_len==0 && current.data.program_status.msg_offset>0
+        && current.data.program_status.title_offset<=current.payload_len
+        && current.data.program_status.msg_offset<=current.payload_len);
+    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+    CHECK(feed_all(value,"\033]7501;state=working\007")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
+        && !current.data.program_status.title_len && !current.data.program_status.title_offset
+        && !current.data.program_status.msg_len && !current.data.program_status.msg_offset);
+    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+
     CHECK(feed_all(value,"\033]7501;state=clear:id=task\033\\")==HVT_OK);
     CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
         && current.data.program_status.action==HVT_PROGRAM_STATUS_CLEAR

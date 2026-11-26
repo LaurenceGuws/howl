@@ -188,7 +188,7 @@ pub const Core = struct {
     /// Retained bytes can advance without a new PTY readiness event.
     pub fn bufferedOutputRunnable(self: *const Core) bool {
         const replies = self.terminal.replyBytes().len;
-        return self.input_retry_at == null and self.read_start < self.read_end and
+        return self.input_retry_at == null and !self.terminal.hasPendingProgramStatus() and self.read_start < self.read_end and
             (replies == 0 or replies <= self.writes.remaining());
     }
 
@@ -196,7 +196,7 @@ pub const Core = struct {
     /// retained reply cannot fit the outbox wakes indefinitely on unchanged data.
     /// A buffered tail progresses through the existing zero-timeout service path.
     pub fn readAdmissible(self: *const Core) bool {
-        if (self.stream_closed or self.terminal.inputBlocked() or self.input_retry_at != null or
+        if (self.stream_closed or self.terminal.inputBlocked() or self.input_retry_at != null or self.terminal.hasPendingProgramStatus() or
             self.read_start != self.read_end) return false;
         return self.write_closed or self.terminal.replyBytes().len <= self.writes.remaining();
     }

@@ -33,19 +33,17 @@ pub const Report = struct {
     kind: ?Kind = null,
     progress: ?u8 = null,
     app: []const u8 = "",
-    title: []const u8 = "",
-    msg: []const u8 = "",
+    title: ?[]const u8 = null,
+    msg: ?[]const u8 = null,
 
-    /// Decode validated title into fixed caller-owned scratch.
+    /// Decode validated title into fixed caller-owned scratch; absent is null.
     pub fn titleText(self: Report, scratch: *[max_msg_bytes]u8) ?[]const u8 {
-        if (self.title.len == 0) return "";
-        return decodeText(self.title, scratch, max_title_bytes);
+        return decodeText(self.title orelse return null, scratch, max_title_bytes);
     }
 
-    /// Decode validated message into fixed caller-owned scratch.
+    /// Decode validated message into fixed caller-owned scratch; absent is null.
     pub fn messageText(self: Report, scratch: *[max_msg_bytes]u8) ?[]const u8 {
-        if (self.msg.len == 0) return "";
-        return decodeText(self.msg, scratch, max_msg_bytes);
+        return decodeText(self.msg orelse return null, scratch, max_msg_bytes);
     }
 };
 
@@ -68,8 +66,8 @@ pub fn parse(body: []const u8) ?Action {
     var kind_field: []const u8 = "";
     var progress_field: []const u8 = "";
     var app: []const u8 = "";
-    var title: []const u8 = "";
-    var msg: []const u8 = "";
+    var title: ?[]const u8 = null;
+    var msg: ?[]const u8 = null;
 
     var scratch: [max_msg_bytes]u8 = undefined;
     var pairs = std.mem.splitScalar(u8, body, ':');

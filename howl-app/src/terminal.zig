@@ -17,6 +17,7 @@ const posix = std.posix;
 const queue_limit = 64;
 const queue_turn_limit = 16;
 const input_byte_limit = 1024 * 1024;
+const status_retry_ns: u64 = 100 * std.time.ns_per_ms;
 
 /// Bounded asynchronous semantic input and presentation-geometry intent.
 pub const Task = union(enum) {
@@ -336,6 +337,7 @@ const State = struct {
     input_activity: std.atomic.Value(bool) = .init(false),
     clipboard: ?[]u8 = null,
     consequence_worked: bool = false,
+    status_retry_at: ?u64 = null,
 
     fn observe(self: *const State) *const vt.Terminal.Observation {
         return self.core.terminal.observation();
@@ -858,14 +860,18 @@ const State = struct {
 
     fn service(self: *State, readable: bool, writable: bool, now: u64) !pty_vt.Service {
         const result = try self.core.service(readable, writable, now);
-        var host = try consequences.drain(&self.core.terminal, self.allocator, self.color_preference, &self.program_status_index);
+        var host: consequences.Applied = .{};
         defer host.deinit(self.allocator);
+        if (self.status_retry_at == null or now >= self.status_retry_at.?) {
+            host = try consequences.drain(&self.core.terminal, self.allocator, self.color_preference, &self.program_status_index);
+            self.status_retry_at = if (host.status_blocked) now +| status_retry_ns else null;
+        }
         self.consequence_worked = host.worked;
         var program_status_dirty = host.status_changed or self.program_status_changed_pending;
         self.program_status_changed_pending = false;
         // The child exit and new shell prompt clear transient work only.
         // Finished and failed status remains until acknowledged by user input.
-        if (result.child_exit != null and self.program_status_index.processExited())
+        if (result.child_exit != null and self.status_retry_at == null and self.program_status_index.processExited())
             program_status_dirty = true;
         var host_notify = false;
         if (host.clipboard) |bytes| {
@@ -1034,6 +1040,11 @@ const State = struct {
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.output_gate.waitMs(now),
+                if (self.status_retry_at) |deadline| retry: {
+                    const remaining = deadline -| now;
+                    const ms = remaining / std.time.ns_per_ms + @intFromBool(remaining % std.time.ns_per_ms != 0);
+                    break :retry @as(i32, @intCast(@min(ms, std.math.maxInt(i32))));
+                } else null,
                 if (self.store_busy and self.visible.load(.acquire) and self.credit.load(.acquire)) @as(i32, 1) else null,
                 // Hidden panes have no pixels to animate. A reveal wakes the
                 // worker and services current phase before publication.
@@ -2476,20 +2487,21 @@ test "direct worker publishes the sole VT while a previous cut is held" {
     pinned = false;
 }
 
-// Test-only allocator that fails exactly the first scalar-pool expansion size.
-const ScalarPressureAllocator = struct {
+// Test-only allocator that fails an exact size while armed.
+const SizePressureAllocator = struct {
     child: std.mem.Allocator,
     armed: std.atomic.Value(bool) = .init(false),
     failures: std.atomic.Value(u32) = .init(0),
+    fail_size: ?usize = null,
 
-    fn allocator(self: *ScalarPressureAllocator) std.mem.Allocator {
+    fn allocator(self: *SizePressureAllocator) std.mem.Allocator {
         return .{ .ptr = self, .vtable = &.{ .alloc = allocate, .resize = resize, .remap = remap, .free = free } };
     }
     // zig-audit: acknowledge anyopaque
     // reason: The standard allocator vtable passes the concrete test owner as opaque context.
-    fn cast(ctx: *anyopaque) *ScalarPressureAllocator {
+    fn cast(ctx: *anyopaque) *SizePressureAllocator {
         // zig-audit: acknowledge ptr_cast
-        // reason: This context was created from a live ScalarPressureAllocator.
+        // reason: This context was created from a live SizePressureAllocator.
         // zig-audit: acknowledge align_cast
         // reason: Allocator vtable calls preserve the alignment supplied at construction.
         return @ptrCast(@alignCast(ctx));
@@ -2502,7 +2514,7 @@ const ScalarPressureAllocator = struct {
         const Screen = @FieldType(ScreenState, "primary");
         const Storage = @typeInfo(@FieldType(Screen, "scalars")).optional.child;
         const Page = @typeInfo(@FieldType(Storage, "pages")).pointer.child;
-        if (len == 2 * @sizeOf(Page) and self.armed.load(.acquire)) {
+        if (len == (self.fail_size orelse 2 * @sizeOf(Page)) and self.armed.load(.acquire)) {
             // zig-audit: acknowledge discard
             // reason: The test only needs the cumulative count, not the previous value.
             _ = self.failures.fetchAdd(1, .monotonic);
@@ -2532,7 +2544,7 @@ test "direct worker backs off scalar pressure and applies queued resize after re
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    var pressure = ScalarPressureAllocator{ .child = std.testing.allocator };
+    var pressure = SizePressureAllocator{ .child = std.testing.allocator };
     const owner = try Terminal.create(pressure.allocator(), threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 511 ]; do printf 'e\\314\\201\\314\\202\\314\\203\\314\\204\\314\\205\\314\\206\\314\\207\\314\\210'; i=$((i+1)); done; printf 'X\\033]0;DONE\\007'; sleep 30",
@@ -2742,5 +2754,100 @@ test "Rex actual PTY exit clears transient work and retains final results" {
             try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
         }
         try std.testing.expect(completed);
+    }
+}
+
+test "Rex live worker backs off host text allocation pressure and resumes ordered PTY output" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var pressure = SizePressureAllocator{ .child = std.testing.allocator, .fail_size = 17 };
+    const owner = try Terminal.create(pressure.allocator(), threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]7501;state=working:id=job:title=T2xk\\007\\033]0;READY\\007'; read line; printf '\\033]7501;state=done:id=job:msg=cmVjb3ZlcnktbWFya2VyMTc=\\007\\033]0;AFTER\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try std.testing.expect(owner.snapshot().program_status.state.? == .working);
+    pressure.armed.store(true, .release);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    for (0..5000) |_| {
+        if (pressure.failures.load(.acquire) != 0) break;
+        if (owner.snapshot().failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(pressure.failures.load(.acquire) != 0);
+    try std.Io.sleep(threaded.io(), .fromMilliseconds(250), .awake);
+    const failures = pressure.failures.load(.acquire);
+    try std.testing.expect(owner.snapshot().failure == null);
+    try std.testing.expect(failures >= 2 and failures <= 6);
+    const blocked = owner.snapshot();
+    try std.testing.expect(blocked.program_status.state.? == .working);
+    try std.testing.expectEqualStrings("READY", blocked.title[0..blocked.title_len]);
+    // No eventfd wake, GUI input or child heartbeat is supplied on recovery.
+    pressure.armed.store(false, .release);
+    try waitTitle(owner, "AFTER");
+    try std.testing.expect(owner.snapshot().program_status.state.? == .done);
+    try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "Rex host service preserves all five states across monotonic time without heartbeats" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const core = try allocator.create(pty_vt.Core);
+    defer allocator.destroy(core);
+    try core.initInto(allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "read line",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, .{ .width = 8, .height = 16 });
+    defer core.deinit();
+    core.terminal.setProgramStatusConsumer(true);
+    var state: State = .{
+        .allocator = allocator,
+        .program_status_index = host_status.Index.init(allocator),
+        .io = threaded.io(),
+        .core = core,
+        .projection = undefined,
+        .history_capacity = 8,
+        .wake_fd = -1,
+        .event_type = c.SDL_RegisterEvents(1),
+        .visible = .init(false),
+    };
+    defer state.program_status_index.deinit();
+    try std.testing.expect((try core.terminal.feed(
+        "\x1b]7501;state=idle:id=idle\x07" ++
+            "\x1b]7501;state=working:id=working:progress=0\x07" ++
+            "\x1b]7501;state=done:id=done\x07" ++
+            "\x1b]7501;state=blocked:id=blocked:kind=auth\x07" ++
+            "\x1b]7501;state=error:id=error\x07",
+    )).stateChanged());
+    const times = [_]u64{ 1, std.time.ns_per_s, 3600 * std.time.ns_per_s, 86400 * std.time.ns_per_s };
+    for (times) |now| {
+        const result = try state.service(false, false, now);
+        try std.testing.expect(result.child_exit == null);
+        try std.testing.expectEqual(@as(usize, 5), state.program_status_index.len);
+        try std.testing.expectEqual(@as(u64, 5), state.program_status_index.sequence);
+        try std.testing.expect(state.status.program_status.state.? == .blocked);
+        try std.testing.expectEqual(@as(u16, 0), core.terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", core.terminal.replyBytes());
+    }
+    // Each state remained independently addressable, not only the visible summary.
+    for ([_][]const u8{ "blocked", "error", "done", "working", "idle" }, [_]?vt.Terminal.ProgramStatus.State{ .@"error", .done, .working, .idle, null }) |id, expected| {
+        var body: [80]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&body, "\x1b]7501;state=clear:id={s}\x07", .{id});
+        try std.testing.expect((try core.terminal.feed(wire)).stateChanged());
+        const serviced = try state.service(false, false, times[times.len - 1]);
+        try std.testing.expect(serviced.child_exit == null);
+        try std.testing.expectEqual(expected, state.status.program_status.state);
     }
 }

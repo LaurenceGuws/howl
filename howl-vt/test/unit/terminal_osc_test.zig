@@ -3444,3 +3444,54 @@ test "Rex feature reply precedes DA1 at every input split only with an opted in 
         }
     }
 }
+
+test "Rex malformed optional escape pairs terminate without swallowing following bytes" {
+    const cases = [_][]const u8{
+        "\x1b]7501;state=working:app=bad\x1b\x07",
+        "\x1b]7501;state=working:app=bad\x1b\x1b\\",
+    };
+    for (cases) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            terminal.setProgramStatusConsumer(true);
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            try std.testing.expect(terminal.consequenceHead() != null);
+            const event = terminal.consequenceHead().?.program_status;
+            try std.testing.expect(event.action.report.state == .working);
+            try std.testing.expectEqualStrings("", event.action.report.app);
+            try terminal.consumeConsequence(event.generation);
+            try feed(&terminal, "X");
+            try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+            try std.testing.expectEqualStrings("", terminal.replyBytes());
+        }
+    }
+}
+
+test "Rex CAN SUB cancel incomplete reports and recover at every input split" {
+    const cases = [_][]const u8{
+        "\x1b]7501;state=clear\x18",
+        "\x1b]7501;state=clear\x1a",
+        "\x1b]7501;state=clear\x1b\x18",
+        "\x1b]7501;state=clear\x1b\x1a",
+    };
+    for (cases) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            terminal.setProgramStatusConsumer(true);
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            try std.testing.expect(terminal.consequenceHead() == null);
+            try std.testing.expectEqualStrings("", terminal.replyBytes());
+            try feed(&terminal, "X\x1b]7501;state=done:id=next\x07");
+            try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+            const event = terminal.consequenceHead().?.program_status;
+            try std.testing.expect(event.action.report.state == .done);
+            try std.testing.expectEqualStrings("next", event.action.report.id);
+            try terminal.consumeConsequence(event.generation);
+            try std.testing.expect(terminal.consequenceHead() == null);
+        }
+    }
+}

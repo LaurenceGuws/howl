@@ -13,11 +13,11 @@ const Projection = struct { info: Info, payload: []const u8 };
 // body; never publish a pointer or silently narrow foreign offset lengths.
 fn statusSpan(
     payload: []const u8,
-    field: []const u8,
+    optional_field: ?[]const u8,
     offset: *u16,
     length: *u16,
 ) Error!void {
-    if (field.len == 0) return;
+    const field = optional_field orelse return;
     const start = @intFromPtr(payload.ptr);
     const pos = @intFromPtr(field.ptr);
     const diff = std.math.sub(usize, pos, start) catch return error.RequestLimit;
@@ -82,14 +82,14 @@ fn project(value: Terminal.Consequence, revision: u64) Error!Projection {
                         out.has_progress = 1;
                         out.progress = progress;
                     }
-                    try statusSpan(result.payload, report.id, &out.id_offset, &out.id_len);
+                    try statusSpan(result.payload, if (report.id.len != 0) report.id else null, &out.id_offset, &out.id_len);
                     try statusSpan(result.payload, report.title, &out.title_offset, &out.title_len);
                     try statusSpan(result.payload, report.msg, &out.msg_offset, &out.msg_len);
-                    try statusSpan(result.payload, report.app, &out.app_offset, &out.app_len);
+                    try statusSpan(result.payload, if (report.app.len != 0) report.app else null, &out.app_offset, &out.app_len);
                 },
                 .clear => |id| {
                     out.action = c.HVT_PROGRAM_STATUS_CLEAR;
-                    try statusSpan(result.payload, id, &out.id_offset, &out.id_len);
+                    try statusSpan(result.payload, if (id.len != 0) id else null, &out.id_offset, &out.id_len);
                 },
                 .prompt_started => out.action = c.HVT_PROGRAM_STATUS_PROMPT_STARTED,
                 // Query is answered immediately; it never enters the

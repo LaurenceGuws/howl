@@ -2278,9 +2278,18 @@ pub const OscControl = struct {
                     self.finishBody(kind);
                     return .{ .finish = .st };
                 }
+                if (self.policy.class == .program_status) {
+                    // A stray ESC is a malformed value byte, not an escape
+                    // that quotes BEL or the next ESC in a real ST.
+                    self.append(0x1B);
+                    if (byte == 0x07 or byte == 0x9C) {
+                        self.finishBody(kind);
+                        return .{ .finish = if (byte == 0x07) .bel else .st };
+                    }
+                    if (byte == 0x1B) return null;
+                }
                 self.state = bodyState(kind);
                 if (kind == .raw and byte == ';') self.policy.class = .raw_other;
-                if (self.policy.class == .program_status) self.append(0x1B);
                 self.append(byte);
                 return .{ .put = byte };
             },

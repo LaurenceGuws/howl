@@ -63,7 +63,7 @@ test "OSC 7501 source field and UTF-8 bounds reject hostile reports atomically" 
     try std.testing.expect(status.parse(&too_long) == null);
     // Unknown or syntactically malformed *optional* values do not discard
     // the whole status. Only invalid IDs, state and text decoding do.
-    try std.testing.expectEqualStrings("", status.parse("state=working:title=%").?.report.title);
+    try std.testing.expect(status.parse("state=working:title=%").?.report.title == null);
     const good = status.parse("state=done:title=UGxhbg:msg=QXBwbHk").?.report;
     var out: [status.max_msg_bytes]u8 = undefined;
     try std.testing.expectEqualStrings("Plan", good.titleText(&out).?);
@@ -168,4 +168,17 @@ test "Rex skips malformed pairs and uses last recognized values without fabricat
         const body = try std.fmt.bufPrint(&buf, "state=blocked:progress={s}", .{value});
         try std.testing.expect(status.parse(body).?.report.progress == null);
     }
+}
+
+test "Rex present empty text differs from absent and malformed text" {
+    var scratch: [status.max_msg_bytes]u8 = undefined;
+    const absent = status.parse("state=working").?.report;
+    try std.testing.expect(absent.title == null and absent.msg == null);
+    try std.testing.expect(absent.titleText(&scratch) == null and absent.messageText(&scratch) == null);
+    const present = status.parse("state=working:title=QQ==:title=:msg= :msg=%").?.report;
+    try std.testing.expectEqualStrings("", present.title.?);
+    try std.testing.expectEqualStrings("", present.msg.?);
+    try std.testing.expectEqualStrings("", present.titleText(&scratch).?);
+    try std.testing.expectEqualStrings("", present.messageText(&scratch).?);
+    try std.testing.expect(status.parse("state=working:msg=A:msg=") == null);
 }

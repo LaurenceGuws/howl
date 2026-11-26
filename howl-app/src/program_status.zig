@@ -41,6 +41,8 @@ const Record = struct {
     reported_at: u64,
     text: []u8,
     title_len: u16,
+    title_present: bool,
+    message_present: bool,
 
     fn idBytes(self: *const Record) []const u8 {
         return self.id[0..self.id_len];
@@ -50,12 +52,12 @@ const Record = struct {
         return self.app[0..self.app_len];
     }
 
-    fn titleText(self: *const Record) []const u8 {
-        return self.text[0..self.title_len];
+    fn titleText(self: *const Record) ?[]const u8 {
+        return if (self.title_present) self.text[0..self.title_len] else null;
     }
 
-    fn messageText(self: *const Record) []const u8 {
-        return self.text[self.title_len..];
+    fn messageText(self: *const Record) ?[]const u8 {
+        return if (self.message_present) self.text[self.title_len..] else null;
     }
 };
 
@@ -195,16 +197,18 @@ pub const Index = struct {
         var title_scratch: [status.max_msg_bytes]u8 = undefined;
         var msg_scratch: [status.max_msg_bytes]u8 = undefined;
         // The VT admission path validated both fields before retaining the event.
-        const title = report.titleText(&title_scratch).?;
-        const msg = report.messageText(&msg_scratch).?;
+        const title = if (report.title != null) report.titleText(&title_scratch).? else "";
+        const msg = if (report.msg != null) report.messageText(&msg_scratch).? else "";
         const existing = self.find(report.id);
         if (existing) |index| {
             const old = &self.records[index];
             const changed = old.state != report.state or
                 old.kind != report.kind or old.progress != report.progress or
                 !std.mem.eql(u8, old.appText(), report.app) or
-                !std.mem.eql(u8, old.titleText(), title) or
-                !std.mem.eql(u8, old.messageText(), msg);
+                old.title_present != (report.title != null) or
+                old.message_present != (report.msg != null) or
+                !std.mem.eql(u8, old.titleText() orelse "", title) or
+                !std.mem.eql(u8, old.messageText() orelse "", msg);
             if (!changed) {
                 old.reported_at = self.nextSequence();
                 return false;
@@ -242,6 +246,8 @@ pub const Index = struct {
             .reported_at = now,
             .text = text,
             .title_len = @intCast(title.len),
+            .title_present = report.title != null,
+            .message_present = report.msg != null,
         };
         @memcpy(entry.id[0..report.id.len], report.id);
         @memcpy(entry.app[0..report.app.len], report.app);
@@ -292,18 +298,18 @@ test "Rex retains decoded title and message sparsely and replaces omitted fields
     try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
     try std.testing.expect(try index.apply(parse("state=working:id=job:title=UGxhbg==:msg=QXBwbHk=").?));
     const record = &index.records[index.find("job").?];
-    try std.testing.expectEqualStrings("Plan", record.titleText());
-    try std.testing.expectEqualStrings("Apply", record.messageText());
+    try std.testing.expectEqualStrings("Plan", record.titleText().?);
+    try std.testing.expectEqualStrings("Apply", record.messageText().?);
     try std.testing.expectEqual(@as(usize, 9), record.text.len);
     const allocations = failing.alloc_index;
     try std.testing.expect(!(try index.apply(parse("state=working:id=job:title=UGxhbg:msg=QXBwbHk").?)));
     try std.testing.expectEqual(allocations, failing.alloc_index);
     try std.testing.expect(try index.apply(parse("state=working:id=job:title=TmV3").?));
-    try std.testing.expectEqualStrings("New", record.titleText());
-    try std.testing.expectEqualStrings("", record.messageText());
+    try std.testing.expectEqualStrings("New", record.titleText().?);
+    try std.testing.expect(record.messageText() == null);
     try std.testing.expect(try index.apply(parse("state=working:id=job").?));
-    try std.testing.expectEqualStrings("", record.titleText());
-    try std.testing.expectEqualStrings("", record.messageText());
+    try std.testing.expect(record.titleText() == null);
+    try std.testing.expect(record.messageText() == null);
     try std.testing.expectEqual(@as(usize, 0), record.text.len);
     try std.testing.expect(index.syncReset(1));
     try std.testing.expectEqual(@as(usize, 0), index.len);
@@ -327,18 +333,39 @@ test "Rex text allocation failure preserves replacement and eviction state" {
     try std.testing.expectError(error.OutOfMemory, index.apply(parse("state=done:id=job0:title=TmV3").?));
     try std.testing.expectEqual(before, index.sequence);
     try std.testing.expectEqual(reported, record.reported_at);
-    try std.testing.expectEqualStrings("Old", record.titleText());
-    try std.testing.expectEqualStrings("Body", record.messageText());
+    try std.testing.expectEqualStrings("Old", record.titleText().?);
+    try std.testing.expectEqualStrings("Body", record.messageText().?);
     try std.testing.expectError(error.OutOfMemory, index.apply(parse("state=done:id=new:msg=TmV3").?));
     try std.testing.expectEqual(before, index.sequence);
     try std.testing.expectEqual(max_records, index.len);
     try std.testing.expect(index.find("new") == null);
-    try std.testing.expectEqualStrings("Old", record.titleText());
+    try std.testing.expectEqualStrings("Old", record.titleText().?);
     failing.fail_index = std.math.maxInt(usize);
     try std.testing.expect(try index.apply(parse("state=done:id=new:msg=TmV3").?));
     try std.testing.expect(index.find("job0") == null);
-    try std.testing.expectEqualStrings("New", index.records[index.find("new").?].messageText());
+    try std.testing.expectEqualStrings("New", index.records[index.find("new").?].messageText().?);
     try std.testing.expect(index.seenByUser());
     try std.testing.expect(index.processExited());
     try std.testing.expectEqual(@as(usize, 0), index.len);
+}
+
+test "Rex empty text replaces omitted text without allocating or fabricating content" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var index = Index.init(failing.allocator());
+    defer index.deinit();
+    const parse = status.parse;
+    try std.testing.expect(try index.apply(parse("state=working").?));
+    try std.testing.expect(try index.apply(parse("state=working:title=:msg=").?));
+    const record = &index.records[0];
+    try std.testing.expectEqualStrings("", record.titleText().?);
+    try std.testing.expectEqualStrings("", record.messageText().?);
+    const changed = record.changed_at;
+    try std.testing.expect(!(try index.apply(parse("state=working:title= :msg=").?)));
+    try std.testing.expectEqual(changed, record.changed_at);
+    try std.testing.expect(try index.apply(parse("state=working:msg=").?));
+    try std.testing.expect(record.titleText() == null);
+    try std.testing.expectEqualStrings("", record.messageText().?);
+    try std.testing.expect(try index.apply(parse("state=working").?));
+    try std.testing.expect(record.titleText() == null and record.messageText() == null);
+    try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
 }

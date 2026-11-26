@@ -18,6 +18,8 @@ pub const Applied = struct {
     attention: bool = false,
     /// A copied status summary changed; this worker may notify its GUI.
     status_changed: bool = false,
+    /// The exact status FIFO head remains owned by VT for a bounded retry.
+    status_blocked: bool = false,
     clipboard: ?[]u8 = null,
 
     /// Releases the latest accepted clipboard payload.
@@ -42,6 +44,7 @@ pub fn drain(
     const current_reset = terminal.resetSequence();
     while (terminal.consequenceHead()) |head| {
         const id = head.id();
+        const previously_worked = result.worked;
         result.worked = true;
         switch (head) {
             .clipboard => |request| switch (request.kind) {
@@ -89,8 +92,14 @@ pub fn drain(
             },
             .bell => result.attention = true,
             .program_status => |request| {
-                if (request.reset_generation == current_reset and (try statuses.apply(request.action)))
-                    result.status_changed = true;
+                if (request.reset_generation == current_reset) {
+                    const changed = statuses.apply(request.action) catch {
+                        result.worked = previously_worked;
+                        result.status_blocked = true;
+                        return result;
+                    };
+                    result.status_changed = result.status_changed or changed;
+                }
             },
             .notification => |request| if (request.kind != .message) {
                 result.attention = true;
@@ -542,14 +551,16 @@ test "Rex host text allocation failure retains the exact FIFO head for retry" {
     try std.testing.expect((try terminal.feed("\x1b]7501;state=done:id=job:msg=TmV3\x07")).stateChanged());
     const id = terminal.consequenceHead().?.id();
     failing.fail_index = failing.alloc_index;
-    try std.testing.expectError(error.OutOfMemory, drain(&terminal, allocator, .dark, &index));
+    var blocked = try drain(&terminal, allocator, .dark, &index);
+    defer blocked.deinit(allocator);
+    try std.testing.expect(blocked.status_blocked and !blocked.worked and !blocked.status_changed);
     try std.testing.expectEqualDeep(before, index.summary());
     try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
     try std.testing.expectEqualStrings("", terminal.replyBytes());
     failing.fail_index = std.math.maxInt(usize);
     var retried = try drain(&terminal, allocator, .dark, &index);
     defer retried.deinit(allocator);
-    try std.testing.expect(retried.status_changed);
+    try std.testing.expect(retried.status_changed and retried.worked and !retried.status_blocked);
     try std.testing.expect(index.summary().state.? == .done);
     try std.testing.expect(terminal.consequenceHead() == null);
 }
@@ -580,4 +591,33 @@ test "Rex reset generation and bank changes preserve only the appropriate record
     try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=stale").?)));
     try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=fresh").?));
     try std.testing.expectEqual(@as(usize, 0), index.len);
+}
+
+test "Rex blocked host allocation preserves earlier clipboard attention and report results" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    var index = host_status.Index.init(failing.allocator());
+    defer index.deinit();
+    var terminal = try vt.Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    try std.testing.expect((try terminal.feed("\x1b]52;c;T25l\x07\x07" ++
+        "\x1b]7501;state=working:id=first\x07" ++
+        "\x1b]7501;state=done:id=second:msg=TmV3\x07" ++
+        "\x1b]7501;state=clear:id=first\x07")).stateChanged());
+    var blocked = try drain(&terminal, allocator, .dark, &index);
+    defer blocked.deinit(allocator);
+    try std.testing.expect(blocked.status_blocked and blocked.worked and blocked.status_changed and blocked.attention);
+    try std.testing.expectEqualStrings("One", blocked.clipboard.?);
+    try std.testing.expectEqual(@as(usize, 1), index.len);
+    try std.testing.expectEqualStrings("second", terminal.consequenceHead().?.program_status.action.report.id);
+    try std.testing.expectEqual(@as(u16, 2), terminal.consequenceCount());
+    failing.fail_index = std.math.maxInt(usize);
+    var retried = try drain(&terminal, allocator, .dark, &index);
+    defer retried.deinit(allocator);
+    try std.testing.expect(retried.status_changed and !retried.status_blocked and !retried.attention and retried.clipboard == null);
+    try std.testing.expectEqual(@as(usize, 1), index.len);
+    try std.testing.expect(index.summary().state.? == .done);
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
