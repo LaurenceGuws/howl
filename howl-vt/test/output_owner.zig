@@ -1930,3 +1930,139 @@ test "Unicode Core natural scaled images and explicit width strings retain disti
     for ([_]u16{ 0, 2 }) |row|
         try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f4bb }, view.cellScalarsAt(row, 0, &scalars));
 }
+
+test "Kitty underline colour follows effective foreground unless explicitly assigned" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(4, 12);
+    const Color = output.commands.Color;
+    const fg: Color = .{ .r = 10, .g = 20, .b = 30, .a = 255 };
+    const bg: Color = .{ .r = 40, .g = 50, .b = 60, .a = 255 };
+    const ul: Color = .{ .r = 70, .g = 80, .b = 90, .a = 255 };
+    try owner.feed("\x1b[?25l\x1b[38;2;10;20;30;48;2;40;50;60;4mA\x1b[7mB\x1b[58;2;70;80;90mC\x1b[27mD\x1b[59mE\x1b[9;58;2;70;80;90mF");
+    try owner.feed("\x1b[2;1H\x1b[0;38;2;10;20;30;48;2;40;50;60;4;9;7m\x1b]66;s=2;X\x07\x1b[2;4H\x1b[58;2;70;80;90m\x1b]66;s=2;Y\x07");
+    for ([_]bool{ false, true }) |reverse_screen| {
+        if (reverse_screen) try owner.feed("\x1b[?5h");
+        try owner.flush();
+        const held = try owner.hold();
+        defer release(owner, held);
+        const snap = held.snapshot;
+        const plain = if (reverse_screen) bg else fg;
+        const reversed = if (reverse_screen) fg else bg;
+        const expected = [_]Color{ plain, reversed, ul, ul, plain, ul, plain };
+        try std.testing.expectEqual(expected.len, snap.decorations[0].len);
+        for (expected, snap.decorations[0]) |color, command| {
+            try std.testing.expect(command == .solid);
+            try std.testing.expectEqual(color, command.solid.color);
+        }
+        // Scaled X uses the reversed effective foreground for both lines;
+        // scaled Y uses explicit underline colour but foreground for strike.
+        var x_count: usize = 0;
+        var y_underline: usize = 0;
+        var y_strike: usize = 0;
+        for (snap.decorations[1..3]) |strip| for (strip) |command| {
+            try std.testing.expect(command == .solid);
+            if (command.solid.rect.x == 0) {
+                try std.testing.expectEqual(reversed, command.solid.color);
+                x_count += 1;
+            } else {
+                try std.testing.expectEqual(@as(i32, snap.cell_width) * 3, command.solid.rect.x);
+                if (command.solid.color == ul) {
+                    y_underline += 1;
+                } else {
+                    try std.testing.expectEqual(reversed, command.solid.color);
+                    y_strike += 1;
+                }
+            }
+        };
+        try std.testing.expect(x_count >= 2 and y_underline != 0 and y_strike != 0);
+    }
+}
+
+test "Kitty indexed underline colours refresh in history without mutating a held frame" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(2, 8);
+    try owner.feed("\x1b[?25l\x1b]4;1;#123456;2;#345678\x07\x1b[31;4mA\x1b[58:5:2mB\x1b[59mC\x1b[0m\r\nD\r\nE");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const Color = output.commands.Color;
+    const old = [_]Color{ .{ .r = 0x12, .g = 0x34, .b = 0x56, .a = 255 }, .{ .r = 0x34, .g = 0x56, .b = 0x78, .a = 255 }, .{ .r = 0x12, .g = 0x34, .b = 0x56, .a = 255 } };
+    try std.testing.expectEqual(old.len, held.?.snapshot.decorations[0].len);
+    for (old, held.?.snapshot.decorations[0]) |color, command| try std.testing.expectEqual(color, command.solid.color);
+    const previous = try a.dupe(output.commands.Command, held.?.snapshot.decorations[0]);
+    defer a.free(previous);
+    try owner.feed("\x1b]4;1;#abcdef;2;#fedcba\x07");
+    try owner.flush();
+    try std.testing.expectEqualSlices(output.commands.Command, previous, held.?.snapshot.decorations[0]);
+    try owner.release(held.?);
+    held = null;
+    const next = try owner.hold();
+    defer release(owner, next);
+    const updated = [_]Color{ .{ .r = 0xab, .g = 0xcd, .b = 0xef, .a = 255 }, .{ .r = 0xfe, .g = 0xdc, .b = 0xba, .a = 255 }, .{ .r = 0xab, .g = 0xcd, .b = 0xef, .a = 255 } };
+    try std.testing.expectEqual(updated.len, next.snapshot.decorations[0].len);
+    for (updated, next.snapshot.decorations[0]) |color, command| try std.testing.expectEqual(color, command.solid.color);
+    const view = owner.observation().semanticView(1);
+    try std.testing.expectEqual(@as(u32, 1), view.history_count);
+    try std.testing.expectEqual(@as(u32, 1), view.cellInfoAt(0, 0).attrs.fg.value);
+    try std.testing.expectEqual(@as(u32, 2), view.cellInfoAt(0, 1).attrs.underline_color.value);
+    try std.testing.expect(view.cellInfoAt(0, 2).attrs.underline_color.kind == .default);
+}
+
+test "Kitty underline style projections have distinct bounded ink and preserve explicit colour" {
+    const f = try font(24);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(7, 8);
+    try owner.feed("\x1b[?25l\x1b[58:2::70:80:90;4:0mA\r\n\x1b[4:1mA\r\n\x1b[4:2mA\r\n\x1b[4:3mA\r\n\x1b[4:4mA\r\n\x1b[4:5mA\r\n\x1b[24mA");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const snap = held.snapshot;
+    try std.testing.expectEqual(@as(usize, 0), snap.decorations[0].len);
+    try std.testing.expectEqual(@as(usize, 0), snap.decorations[6].len);
+    try std.testing.expectEqual(@as(usize, 1), snap.decorations[1].len);
+    try std.testing.expectEqual(@as(usize, 2), snap.decorations[2].len);
+    const first = snap.decorations[2][0].solid;
+    const second = snap.decorations[2][1].solid;
+    try std.testing.expect(first.rect.y + @as(i32, first.rect.height) < second.rect.y);
+    const expected: output.commands.Color = .{ .r = 70, .g = 80, .b = 90, .a = 255 };
+    for (snap.decorations[1..6]) |commands| {
+        for (commands) |command| switch (command) {
+            .solid => |value| {
+                try std.testing.expectEqual(expected, value.color);
+                try std.testing.expect(value.rect.x >= 0 and value.rect.x + @as(i32, value.rect.width) <= snap.cell_width);
+                try std.testing.expect(value.rect.y >= 0 and value.rect.y + @as(i32, value.rect.height) <= snap.cell_height);
+            },
+            .alpha_mask => |value| {
+                try std.testing.expectEqual(expected, value.color);
+                try std.testing.expect(value.clip.x >= 0 and value.clip.x + @as(i32, value.clip.width) <= snap.cell_width);
+                try std.testing.expect(value.clip.y >= 0 and value.clip.y + @as(i32, value.clip.height) <= snap.cell_height);
+            },
+            else => return error.UnexpectedDecoration,
+        };
+    }
+    for (3..6) |row| {
+        try std.testing.expectEqual(@as(usize, 1), snap.decorations[row].len);
+        try std.testing.expect(snap.decorations[row][0] == .alpha_mask);
+    }
+    const curly = snap.decorations[3][0].alpha_mask.resource.source.?;
+    const dotted = snap.decorations[4][0].alpha_mask.resource.source.?;
+    const dashed = snap.decorations[5][0].alpha_mask.resource.source.?;
+    try std.testing.expect(curly.height > dotted.height);
+    try std.testing.expect(!std.meta.eql(dotted, dashed));
+    const masks = [_]output.commands.SourceRect{ dotted, dashed };
+    for (masks, [_]usize{ 2, 5 }, [_]usize{ 1, 3 }) |mask, step, ink| {
+        for (0..mask.height) |y| for (0..mask.width) |x| {
+            const pos = (@as(usize, @intCast(mask.y)) + y) * snap.atlas_width + @as(usize, @intCast(mask.x)) + x;
+            try std.testing.expectEqual(@as(u8, if (x % step < ink) 255 else 0), snap.atlas_pixels[pos]);
+        };
+    }
+}

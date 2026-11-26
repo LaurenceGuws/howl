@@ -75,7 +75,14 @@ pub fn Emitter(comptime instrumented: bool) type {
             var bg = try resolve(cell.attrs.bg, p, false);
             if (cell.attrs.reverse != p.reverse_screen) std.mem.swap(frame.Color, &fg, &bg);
             if (cell.attrs.dim) fg.a = @intCast((@as(u16, fg.a) * 55 + 50) / 100);
-            return .{ .fg = fg, .bg = bg, .underline = try resolve(cell.attrs.underline_color, p, true) };
+            // Default decoration colour follows the effective text
+            // foreground, including reverse video and bold defaults.
+            // An explicitly assigned underline colour is independent.
+            const underline_color = if (cell.attrs.underline_color.kind == .default)
+                fg
+            else
+                try resolve(cell.attrs.underline_color, p, true);
+            return .{ .fg = fg, .bg = bg, .underline = underline_color };
         }
         fn variant(a: VT.CellAttrs) cache.FontVariant {
             return if (a.bold) (if (a.italic) .bold_italic else .bold) else (if (a.italic) .italic else .regular);
@@ -374,7 +381,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 const c = shared_colors orelse try colors(cell, p);
                 const allocation: frame.Rect = .{ .x = @as(i32, @intCast(col)) * ctx.cell_width, .y = 0, .width = ctx.cell_width * cell.width, .height = ctx.cell_height };
                 if (cell.attrs.underline) try underline(ctx, output, &used, allocation, line_offset + metrics.underline_y, metrics.underline_height, metrics.line_height, cell.attrs.underline_style, c.underline);
-                if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, &used, .{ .x = allocation.x, .y = line_offset + metrics.strike_y, .width = allocation.width, .height = @max(@as(u16, 1), metrics.strike_height) }, allocation, c.underline);
+                if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, &used, .{ .x = allocation.x, .y = line_offset + metrics.strike_y, .width = allocation.width, .height = @max(@as(u16, 1), metrics.strike_height) }, allocation, c.fg);
             };
             const decoration_end = used;
             var scalars: [scalar_limit]u32 = undefined;
@@ -609,7 +616,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                     },
                 }
             }
-            if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = line_offset + metrics.strike_y, .width = sizing.base_width, .height = @max(@as(u16, 1), metrics.strike_height) }), clip, resolved.underline);
+            if (cell.attrs.strikethrough) try solid(ctx.command_bytes_written, output, used, try sizing.transform(.{ .x = sizing.allocation.x, .y = line_offset + metrics.strike_y, .width = sizing.base_width, .height = @max(@as(u16, 1), metrics.strike_height) }), clip, resolved.fg);
         }
 
         // Project a live scaled cluster into one row-local strip. Retaining

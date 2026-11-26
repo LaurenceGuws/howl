@@ -2670,3 +2670,30 @@ test "Unicode Core mode save restore and query preserve both reply profiles" {
         try std.testing.expectEqual(@as(u8, 2), terminal.semanticView(0).cellInfoAt(0, 0).width);
     }
 }
+
+test "Kitty underline styles and colour lifetime survive every wire split and both C1 profiles" {
+    const seven = "\x1b[58;5;17;4:1mA\x1b[4:2mB\x1b[4:3mC\x1b[4:4mD\x1b[4:5mE\x1b[4:0mF\x1b[4mG\x1b[24mH\x1b[58:2::10:20:30;4mI\x1b[59mJ\x1b[58:5:42mK\x1b[0mL";
+    const eight = "\x9b58;5;17;4:1mA\x9b4:2mB\x9b4:3mC\x9b4:4mD\x9b4:5mE\x9b4:0mF\x9b4mG\x9b24mH\x9b58:2::10:20:30;4mI\x9b59mJ\x9b58:5:42mK\x9b0mL";
+    const Style = Terminal.UnderlineStyle;
+    const styles = [_]?Style{ .straight, .double, .curly, .dotted, .dashed, null, .straight, null, .straight, .straight, .straight, null };
+    const Color = Terminal.Color;
+    const default = Terminal.default_cell_attrs.underline_color;
+    const colors = [_]Color{ .indexed(17), .indexed(17), .indexed(17), .indexed(17), .indexed(17), .indexed(17), .indexed(17), .indexed(17), .rgbComponents(10, 20, 30), default, .indexed(42), default };
+    for ([_][]const u8{ seven, eight }) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 16, 0);
+            defer terminal.deinit();
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            const view = terminal.semanticView(0);
+            for (styles, colors, 0..) |style, color, col| {
+                const cell = view.cellInfoAt(0, @intCast(col));
+                try std.testing.expectEqual(@as(u32, @intCast('A' + col)), cell.codepoint);
+                try std.testing.expectEqual(style != null, cell.attrs.underline);
+                try std.testing.expectEqual(style orelse .straight, cell.attrs.underline_style);
+                try std.testing.expectEqual(color, cell.attrs.underline_color);
+            }
+            try std.testing.expectEqual(@as(u16, 12), view.cursor_col);
+        }
+    }
+}

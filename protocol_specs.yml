@@ -20336,6 +20336,33 @@ specifications:
           sha256: 051f6bda4bb940aee9bfc3284071125da6daf3b585c5b12c1af2b8f22824eec7
           location: collect_sgr underline
           meaning: Subparameter admitted0..5; invalid range skipped; default1. Not full rendering proof.
+        howl_qualification_20261127_underline_01:
+          scope: Valid SGR4:0..5, ordinary4 and24 decoded by existing canonical owner; exact scalar, underline enabled/style
+            and colour retention at every input split for ESC CSI and raw C1 CSI. Actual font-backed output at 24px distinguishes
+            none/straight/double/curly/dotted/dashed, bounded rects, disjoint double lines, selected mask extents and exact
+            dotted/dashed atlas bytes. Existing full-width dotted bound and out-of-range no-op policy retained (author implementation
+            clamps, source document defines only0..5). No complete tiny-font/combined-style/physical or all scaled decoration
+            geometry claim.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
+            live terminfo inspection; no blanket FULL promotion
+          baseline: 88bd0b39c6c47482cc062979731d305e92859828
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Kitty underline styles and colour lifetime survive every wire split and both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty underline style projections have distinct bounded ink and preserve explicit colour
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: SGR retains exact rendition and colon color state'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: out of range Kitty underline style is ignored by Howl'
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: full-width dotted underline stays within the ordinary row command bound
+        relation: protocol-family
     - id: color
       section: lines 22-27
       level: defined
@@ -20355,6 +20382,32 @@ specifications:
           sha256: 65ba332e800d2a9e846dd7bc32ddbfc93a4a47da7332c20e1243d92f156f2e25
           location: tsetattr58
           meaning: Consumes color parameter operands via tdefcolor but does not apply underline color.
+        howl_qualification_20261127_underline_01:
+          scope: Existing common extended-colour decoder handles SGR58 with same indexed/RGB forms as38/48. Test semicolon
+            indexed and colon RGB/indexed, retained style off/on, actual explicit RGB/indexed decoration, palette change in
+            retained history, exact unchanged canonical indices and immutable held frame. Explicit underline colour remains
+            independent of effective foreground. Existing malformed extended-colour policy retained; no complete all parameter
+            forms or attribute combination proof.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
+            live terminfo inspection; no blanket FULL promotion
+          baseline: 88bd0b39c6c47482cc062979731d305e92859828
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Kitty underline styles and colour lifetime survive every wire split and both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty underline style projections have distinct bounded ink and preserve explicit colour
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty underline colour follows effective foreground unless explicitly assigned
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty indexed underline colours refresh in history without mutating a held frame
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: SGR retains exact rendition and colon color state'
+        relation: protocol-family
     - id: reset-color
       section: lines 29-32
       level: defined
@@ -20369,6 +20422,24 @@ specifications:
           sha256: 62613ea9590893336bde270894bab872de89b3b72844db85a929ba167dc7b83d
           location: selectGraphicRendition 59
           meaning: Resets to foreground index; SGR0 does not explicitly reset mUnderlineColor in this handler.
+        howl_qualification_20261127_underline_01:
+          scope: SGR59 resets only underline colour while retaining underline style; actual decoration then follows cell foreground
+            instead of unconditional theme foreground. SGR24/4:0 retain assigned colour while disabled, SGR0 resets both.
+            All input splits for both CSI profiles, retained history palette projection.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
+            live terminfo inspection; no blanket FULL promotion
+          baseline: 88bd0b39c6c47482cc062979731d305e92859828
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Kitty underline styles and colour lifetime survive every wire split and both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty underline colour follows effective foreground unless explicitly assigned
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty indexed underline colours refresh in history without mutating a held frame
+        relation: protocol-family
     - id: reverse-video-color
       section: lines 33-34
       level: defined
@@ -20377,11 +20448,44 @@ specifications:
       - CSI 7 m
       - CSI 27 m
       rule: Explicit underline color remains unchanged under reverse video; default underline color follows foreground.
+      test_locations:
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty underline colour follows effective foreground unless explicitly assigned
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty indexed underline colours refresh in history without mutating a held frame
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_underline_01:
+          scope: Shared decoration resolver obtains default underline colour from the effective cell foreground after cell
+            reverse XOR reverse-screen, and bold/dim foreground resolution. Explicit colour independently resolves palette
+            or RGB and is not swapped. Strikethrough uses text foreground rather than underline colour (pinned Kitty cell.slang
+            separate strike and underline masks). Actual output checks ordinary and scaled text across reverse-screen and
+            cell reverse, explicit RGB and SGR59; indexed live/history colour update. Selected RGB and indexed cases; no complete
+            alpha/dim, hyperlink, selection or compositor policy claim.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
+            live terminfo inspection; no blanket FULL promotion
+          baseline: 88bd0b39c6c47482cc062979731d305e92859828
     - id: detection
       section: lines 36-37
       level: defined
       wire: terminfo Su
       rule: Boolean terminfo capability identifies styled/colored underline support; not a new control sequence.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: XTGETTCAP replies preserve ordered names values failures and C1 serialization
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_underline_01:
+          scope: Existing fixed XTGETTCAP Su flag reply verified in the linked query inventory; this is adjacent capability
+            discovery, not proof of host terminfo publication. Home default Launch.term remains xterm-256color; live infocmp
+            -x xterm-256color lacks Su/Smulx/Setulc (terminfo-xterm-256color.txt in workstream). No host identity change;
+            defer actual Su terminfo publication to truthful capability-publication campaign.
+          method: Pinned Kitty a79f376 docs/underlines.rst SHA256 7355e01cbfd176f2ea75687bf87573e889cbafb882c3a8214ec4737352c9b1ad
+            and kitty/shaders/cell.slang; actual output-owner red-green, palette/history/atlas/fragmented wire proofs and
+            live terminfo inspection; no blanket FULL promotion
+          baseline: 88bd0b39c6c47482cc062979731d305e92859828
   kitty_dnd:
     title: Kitty drag and drop protocol (OSC 72)
     author: Kovid Goyal / kitty
