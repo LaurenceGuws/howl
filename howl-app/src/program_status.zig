@@ -7,8 +7,9 @@ const vt = @import("howl_vt");
 
 const status = vt.Terminal.ProgramStatus;
 
-/// Maximum live status identities per pane. Oldest reports are evicted.
-pub const max_records: usize = 32;
+/// Rex revision 0.4 requires at least 64 records per terminal.
+/// Choose the minimum supported capacity; evict the least recently updated.
+pub const max_records: usize = 64;
 
 /// The only status facts copied from the PTY worker to the SDL header.
 pub const Summary = struct {
@@ -114,7 +115,7 @@ pub const Index = struct {
                 (record.state == best.state and record.changed_at > best.changed_at))
                 chosen = i;
         }
-        const selected = self.records[chosen];
+        const selected = &self.records[chosen];
         var same: u8 = 0;
         for (self.records[0..self.len]) |record| {
             if (record.state == selected.state) same += 1;
@@ -125,7 +126,7 @@ pub const Index = struct {
             .progress = selected.progress,
             .count = same,
         };
-        const app = selected.appText();
+        const app = self.effectiveApp(selected);
         @memcpy(result.app[0..app.len], app);
         result.app_len = @intCast(app.len);
         return result;
@@ -136,6 +137,22 @@ pub const Index = struct {
             if (std.mem.eql(u8, record.idBytes(), id)) return i;
         }
         return null;
+    }
+
+    // Resolve from current records, not a copied inherited name. Ancestors
+    // may appear, change, disappear, or lack an explicit app of their own.
+    fn effectiveApp(self: *const Index, record: *const Record) []const u8 {
+        const own = record.appText();
+        if (own.len != 0) return own;
+        var id = record.idBytes();
+        while (id.len != 0) {
+            id = if (std.mem.lastIndexOfScalar(u8, id, '/')) |slash| id[0..slash] else "";
+            if (self.find(id)) |ancestor| {
+                const app = self.records[ancestor].appText();
+                if (app.len != 0) return app;
+            }
+        }
+        return "";
     }
 
     fn nextSequence(self: *Index) u64 {
@@ -149,21 +166,18 @@ pub const Index = struct {
         std.debug.assert(report.id.len <= 128);
         const now = self.nextSequence();
         var index: usize = undefined;
-        var new_record = false;
         if (self.find(report.id)) |existing| {
             index = existing;
             const old = &self.records[index];
             const changed = old.state != report.state or
                 old.kind != report.kind or old.progress != report.progress or
-                (report.app.len != 0 and !std.mem.eql(u8, old.appText(), report.app));
+                !std.mem.eql(u8, old.appText(), report.app);
             old.reported_at = now;
             if (!changed) return false;
         } else if (self.len < max_records) {
-            new_record = true;
             index = self.len;
             self.len += 1;
         } else {
-            new_record = true;
             index = 0;
             for (self.records[1..self.len], 1..) |record, i| {
                 if (record.reported_at < self.records[index].reported_at) index = i;
@@ -172,12 +186,8 @@ pub const Index = struct {
         const entry = &self.records[index];
         @memcpy(entry.id[0..report.id.len], report.id);
         entry.id_len = @intCast(report.id.len);
-        if (report.app.len != 0) {
-            @memcpy(entry.app[0..report.app.len], report.app);
-            entry.app_len = @intCast(report.app.len);
-        } else if (new_record) {
-            entry.app_len = 0;
-        }
+        @memcpy(entry.app[0..report.app.len], report.app);
+        entry.app_len = @intCast(report.app.len);
         entry.state = report.state;
         entry.kind = report.kind;
         entry.progress = report.progress;

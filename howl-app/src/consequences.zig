@@ -296,9 +296,9 @@ test "clipboard allocation pressure retains the exact FIFO head until successful
 }
 
 test "host OSC7501 per-pane index remains compact and allocation-free" {
-    try std.testing.expect(@sizeOf(host_status.Index) <= 8 * 1024);
+    try std.testing.expect(@sizeOf(host_status.Index) <= 16 * 1024);
     try std.testing.expect(@sizeOf(host_status.Summary) <= 64);
-    try std.testing.expectEqual(@as(usize, 32), host_status.max_records);
+    try std.testing.expectEqual(@as(usize, 64), host_status.max_records);
 }
 
 test "host status snapshot includes only validated app name for toast" {
@@ -310,7 +310,7 @@ test "host status snapshot includes only validated app name for toast" {
     try std.testing.expectEqual(@as(?u8, 32), current.progress);
     try std.testing.expect(index.apply(parse("state=working:id=compile:app=cargo:progress=32").?));
     try std.testing.expectEqualStrings("cargo", index.summary().appText());
-    try std.testing.expect(@sizeOf(host_status.Index) <= 8192);
+    try std.testing.expect(@sizeOf(host_status.Index) <= 16 * 1024);
     try std.testing.expect(@sizeOf(host_status.Summary) <= 64);
 }
 
@@ -389,4 +389,90 @@ test "host OSC7501 fixed index evicts least recently reported records" {
     try std.testing.expect(!index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=job1").?));
     try std.testing.expect(index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=job0").?));
     try std.testing.expectEqual(host_status.max_records - 1, index.len);
+}
+
+test "Rex retains at least 64 independent records and refreshes eviction recency" {
+    var index: host_status.Index = .{};
+    const parse = vt.Terminal.ProgramStatus.parse;
+    for (0..64) |i| {
+        var buffer: [64]u8 = undefined;
+        const body = try std.fmt.bufPrint(&buffer, "state=working:id=job{d}", .{i});
+        try std.testing.expect(index.apply(parse(body).?));
+    }
+    try std.testing.expectEqual(@as(usize, 64), index.len);
+    try std.testing.expectEqual(@as(u8, 64), index.summary().count);
+    try std.testing.expect(!index.apply(parse("state=working:id=job0").?));
+    try std.testing.expect(index.apply(parse("state=working:id=job64").?));
+    try std.testing.expectEqual(@as(usize, 64), index.len);
+    try std.testing.expect(!index.apply(parse("state=clear:id=job1").?));
+    try std.testing.expect(index.apply(parse("state=clear:id=job0").?));
+    try std.testing.expect(index.apply(parse("state=clear:id=job63").?));
+}
+
+test "Rex app replacement and nearest ancestor inheritance are live" {
+    var index: host_status.Index = .{};
+    const parse = vt.Terminal.ProgramStatus.parse;
+    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:app=local:kind=permission:progress=42").?));
+    try std.testing.expectEqualStrings("local", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:kind=permission:progress=42").?));
+    try std.testing.expectEqualStrings("", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=idle:app=root").?));
+    try std.testing.expectEqualStrings("root", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=idle:id=build:app=build").?));
+    try std.testing.expectEqualStrings("build", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=idle:id=build/test:app=nearest").?));
+    try std.testing.expectEqualStrings("nearest", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=idle:id=build/test").?));
+    try std.testing.expectEqualStrings("build", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=idle:id=build:app=other").?));
+    try std.testing.expectEqualStrings("other", index.summary().appText());
+    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:app=override").?));
+    try std.testing.expectEqualStrings("override", index.summary().appText());
+    try std.testing.expect(index.summary().kind == null and index.summary().progress == null);
+    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:app=invalid/name").?));
+    try std.testing.expectEqualStrings("other", index.summary().appText());
+}
+
+test "Rex fragmented rejected reports preserve the real host index and reply lane" {
+    const allocator = std.testing.allocator;
+    const segment = "abcdefghijklmnopqrstuvwxyz123456";
+    const id = segment ++ "/" ++ segment ++ "/" ++ segment ++ "/abcdefghijklmnopqrstuvwxyz123";
+    comptime std.debug.assert(id.len == 128);
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        const invalid_bodies = [_][]const u8{
+            "state=clear:id=" ++ id ++ "4",
+            "state=clear:title=AA==:title=QQ==",
+            "state=done:id=" ++ id ++ ":msg=////:msg=QQ==",
+        };
+        for (invalid_bodies) |body| {
+            var wire_buffer: [512]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&wire_buffer, "\x1b]7501;{s}{s}", .{ body, term });
+            for (0..wire.len + 1) |split| {
+                var terminal = try vt.Terminal.init(allocator, 2, 8);
+                defer terminal.deinit();
+                var index: host_status.Index = .{};
+                terminal.setProgramStatusConsumer(true);
+                const seed = "\x1b]7501;state=working:app=root\x07" ++
+                    "\x1b]7501;state=blocked:id=" ++ id ++ ":kind=auth\x1b\\";
+                try std.testing.expect((try terminal.feed(seed)).stateChanged());
+                var initial = try drain(&terminal, allocator, .dark, &index);
+                defer initial.deinit(allocator);
+                const before = index.summary();
+                try std.testing.expectEqual(@as(usize, 2), index.len);
+                try std.testing.expectEqualStrings("root", before.appText());
+                try std.testing.expect(before.state.? == .blocked and before.kind.? == .auth);
+                const identity = terminal.semanticSequence();
+                try std.testing.expect(!(try terminal.feed(wire[0..split])).stateChanged());
+                try std.testing.expect(!(try terminal.feed(wire[split..])).stateChanged());
+                var rejected = try drain(&terminal, allocator, .dark, &index);
+                defer rejected.deinit(allocator);
+                try std.testing.expect(!rejected.worked and !rejected.status_changed);
+                try std.testing.expectEqual(@as(usize, 2), index.len);
+                try std.testing.expectEqualDeep(before, index.summary());
+                try std.testing.expectEqual(identity, terminal.semanticSequence());
+                try std.testing.expectEqualStrings("", terminal.replyBytes());
+                try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+            }
+        }
+    }
 }

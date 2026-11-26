@@ -84,3 +84,30 @@ test "OSC 7501 only recognized states and numeric range are returned" {
     try std.testing.expect(status.parse("state=blocked:kind=auth").?.report.kind.? == .auth);
     try std.testing.expect(status.parse("state=blocked:kind=other").?.report.kind == null);
 }
+
+test "Rex validates earlier duplicate text before last value wins" {
+    for ([_][]const u8{
+        "state=working:title=AA==:title=QQ==",
+        "state=working:msg=////:msg=QQ==",
+        "state=clear:msg=A:msg=QQ==",
+        "state=working:title=woA:title=QQ==",
+        "state=working:msg=AA==:msg=",
+    }) |body| try std.testing.expect(status.parse(body) == null);
+
+    const report = status.parse("state=working:title=QQ==:title=Qg:msg=QQ:msg=Qw==").?.report;
+    var scratch: [status.max_msg_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings("B", report.titleText(&scratch).?);
+    try std.testing.expectEqualStrings("C", report.messageText(&scratch).?);
+}
+
+test "Rex ID limits count separators and reject entire invalid report" {
+    const segment = "abcdefghijklmnopqrstuvwxyz123456";
+    comptime std.debug.assert(segment.len == 32);
+    const valid = segment ++ "/" ++ segment ++ "/" ++ segment ++ "/abcdefghijklmnopqrstuvwxyz123";
+    comptime std.debug.assert(valid.len == 128);
+    try std.testing.expectEqualStrings(valid, status.parse("state=working:id=" ++ valid).?.report.id);
+    try std.testing.expect(status.parse("state=working:id=" ++ valid ++ "4") == null);
+    try std.testing.expect(status.parse("state=clear:id=" ++ segment ++ "x") == null);
+    try std.testing.expect(status.parse("state=clear:id=a/b/c/d/e/f/g/h/i") == null);
+    try std.testing.expectEqualStrings("a/b/c/d/e/f/g/h", status.parse("state=working:id=a/b/c/d/e/f/g/h").?.report.id);
+}

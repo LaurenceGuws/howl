@@ -76,6 +76,7 @@ pub fn parse(body: []const u8) ?Action {
     var title: []const u8 = "";
     var msg: []const u8 = "";
 
+    var scratch: [max_msg_bytes]u8 = undefined;
     var pairs = std.mem.splitScalar(u8, body, ':');
     while (pairs.next()) |pair| {
         const separator = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
@@ -102,18 +103,16 @@ pub fn parse(body: []const u8) ?Action {
             app = value;
         } else if (std.mem.eql(u8, key, "title")) {
             if (value.len > max_title_encoded_bytes) return null;
+            if (decodeText(value, &scratch, max_title_bytes) == null) return null;
             title = value;
         } else if (std.mem.eql(u8, key, "msg")) {
             if (value.len > max_msg_encoded_bytes) return null;
+            if (decodeText(value, &scratch, max_msg_bytes) == null) return null;
             msg = value;
         }
     }
-    // Both references decode/validate every recognized text field before
-    // distinguishing clear from update. An invalid title on a clear cannot
-    // bypass admission by taking the early clear branch.
-    var scratch: [max_msg_bytes]u8 = undefined;
-    if (title.len != 0 and decodeText(title, &scratch, max_title_bytes) == null) return null;
-    if (msg.len != 0 and decodeText(msg, &scratch, max_msg_bytes) == null) return null;
+    // Every admitted text pair was validated before duplicate resolution.
+    // Neither replacement nor clear can hide a rejected field.
     if (std.mem.eql(u8, state_field, "clear")) return .{ .clear = id };
     const state = std.meta.stringToEnum(State, state_field) orelse return null;
 
