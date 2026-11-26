@@ -20686,6 +20686,42 @@ specifications:
         test: shared SGR patch matches direct rendition across supported selectors
         relation: protocol-family
         note: Selected shared-SGR regression evidence; not full wire/geometry/renderer qualification.
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty DECCARA clips page rows and admits ordered stream endpoints without clamping offscreen starts
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty DECCARA origin adds vertical offset while regional extent uses the physical page
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: DECCARA lead-only rendition repairs every scaled ink strip without mutating continuations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: WezTerm RGBA rectangular admission and reports preserve alpha across both C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_deccara_01:
+          scope: 'Existing shared SGR patch and accepted bare/coordinate-only/zero distinction retained. Originating Kitty
+            geometry now has a separate regional bounds policy: top beyond page is inert, requested off-page bottom clips
+            iteration without truncating the last visible stream row, multi-row stream endpoints can have decreasing columns,
+            rectangular and same-row inverted spans are inert after horizontal clamping. DECOM offsets vertical coordinates
+            by top margin; region uses physical page columns and rows, not horizontal origin or scroll-bottom clipping. This
+            follows pinned Kitty screen.c select_graphic_rendition and its parser tests; original DEC bounds and DECRARA/erasure/copy
+            routes remain distinct. Every split of ten page/stream cases in both introducers, exact cells, row revisions and
+            cursor, repeated no-op, plus origin/horizontal margins separation. RGBA exact24-operand rectangle and common-report
+            proof reused. Valid per-cell rendition differences in sized text no longer reject the whole output scene: validate
+            immutable cluster geometry, retain distinct canonical cell backgrounds/attributes, borrow the existing lead ink/style/visibility/blink/decorations
+            consistently on every strip. Changed lead invalidates dependent row generations without rewriting continuation
+            attrs or their background witnesses. Actual output proof held lease immutability, lead-only RGBA foreground, underline/blink
+            and conceal. This is Howl lead-owned scaled ink policy, not a foreign per-cell mixed-rendition pixel claim. Remaining
+            scope includes trailing omission grammar, malformed ordinary SGR repertoire, all DEC geometry combinations, continuation-specific
+            ink policy, physical and remote output.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/deccara.rst SHA256 700d97077b7ff209f35a17651d4534ff2281669b4d70248a21083acf7218d605;
+            kitty/screen.c select_graphic_rendition, kitty/vt-parser.c _parse_sgr, kitty_tests/parser.py test_deccara; deterministic
+            VT and output-owner red-green; no blanket FULL promotion
+          baseline: 082f8b554ece4ff159f3c6cdf5c2fa8f67a30365
   kitty_underlines:
     title: Kitty colored and styled underlines
     author: Kovid Goyal / kitty

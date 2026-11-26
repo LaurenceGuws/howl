@@ -776,7 +776,7 @@ fn rectAttrsChange(params: []const i32, separators: parser_mod.CsiSeparatorList,
     // Bare DECCARA defaults to SGR reset; supplied coordinates without
     // an SGR selector do not change rendition. DECRARA has no omitted selector.
     if (params.len < 5 and (reverse or params.len != 0)) return null;
-    const area = rectArea(params, 0, .zero_or_omitted) orelse return null;
+    const area = (if (reverse) rectArea(params, 0, .zero_or_omitted) else rectArea(params, 0, .deccara)) orelse return null;
     const start = @min(params.len, 4);
     for (0..start) |i| if (separators.isSet(i)) return null;
     const sgr = screenSgrOperands(params, separators, omitted);
@@ -963,7 +963,7 @@ fn locatorFilterArea(params: []const i32) ?locator_mod.FilterArea {
 }
 
 // Projects a parameter suffix into an ordered zero-based rectangle with open lower defaults.
-fn rectArea(params: []const i32, start_idx: u8, comptime edge_defaults: enum { omitted_only, zero_or_omitted }) ?RectArea {
+fn rectArea(params: []const i32, start_idx: u8, comptime edge_defaults: enum { omitted_only, zero_or_omitted, deccara }) ?RectArea {
     const start = @as(u32, start_idx);
     const param_len = paramCount32(params);
     const area: RectArea = .{
@@ -981,7 +981,9 @@ fn rectArea(params: []const i32, start_idx: u8, comptime edge_defaults: enum { o
             null,
     };
     if (area.bottom) |bottom| if (area.top > bottom) return null;
-    if (area.right) |right| if (area.left > right) return null;
+    // Extended DECCARA can select a multi-row stream whose end
+    // column precedes its start. Its extent owner decides that case.
+    if (edge_defaults != .deccara) if (area.right) |right| if (area.left > right) return null;
     return area;
 }
 

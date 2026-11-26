@@ -6528,3 +6528,76 @@ test "terminal: horizontal margin row edits retire only straddling graphics plac
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
     try std.testing.expectEqual(pixels, terminal.images(0).content_generation);
 }
+
+test "Kitty DECCARA clips page rows and admits ordered stream endpoints without clamping offscreen starts" {
+    // Pinned Kitty screen.c: region iteration uses the requested bottom,
+    // even if it exceeds the page; only the iteration itself is clipped.
+    const cases = [_]struct { coordinates: []const u8, rectangle: bool, selected: [5]u8 }{
+        .{ .coordinates = "100;1;100;5", .rectangle = false, .selected = @splat(0) },
+        .{ .coordinates = "99999999;1;99999999;5", .rectangle = true, .selected = @splat(0) },
+        .{ .coordinates = "3;4;3;2", .rectangle = false, .selected = @splat(0) },
+        .{ .coordinates = "1;7;3;2", .rectangle = true, .selected = @splat(0) },
+        .{ .coordinates = "1;7;3;2", .rectangle = false, .selected = .{ 0xc0, 0xff, 3, 0, 0 } },
+        .{ .coordinates = "3;4;99;2", .rectangle = false, .selected = .{ 0, 0, 0xf8, 0xff, 0xff } },
+        .{ .coordinates = "3;1;99;2", .rectangle = true, .selected = .{ 0, 0, 3, 3, 3 } },
+        .{ .coordinates = "5;999;5;999", .rectangle = true, .selected = .{ 0, 0, 0, 0, 0x80 } },
+        .{ .coordinates = "3;999;3;2", .rectangle = true, .selected = @splat(0) },
+        .{ .coordinates = "4;1;2;8", .rectangle = false, .selected = @splat(0) },
+    };
+    for (cases) |case| for ([_][]const u8{ "\x1b[", "\x9b" }) |intro| {
+        var scratch: [128]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&scratch, "{s}{s};44$r", .{ intro, case.coordinates });
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 8, 4);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[31mA\x1b[5;8HZ");
+            if (case.rectangle) try feed(&terminal, "\x1b[2*x");
+            var before: [5][8]Terminal.Cell = undefined;
+            var generations: [5]?u64 = undefined;
+            const view = terminal.semanticView(0);
+            for (&before, &generations, 0..) |*row, *generation, r| {
+                generation.* = view.rowGeneration(@intCast(r));
+                for (row, 0..) |*cell, col| cell.* = view.cellInfoAt(@intCast(r), @intCast(col));
+            }
+            const seq = terminal.semanticSequence();
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            const after = terminal.semanticView(0);
+            for (before, case.selected, generations, 0..) |row, mask, generation, r| {
+                try std.testing.expectEqual(mask != 0, generation != after.rowGeneration(@intCast(r)));
+                for (row, 0..) |cell, col| {
+                    var expected = cell;
+                    if (mask & (@as(u8, 1) << @as(u3, @intCast(col))) != 0) expected.attrs.bg = .indexed(4);
+                    try std.testing.expectEqualDeep(expected, after.cellInfoAt(@intCast(r), @intCast(col)));
+                }
+            }
+            try std.testing.expectEqual(@as(u16, 4), after.cursor_row);
+            try std.testing.expectEqual(@as(u16, 7), after.cursor_col);
+            var changed = false;
+            for (case.selected) |mask| changed = changed or mask != 0;
+            try std.testing.expectEqual(changed, seq != terminal.semanticSequence());
+            try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        }
+    };
+}
+
+test "Kitty DECCARA origin adds vertical offset while regional extent uses the physical page" {
+    var terminal = try Terminal.init(std.testing.allocator, 5, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[2;3r\x1b[?69h\x1b[3;6s\x1b[?6h\x1b[2*x");
+    try feed(&terminal, "\x1b[1;1;3;2;44$r");
+    const view = terminal.semanticView(0);
+    for (0..5) |r| for (0..8) |col| {
+        const expected = if (r >= 1 and r <= 3 and col < 2) Terminal.Color.indexed(4) else Terminal.default_cell_attrs.bg;
+        const cell = view.cellInfoAt(@intCast(r), @intCast(col));
+        try std.testing.expectEqual(expected, cell.attrs.bg);
+        try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+    };
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+    try std.testing.expect(!(try terminal.feed("\x1b[9;1;12;8;45$r")).stateChanged());
+    // Erasure/reverse/copy remain separate original DEC owners.
+    try feed(&terminal, "\x1b[1;1;1;1;1$t");
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 2).attrs.bold);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(1, 0).attrs.bold);
+}

@@ -269,9 +269,13 @@ pub fn Emitter(comptime instrumented: bool) type {
                     // the remaining fragments have no glyph to project.
                     if (retained_row < cell.y) continue;
                     const origin = screen.retainedCellInfoAt(retained_row - cell.y, @intCast(col - cell.x)) orelse return error.UnsupportedScene;
+                    // Regional rendition can legally differ at each cell.
+                    // Only cluster ownership and geometry must agree.
                     if (origin.x != 0 or origin.y != 0 or origin.width != cell.width or
                         origin.height != cell.height or origin.semantic_width or
-                        !std.meta.eql(origin.attrs, cell.attrs)) return error.UnsupportedScene;
+                        origin.subscale_n != cell.subscale_n or origin.subscale_d != cell.subscale_d or
+                        origin.vertical_align != cell.vertical_align or origin.horizontal_align != cell.horizontal_align or
+                        origin.explicit_width != cell.explicit_width) return error.UnsupportedScene;
                 }
                 if (cell.width > 1) {
                     if (cell.x > col) return error.UnsupportedScene;
@@ -315,17 +319,21 @@ pub fn Emitter(comptime instrumented: bool) type {
             const metrics = cache.fontFaces(ctx.atlas).metrics();
             const line_offset = @divFloor(@as(i32, ctx.cell_height) - metrics.line_height, 2);
             if (!uniform or span.attrs.underline or span.attrs.strikethrough) for (cells, 0..) |cell, col| {
-                if (cell.x != 0 or cell.attrs.invisible or
-                    (!cell.attrs.underline and !cell.attrs.strikethrough)) continue;
-                const start = used;
-                defer if (cell.attrs.blink) markBlink(output, start, used);
+                if (cell.x != 0) continue;
                 if (needsScale(cell)) {
                     if (retained_row < cell.y) continue;
                     const lead = screen.retainedCellInfoAt(retained_row - cell.y, @intCast(col)) orelse return error.UnsupportedScene;
-                    if (lead.codepoint != 0) try appendDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
+                    if (lead.codepoint == 0 or lead.attrs.invisible or
+                        (!lead.attrs.underline and !lead.attrs.strikethrough)) continue;
+                    const start = used;
+                    defer if (lead.attrs.blink) markBlink(output, start, used);
+                    try appendDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
                     continue;
                 }
-                if (cell.codepoint == 0) continue;
+                if (cell.codepoint == 0 or cell.attrs.invisible or
+                    (!cell.attrs.underline and !cell.attrs.strikethrough)) continue;
+                const start = used;
+                defer if (cell.attrs.blink) markBlink(output, start, used);
                 const c = shared_colors orelse try colors(cell, p);
                 try appendDecorations(ctx, output, &used, cell, col, 0, row_clip, line_offset, metrics, c);
             };
@@ -339,13 +347,14 @@ pub fn Emitter(comptime instrumented: bool) type {
                 const col = column;
                 column += 1;
                 const cell = cells[col];
-                if (cell.x != 0 or cell.attrs.invisible) continue;
-                const start = used;
-                defer if (cell.attrs.blink) markBlink(output, start, used);
+                if (cell.x != 0) continue;
                 if (needsScale(cell)) {
                     if (retained_row < cell.y) continue;
                     const lead_row = retained_row - cell.y;
                     const lead = screen.retainedCellInfoAt(lead_row, @intCast(col)) orelse return error.UnsupportedScene;
+                    if (lead.attrs.invisible) continue;
+                    const start = used;
+                    defer if (lead.attrs.blink) markBlink(output, start, used);
                     const sequence = screen.retainedCellScalarsAt(lead_row, @intCast(col), &scalars);
                     if (sequence.len != 0 and sequence[0] != 0x10eeee and !(sequence.len == 1 and sequence[0] == ' ')) {
                         const c = try colors(lead, p);
@@ -353,6 +362,9 @@ pub fn Emitter(comptime instrumented: bool) type {
                     }
                     continue;
                 }
+                if (cell.attrs.invisible) continue;
+                const start = used;
+                defer if (cell.attrs.blink) markBlink(output, start, used);
                 const sequence = if (cell.combining_len == 0) blk: {
                     scalars[0] = cell.codepoint;
                     break :blk scalars[0..@as(usize, if (cell.codepoint == 0) 0 else 1)];

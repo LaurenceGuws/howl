@@ -2290,3 +2290,57 @@ test "WezTerm RGBA scaled strips preserve independent text alpha and intrinsic i
     }
     try std.testing.expect(colour_count >= 5 and fractional_ink >= 2);
 }
+
+test "DECCARA lead-only rendition repairs every scaled ink strip without mutating continuations" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b[32m\x1b]66;s=2;█\x07\x1b[2*x");
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const first = held.?.snapshot;
+    const initial_view = owner.observation().semanticView(0);
+    const lower = initial_view.cellInfoAt(1, 0);
+    const untouched = initial_view.rowGeneration(2);
+    const lower_bg = initial_view.rowBackgroundGeneration(1);
+    try std.testing.expectEqual(@as(usize, 1), first.glyphs[0].len);
+    try std.testing.expectEqual(@as(usize, 1), first.glyphs[1].len);
+    const old = try a.dupe(output.commands.Command, first.glyphs[1]);
+    defer a.free(old);
+    try owner.feed("\x1b[1;1;1;1;38:6:255:0:0:128;4;5$r");
+    try owner.flush();
+    try std.testing.expectEqualSlices(output.commands.Command, old, first.glyphs[1]);
+    const old_lower_generation = first.row_generations[1];
+    try owner.release(held.?);
+    held = null;
+    {
+        const next = try owner.hold();
+        defer release(owner, next);
+        const s = next.snapshot;
+        const view = owner.observation().semanticView(0);
+        try std.testing.expectEqualDeep(lower, view.cellInfoAt(1, 0));
+        try std.testing.expectEqual(untouched, view.rowGeneration(2));
+        try std.testing.expectEqual(lower_bg, view.rowBackgroundGeneration(1));
+        try std.testing.expect(s.row_generations[1] != old_lower_generation);
+        for (0..2) |row| {
+            try std.testing.expectEqual(@as(usize, 1), s.glyphs[row].len);
+            try std.testing.expectEqual(output.commands.Color{ .r = 255, .g = 0, .b = 0, .a = 128 }, s.glyphs[row][0].alpha_mask.color);
+            try std.testing.expect(s.glyphs[row][0].alpha_mask.blink);
+        }
+        try std.testing.expectEqual(@as(usize, 1), s.decorations[1].len);
+        try std.testing.expectEqual(s.glyphs[1][0].alpha_mask.color, s.decorations[1][0].solid.color);
+        try std.testing.expect(s.decorations[1][0].solid.blink);
+    }
+    try owner.feed("\x1b[1;1;1;1;8$r");
+    try owner.flush();
+    const hidden = try owner.hold();
+    defer release(owner, hidden);
+    for (0..2) |row| {
+        try std.testing.expectEqual(@as(usize, 0), hidden.snapshot.glyphs[row].len);
+        try std.testing.expectEqual(@as(usize, 0), hidden.snapshot.decorations[row].len);
+    }
+    try std.testing.expectEqualDeep(lower, owner.observation().semanticView(0).cellInfoAt(1, 0));
+}

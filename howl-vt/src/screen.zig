@@ -2104,38 +2104,73 @@ pub const Screen = struct {
         return true;
     }
 
+    const RenditionRegion = struct {
+        bounds: RectBounds,
+        ends_in_page: bool = true,
+    };
+
+    // Originating extended DECCARA offsets vertical coordinates under
+    // DECOM, but uses physical page bounds rather than scroll margins.
+    // Keep the requested bottom's admission fact for stream extent:
+    // an off-page endpoint does not truncate the final visible row.
+    fn deccaraRegion(self: *const Screen, area: RectArea) ?RenditionRegion {
+        if (self.rows == 0 or self.cols == 0) return null;
+        const offset: u32 = if (self.origin_mode) self.scroll_top else 0;
+        const top = offset + area.top;
+        const bottom = offset + (area.bottom orelse self.rows - 1);
+        if (top >= self.rows or top > bottom) return null;
+        const left = @min(area.left, self.cols - 1);
+        const right = @min(area.right orelse self.cols - 1, self.cols - 1);
+        if ((self.attr_change_extent_rect or top == bottom) and left > right) return null;
+        return .{
+            .bounds = .{ .top = @intCast(top), .bottom = @intCast(@min(bottom, self.rows - 1)), .left = left, .right = right },
+            .ends_in_page = bottom < self.rows,
+        };
+    }
+
     /// Apply shared SGR changes or DEC reverse selectors to existing cells.
     /// Cluster geometry and scalar ownership remain intact even at an edge.
     pub fn changeRectAttrs(self: *Screen, area: RectArea, operands: SgrOperands, reverse: bool) bool {
         // DECCARA is a rendition-only operation, including pending wrap.
-        // Retain the existing distinct DECRARA motion policy.
+        // Retain the existing distinct DECRARA motion and bounds policy.
         var changed = if (reverse) self.cancelPendingWrap() else false;
         const cells = self.cells orelse return changed;
         if (reverse and operands.values.len == 0) return changed;
-        const bounds = self.rectBounds(area) orelse return changed;
+        const region = if (reverse)
+            RenditionRegion{ .bounds = self.rectBounds(area) orelse return changed }
+        else
+            self.deccaraRegion(area) orelse return changed;
+        const bounds = region.bounds;
         var patch: SgrPatch = .{};
         if (!reverse) {
             Sgr(SgrPatch).apply(&patch, operands);
             if (patch.written == 0) return changed;
         }
 
+        // A sized glyph's other rows depend on the lead's ink rendition.
+        // Mark each dependent row once, without mutating its cell attributes.
+        var dependent_after = bounds.top;
         var row = bounds.top;
-        while (row <= bounds.bottom) : (row += 1) {
-            const row_start = self.rowStart(row);
-            const start_col = if (self.attr_change_extent_rect or row == bounds.top) bounds.left else 0;
-            const end_col = if (self.attr_change_extent_rect or row == bounds.bottom) bounds.right else self.cols -| 1;
+        while (row <= bounds.bottom or row < dependent_after) : (row += 1) {
             var row_changed = false;
-            var col = start_col;
-            while (col <= end_col) : (col += 1) {
-                const idx = row_start + @as(u32, col);
-                const target = &cells[@intCast(idx)].attrs;
-                const cell_changed = if (reverse)
-                    reverseRectAttrOps(target, operands.values)
-                else
-                    patch.apply(target);
-                row_changed = cell_changed or row_changed;
+            if (row <= bounds.bottom) {
+                const row_start = self.rowStart(row);
+                const start_col = if (self.attr_change_extent_rect or row == bounds.top) bounds.left else 0;
+                const end_col = if (self.attr_change_extent_rect or (row == bounds.bottom and region.ends_in_page)) bounds.right else self.cols -| 1;
+                var col = start_col;
+                while (col <= end_col) : (col += 1) {
+                    const cell = &cells[@intCast(row_start + @as(u32, col))];
+                    const cell_changed = if (reverse)
+                        reverseRectAttrOps(&cell.attrs, operands.values)
+                    else
+                        patch.apply(&cell.attrs);
+                    if (cell_changed and cell.x == 0 and cell.y == 0 and cell.height > 1)
+                        dependent_after = @max(dependent_after, @min(self.rows, row +| cell.height));
+                    row_changed = cell_changed or row_changed;
+                }
             }
             changed = self.noteRowChange(row, row_changed) or changed;
+            if (!row_changed and row < dependent_after) self.markRowChangedWithBackground(row, false);
         }
         return changed;
     }
