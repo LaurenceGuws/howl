@@ -379,6 +379,7 @@ const SemanticEvent = union(enum) {
     string_payload: consequences.StringInput,
     device_status_report,
     dec_device_status_report: u16,
+    visibility_query,
     cursor_position_report,
     dec_cursor_position_report,
     primary_device_attributes,
@@ -1315,6 +1316,7 @@ fn report(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEv
             6 => SemanticEvent.dec_cursor_position_report,
             55, 56 => |status| SemanticEvent{ .dec_device_status_report = status },
             996 => SemanticEvent.color_preference_query,
+            998 => SemanticEvent.visibility_query,
             else => null,
         },
         else => null,
@@ -2361,6 +2363,7 @@ fn decModeReportView(vt: *const Terminal) mode_report_mod.DecView {
         .bracketed_paste = vt.modes.bracketed_paste,
         .synchronized_output = vt.modes.synchronized_output,
         .inband_resize_notifications = vt.modes.inband_resize_notifications,
+        .visibility_reporting = vt.modes.visibility_reporting,
         .color_preference_notifications = vt.modes.color_preference_notifications,
         .paste_events = vt.modes.paste_events,
         .reverse_wraparound = vt.modes.reverse_wraparound_mode,
@@ -2426,6 +2429,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         .dcs_request_resource => |request| try appendResourceInvalidReport(reply_buffer, request),
         .device_status_report => try fixed_report_mod.appendDeviceStatus(reply_buffer),
         .dec_device_status_report => |param| try locator_mod.appendDeviceStatusReport(reply_buffer, encode_buf, param),
+        .visibility_query => try reply_buffer.appendCsi(.terminal, Terminal.visibilityPayload(vt.view_visibility)),
         .cursor_position_report => try fixed_report_mod.appendCursorPosition(
             reply_buffer,
             encode_buf,
@@ -3821,6 +3825,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .dcs_request_resource,
         .device_status_report,
         .dec_device_status_report,
+        .visibility_query,
         .cursor_position_report,
         .dec_cursor_position_report,
         .primary_device_attributes,
@@ -7008,6 +7013,7 @@ pub const Terminal = struct {
     screen_state: ScreenSet,
     graphics: graphics_mod.Plane,
     modes: modes_mod.State = .{},
+    view_visibility: Visibility = .potentially_visible,
     saved_all_modes: SavedAllModes = .{},
     kitty: modes_mod.KeyboardState = .{},
     sgr_stack: [sgr_stack_capacity]SgrStackEntry = @splat(.{}),
@@ -7436,6 +7442,31 @@ pub const Terminal = struct {
         return .{ .width = value.width, .height = value.height };
     }
 
+    /// Effective per-session visibility, supplied by its embedding owner.
+    /// Unknown or any potentially observable view is potentially visible.
+    pub const Visibility = enum { potentially_visible, not_visible };
+
+    /// Updates the factual host state, independently of focus or execution.
+    /// A mandatory report is admitted before changing the fact, so failure
+    /// leaves the previous fact and all prior replies intact. Resetting VT
+    /// disables reports but does not change the embedding owner's fact.
+    pub fn setVisibility(self: *Terminal, value: Visibility) replies.AppendError!bool {
+        self.requireNoPreparedResize();
+        if (self.view_visibility == value) return false;
+        if (self.modes.visibility_reporting)
+            try self.reply_buffer.appendCsi(.terminal, visibilityPayload(value));
+        self.view_visibility = value;
+        advanceIdentity(&self.semantic_sequence);
+        return true;
+    }
+
+    fn visibilityPayload(value: Visibility) []const u8 {
+        return switch (value) {
+            .potentially_visible => "?999;1n",
+            .not_visible => "?999;2n",
+        };
+    }
+
     /// Appends one Kitty color-preference notification when mode 2031 is enabled.
     ///
     /// Disabled mode returns false without mutation. Allocation or output-bound
@@ -7529,6 +7560,7 @@ pub const Terminal = struct {
         changed = replaceBool(&self.modes.focus_reporting, false) or changed;
         changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
         changed = replaceBool(&self.modes.inband_resize_notifications, false) or changed;
+        changed = replaceBool(&self.modes.visibility_reporting, false) or changed;
         changed = replaceBool(&self.modes.reverse_wraparound_mode, false) or changed;
         changed = replaceBool(&self.modes.extended_reverse_wraparound_mode, false) or changed;
         changed = replaceBool(&self.modes.sixel_display_mode, false) or changed;
@@ -7753,40 +7785,68 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Apply one canonical semantic mode event. Reserve mandatory initial
-    /// resize reports before mutating any member of a grouped mode command.
+    /// Reserve every mandatory initial report before applying any member of
+    /// a grouped mode command. Keep report order equal to operand order.
     fn applyModeEvent(self: *Terminal, event: SemanticEvent) replies.AppendError!bool {
-        const reports = self.initialResizeReportCount(event);
-        var report_bytes: [98]u8 = undefined;
+        const reports = self.initialModeReports(event);
+        var resize_bytes: [98]u8 = undefined;
         const active = self.screen_state.activeConst();
-        const report_len = if (reports != 0)
-            self.formatResizeReport(active.rows, active.cols, self.cellPixelSize(), &report_bytes)
+        const resize_len = if (std.mem.indexOfScalar(u16, reports.params[0..reports.param_count], 2048) != null)
+            self.formatResizeReport(active.rows, active.cols, self.cellPixelSize(), &resize_bytes)
         else
             0;
-        const capacity = std.math.mul(u32, reports, report_len) catch return error.ReplyLimit;
+        const visibility_payload = visibilityPayload(self.view_visibility);
+        const visibility_len: u32 = @intCast(visibility_payload.len + @as(usize, if (self.reply_buffer.eight_bit_controls) 1 else 2));
+        var capacity: u32 = 0;
+        for (reports.params[0..reports.param_count]) |mode|
+            capacity += if (mode == 2048) @as(u32, resize_len) else visibility_len;
         if (capacity != 0) try self.reply_buffer.ensureUnusedCapacity(capacity);
         const changed = self.applyModeEventInner(event);
-        // Mode commands cannot change the cell/pixel dimensions or reply framing
-        // of an enable/restore group; all fallible reply work was admitted above.
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-        for (0..reports) |_| self.reply_buffer.append(report_bytes[0..report_len]) catch unreachable;
-        return changed or reports != 0;
+        // All fallible report capacity has been reserved. Mode commands
+        // cannot alter the effective geometry, host visibility or framing.
+        for (reports.params[0..reports.param_count]) |mode| {
+            if (mode == 2048) {
+                // zig-audit: acknowledge catch_unreachable
+                // reason: The exact reply bytes were reserved before any mode mutation.
+                self.reply_buffer.append(resize_bytes[0..resize_len]) catch unreachable;
+            } else {
+                std.debug.assert(mode == 2033);
+                // zig-audit: acknowledge catch_unreachable
+                // reason: The exact framed visibility payload was reserved before any mode mutation.
+                self.reply_buffer.appendCsi(.terminal, visibility_payload) catch unreachable;
+            }
+        }
+        return changed or reports.param_count != 0;
     }
 
-    fn initialResizeReportCount(self: *const Terminal, event: SemanticEvent) u32 {
-        const mode: u16 = 2048;
-        return switch (event) {
-            .inband_resize_notifications => |enabled| @intFromBool(enabled),
-            .dec_mode_set => |modes| @intCast(std.mem.count(u16, modes.params[0..modes.param_count], &.{mode})),
-            .dec_mode_restore => |modes| if (modes.param_count == 0)
-                @intFromBool(self.saved_all_modes.inband_resize_notifications)
-            else if (self.modes.saved_dec_modes[modes_mod.savedDecModeIndex(mode).?] == 1)
-                @intCast(std.mem.count(u16, modes.params[0..modes.param_count], &.{mode}))
-            else
-                0,
-            else => 0,
+    fn initialModeReports(self: *const Terminal, event: SemanticEvent) ModeParams {
+        var reports: ModeParams = .{ .params = @splat(0), .param_count = 0 };
+        const modes = switch (event) {
+            .inband_resize_notifications => |enabled| {
+                if (enabled) {
+                    reports.params[0] = 2048;
+                    reports.param_count = 1;
+                }
+                return reports;
+            },
+            .dec_mode_set, .dec_mode_restore => |modes| modes,
+            else => return reports,
         };
+        if (event == .dec_mode_restore and modes.param_count == 0) {
+            // Preserve the existing curated parameterless Kitty save set.
+            if (self.saved_all_modes.inband_resize_notifications) {
+                reports.params[0] = 2048;
+                reports.param_count = 1;
+            }
+            return reports;
+        }
+        for (modes.params[0..modes.param_count]) |mode| {
+            if (mode != 2048 and mode != 2033) continue;
+            if (event == .dec_mode_restore and self.modes.saved_dec_modes[modes_mod.savedDecModeIndex(mode).?] != 1) continue;
+            reports.params[reports.param_count] = mode;
+            reports.param_count += 1;
+        }
+        return reports;
     }
 
     fn applyModeEventInner(self: *Terminal, event: SemanticEvent) bool {
@@ -8028,6 +8088,7 @@ pub const Terminal = struct {
             2004 => replaceBool(&self.modes.bracketed_paste, enabled),
             2026 => replaceBool(&self.modes.synchronized_output, enabled),
             2048 => replaceBool(&self.modes.inband_resize_notifications, enabled),
+            2033 => replaceBool(&self.modes.visibility_reporting, enabled),
             2031 => replaceBool(&self.modes.color_preference_notifications, enabled),
             5522 => replaceBool(&self.modes.paste_events, enabled),
             19997 => replaceBool(&self.modes.termios_signals, enabled),
@@ -12916,4 +12977,31 @@ test "OSC 9 paused progress retains only present percentages and remains indepen
             }
         }
     }
+}
+
+test "visibility enable and host transition allocation failures leave prior facts intact" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, visibilityTransaction, .{});
+}
+
+fn visibilityTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.init(allocator, 2, 4);
+    defer terminal.deinit();
+    const before = terminal.semanticSequence();
+    const enabled = terminal.feed("\x1b[?2033h") catch |failure| {
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expect(!terminal.modes.visibility_reporting);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        return failure;
+    };
+    try std.testing.expect(enabled.stateChanged());
+    try std.testing.expectEqualStrings("\x1b[?999;1n", terminal.replyBytes());
+    const sequence = terminal.semanticSequence();
+    const changed = terminal.setVisibility(.not_visible) catch |failure| {
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(Terminal.Visibility.potentially_visible, terminal.view_visibility);
+        try std.testing.expectEqualStrings("\x1b[?999;1n", terminal.replyBytes());
+        return failure;
+    };
+    try std.testing.expect(changed);
+    try std.testing.expectEqualStrings("\x1b[?999;1n\x1b[?999;2n", terminal.replyBytes());
 }

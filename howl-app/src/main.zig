@@ -197,6 +197,8 @@ pub const App = struct {
     ui_fonts: *font_owner.TextFonts,
     geometry: *canvas.Geometry,
     wake_event: u32,
+    window_visibility: c.SDL_WindowFlags = 0,
+    visibility_retry_pending: bool = false,
     scale: f32,
     tabs: [tab_limit]?*Tab = @splat(null),
     tab_count: u8 = 0,
@@ -452,16 +454,25 @@ pub const App = struct {
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .in } });
     }
+    fn panePotentiallyVisible(self: *const App, tab_index: usize, slot: usize) bool {
+        const tree = &self.tabs[tab_index].?.tree;
+        return self.window_visibility == 0 and tab_index == self.active and (!tree.zoomed or slot == tree.active);
+    }
+
     fn syncVisible(self: *App) void {
+        self.visibility_retry_pending = false;
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const t = maybe.?;
             for (t.panes, 0..) |maybe_p, slot| if (maybe_p) |p| {
-                const visible = index == self.active and (!t.tree.zoomed or slot == t.tree.active);
+                const visible = self.panePotentiallyVisible(index, slot);
                 if (!visible) {
                     p.canvas.invalidateContent();
                     p.motion.reset();
                 }
-                if (p.owner) |owner| owner.setVisible(visible);
+                if (p.owner) |owner| owner.setVisible(visible) catch |failure| {
+                    self.visibility_retry_pending = true;
+                    self.report(failure);
+                };
             };
         }
     }
@@ -1471,6 +1482,7 @@ pub const App = struct {
         }
         if (try self.chromeEvent(value)) return;
         self.input_timestamp = value.common.timestamp;
+        if (self.visibility_retry_pending and value.type == self.wake_event) self.syncVisible();
         switch (value.type) {
             c.SDL_EVENT_RENDER_TARGETS_RESET => {
                 for (self.tabs[0..self.tab_count]) |tab_value| {
@@ -1592,6 +1604,22 @@ pub const App = struct {
                 try self.drop(value.drop.data, value.type == c.SDL_EVENT_DROP_FILE);
             },
             c.SDL_EVENT_MOUSE_WHEEL => if (self.rename_editor == null) try self.pointerWheel(value.wheel),
+            c.SDL_EVENT_WINDOW_HIDDEN => {
+                self.window_visibility |= c.SDL_WINDOW_HIDDEN;
+                self.syncVisible();
+            },
+            c.SDL_EVENT_WINDOW_SHOWN => {
+                self.window_visibility &= ~c.SDL_WINDOW_HIDDEN;
+                self.syncVisible();
+            },
+            c.SDL_EVENT_WINDOW_MINIMIZED => {
+                self.window_visibility |= c.SDL_WINDOW_MINIMIZED;
+                self.syncVisible();
+            },
+            c.SDL_EVENT_WINDOW_RESTORED, c.SDL_EVENT_WINDOW_MAXIMIZED => {
+                self.window_visibility &= ~c.SDL_WINDOW_MINIMIZED;
+                self.syncVisible();
+            },
             c.SDL_EVENT_WINDOW_FOCUS_GAINED => {
                 self.focused = true;
                 try self.gainKeyboard();
@@ -2551,6 +2579,7 @@ pub fn main(initial: std.process.Init) !void {
         .ui_fonts = &ui_fonts,
         .geometry = geometry,
         .wake_event = wake_event,
+        .window_visibility = c.SDL_GetWindowFlags(window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED),
         .scale = scale,
         .bindings = try keybindings.Bindings.fromOverrides(configuration.value.keybindings),
         .focused = c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_INPUT_FOCUS != 0,
@@ -4332,4 +4361,58 @@ test "SDL single double and triple clicks retain selection through motion and re
             try std.testing.expectEqualStrings(expected, text);
         }
     }
+}
+
+test "session visibility follows tab zoom and explicit window state not focus" {
+    var first: Tab = .{ .recipe = undefined };
+    var second: Tab = .{ .recipe = undefined };
+    const split_slot = try first.tree.split(.horizontal);
+    var app: App = .{
+        .init = undefined,
+        .configuration = undefined,
+        .fonts = undefined,
+        .window = undefined,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .tab_count = 2,
+    };
+    app.tabs[0] = &first;
+    app.tabs[1] = &second;
+    try std.testing.expect(app.panePotentiallyVisible(0, 0));
+    try std.testing.expect(app.panePotentiallyVisible(0, split_slot));
+    try std.testing.expect(!app.panePotentiallyVisible(1, 0));
+    app.focused = false;
+    try std.testing.expect(app.panePotentiallyVisible(0, 0));
+    first.tree.zoomed = true;
+    first.tree.active = split_slot;
+    try std.testing.expect(!app.panePotentiallyVisible(0, 0));
+    try std.testing.expect(app.panePotentiallyVisible(0, split_slot));
+    app.active = 1;
+    try std.testing.expect(!app.panePotentiallyVisible(0, split_slot));
+    try std.testing.expect(app.panePotentiallyVisible(1, 0));
+    const Check = struct {
+        fn event(a: *App, kind: u32) !void {
+            var value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+            value.type = kind;
+            try a.event(value);
+        }
+    };
+    try Check.event(&app, c.SDL_EVENT_WINDOW_HIDDEN);
+    try Check.event(&app, c.SDL_EVENT_WINDOW_MINIMIZED);
+    try Check.event(&app, c.SDL_EVENT_WINDOW_SHOWN);
+    try std.testing.expect(!app.panePotentiallyVisible(1, 0));
+    try Check.event(&app, c.SDL_EVENT_WINDOW_RESTORED);
+    try std.testing.expect(app.panePotentiallyVisible(1, 0));
+    // SDL occlusion/exposure alone is not the local authority for invisibility.
+    try Check.event(&app, c.SDL_EVENT_WINDOW_OCCLUDED);
+    try std.testing.expect(app.panePotentiallyVisible(1, 0));
+    try Check.event(&app, c.SDL_EVENT_WINDOW_HIDDEN);
+    try Check.event(&app, c.SDL_EVENT_WINDOW_MAXIMIZED);
+    try std.testing.expect(!app.panePotentiallyVisible(1, 0));
+    try Check.event(&app, c.SDL_EVENT_WINDOW_SHOWN);
+    try std.testing.expect(app.panePotentiallyVisible(1, 0));
 }

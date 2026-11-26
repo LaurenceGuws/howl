@@ -27833,6 +27833,41 @@ specifications:
           sha256: de95ad6125e66849b37365234ec4399ace7b2bdb297b4067d5200b219a055341
           location: set_mode_from_const VISIBILITY_REPORTS
           meaning: Every SET calls send_visibility_report; RESET disables.
+        howl_qualification_20261126_visibility_01:
+          scope: Mode2033 defaults disabled; every SET emits current report, repeated SET and parameterized restore included;
+            grouped 2033/2048 reports preserve operand order, all mandatory bytes reserved before mutation. Enabled host changes
+            emit exact reports, duplicates suppressed, RESET disables without changing host fact. Accepted local host transitions
+            use bounded FIFO, not coalesced atomic presentation flag. Explicit GUI admission overflow rejects transition and
+            retries current fact on capacity wake; no guarantee for unadmitted intermediate transitions.
+          method: Preserved Rockorager author HTML SHA256 cd0390480a086ae817fe5e410d8959a45069dd75462c8842357d7ab8e59a7c18;
+            typed mode/fact red-green, native C peer, local worker FIFO/pressure and actual child PTY proofs; no blanket FULL
+            promotion
+          baseline: 5b6a80e2e193f5d663e239a1e3ab61e3d7e66f1e
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility mode query and repeated enable preserve grouped report order
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility follows host fact across disabled queries focus and resets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility query and enable decode across every split in both reply profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility report saturation preserves previous fact and grouped mode transaction
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: visibility enable and host transition allocation failures leave prior facts intact
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility reports retain ordered pane transitions while hidden child execution continues
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility FIFO rejects overflow explicitly and resumes the latest rejected fact
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility FIFO retains a transition under reply pressure before later input
+        relation: protocol-family
     - id: detection
       section: Detection and Enabling
       level: defined
@@ -27848,6 +27883,31 @@ specifications:
       - kind: related
         clause: dec_vt420.report-mode
         role: reply
+      test_locations:
+      - file: howl-vt/src/mode_report.zig
+        test: DEC report inventory distinguishes reset set and unsupported modes
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility mode query and repeated enable preserve grouped report order
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility follows host fact across disabled queries focus and resets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility query and enable decode across every split in both reply profiles
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility reports retain ordered pane transitions while hidden child execution continues
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_visibility_01:
+          scope: Exact DECRQM/DECRPM state2/1 with dollar intermediate in both reply profiles. RIS/DECSTR reset mode, not
+            visibility. Actual child sees supported disabled state then repeated enables; native C peer confirms query and
+            enable with conservative unknown state.
+          method: Preserved Rockorager author HTML SHA256 cd0390480a086ae817fe5e410d8959a45069dd75462c8842357d7ab8e59a7c18;
+            typed mode/fact red-green, native C peer, local worker FIFO/pressure and actual child PTY proofs; no blanket FULL
+            promotion
+          baseline: 5b6a80e2e193f5d663e239a1e3ab61e3d7e66f1e
     - id: query
       section: Querying Visibility
       level: defined
@@ -27856,6 +27916,28 @@ specifications:
       - CSI ? 998 n
       - CSI ? 999 n
       rule: One-shot query MUST reply regardless of notification mode; does not change mode2033.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility mode query and repeated enable preserve grouped report order
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility follows host fact across disabled queries focus and resets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility query and enable decode across every split in both reply profiles
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility reports retain ordered pane transitions while hidden child execution continues
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_visibility_01:
+          scope: One-shot private DSR998 replies 999;1/2 independently of mode. Query does not enable reports; native C default
+            unknown returns1; actual child queries initially hidden and after disabled transition. Exact supported grammar
+            at every split under both C1 profiles.
+          method: Preserved Rockorager author HTML SHA256 cd0390480a086ae817fe5e410d8959a45069dd75462c8842357d7ab8e59a7c18;
+            typed mode/fact red-green, native C peer, local worker FIFO/pressure and actual child PTY proofs; no blanket FULL
+            promotion
+          baseline: 5b6a80e2e193f5d663e239a1e3ab61e3d7e66f1e
     - id: report
       section: Visibility Report; Determining Visibility
       level: defined
@@ -27878,6 +27960,44 @@ specifications:
           sha256: 57605f5dc22687b1926654664475d3d05c74e0bff12bfe8a9cc955596e8fae92
           location: 46-55
           meaning: Pinned encoder emits ?999;1n or ?999;2n, preserving advisory values.
+        howl_qualification_20261126_visibility_01:
+          scope: Canonical fact is potentially visible by default; embedding owner supplies positive hidden fact. Local app
+            session view follows selected tab, displayed/zoomed panes and explicit hidden/minimized window events; unrelated
+            focus and uncertain occlusion do not imply hidden. Actual headless PTY transitions, repeated affirmation, focus
+            and hidden input verified. Native C owner has no external visibility setter in this slice, so unknown is1; other/multiple-view
+            aggregation remains embedding-owner responsibility, not qualified remote/session behavior.
+          method: Preserved Rockorager author HTML SHA256 cd0390480a086ae817fe5e410d8959a45069dd75462c8842357d7ab8e59a7c18;
+            typed mode/fact red-green, native C peer, local worker FIFO/pressure and actual child PTY proofs; no blanket FULL
+            promotion
+          baseline: 5b6a80e2e193f5d663e239a1e3ab61e3d7e66f1e
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility mode query and repeated enable preserve grouped report order
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility follows host fact across disabled queries focus and resets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility query and enable decode across every split in both reply profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: visibility report saturation preserves previous fact and grouped mode transaction
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: visibility enable and host transition allocation failures leave prior facts intact
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility reports retain ordered pane transitions while hidden child execution continues
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility FIFO rejects overflow explicitly and resumes the latest rejected fact
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility FIFO retains a transition under reply pressure before later input
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: session visibility follows tab zoom and explicit window state not focus
+        relation: protocol-family
     - id: application-behavior
       section: Application Behavior
       level: defined
@@ -27889,6 +28009,25 @@ specifications:
       - kind: related
         clause: rockorager_visibility.report
         role: consumer
+      test_locations:
+      - file: howl-app/src/terminal.zig
+        test: visibility reports retain ordered pane transitions while hidden child execution continues
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: visibility affirmation cannot manufacture presentation credits; reveal can
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: session visibility follows tab zoom and explicit window state not focus
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_visibility_01:
+          scope: Local host continues PTY service and user input while hidden; visibility remains advisory, never process
+            suspension. Existing projection credit and explicit reveal proof retained. These are terminal-side/local-host
+            witnesses, not a claim that arbitrary child applications implement the author consumer advice or coalescing behavior.
+          method: Preserved Rockorager author HTML SHA256 cd0390480a086ae817fe5e410d8959a45069dd75462c8842357d7ab8e59a7c18;
+            typed mode/fact red-green, native C peer, local worker FIFO/pressure and actual child PTY proofs; no blanket FULL
+            promotion
+          baseline: 5b6a80e2e193f5d663e239a1e3ab61e3d7e66f1e
   contour_unicode_core:
     title: 'Terminal Unicode Core: Unicode in Terminals'
     author: Christian Parpart / Contour

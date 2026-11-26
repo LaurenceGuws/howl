@@ -75,7 +75,7 @@ const Configuration = struct {
     failure: ?ConfigureError = null,
     complete: bool = false,
 };
-const Work = union(enum) { intent: Task, configure: *Configuration, copy: *Copy };
+const Work = union(enum) { intent: Task, visibility: vt.Terminal.Visibility, configure: *Configuration, copy: *Copy };
 
 fn sharedConfig(config: app_presentation.Config, history_rows: u16) @import("output_state").SharedConfig {
     return .{
@@ -182,9 +182,11 @@ pub const Terminal = opaque {
     pub fn takeClipboardSet(self: *Terminal, allocator: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
         return self.state().takeClipboardSet(allocator);
     }
-    /// Changes projection visibility without changing canonical service policy.
-    pub fn setVisible(self: *Terminal, visible: bool) void {
-        self.state().setVisible(visible);
+    /// Changes local projection visibility and admits the ordered session fact.
+    /// A full intent FIFO rejects only the protocol transition; the caller
+    /// may retry on the worker's next capacity notification.
+    pub fn setVisible(self: *Terminal, visible: bool) error{InputQueueFull}!void {
+        return self.state().setVisible(visible);
     }
     /// Grants one projection credit after presentation or an explicit reveal.
     pub fn requestFrame(self: *Terminal) void {
@@ -318,6 +320,10 @@ const State = struct {
     color_preference: vt.Terminal.ColorSchemePreference = .dark,
     preference_pending: bool = false,
     visible: std.atomic.Value(bool) = .init(true),
+    // Last admitted protocol fact and capacity-notification latch. Both are
+    // protected by the existing intent FIFO mutex, not the projection flag.
+    visibility_admitted: bool = true,
+    visibility_retry: bool = false,
     credit: std.atomic.Value(bool) = .init(true),
     new_frame: std.atomic.Value(bool) = .init(false),
     output_gate: OutputGate = .{},
@@ -371,6 +377,8 @@ const State = struct {
         // Register the real per-pane consumer before PTY read admission,
         // otherwise an early OSC 7501 query would be falsely ignored.
         core.terminal.setProgramStatusConsumer(true);
+        const visibility_changed = try core.terminal.setVisibility(if (initially_visible) .potentially_visible else .not_visible);
+        std.debug.assert(visibility_changed == !initially_visible);
         const output_owner = try projection.Projection.create(allocator, &core.terminal, store, sharedConfig(presentation, launch.history_rows));
         errdefer output_owner.destroy();
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
@@ -387,6 +395,7 @@ const State = struct {
             .wake_fd = fd,
             .event_type = event_type,
             .visible = .init(initially_visible),
+            .visibility_admitted = initially_visible,
         };
         self.thread = try std.Thread.spawn(.{}, run, .{self});
         return self;
@@ -711,16 +720,35 @@ const State = struct {
     fn cancelPending(self: *State) void {
         while (self.pop()) |work| switch (work) {
             .intent => |task| self.releaseTask(task),
+            .visibility => {},
             .configure => |request| self.completeConfiguration(request, error.TerminalStopped),
             .copy => |request| self.completeCopy(request, error.TerminalStopped),
         };
     }
 
-    fn setVisible(self: *State, visible: bool) void {
+    fn setVisible(self: *State, visible: bool) error{InputQueueFull}!void {
         if (self.visible.swap(visible, .acq_rel) != visible) {
             if (visible) self.requestFrame();
             self.wake();
         }
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping or self.status.failure != null or self.status.closed) return;
+        if (self.visibility_admitted == visible) {
+            self.visibility_retry = false;
+            return;
+        }
+        if (self.count == queue_limit) {
+            self.visibility_retry = true;
+            return error.InputQueueFull;
+        }
+        self.tasks[(self.head + self.count) % queue_limit] = .{
+            .visibility = if (visible) .potentially_visible else .not_visible,
+        };
+        self.count += 1;
+        self.visibility_admitted = visible;
+        self.visibility_retry = false;
+        self.wake();
     }
 
     /// Called only after successful SDL presentation, or an explicit reveal.
@@ -729,6 +757,8 @@ const State = struct {
     }
 
     fn pop(self: *State) ?Work {
+        var retry = false;
+        defer if (retry) self.notify();
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.count == 0) return null;
@@ -736,6 +766,8 @@ const State = struct {
         self.head = (self.head + 1) % queue_limit;
         self.count -= 1;
         if (task == .intent) self.input_bytes -= taskBytes(task.intent).len;
+        retry = self.visibility_retry;
+        self.visibility_retry = false;
         return task;
     }
 
@@ -748,6 +780,8 @@ const State = struct {
     /// An unwritable PTY must not hold GUI callers on borrowed stack requests.
     /// Rejection has no canonical effect; retained intent keeps its exact FIFO order.
     fn rejectBlockedControls(self: *State) void {
+        var retry = false;
+        defer if (retry) self.notify();
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const count = self.count;
@@ -756,7 +790,7 @@ const State = struct {
         for (0..count) |index| {
             const work = self.tasks[(self.head + index) % queue_limit];
             switch (work) {
-                .intent => {
+                .intent, .visibility => {
                     self.tasks[(self.head + retained) % queue_limit] = work;
                     retained += 1;
                 },
@@ -774,6 +808,8 @@ const State = struct {
         }
         self.count = retained;
         if (rejected) self.request_completed.broadcast(self.io);
+        retry = self.visibility_retry and retained < count;
+        if (retry) self.visibility_retry = false;
     }
 
     const QueueTurn = enum { empty, backpressured, more };
@@ -796,6 +832,16 @@ const State = struct {
                         self.write_closed_payload_bytes +|= taskBytes(task).len;
                     },
                     else => return failure,
+                },
+                .visibility => |value| {
+                    const changed = self.core.terminal.setVisibility(value) catch |failure| switch (failure) {
+                        error.ReplyLimit => {
+                            self.rejectBlockedControls();
+                            return .backpressured;
+                        },
+                        else => return failure,
+                    };
+                    std.debug.assert(changed);
                 },
                 .configure => |request| self.applyConfiguration(request),
                 .copy => |request| self.applyCopy(request),
@@ -1041,9 +1087,11 @@ const State = struct {
                 self.rejectBlockedControls();
             }
             const room_before = self.core.writeRoom();
+            const replies_before = self.core.terminal.replyBytes().len;
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
-            const retry_after_write_progress = queue_turn == .backpressured and self.core.writeRoom() > room_before;
+            const retry_after_write_progress = queue_turn == .backpressured and
+                (self.core.writeRoom() > room_before or self.core.terminal.replyBytes().len < replies_before);
             // Queued work received while blocked must not wait for another wake.
             const retry_after_scalar_recovery = scalar_was_blocked and !self.core.inputBlocked();
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
@@ -1775,12 +1823,12 @@ test "visibility affirmation cannot manufacture presentation credits; reveal can
     try owner.releaseFrame(initial);
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "FIRST");
-    for (0..16) |_| owner.setVisible(true);
+    for (0..16) |_| try owner.setVisible(true);
     try owner.submit(.{ .input = .{ .bytes = "END\n" } });
     try waitTitle(owner, "SECOND");
     try std.testing.expect(!owner.state().new_frame.load(.acquire));
-    owner.setVisible(false);
-    owner.setVisible(true);
+    try owner.setVisible(false);
+    try owner.setVisible(true);
     const revealed = try waitFrame(owner, null, null);
     // zig-audit: acknowledge catch_unreachable
     // reason: This test defers the exact live pin's release before destroying its terminal owner.
@@ -1982,7 +2030,7 @@ test "completed reconfiguration fences unread frames from the previous presentat
     while (!owner.state().new_frame.load(.acquire) and attempts < 5000) : (attempts += 1)
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     try std.testing.expect(attempts < 5000);
-    owner.setVisible(false);
+    try owner.setVisible(false);
     const configured = try owner.reconfigure(testPresentation(), null);
     try std.testing.expect(configured.cell_size.width > 0);
     // An old unread slot remains native-owned, but cannot enter a fresh backend.
@@ -1996,7 +2044,7 @@ test "completed reconfiguration fences unread frames from the previous presentat
     try std.testing.expect(hidden == null);
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "CONTINUED");
-    owner.setVisible(true);
+    try owner.setVisible(true);
     const accepted = try waitFrame(owner, null, null);
     // zig-audit: acknowledge catch_unreachable
     // reason: This test defers the exact live pin's release before destroying its terminal owner.
@@ -2072,7 +2120,7 @@ test "selection paint travels with its immutable lease and a stalled transfer ca
     defer std.testing.allocator.free(word);
     try std.testing.expectEqualStrings("beta", word);
     var paint: selection.Paint = .{};
-    owner.setVisible(true);
+    try owner.setVisible(true);
     var held = try waitFrame(owner, null, &paint);
     // zig-audit: acknowledge catch_unreachable
     // reason: This test defers the exact live pin's release before destroying its terminal owner.
@@ -3052,4 +3100,138 @@ test "live in-band resize reports follow committed grid and font geometry before
     try owner.submit(.{ .input = .{ .bytes = "done\n" } });
     try Check.wait(owner, "7 24-1b5b3f323034383b322479646f6e65");
     try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "visibility reports retain ordered pane transitions while hidden child execution continues" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const command = "stty raw -echo; printf '\\033[?2033$p\\033[?998n\\033[?2033h\\033[?2033h\\033[?1004h\\033]0;READY\\007'; " ++
+        "report() { IFS= read -r wire || exit 1; printf '\\033]0;%s-%s\\007' \"$1\" \"$(printf '%s' \"$wire\" | od -v -An -tx1 | tr -d ' \\n')\"; }; " ++
+        "report initial; report edges; report hidden; report revealed; " ++
+        "IFS= read -r ack || exit 1; printf '\\033[?2033l\\033[?2033$p\\033]0;DISABLED\\007'; " ++
+        "IFS= read -r ack || exit 1; printf '\\033[?998n\\033]0;QUERY\\007'; report disabled; sleep 30";
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = command,
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    const Check = struct {
+        fn report(t: *Terminal, comptime stage: []const u8, comptime bytes: []const u8) !void {
+            try t.submit(.{ .input = .{ .bytes = "\n" } });
+            const title = comptime stage ++ "-" ++ std.fmt.bytesToHex(bytes[0..bytes.len].*, .lower);
+            waitTitle(t, title) catch |failure| {
+                const observed = t.snapshot();
+                std.debug.print("visibility proof expected={s}; actual={s}\n", .{ title, observed.title[0..observed.title_len] });
+                return failure;
+            };
+        }
+    };
+    try waitTitle(owner, "READY");
+    try owner.setVisible(false);
+    try Check.report(owner, "initial", "\x1b[?2033;2$y\x1b[?999;2n\x1b[?999;2n\x1b[?999;2n");
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+
+    try owner.setVisible(true);
+    try owner.setVisible(false);
+    try owner.setVisible(true);
+    try owner.setVisible(true);
+    try owner.submit(.{ .input = .{ .focus = .out } });
+    try Check.report(owner, "edges", "\x1b[?999;1n\x1b[?999;2n\x1b[?999;1n\x1b[O");
+
+    try owner.setVisible(false);
+    try owner.submit(.{ .input = .{ .bytes = "still-running" } });
+    try Check.report(owner, "hidden", "\x1b[?999;2nstill-running");
+    try owner.setVisible(true);
+    try Check.report(owner, "revealed", "\x1b[?999;1n");
+    try owner.submit(.{ .input = .{ .bytes = "disable\n" } });
+    try waitTitle(owner, "DISABLED");
+    try owner.setVisible(false);
+    // Read the disabled-mode reply before sending the next marker.
+    // The child read consumes the prior DECRPM and the marker as one line.
+    try owner.submit(.{ .input = .{ .bytes = "query\n" } });
+    try waitTitle(owner, "QUERY");
+    try Check.report(owner, "disabled", "\x1b[?999;2n");
+    try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "visibility FIFO rejects overflow explicitly and resumes the latest rejected fact" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const wake_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (wake_fd < 0) return error.WakeFailed;
+    defer closeWake(wake_fd);
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
+        .io = threaded.io(),
+        .core = undefined,
+        .projection = undefined,
+        .history_capacity = 8,
+        .wake_fd = wake_fd,
+        .event_type = c.SDL_RegisterEvents(1),
+    };
+    defer state.program_status_index.deinit();
+    defer state.cancelPending();
+    for (0..queue_limit) |_| try state.admit(.{ .intent = .{ .seek = 0 } });
+    try std.testing.expectError(error.InputQueueFull, state.setVisible(false));
+    try std.testing.expect(!state.visible.load(.acquire));
+    try std.testing.expect(state.visibility_admitted);
+    try std.testing.expect(state.visibility_retry);
+    try std.testing.expect(state.pop().? == .intent);
+    try std.testing.expect(!state.visibility_retry);
+    var wake: c.SDL_Event = undefined;
+    try std.testing.expect(c.SDL_PollEvent(&wake));
+    try std.testing.expectEqual(state.event_type, wake.type);
+    try state.setVisible(false);
+    try state.setVisible(false);
+    try std.testing.expect(!state.visibility_admitted);
+    try std.testing.expectEqual(@as(usize, queue_limit), state.count);
+    for (0..queue_limit - 1) |_| try std.testing.expect(state.pop().? == .intent);
+    try std.testing.expectEqual(vt.Terminal.Visibility.not_visible, state.pop().?.visibility);
+    try std.testing.expect(state.pop() == null);
+}
+
+test "visibility FIFO retains a transition under reply pressure before later input" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const core = try std.testing.allocator.create(pty_vt.Core);
+    defer std.testing.allocator.destroy(core);
+    core.* = .{ .allocator = std.testing.allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, std.testing.allocator, 2, 8, 0);
+    defer core.terminal.deinit();
+    try std.testing.expect((try core.terminal.feed("\x1b[?2033h")).stateChanged());
+    try core.terminal.consumeReplyBytes(core.terminal.replyBytes().len);
+    for (0..16384) |_| try std.testing.expect((try core.terminal.feed("\x1b[5n")).stateChanged());
+    const wake_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (wake_fd < 0) return error.WakeFailed;
+    defer closeWake(wake_fd);
+    var state: State = .{
+        .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
+        .io = threaded.io(),
+        .core = core,
+        .projection = undefined,
+        .history_capacity = 0,
+        .wake_fd = wake_fd,
+        .event_type = 0,
+    };
+    defer state.program_status_index.deinit();
+    defer state.cancelPending();
+    try state.setVisible(false);
+    try state.submit(.{ .input = .{ .bytes = "next" } });
+    const sequence = core.terminal.semanticSequence();
+    try std.testing.expectEqual(State.QueueTurn.backpressured, try state.applyQueued());
+    try std.testing.expectEqual(@as(usize, 2), state.count);
+    try std.testing.expectEqual(sequence, core.terminal.semanticSequence());
+    try std.testing.expectEqual(@as(usize, 65536), core.terminal.replyBytes().len);
+    try core.terminal.consumeReplyBytes(core.terminal.replyBytes().len);
+    try std.testing.expectEqual(State.QueueTurn.empty, try state.applyQueued());
+    try std.testing.expectEqualStrings("\x1b[?999;2nnext", core.writes.bytes[0..core.writes.count]);
 }

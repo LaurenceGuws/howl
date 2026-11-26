@@ -8,7 +8,7 @@ const savable_dec_modes = [_]u16{
     1,    3,    5,    6,    7,    8,    9,    12,   25,   40,
     41,   45,   47,   66,   69,   80,   95,   1045, 1047, 1049,
     1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026,
-    2031, 2048, 5522,
+    2031, 2048, 5522, 2033,
 };
 
 /// Stores modes that affect screen mutation, input encoding, and reports.
@@ -34,6 +34,7 @@ pub const State = struct {
     bracketed_paste: bool = false,
     synchronized_output: bool = false,
     inband_resize_notifications: bool = false,
+    visibility_reporting: bool = false,
     color_preference_notifications: bool = false,
     paste_events: bool = false,
     termios_signals: bool = false,

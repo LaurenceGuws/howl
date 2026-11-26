@@ -5051,3 +5051,94 @@ test "platform key text admission rejects controls and invalid scalars without c
         try std.testing.expectEqualStrings("\n", raw.bytes);
     }
 }
+
+test "visibility mode query and repeated enable preserve grouped report order" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[?2033$p\x1b[?998n\x1b[?2033;2048;2033h\x1b[?2033$p");
+    try std.testing.expectEqualStrings(
+        "\x1b[?2033;2$y\x1b[?999;1n\x1b[?999;1n\x1b[48;2;4;0;0t\x1b[?999;1n\x1b[?2033;1$y",
+        terminal.replyBytes(),
+    );
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?2033h\x1b[?2033s\x1b[?2033l\x1b[?998n\x1b[?2033$p\x1b[?2033r");
+    try std.testing.expectEqualStrings("\x1b[?999;1n\x1b[?999;1n\x1b[?2033;2$y\x1b[?999;1n", terminal.replyBytes());
+}
+
+test "visibility follows host fact across disabled queries focus and resets" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    const content_before = terminal.contentSequence();
+    try std.testing.expect(try terminal.setVisibility(.not_visible));
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(content_before, terminal.contentSequence());
+    try feed(&terminal, "\x1b[?998n\x1b[?2033h\x1b[?2033h");
+    try std.testing.expectEqualStrings("\x1b[?999;2n\x1b[?999;2n\x1b[?999;2n", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    const before_reveal = terminal.contentSequence();
+    try std.testing.expect(!(try terminal.setVisibility(.not_visible)));
+    try std.testing.expect(try terminal.setVisibility(.potentially_visible));
+    try std.testing.expectEqual(before_reveal, terminal.contentSequence());
+    try std.testing.expect(!(try terminal.setVisibility(.potentially_visible)));
+    try std.testing.expectEqualStrings("\x1b[?999;1n", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?1004h");
+    var scratch: Terminal.InputScratch = .{};
+    var focus = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .focus = .out });
+    defer focus.deinit();
+    try std.testing.expectEqualStrings("\x1b[O", focus.bytes);
+    try feed(&terminal, "\x1b[?998n");
+    try std.testing.expectEqualStrings("\x1b[?999;1n", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expect(try terminal.setVisibility(.not_visible));
+    try feed(&terminal, "\x1b[!p\x1b[?2033$p\x1b[?998n\x1bc\x1b[?2033$p\x1b[?998n");
+    try std.testing.expectEqualStrings("\x1b[?999;2n\x1b[?2033;2$y\x1b[?999;2n\x1b[?2033;2$y\x1b[?999;2n", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expect(try terminal.setVisibility(.potentially_visible));
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "visibility query and enable decode across every split in both reply profiles" {
+    for ([_]bool{ false, true }) |eight_bit| {
+        const wire = if (eight_bit) "\x9b?998n\x9b?2033h\x9b?2033$p" else "\x1b[?998n\x1b[?2033h\x1b[?2033$p";
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+            defer terminal.deinit();
+            if (eight_bit) try feed(&terminal, "\x1b G");
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            try std.testing.expectEqualStrings(if (eight_bit) "\x9b?999;1n\x9b?999;1n\x9b?2033;1$y" else "\x1b[?999;1n\x1b[?999;1n\x1b[?2033;1$y", terminal.replyBytes());
+        }
+    }
+}
+
+test "visibility report saturation preserves previous fact and grouped mode transaction" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[?2033h");
+    try consumeReplies(&terminal);
+    const fill = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes - 1, false);
+    defer std.testing.allocator.free(fill);
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.setVisibility(.not_visible));
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expectEqualStrings(fill, terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?998n");
+    try std.testing.expectEqualStrings("\x1b[?999;1n", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expect(try terminal.setVisibility(.not_visible));
+    try std.testing.expectEqualStrings("\x1b[?999;2n", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?2033l\x1b[?25l");
+    const second = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes - 10, false);
+    defer std.testing.allocator.free(second);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b[?25;2033;2048h"));
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expect(!terminal.semanticView(0).cursor_visible);
+    try std.testing.expectEqualStrings(second, terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?2033$p\x1b[?2048$p");
+    try std.testing.expectEqualStrings("\x1b[?2033;2$y\x1b[?2048;2$y", terminal.replyBytes());
+}
