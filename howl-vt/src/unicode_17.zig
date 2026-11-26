@@ -65,6 +65,11 @@ pub const Properties = struct {
         return self.value & (@as(u32, 1) << 12) != 0;
     }
 
+    /// Reports the generated Extended_Pictographic property used by GB11.
+    pub fn isExtendedPictographic(self: Properties) bool {
+        return self.value & (@as(u32, 1) << 31) != 0;
+    }
+
     /// Reports a Unicode symbol-category scalar.
     pub fn isSymbol(self: Properties) bool {
         return self.value & (@as(u32, 1) << 21) != 0;

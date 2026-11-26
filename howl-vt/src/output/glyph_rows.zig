@@ -1,7 +1,8 @@
 //! Experimental direct native Screen -> final row-local commands. No Source/Input.
 //! Caller owns transaction staging, resource rebinding, and global phase order.
 const std = @import("std");
-const VT = @import("howl_vt").Terminal;
+const howl_vt = @import("howl_vt");
+const VT = howl_vt.Terminal;
 const text = @import("howl_text");
 const cache = @import("glyph_cache");
 const frame = @import("frame");
@@ -94,6 +95,51 @@ pub fn Emitter(comptime instrumented: bool) type {
             const height: u16 = @intFromFloat(@max(1, @floor(@as(f64, @floatFromInt(ink.height)) * scale)));
             return .{ .x = cell.x + @as(i32, @intCast((cell.width - width) / 2)), .y = cell.y + @as(i32, @intCast((cell.height - height) / 2)), .width = width, .height = height };
         }
+        // A natural cell is a canonical grapheme. Do not mistake an
+        // explicit-width OSC66 string containing several graphemes for
+        // one emoji. The shared presentation policy depends on the cell,
+        // not the currently negotiated mode, so history stays drawable.
+        fn singleEmojiImage(cell: VT.Cell, sequence: []const u32) bool {
+            if (cell.explicit_width or sequence.len < 3) return false;
+            var pictograph = false;
+            var joined = false;
+            for (sequence) |cp| {
+                if (cp == 0x200d) {
+                    joined = pictograph;
+                } else if (howl_vt.unicodeProperties(@intCast(cp)).isExtendedPictographic()) {
+                    if (joined) return true;
+                    pictograph = true;
+                }
+            }
+            return false;
+        }
+
+        fn resolveCellShape(ctx: Context, style: cache.FontVariant, cell: VT.Cell, sequence: []const u32) BuildError!text.Run {
+            const single_image = singleEmojiImage(cell, sequence);
+            const run = cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?) catch |failure| switch (failure) {
+                error.InvalidGlyphIdentity => if (single_image)
+                    return cache.resolveShape(ctx.shapes, style, &.{0xfffd}, ctx.clusters.?, ctx.shaped.?)
+                else
+                    return failure,
+                else => return failure,
+            };
+            if (!single_image or run.glyphs.len <= 1) return run;
+
+            // Coverage of every scalar does not prove a joined image.
+            // HarfBuzz can retain zero-ink controls beside a valid ligature;
+            // count actual nonempty glyph rasters, not glyph records. Reuse
+            // the existing bounded atlas rather than creating a scratch
+            // image owner. Resource pressure still propagates exactly.
+            var visible = false;
+            for (run.glyphs) |glyph| {
+                const raster = try cache.resolveFontAtlas(ctx.atlas, style, run.face_index, glyph.id, ctx.raster, null, 0);
+                if (raster.width == 0 or raster.height == 0) continue;
+                if (visible) return cache.resolveShape(ctx.shapes, style, &.{0xfffd}, ctx.clusters.?, ctx.shaped.?);
+                visible = true;
+            }
+            return run;
+        }
+
         fn preservesCells(glyphs: []const text.Glyph, count: usize) bool {
             if (glyphs.len == 0 or glyphs[0].cluster != 0) return false;
             var previous: u32 = 0;
@@ -457,7 +503,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                     }
                 }
                 if (!contextual) {
-                    run = try cache.resolveShape(ctx.shapes, style, sequence, clusters, glyphs);
+                    run = try resolveCellShape(ctx, style, cell, sequence);
                     // Cache hits obey the same lane bound as freshly shaped runs.
                     if (run.glyphs.len > glyphs.len) return error.InsufficientGlyphs;
                 }
@@ -609,7 +655,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 }
                 return;
             }
-            const run = try cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?);
+            const run = try resolveCellShape(ctx, style, cell, sequence);
             if (run.glyphs.len > ctx.shaped.?.len) return error.InsufficientGlyphs;
             const bounded_symbol = sequence.len == 1 and run.glyphs.len == 1 and
                 ((sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff));
@@ -672,6 +718,7 @@ pub fn Emitter(comptime instrumented: bool) type {
             color: frame.Color,
         ) BuildError!void {
             const ascii_index = cache.printableAsciiIndex(sequence);
+            const single_image = !contextual and singleEmojiImage(cell, sequence);
             const bounded_symbol = !contextual and sequence.len == 1 and run.glyphs.len == 1 and
                 ((sequence[0] >= 0x2190 and sequence[0] <= 0x21ff) or (sequence[0] >= 0x25a0 and sequence[0] <= 0x25ff));
             const allocation: frame.Rect = .{ .x = @as(i32, @intCast(col)) * ctx.cell_width, .y = 0, .width = ctx.cell_width * cell.width, .height = ctx.cell_height };
@@ -708,7 +755,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                             .resource = .{ .resource = ctx.color_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                         } });
                     } else {
-                        const clip = try frame.intersectRects(destination, if (bounded_symbol or (!cell.semantic_width and cell.width > 1)) allocation else row_clip);
+                        const clip = try frame.intersectRects(destination, if (single_image or bounded_symbol or (!cell.semantic_width and cell.width > 1)) allocation else row_clip);
                         if (clip) |visible| {
                             const size = cache.atlasSize(ctx.atlas);
                             try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{

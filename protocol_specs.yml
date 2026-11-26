@@ -28978,6 +28978,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: Unicode Core cursor restoration retires consecutive ownership even at unchanged coordinates
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core renders unsupported emoji ZWJ clusters as one bounded replacement
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_unicode_core_01:
           scope: One per-screen consecutive-write witness uses actual lead position, cursor identity/cut and row generation;
@@ -28999,6 +29002,14 @@ specifications:
             Kitty a79f376 text sizing and draw_combining_char/move_cursor_past_multicell; accepted profile decision, VT red-green
             exact placement/pressure/restore/framing proofs; no blanket FULL promotion
           baseline: 40cbb03603c1ee943a44f09f9eb59d64046e67f7
+        howl_qualification_20261126_unicode_core_03:
+          scope: The actual font-backed ZWJ projection proof preserves canonical scalar cluster identity, width2, continuation
+            and next ordinary text, even when fallback ink replaces an unsupported image. Mode reset and history projection
+            preserve original retained sequence and output. Existing grapheme and stream-owner evidence unchanged.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            actual native HarfBuzz/FreeType font fixture and output-owner red-green with atlas-backed commands; no blanket
+            FULL promotion
+          baseline: 29bf37711386668a4c5f50ca605f9c22be236e2f
     - id: overwrite
       section: Semantics / Grapheme Cluster
       level: defined
@@ -29064,6 +29075,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core renders unsupported emoji ZWJ clusters as one bounded replacement
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_unicode_core_01:
           scope: Representative emoji ZWJ/modifier sequence retains one scalar cluster occupying two cells, no extra logical
@@ -29073,6 +29087,21 @@ specifications:
             accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
             FULL promotion
           baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
+        howl_qualification_20261126_unicode_core_03:
+          scope: Actual font-backed output owner distinguishes supported one-glyph ZWJ ligature from a sequence whose component
+            scalars are covered but shape produces multiple nonempty rasters. Reproducible original CC0 colour-font fixture
+            joins woman+ZWJ+laptop, leaves woman+ZWJ+wrench decomposed, and lacks rocket. Supported image remains RGBA; decomposed
+            and absent-coverage cases emit the same bounded replacement mask and retain exact original scalars, two-cell occupancy
+            and following text position. Single-image check uses generated Extended_Pictographic data, ignores non-rendering
+            zero-size glyphs when counting rasters, and clips natural emoji ZWJ ink to its allocation. Shared presentation
+            policy applies independent of current mode; immutable prior lease and history viewport after RESET preserve commands
+            and sequence. Explicit-width OSC66 strings are excluded because they may contain several distinct graphemes. The
+            selected configured face is tested, not exhaustive search for a later ligature-capable font. No universal font
+            presentation-selector preference, missing replacement-glyph handling, or physical raster/compositor claim.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            actual native HarfBuzz/FreeType font fixture and output-owner red-green with atlas-backed commands; no blanket
+            FULL promotion
+          baseline: 29bf37711386668a4c5f50ca605f9c22be236e2f
     - id: vs16
       section: Semantics / Variation Selector16
       level: defined

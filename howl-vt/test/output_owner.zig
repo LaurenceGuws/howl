@@ -1772,3 +1772,63 @@ test "OSC 66 fractional glyph and colour alignment use the scaled render area on
         }
     }
 }
+
+test "Unicode Core renders unsupported emoji ZWJ clusters as one bounded replacement" {
+    const fonts = @import("test_fonts");
+    const f = try text.FontSet.init(a, .{ .primary = fonts.primary_font, .fallbacks = &.{fonts.colour_font}, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const shape = try text.ShapeBuffer.init(a, 24);
+    defer shape.deinit();
+    var glyphs: [24]text.Glyph = undefined;
+    const joined = try f.shape(shape, .{ .codepoints = &.{ 0x1f469, 0x200d, 0x1f4bb }, .clusters = &.{ 0, 1, 2 } }, &glyphs);
+    try std.testing.expectEqual(@as(usize, 1), joined.glyphs.len);
+    const separated = try f.shape(shape, .{ .codepoints = &.{ 0x1f469, 0x200d, 0x1f527 }, .clusters = &.{ 0, 1, 2 } }, &glyphs);
+    // All component scalars have font coverage; no ligature exists.
+    try std.testing.expect(separated.glyphs.len > 1);
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8, .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(3, 12);
+    try owner.feed("\x1b[?25l\x1b[?2027h👩‍💻X\r\n👩‍🔧Y\r\n👩‍🚀Z");
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const view = owner.observation().semanticView(0);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f4bb }, view.cellScalarsAt(0, 0, &scalars));
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f527 }, view.cellScalarsAt(1, 0, &scalars));
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f680 }, view.cellScalarsAt(2, 0, &scalars));
+    const snap = held.?.snapshot;
+    const right = @as(i32, snap.cell_width) * 2;
+    for (0..3) |row| {
+        try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(@intCast(row), 0).width);
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(@intCast(row), 1).x);
+        try std.testing.expectEqual(@as(u21, @intCast('X' + row)), view.cellAt(@intCast(row), 2));
+        try std.testing.expectEqual(@as(usize, 2), snap.glyphs[row].len);
+        const first = snap.glyphs[row][0];
+        if (row == 0) {
+            try std.testing.expect(first == .rgba);
+            try std.testing.expect(first.rgba.clip.x >= 0);
+            try std.testing.expect(first.rgba.clip.x + @as(i32, first.rgba.clip.width) <= right);
+        } else {
+            try std.testing.expect(first == .alpha_mask);
+            try std.testing.expect(first.alpha_mask.clip.x >= 0);
+            try std.testing.expect(first.alpha_mask.clip.x + @as(i32, first.alpha_mask.clip.width) <= right);
+        }
+    }
+    // Decomposition fallback and missing scalar coverage use the same
+    // replacement ink. Neither substitutes the canonical scalar sequence.
+    try std.testing.expectEqualDeep(snap.glyphs[1][0].alpha_mask.resource.source, snap.glyphs[2][0].alpha_mask.resource.source);
+    const before = try a.dupe(output.commands.Command, snap.glyphs[1]);
+    defer a.free(before);
+    try owner.feed("\x1b[?2027l\x1b[3;1H\r\n");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    try std.testing.expectEqualSlices(output.commands.Command, before, held.?.snapshot.glyphs[1]);
+    try owner.release(held.?);
+    held = null;
+    const retained = try owner.hold();
+    defer release(owner, retained);
+    try std.testing.expectEqualSlices(output.commands.Command, before, retained.snapshot.glyphs[1]);
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f527 }, owner.observation().semanticView(1).cellScalarsAt(1, 0, &scalars));
+}
