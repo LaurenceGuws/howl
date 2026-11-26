@@ -115,29 +115,7 @@ pub fn Emitter(comptime instrumented: bool) type {
         }
 
         fn resolveCellShape(ctx: Context, style: cache.FontVariant, cell: VT.Cell, sequence: []const u32) BuildError!text.Run {
-            const single_image = singleEmojiImage(cell, sequence);
-            const run = cache.resolveShape(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?) catch |failure| switch (failure) {
-                error.InvalidGlyphIdentity => if (single_image)
-                    return cache.resolveShape(ctx.shapes, style, &.{0xfffd}, ctx.clusters.?, ctx.shaped.?)
-                else
-                    return failure,
-                else => return failure,
-            };
-            if (!single_image or run.glyphs.len <= 1) return run;
-
-            // Coverage of every scalar does not prove a joined image.
-            // HarfBuzz can retain zero-ink controls beside a valid ligature;
-            // count actual nonempty glyph rasters, not glyph records. Reuse
-            // the existing bounded atlas rather than creating a scratch
-            // image owner. Resource pressure still propagates exactly.
-            var visible = false;
-            for (run.glyphs) |glyph| {
-                const raster = try cache.resolveFontAtlas(ctx.atlas, style, run.face_index, glyph.id, ctx.raster, null, 0);
-                if (raster.width == 0 or raster.height == 0) continue;
-                if (visible) return cache.resolveShape(ctx.shapes, style, &.{0xfffd}, ctx.clusters.?, ctx.shaped.?);
-                visible = true;
-            }
-            return run;
+            return cache.resolveShapePolicy(ctx.shapes, style, sequence, ctx.clusters.?, ctx.shaped.?, singleEmojiImage(cell, sequence));
         }
 
         fn preservesCells(glyphs: []const text.Glyph, count: usize) bool {

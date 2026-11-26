@@ -231,6 +231,7 @@ const AtlasEntry = struct {
 const ShapeEntry = struct {
     hash: u64,
     variant: FontVariant,
+    single_glyph: bool = false,
     scalar_offset: usize,
     scalar_count: usize,
     glyph_offset: usize,
@@ -711,12 +712,25 @@ pub fn resolveShape(
     cluster_scratch: []u32,
     glyph_scratch: []text.Glyph,
 ) ShapeCacheError!text.Run {
+    return resolveShapePolicy(cache, variant, sequence, cluster_scratch, glyph_scratch, false);
+}
+
+/// Resolves the same bounded cache with a distinct single-glyph requirement.
+/// The constraint is a cache-key fact, not a terminal-specific policy.
+pub fn resolveShapePolicy(
+    cache: *ShapeCache,
+    variant: FontVariant,
+    sequence: []const u32,
+    cluster_scratch: []u32,
+    glyph_scratch: []text.Glyph,
+    single_glyph: bool,
+) ShapeCacheError!text.Run {
     const impl = shapeCacheImpl(cache);
     const resolved_variant = impl.fonts.resolveVariant(variant);
     const variant_index = fontVariantIndex(resolved_variant);
     if (sequence.len == 0 or sequence.len > @as(usize, impl.max_sequence_scalars))
         return error.ShapeSequenceLimit;
-    const ascii_index = printableAsciiIndex(sequence);
+    const ascii_index = if (single_glyph) null else printableAsciiIndex(sequence);
     if (ascii_index) |index| {
         const retained = impl.ascii_entries[variant_index][index];
         if (retained != 0) {
@@ -729,15 +743,15 @@ pub fn resolveShape(
         }
     }
     const hash = std.hash.Wyhash.hash(
-        0x9e3779b97f4a7c15,
+        if (single_glyph) 0xa0761d6478bd642f else 0x9e3779b97f4a7c15,
         std.mem.sliceAsBytes(sequence),
     );
-    if (@call(.always_inline, findShapeIndex, .{ impl, resolved_variant, sequence, hash })) |entry_index| {
+    if (@call(.always_inline, findShapeIndex, .{ impl, resolved_variant, sequence, hash, single_glyph })) |entry_index| {
         if (ascii_index) |index| impl.ascii_entries[variant_index][index] = @intCast(entry_index + 1);
         return shapeEntryRun(impl, entry_index);
     }
 
-    return @call(.never_inline, shapeAndRetain, .{ cache, resolved_variant, sequence, cluster_scratch, glyph_scratch, hash, ascii_index });
+    return @call(.never_inline, shapeAndRetain, .{ cache, resolved_variant, sequence, cluster_scratch, glyph_scratch, hash, ascii_index, single_glyph });
 }
 
 fn shapeAndRetain(
@@ -748,6 +762,7 @@ fn shapeAndRetain(
     glyph_scratch: []text.Glyph,
     hash: u64,
     ascii_index: ?usize,
+    single_glyph: bool,
 ) ShapeCacheError!text.Run {
     const impl = shapeCacheImpl(cache);
     const fonts = impl.fonts.select(resolved_variant);
@@ -756,7 +771,7 @@ fn shapeAndRetain(
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index| cluster.* = @intCast(index);
     const shaped = fonts.shape(
         impl.shape,
-        .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
+        .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len], .single_glyph = single_glyph },
         glyph_scratch,
     ) catch |failure| switch (failure) {
         error.MissingGlyph => replacement: {
@@ -765,7 +780,7 @@ fn shapeAndRetain(
                     if (fonts.appendFallback(candidate, sequence) catch false) {
                         const recovered = fonts.shape(
                             impl.shape,
-                            .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
+                            .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len], .single_glyph = single_glyph },
                             glyph_scratch,
                         ) catch |retry_failure| switch (retry_failure) {
                             error.MissingGlyph => null,
@@ -779,7 +794,7 @@ fn shapeAndRetain(
             cluster_scratch[0] = 0;
             break :replacement try fonts.shape(
                 impl.shape,
-                .{ .codepoints = &replacement_codepoints, .clusters = cluster_scratch[0..1] },
+                .{ .codepoints = &replacement_codepoints, .clusters = cluster_scratch[0..1], .single_glyph = single_glyph },
                 glyph_scratch,
             );
         },
@@ -808,6 +823,7 @@ fn shapeAndRetain(
     impl.entries[entry_index] = .{
         .hash = hash,
         .variant = resolved_variant,
+        .single_glyph = single_glyph,
         .scalar_offset = scalar_offset,
         .scalar_count = sequence.len,
         .glyph_offset = glyph_offset,
@@ -862,26 +878,26 @@ fn growShapeStorage(impl: *ShapeCacheImpl, scalar_count: usize, glyph_count: usi
     return true;
 }
 
-fn shapeEntryMatches(impl: *const ShapeCacheImpl, index: usize, variant: FontVariant, sequence: []const u32, hash: u64) bool {
+fn shapeEntryMatches(impl: *const ShapeCacheImpl, index: usize, variant: FontVariant, sequence: []const u32, hash: u64, single_glyph: bool) bool {
     const entry = impl.entries[index];
-    if (entry.variant != variant or entry.hash != hash or entry.scalar_count != sequence.len) return false;
+    if (entry.variant != variant or entry.single_glyph != single_glyph or entry.hash != hash or entry.scalar_count != sequence.len) return false;
     return std.mem.eql(u32, impl.scalars[entry.scalar_offset..][0..entry.scalar_count], sequence);
 }
 
-fn findIndexedShape(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: []const u32, hash: u64) ?usize {
+fn findIndexedShape(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: []const u32, hash: u64, single_glyph: bool) ?usize {
     var probe = impl.lookup.probe(shapeIndexHash(hash, variant));
     while (probe.next()) |index| {
         std.debug.assert(index < impl.entry_count);
-        if (shapeEntryMatches(impl, index, variant, sequence, hash)) return index;
+        if (shapeEntryMatches(impl, index, variant, sequence, hash, single_glyph)) return index;
     }
     return null;
 }
 
-fn findShapeIndex(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: []const u32, hash: u64) ?usize {
+fn findShapeIndex(impl: *const ShapeCacheImpl, variant: FontVariant, sequence: []const u32, hash: u64, single_glyph: bool) ?usize {
     if (impl.entry_count > 64)
-        return @call(.never_inline, findIndexedShape, .{ impl, variant, sequence, hash });
+        return @call(.never_inline, findIndexedShape, .{ impl, variant, sequence, hash, single_glyph });
     for (impl.entries[0..impl.entry_count], 0..) |entry, index| {
-        if (entry.variant != variant or entry.hash != hash or entry.scalar_count != sequence.len) continue;
+        if (entry.variant != variant or entry.single_glyph != single_glyph or entry.hash != hash or entry.scalar_count != sequence.len) continue;
         const retained = impl.scalars[entry.scalar_offset..][0..entry.scalar_count];
         if (std.mem.eql(u32, retained, sequence)) return index;
     }
@@ -1500,14 +1516,14 @@ test "shape index compares exact sequences and variants under a complete hash co
     };
     try std.testing.expect(lookup.slots.len >= entries.len * 2);
     for (scalars, 0..) |scalar, index| {
-        try std.testing.expectEqual(@as(?usize, index), findShapeIndex(&impl, .regular, &.{scalar}, 7));
-        try std.testing.expect(findShapeIndex(&impl, .bold, &.{scalar}, 7) == null);
-        try std.testing.expect(findShapeIndex(&impl, .regular, &.{scalar}, 8) == null);
-        try std.testing.expect(findShapeIndex(&impl, .regular, &.{ scalar, scalar }, 7) == null);
+        try std.testing.expectEqual(@as(?usize, index), findShapeIndex(&impl, .regular, &.{scalar}, 7, false));
+        try std.testing.expect(findShapeIndex(&impl, .bold, &.{scalar}, 7, false) == null);
+        try std.testing.expect(findShapeIndex(&impl, .regular, &.{scalar}, 8, false) == null);
+        try std.testing.expect(findShapeIndex(&impl, .regular, &.{ scalar, scalar }, 7, false) == null);
     }
-    try std.testing.expect(findShapeIndex(&impl, .regular, &.{0xffff}, 7) == null);
+    try std.testing.expect(findShapeIndex(&impl, .regular, &.{0xffff}, 7, false) == null);
     impl.lookup.clear();
-    try std.testing.expect(findIndexedShape(&impl, .regular, &.{scalars[0]}, 7) == null);
+    try std.testing.expect(findIndexedShape(&impl, .regular, &.{scalars[0]}, 7, false) == null);
     // A malformed all-occupied synthetic table must still terminate its probe.
     var full = [_]u32{ 1, 1, 1, 1 };
     var probe = (EntryIndex{ .slots = &full }).probe(7);
@@ -1664,7 +1680,7 @@ fn expectRetainedShapes(impl: *const ShapeCacheImpl, count: usize) !void {
     try std.testing.expectEqual(count, impl.glyph_count);
     for (0..count) |index| {
         const sequence = [_]u32{ @intCast(index + 0x100), @intCast(index + 0x200) };
-        try std.testing.expectEqual(@as(?usize, index), findShapeIndex(impl, .regular, &sequence, index));
+        try std.testing.expectEqual(@as(?usize, index), findShapeIndex(impl, .regular, &sequence, index, false));
         const run = shapeEntryRun(impl, index);
         try std.testing.expectEqual(@as(u32, @intCast(index + 3)), run.glyphs[0].id);
     }

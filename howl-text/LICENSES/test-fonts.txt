@@ -142,4 +142,4 @@ not met.
     FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
     OTHER DEALINGS IN THE FONT SOFTWARE.
 
-colour.ttf and generate-colour.py are original Howl geometric test fixtures, dedicated to the public domain under CC0-1.0. They contain no third-party outlines. Regenerate with Python fontTools; the resulting COLRv0 fixture has deterministic timestamps.
+colour.ttf, colour-decomposed.ttf and generate-colour.py are original Howl geometric test fixtures, dedicated to the public domain under CC0-1.0. They contain no third-party outlines. Regenerate with Python fontTools; the resulting COLRv0 fixture has deterministic timestamps.

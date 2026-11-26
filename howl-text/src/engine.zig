@@ -150,6 +150,9 @@ pub const Text = struct {
     codepoints: []const u32,
     /// Borrows one caller-owned source identity per codepoint.
     clusters: []const u32,
+    /// Requires one glyph after shaping and removal of default-ignorable
+    /// controls; search the configured faces before reporting absence.
+    single_glyph: bool = false,
 };
 
 /// Records one exact HarfBuzz glyph, source cluster, and 26.6 position.
@@ -432,14 +435,24 @@ pub const FontSet = struct {
         try validateText(text);
         if (text.codepoints.len > buffer.capacity)
             return error.InsufficientShapeBuffer;
-        const face_index = self.selectFace(text.codepoints) orelse
-            return error.MissingGlyph;
-        return self.shapeOnFace(
-            buffer,
-            text,
-            glyph_storage,
-            @intCast(face_index),
-        );
+        if (!text.single_glyph) {
+            const face_index = self.selectFace(text.codepoints) orelse return error.MissingGlyph;
+            return self.shapeOnFace(buffer, text, glyph_storage, @intCast(face_index));
+        }
+        const preferred = preferredColour(text.codepoints);
+        // An exact variation mapping outranks nominal coverage; within
+        // each rank retain the caller's face order. A failed candidate
+        // never writes caller glyph storage.
+        for (0..3) |rank| {
+            for (self.faces, 0..) |face, index| {
+                if (faceRank(face, text.codepoints, preferred) != @as(u2, @intCast(rank))) continue;
+                return self.shapeOnFace(buffer, text, glyph_storage, @intCast(index)) catch |failure| switch (failure) {
+                    error.MissingGlyph, error.InvalidGlyphIdentity => continue,
+                    else => return failure,
+                };
+            }
+        }
+        return error.MissingGlyph;
     }
 
     fn shapeOnFace(
@@ -455,6 +468,10 @@ pub const FontSet = struct {
         if (face_index >= self.faces.len) return error.MissingGlyph;
         const face = self.faces[face_index];
         c.hb_buffer_clear_contents(buffer.handle);
+        // HarfBuzz retains joiners during substitutions, removing
+        // default-ignorables only from the final shaped result.
+        c.hb_buffer_set_flags(buffer.handle, if (text.single_glyph) c.HB_BUFFER_FLAG_REMOVE_DEFAULT_IGNORABLES else c.HB_BUFFER_FLAG_DEFAULT);
+        defer c.hb_buffer_set_flags(buffer.handle, c.HB_BUFFER_FLAG_DEFAULT);
         try requireHbBuffer(buffer.handle);
         c.hb_buffer_add_utf32(
             buffer.handle,
@@ -476,6 +493,7 @@ pub const FontSet = struct {
         const positions = c.hb_buffer_get_glyph_positions(buffer.handle, &position_count);
         try requireHbBuffer(buffer.handle);
         if (info_count != position_count) return error.InvalidShapeResult;
+        if (text.single_glyph and info_count != 1) return error.MissingGlyph;
         if (info_count > 0 and (infos == null or positions == null))
             return error.HarfBuzzBuffer;
         for (0..info_count) |i| {
@@ -631,17 +649,20 @@ pub const FontSet = struct {
     }
 
     fn selectFace(self: *FontSet, codepoints: []const u32) ?usize {
+        // Preserve the fast ordinary/exact-variant path and caller order.
         for (self.faces, 0..) |face, index| {
             if (faceSupportsSequence(face.hb, codepoints, false)) return index;
         }
-        // Prefer an explicitly supported whole sequence in any configured face.
-        // Only then let HarfBuzz hide unsupported selectors beside covered bases.
+        const preferred = preferredColour(codepoints);
+        var fallback: ?usize = null;
         for (codepoints) |codepoint| {
             if (!isVariationSelector(codepoint)) continue;
             for (self.faces, 0..) |face, index| {
-                if (faceSupportsSequence(face.hb, codepoints, true)) return index;
+                if (!faceSupportsSequence(face.hb, codepoints, true)) continue;
+                if (preferred == null or preferred.? == faceHasColour(face)) return index;
+                if (fallback == null) fallback = index;
             }
-            return null;
+            return fallback;
         }
         return null;
     }
@@ -850,6 +871,29 @@ fn validatePath(path: []const u8) error{InvalidConfig}!void {
     if (path.len == 0 or path.len > max_font_path_bytes or
         std.mem.indexOfScalar(u8, path, 0) != null)
         return error.InvalidConfig;
+}
+
+// Prefer face-level presentation capability only when all explicit
+// presentation selectors agree. Exact cmap14 mappings always win.
+fn preferredColour(codepoints: []const u32) ?bool {
+    var preference: ?bool = null;
+    for (codepoints) |cp| {
+        if (cp != 0xfe0e and cp != 0xfe0f) continue;
+        const colour = cp == 0xfe0f;
+        if (preference != null and preference.? != colour) return null;
+        preference = colour;
+    }
+    return preference;
+}
+
+fn faceHasColour(face: Face) bool {
+    return face.ft.*.face_flags & c.FT_FACE_FLAG_COLOR != 0;
+}
+
+fn faceRank(face: Face, codepoints: []const u32, preferred: ?bool) ?u2 {
+    if (faceSupportsSequence(face.hb, codepoints, false)) return 0;
+    if (!faceSupportsSequence(face.hb, codepoints, true)) return null;
+    return if (preferred == null or preferred.? == faceHasColour(face)) 1 else 2;
 }
 
 fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32, allow_nominal_variant: bool) bool {

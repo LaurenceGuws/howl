@@ -129,6 +129,9 @@ fn testFontModule(b: *std.Build) *std.Build.Module {
     // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     fonts.addOption([]const u8, "colour_font", b.root.joinString(b.allocator, "testdata/colour.ttf") catch @panic("OOM"));
     // zig-audit: acknowledge panic
+    // reason: Build graph construction cannot proceed without the deterministic negative font fixture path.
+    fonts.addOption([]const u8, "decomposed_colour_font", b.root.joinString(b.allocator, "testdata/colour-decomposed.ttf") catch @panic("OOM"));
+    // zig-audit: acknowledge panic
     // reason: Build graph construction cannot proceed without its bounded test-font path; allocator exhaustion is fatal to this build process.
     fonts.addOption([]const u8, "mono_font", b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"));
     return b.addModule("howl_text_test_fonts", .{

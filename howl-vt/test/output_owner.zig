@@ -1832,3 +1832,101 @@ test "Unicode Core renders unsupported emoji ZWJ clusters as one bounded replace
     try std.testing.expectEqualSlices(output.commands.Command, before, retained.snapshot.glyphs[1]);
     try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f527 }, owner.observation().semanticView(1).cellScalarsAt(1, 0, &scalars));
 }
+
+test "Unicode selectors prefer text and colour faces without changing negotiated occupancy" {
+    const fonts = @import("test_fonts");
+    for ([_]bool{ false, true }) |colour_first| {
+        const fallbacks = if (colour_first)
+            [_][]const u8{ fonts.colour_font, fonts.symbol_font }
+        else
+            [_][]const u8{ fonts.symbol_font, fonts.colour_font };
+        const f = try text.FontSet.init(a, .{ .primary = fonts.primary_font, .fallbacks = &fallbacks, .size = .{ .pixels = 20 } });
+        defer f.deinit();
+        const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+        defer destroy(owner);
+        try owner.resize(3, 12);
+        try owner.feed("\x1b[?25l\x1b[?2027h☺\u{fe0e}X\r\n☺\u{fe0f}Y\r\n☺Z");
+        try owner.flush();
+        const held = try owner.hold();
+        defer release(owner, held);
+        const snap = held.snapshot;
+        try std.testing.expectEqual(@as(usize, 2), snap.glyphs[0].len);
+        try std.testing.expectEqual(@as(usize, 2), snap.glyphs[1].len);
+        try std.testing.expectEqual(@as(usize, 2), snap.glyphs[2].len);
+        try std.testing.expect(snap.glyphs[0][0] == .alpha_mask);
+        try std.testing.expect(snap.glyphs[1][0] == .rgba);
+        try std.testing.expectEqual(colour_first, snap.glyphs[2][0] == .rgba);
+        const view = owner.observation().semanticView(0);
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, 0).width);
+        try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(1, 0).width);
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(2, 0).width);
+        try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(1, 2));
+        try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(2, 1));
+    }
+}
+
+test "Unicode Core searches later joined faces without collapsing explicit width strings" {
+    const fonts = @import("test_fonts");
+    const f = try text.FontSet.init(a, .{ .primary = fonts.primary_font, .fallbacks = &.{ fonts.decomposed_colour_font, fonts.colour_font }, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(4, 12);
+    // First warm the exact same scalar sequence under ordinary unconstrained
+    // shaping. Natural single-image shaping must not reuse that cached run.
+    try owner.feed("\x1b[?25l\x1b[?2027h\x1b]66;w=4;👩‍💻\x07X\r\n👩‍💻Y\r\n\x1b]66;w=4;👩‍💻\x07Z\r\n👩‍💻W");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const snap = held.snapshot;
+    const view = owner.observation().semanticView(0);
+    for (0..4) |row| {
+        const explicit = row % 2 == 0;
+        try std.testing.expectEqual(@as(u8, if (explicit) 4 else 2), view.cellInfoAt(@intCast(row), 0).width);
+        try std.testing.expectEqual(explicit, view.cellInfoAt(@intCast(row), 0).explicit_width);
+        try std.testing.expectEqual(@as(usize, if (explicit) 3 else 2), snap.glyphs[row].len);
+        try std.testing.expect(snap.glyphs[row][0] == .rgba);
+        if (explicit) try std.testing.expect(snap.glyphs[row][1] == .rgba);
+        var scalars: [24]u21 = undefined;
+        try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f4bb }, view.cellScalarsAt(@intCast(row), 0, &scalars));
+    }
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 'W'), view.cellAt(3, 2));
+}
+
+test "Unicode Core natural scaled images and explicit width strings retain distinct shaped runs" {
+    const fonts = @import("test_fonts");
+    const f = try text.FontSet.init(a, .{ .primary = fonts.primary_font, .fallbacks = &.{ fonts.decomposed_colour_font, fonts.colour_font }, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(5, 12);
+    try owner.feed("\x1b[?25l\x1b[?2027h\x1b]66;s=2:w=2;👩‍💻\x07\x1b[3;1H\x1b]66;s=2;👩‍💻\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const snap = held.snapshot;
+    const view = owner.observation().semanticView(0);
+    try std.testing.expectEqual(@as(u16, 4), view.cursor_col);
+    for (0..4) |row| {
+        const cell = view.cellInfoAt(@intCast(row), 0);
+        try std.testing.expectEqual(@as(u8, 4), cell.width);
+        try std.testing.expectEqual(@as(u8, 2), cell.height);
+        try std.testing.expectEqual(@as(u8, @intCast(row % 2)), cell.y);
+        try std.testing.expectEqual(row < 2, cell.explicit_width);
+        var count: usize = 0;
+        for (snap.glyphs[row]) |cmd| {
+            try std.testing.expect(cmd == .rgba);
+            try std.testing.expect(cmd.rgba.clip.x >= 0);
+            try std.testing.expect(cmd.rgba.clip.x + @as(i32, cmd.rgba.clip.width) <= @as(i32, snap.cell_width) * 4);
+            count += 1;
+        }
+        // Both strips of the joined image retain one image command. Both
+        // strips of the application string retain its two component images.
+        try std.testing.expectEqual(@as(usize, if (row < 2) 2 else 1), count);
+    }
+    var scalars: [24]u21 = undefined;
+    for ([_]u16{ 0, 2 }) |row|
+        try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x200d, 0x1f4bb }, view.cellScalarsAt(row, 0, &scalars));
+}

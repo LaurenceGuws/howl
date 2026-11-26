@@ -10760,6 +10760,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: OSC 66 fractional glyph and colour alignment use the scaled render area on every strip
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core natural scaled images and explicit width strings retain distinct shaped runs
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core searches later joined faces without collapsing explicit width strings
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: All49 explicit s=1..7,w=1..7 pairs crossed with full/half-size rendering metadata (98 cases), exact s*w by
@@ -10785,6 +10791,15 @@ specifications:
           method: Pinned Kitty a79f376 text-sizing-protocol.rst variation selectors/fractional scaling and screen.c halve_multicell_width/draw_combining_char;
             VT and independent font-backed output red-green geometry witnesses; no blanket FULL promotion
           baseline: f8c15bf66412b043c39679a2dd29c41c21f46ce1
+        howl_qualification_20261126_unicode_core_04:
+          scope: Actual font-backed projection distinguishes natural one-image grapheme shaping from explicit-width text under
+            mode2027, without changing canonical OSC66 allocation. Both scaled strips preserve s=2,width4,height2 and exact
+            scalars, with two component images retained for explicit strings and one joined image for natural clusters. Shared
+            cache constraint separates identical scalar keys; no blanket all-scale/raster claim.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af,
+            pinned Kitty text sizing, actual configured HarfBuzz/FreeType red-green font fixtures and bounded Text/output
+            tests; no blanket FULL promotion
+          baseline: 181102767c9bc78f764e60d4f701132f1f200cc5
     - id: fraction
       section: Fractional scaling
       level: defined
@@ -28981,6 +28996,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Unicode Core renders unsupported emoji ZWJ clusters as one bounded replacement
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core searches later joined faces without collapsing explicit width strings
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core natural scaled images and explicit width strings retain distinct shaped runs
+        relation: protocol-family
+      - file: howl-text/src/native_test.zig
+        test: single glyph shaping searches configured faces and preserves caller storage on absence
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_unicode_core_01:
           scope: One per-screen consecutive-write witness uses actual lead position, cursor identity/cut and row generation;
@@ -29010,6 +29034,15 @@ specifications:
             actual native HarfBuzz/FreeType font fixture and output-owner red-green with atlas-backed commands; no blanket
             FULL promotion
           baseline: 29bf37711386668a4c5f50ca605f9c22be236e2f
+        howl_qualification_20261126_unicode_core_04:
+          scope: One shared scalar sequence may require distinct shaping constraints depending on explicit-width ownership.
+            Cache key includes single-glyph requirement with independent exact equality and hash seed; ordinary and scaled
+            tests alternate identical explicit/natural sequences, preserve original scalars and cell geometry, and produce
+            the correct joined versus unconstrained glyph count. Actual shape rejection does not alter canonical VT occupancy.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af,
+            pinned Kitty text sizing, actual configured HarfBuzz/FreeType red-green font fixtures and bounded Text/output
+            tests; no blanket FULL promotion
+          baseline: 181102767c9bc78f764e60d4f701132f1f200cc5
     - id: overwrite
       section: Semantics / Grapheme Cluster
       level: defined
@@ -29078,6 +29111,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Unicode Core renders unsupported emoji ZWJ clusters as one bounded replacement
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core searches later joined faces without collapsing explicit width strings
+        relation: protocol-family
+      - file: howl-text/src/native_test.zig
+        test: single glyph shaping searches configured faces and preserves caller storage on absence
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode Core natural scaled images and explicit width strings retain distinct shaped runs
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_unicode_core_01:
           scope: Representative emoji ZWJ/modifier sequence retains one scalar cluster occupying two cells, no extra logical
@@ -29102,6 +29144,21 @@ specifications:
             actual native HarfBuzz/FreeType font fixture and output-owner red-green with atlas-backed commands; no blanket
             FULL promotion
           baseline: 29bf37711386668a4c5f50ca605f9c22be236e2f
+        howl_qualification_20261126_unicode_core_04:
+          scope: The shared Text shaping owner supports a generic single-glyph requirement. Search bounded configured faces
+            in order within exact-variant/nominal preference ranks, rejecting decomposed candidates before writing glyph storage;
+            HarfBuzz removes default-ignorable controls after shaping. The deterministic negative and joined colour fixtures
+            share nominal coverage, but only the later face has the ligature. Actual output chooses its one RGBA image rather
+            than replacing despite available joined coverage; missing joined glyph falls back through the existing replacement
+            owner. Both cache policy and exact scalar sequence are key facts; an explicit-width string can retain its unconstrained
+            multi-glyph run without aliasing natural one-image shaping. Scaled strips preserve that distinction. Direct Text
+            proof verifies chosen face, exact cluster, failure storage and buffer reuse. Conservative one-glyph requirement
+            may replace a multi-glyph image even if it would visually compose into one; no exhaustive OS font discovery or
+            all font glyph formats guarantee.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af,
+            pinned Kitty text sizing, actual configured HarfBuzz/FreeType red-green font fixtures and bounded Text/output
+            tests; no blanket FULL promotion
+          baseline: 181102767c9bc78f764e60d4f701132f1f200cc5
     - id: vs16
       section: Semantics / Variation Selector16
       level: defined
@@ -29128,6 +29185,12 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: row provenance follows VS16 grapheme relocation into an empty destination row
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode selectors prefer text and colour faces without changing negotiated occupancy
+        relation: protocol-family
+      - file: howl-text/src/native_test.zig
+        test: unsupported variants retain a supported base after exact fallback selection
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_unicode_core_01:
           scope: Enabled later VS16 forces width2 for admitted joined unlocked unscaled cluster, including A example, rather
@@ -29149,6 +29212,16 @@ specifications:
             Kitty a79f376 text sizing and draw_combining_char/move_cursor_past_multicell; accepted profile decision, VT red-green
             exact placement/pressure/restore/framing proofs; no blanket FULL promotion
           baseline: 40cbb03603c1ee943a44f09f9eb59d64046e67f7
+        howl_qualification_20261126_unicode_core_04:
+          scope: Nominal fallback prefers colour-capable face on VS16 if exact variation coverage is absent. Actual output
+            is RGBA for the selected smiley in either configured fallback order, and the next character remains at the two-cell
+            cursor advance. Unselected base retains ordinary font order. Exact cmap variants and canonical explicit-width
+            authority are not redefined. Face-level rather than per-glyph preference; no exhaustive presentation or OS discovery
+            guarantee.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af,
+            pinned Kitty text sizing, actual configured HarfBuzz/FreeType red-green font fixtures and bounded Text/output
+            tests; no blanket FULL promotion
+          baseline: 181102767c9bc78f764e60d4f701132f1f200cc5
     - id: vs15
       section: Semantics / Variation Selector15
       level: defined
@@ -29162,6 +29235,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode selectors prefer text and colour faces without changing negotiated occupancy
+        relation: protocol-family
+      - file: howl-text/src/native_test.zig
+        test: unsupported variants retain a supported base after exact fallback selection
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_unicode_core_01:
           scope: Enabled later VS15 preserves existing width (wide emoji stays2) whereas resetting2027 restores Kitty natural-width
@@ -29171,6 +29250,16 @@ specifications:
             accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
             FULL promotion
           baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
+        howl_qualification_20261126_unicode_core_04:
+          scope: Nominal font fallback prefers non-colour-capable face on VS15 when both nominal text and colour faces cover
+            the whole sequence; exact variation cmap mappings retain priority, conflicting selectors retain caller order.
+            Actual font-backed smiley output is alpha in either fallback order and keeps negotiated original width. Face-level
+            capability is a preference, not complete per-glyph classification for mixed-colour fonts; a matching nominal face
+            is not required to exist. Existing wide VS15 canonical width proof retained.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af,
+            pinned Kitty text sizing, actual configured HarfBuzz/FreeType red-green font fixtures and bounded Text/output
+            tests; no blanket FULL promotion
+          baseline: 181102767c9bc78f764e60d4f701132f1f200cc5
     - id: margin
       section: Semantics / Margins and AutoWrap with Emoji
       level: defined

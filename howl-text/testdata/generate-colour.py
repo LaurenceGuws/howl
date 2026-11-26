@@ -38,3 +38,7 @@ b.font["CPAL"] = buildCPAL([[(1,0,0,1), (0,0,1,0.5)]])
 # Reproducible fixture timestamps, independent of regeneration time.
 b.font["head"].created = b.font["head"].modified = 0
 b.save(Path(__file__).with_name("colour.ttf"))
+# Same nominal coverage without a joining substitution: a negative face
+# preceding the joined face in an ordered fallback list.
+del b.font["GSUB"]
+b.save(Path(__file__).with_name("colour-decomposed.ttf"))

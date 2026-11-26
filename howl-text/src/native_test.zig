@@ -959,3 +959,48 @@ test "unsupported variants retain a supported base after exact fallback selectio
     }
     try std.testing.expectEqual(@as(?u8, null), try set.faceFor(&.{ 0x10ffff, 0xfe0f }));
 }
+
+test "single glyph shaping searches configured faces and preserves caller storage on absence" {
+    const set = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{ fonts.decomposed_colour_font, fonts.colour_font },
+        .size = .{ .pixels = 20 },
+    });
+    defer set.deinit();
+    const buffer = try text.ShapeBuffer.init(std.testing.allocator, 24);
+    defer buffer.deinit();
+    const sequence = [_]u32{ 0x1f469, 0x200d, 0x1f4bb };
+    const clusters = [_]u32{ 71, 71, 71 };
+    var storage: [24]text.Glyph = undefined;
+    const ordinary = try set.shape(buffer, .{ .codepoints = &sequence, .clusters = &clusters }, &storage);
+    try std.testing.expectEqual(@as(u8, 1), ordinary.face_index);
+    try std.testing.expect(ordinary.glyphs.len > 1);
+    const ordinary_count = ordinary.glyphs.len;
+    const joined = try set.shape(buffer, .{ .codepoints = &sequence, .clusters = &clusters, .single_glyph = true }, &storage);
+    try std.testing.expectEqual(@as(u8, 2), joined.face_index);
+    try std.testing.expectEqual(@as(usize, 1), joined.glyphs.len);
+    try std.testing.expectEqual(@as(u32, 71), joined.glyphs[0].cluster);
+    const joined_id = joined.glyphs[0].id;
+    var raster = try set.rasterizeGlyph(std.testing.allocator, joined.face_index, joined_id);
+    defer raster.deinit();
+    try std.testing.expectEqual(text.RasterFormat.rgba8, raster.format);
+
+    const sentinel: text.Glyph = .{ .id = 0xaabbccdd, .cluster = 9, .x_advance = -1, .y_advance = -2, .x_offset = -3, .y_offset = -4 };
+    @memset(&storage, sentinel);
+    try std.testing.expectError(error.MissingGlyph, set.shape(buffer, .{
+        .codepoints = &.{ 0x1f469, 0x200d, 0x1f527 },
+        .clusters = &clusters,
+        .single_glyph = true,
+    }, &storage));
+    for (storage) |glyph| try std.testing.expectEqualDeep(sentinel, glyph);
+    try std.testing.expectError(error.InsufficientGlyphs, set.shape(buffer, .{
+        .codepoints = &sequence,
+        .clusters = &clusters,
+        .single_glyph = true,
+    }, storage[0..0]));
+    for (storage) |glyph| try std.testing.expectEqualDeep(sentinel, glyph);
+    // The single-glyph search must not leak buffer flags to ordinary shaping.
+    const after = try set.shape(buffer, .{ .codepoints = &sequence, .clusters = &clusters }, &storage);
+    try std.testing.expectEqual(@as(u8, 1), after.face_index);
+    try std.testing.expectEqual(ordinary_count, after.glyphs.len);
+}
