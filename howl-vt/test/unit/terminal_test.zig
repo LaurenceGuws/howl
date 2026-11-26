@@ -2467,3 +2467,55 @@ test "ED22 archives only eligible primary viewport and leaves private and malfor
         };
     }
 }
+
+test "OSC 66 streamed VS15 narrows complete natural rectangles without moving them to a prior row" {
+    for (1..8) |scale| {
+        for ([_]bool{ false, true }) |locked| {
+            for ([_]bool{ false, true }) |fractional| {
+                var terminal = try Terminal.initWithHistory(std.testing.allocator, 9, 18, 0);
+                defer terminal.deinit();
+                var command: [128]u8 = undefined;
+                try feedChanged(&terminal, try std.fmt.bufPrint(&command, "\x1b[2;3H\x1b]66;s={d}:w={d}:n={d}:d={d}:h={d}:v={d};😐\x07", .{
+                    scale, @as(u8, if (locked) 2 else 0), @as(u8, if (fractional) 1 else 0), @as(u8, if (fractional) 2 else 0), @as(u8, if (fractional) 2 else 0), @as(u8, if (fractional) 1 else 0),
+                }));
+                try feedChanged(&terminal, "\u{fe0e}");
+                const view = terminal.semanticView(0);
+                const width = scale * @as(usize, if (locked) 2 else 1);
+                try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+                try std.testing.expectEqual(@as(u16, @intCast(2 + width)), view.cursor_col);
+                var scalars: [24]u21 = undefined;
+                for (0..scale) |y| for (0..2 * scale) |x| {
+                    const row: u16 = @intCast(y + 1);
+                    const col: u16 = @intCast(x + 2);
+                    const cell = view.cellInfoAt(row, col);
+                    if (x < width) {
+                        try std.testing.expectEqual(@as(u8, @intCast(width)), cell.width);
+                        try std.testing.expectEqual(@as(u8, @intCast(scale)), cell.height);
+                        try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+                        try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+                        try std.testing.expectEqual(locked, cell.explicit_width);
+                        try std.testing.expectEqual(@as(u4, if (fractional) 1 else 0), cell.subscale_n);
+                        try std.testing.expectEqual(@as(u4, if (fractional) 2 else 0), cell.subscale_d);
+                        try std.testing.expectEqualSlices(u21, &.{ 0x1f610, 0xfe0e }, view.cellScalarsAt(row, col, &scalars));
+                    } else {
+                        try std.testing.expectEqual(@as(u8, 1), cell.width);
+                        try std.testing.expectEqual(@as(u8, 1), cell.height);
+                        try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+                    }
+                };
+            }
+        }
+    }
+    // A wide block wrapping at admission must not relocate to the previous
+    // line when a later selector releases half of its allocation.
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 6, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "ABCDE\x1b]66;s=2;😐\x07\u{fe0e}Z");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'E'), view.cellAt(0, 4));
+    try std.testing.expectEqual(@as(u21, 0x1f610), view.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(2, 1).width);
+    try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+}

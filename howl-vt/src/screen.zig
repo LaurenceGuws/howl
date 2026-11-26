@@ -3351,16 +3351,19 @@ pub const Screen = struct {
             if (grow) return error.ScalarCapacity;
             return false;
         }
-        // Width-changing helpers operate on ordinary one-row geometry.
-        // Never reinterpret application width or collapse a scaled rectangle.
+        // VS16 and positive spacing marks only widen an unscaled cell.
+        // VS15 may reduce natural width from two to one scaled columns
+        // across the entire rectangle, but application-assigned width wins.
         const lead_height = lead_cell.height;
-        const can_resize = !lead_cell.explicit_width and lead_height == 1 and
+        const can_widen = !lead_cell.explicit_width and lead_height == 1 and
             lead_cell.subscale_n == 0 and lead_cell.subscale_d == 0 and
             lead_cell.vertical_align == 0 and lead_cell.horizontal_align == 0;
-        const changes_presentation = can_resize and (if (previous) |last| last.isEmojiPresentationBase() else false);
-        const widens = lead_cell.width == 1 and
-            ((cp == 0xfe0f and changes_presentation) or
-                (can_resize and properties.isSpacingMark() and properties.width() > 0));
+        const presentation_base = if (previous) |last| last.isEmojiPresentationBase() else false;
+        const widens = can_widen and lead_cell.width == 1 and
+            ((cp == 0xfe0f and presentation_base) or
+                (properties.isSpacingMark() and properties.width() > 0));
+        const narrows = !lead_cell.explicit_width and cp == 0xfe0e and
+            lead_cell.width == 2 * @as(u16, lead_height) and presentation_base;
         if (widens and
             self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
         {
@@ -3410,9 +3413,9 @@ pub const Screen = struct {
         if (widens) {
             self.widenPresentation(anchor_row, anchor_col, &history);
             final_width = 2;
-        } else if (cp == 0xfe0e and lead_cell.width == 2 and changes_presentation) {
+        } else if (narrows) {
             self.narrowPresentation(anchor_row, anchor_col);
-            final_width = 1;
+            final_width = lead_height;
         }
         if (self.last_graphic) |*graphic| {
             if (graphic.combining_len < graphic.combining.len) {
@@ -3553,19 +3556,32 @@ pub const Screen = struct {
 
     fn narrowPresentation(self: *Screen, row: u16, col: u16) void {
         const cells = self.cells orelse return;
-        const lead_index = self.rowStart(row) + col;
-        cells[@intCast(lead_index)].width = 1;
-        cells[@intCast(lead_index)].semantic_width = false;
-        if (col + 1 < self.cols) {
-            const continuation_index = lead_index + 1;
-            cells[@intCast(continuation_index)] = blank_cell;
+        const lead = cells[self.rowStart(row) + col];
+        const width: u16 = lead.width;
+        const reduced: u16 = lead.height;
+        std.debug.assert(!lead.explicit_width and width == reduced * 2);
+        std.debug.assert(@as(u32, col) + width <= self.cols);
+        const end_row = @min(@as(u32, self.rows), @as(u32, row) + lead.height);
+        for (row..end_row) |strip| {
+            const start = self.rowStart(@intCast(strip)) + col;
+            for (cells[start..][0..reduced]) |*cell| {
+                cell.width = @intCast(reduced);
+                cell.semantic_width = false;
+            }
+            // The released half contains continuations only; the lead and
+            // its scalar sidecar remain at the original physical coordinate.
+            @memset(cells[start + reduced ..][0 .. width - reduced], blank_cell);
         }
         if (self.cursor.row == row) {
+            const new_limit = col + reduced;
+            const old_limit = col + width;
             if (self.wrap_pending) {
                 self.wrap_pending = false;
-                self.cursor.setColByClient(col + 1);
-            } else if (self.cursor.col > col + 1) {
-                self.cursor.setColByClient(self.cursor.col - 1);
+                self.cursor.setColByClient(new_limit);
+            } else if (self.cursor.col >= old_limit) {
+                self.cursor.setColByClient(self.cursor.col - (width - reduced));
+            } else if (self.cursor.col > new_limit) {
+                self.cursor.setColByClient(new_limit);
             }
         }
     }

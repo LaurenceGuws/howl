@@ -10754,6 +10754,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: OSC 66 implicit selectors and spacing marks measure clusters while explicit width wins
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 streamed VS15 narrows complete natural rectangles without moving them to a prior row
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: OSC 66 fractional glyph and colour alignment use the scaled render area on every strip
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: All49 explicit s=1..7,w=1..7 pairs crossed with full/half-size rendering metadata (98 cases), exact s*w by
@@ -10772,6 +10778,13 @@ specifications:
             property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
             byte-offset/admission and retained pressure proofs; no blanket FULL promotion
           baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
+        howl_qualification_20261126_text_size_06:
+          scope: Complete rectangle reduction keeps height s, scales natural width from2*s to s, preserves locked explicit
+            geometry; actual fractional output uses derived render area independent from occupied rectangle. Selected scale/width/fraction/alignment
+            tests, not every possible glyph or font size.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst variation selectors/fractional scaling and screen.c halve_multicell_width/draw_combining_char;
+            VT and independent font-backed output red-green geometry witnesses; no blanket FULL promotion
+          baseline: f8c15bf66412b043c39679a2dd29c41c21f46ce1
     - id: fraction
       section: Fractional scaling
       level: defined
@@ -10794,6 +10807,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: fractional generated and colour glyphs survive history
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: OSC 66 fractional glyph and colour alignment use the scaled render area on every strip
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 streamed VS15 narrows complete natural rectangles without moving them to a prior row
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: Full and n=1,d=2 metadata leave occupancy identical across all49 explicit integer scales/widths, selected
@@ -10804,6 +10823,17 @@ specifications:
             and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
             FULL promotion
           baseline: a54d459fe81985a580470341aa21b573dbeb3660
+        howl_qualification_20261126_text_size_06:
+          scope: Output owner distinguishes full cell allocation from aligned fractional render area. Generated masks, shaped
+            font glyphs and RGBA color glyphs use one transform and row-strip clip; color fitting and bounded-symbol placement
+            use aligned render area, not full allocation. Deterministic actual font-backed projection test crosses all nine
+            h/v combinations and n=1,d=2 or3 at s=2,w=2 (54 cases across three glyph types), verifies destination translation,
+            clip containment, generated rectangle extent/coverage and unchanged cell occupancy. Existing history projection
+            proofs retained. This is draw-command and actual atlas-backed geometry evidence, not exhaustive fraction/raster/physical
+            compositor qualification; clip policy may truncate ink that exceeds render area, as author permits.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst variation selectors/fractional scaling and screen.c halve_multicell_width/draw_combining_char;
+            VT and independent font-backed output red-green geometry witnesses; no blanket FULL promotion
+          baseline: f8c15bf66412b043c39679a2dd29c41c21f46ce1
     - id: editing
       section: Wrapping and overwriting behavior
       level: defined
@@ -11261,6 +11291,9 @@ specifications:
       - file: howl-vt/src/screen.zig
         test: OSC 66 later combining preserves scaled rectangle and invalidates every strip
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 streamed VS15 narrows complete natural rectangles without moving them to a prior row
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_02:
           scope: Within one OSC66 command, natural block width is measured before scaling, following pinned author variable-width
@@ -11284,6 +11317,15 @@ specifications:
             VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
             FULL promotion
           baseline: 86dbb20a16298396777116670570415633e704ee
+        howl_qualification_20261126_text_size_06:
+          scope: Later ordinary VS15 on a complete naturally wide block reduces each visible strip from 2*s to s columns,
+            preserving lead scalar ownership, scale, fractional metadata and anchor. All seven integer scales crossed with
+            explicit/natural width and full/fractional metadata (28 cases); explicit w never resized, VS16 and spacing-mark
+            widening remain restricted to ordinary unscaled cells. Narrowing after a wide block wrapped does not move it back
+            to the prior row. Prior wrapped-line attachment and immutable-history lead cases remain unqualified.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst variation selectors/fractional scaling and screen.c halve_multicell_width/draw_combining_char;
+            VT and independent font-backed output red-green geometry witnesses; no blanket FULL promotion
+          baseline: f8c15bf66412b043c39679a2dd29c41c21f46ce1
   kitty_pointer:
     title: Kitty mouse pointer shape control
     author: Kovid Goyal / kitty

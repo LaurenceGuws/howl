@@ -1704,3 +1704,71 @@ test "multi-row history output reads the complete cold scalar tail" {
     try std.testing.expectEqualSlices(u21, &.{ 'e', 0x301, 0x302, 0x303, 0x304, 0x305 }, view.cellScalarsAt(0, 0, &scalars));
     try std.testing.expect(held.snapshot.glyphs[0].len != 0);
 }
+
+test "OSC 66 fractional glyph and colour alignment use the scaled render area on every strip" {
+    const f = try text.FontSet.init(a, .{ .primary = @import("test_fonts").primary_font, .fallbacks = &.{@import("test_fonts").colour_font}, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(3, 8);
+    const Rect = output.commands.Rect;
+    for ([_][]const u8{ "─", "X", "😀" }) |glyph| {
+        for ([_]u16{ 2, 3 }) |denominator| {
+            var reference: ?Rect = null;
+            for (0..3) |vertical| for (0..3) |horizontal| {
+                var wire: [128]u8 = undefined;
+                try owner.feed(try std.fmt.bufPrint(&wire, "\x1b[2J\x1b[H\x1b[?25l\x1b]66;s=2:w=2:n=1:d={d}:v={d}:h={d};{s}\x07", .{ denominator, vertical, horizontal, glyph }));
+                try owner.flush();
+                const held = try owner.hold();
+                defer release(owner, held);
+                const snap = held.snapshot;
+                const width = snap.cell_width * 4;
+                const height = snap.cell_height * 2;
+                const rw = (width + denominator - 1) / denominator;
+                const rh = (height + denominator - 1) / denominator;
+                const dx: i32 = switch (horizontal) {
+                    1 => width - rw,
+                    2 => (width - rw) / 2,
+                    else => 0,
+                };
+                const dy: i32 = switch (vertical) {
+                    1 => height - rh,
+                    2 => (height - rh) / 2,
+                    else => 0,
+                };
+                var destination: ?Rect = null;
+                var covered: u32 = 0;
+                for (snap.glyphs, 0..) |commands, row| {
+                    for (commands) |command| {
+                        const value: struct { destination: Rect, clip: Rect } = switch (command) {
+                            .alpha_mask => |mask| .{ .destination = mask.destination, .clip = mask.clip },
+                            .rgba => |rgba| .{ .destination = rgba.destination, .clip = rgba.clip },
+                            else => return error.UnexpectedCommand,
+                        };
+                        var global = value.destination;
+                        global.y += @as(i32, @intCast(row * snap.cell_height));
+                        const clip_y = value.clip.y + @as(i32, @intCast(row * snap.cell_height));
+                        try std.testing.expect(value.clip.x >= dx and value.clip.x + @as(i32, value.clip.width) <= dx + @as(i32, rw));
+                        try std.testing.expect(clip_y >= dy and clip_y + @as(i32, value.clip.height) <= dy + @as(i32, rh));
+                        if (destination) |prior| try std.testing.expectEqualDeep(prior, global) else destination = global;
+                        covered += @as(u32, value.clip.width) * value.clip.height;
+                    }
+                }
+                const actual = destination orelse return error.MissingGlyph;
+                if (reference) |base| {
+                    var expected = base;
+                    expected.x += dx;
+                    expected.y += dy;
+                    try std.testing.expectEqualDeep(expected, actual);
+                } else reference = actual;
+                try std.testing.expect(covered != 0);
+                if (std.mem.eql(u8, glyph, "─")) {
+                    try std.testing.expectEqualDeep(Rect{ .x = dx, .y = dy, .width = rw, .height = rh }, actual);
+                    try std.testing.expectEqual(@as(u32, rw) * rh, covered);
+                }
+                try std.testing.expectEqual(@as(u8, 4), owner.observation().semanticView(0).cellInfoAt(0, 0).width);
+                try std.testing.expectEqual(@as(u8, 2), owner.observation().semanticView(0).cellInfoAt(1, 3).height);
+            };
+        }
+    }
+}

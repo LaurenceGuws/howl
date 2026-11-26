@@ -498,13 +498,12 @@ pub fn Emitter(comptime instrumented: bool) type {
             base_width: u16,
             numerator: u16,
             denominator: u16,
-            offset_x: u16,
-            offset_y: u16,
+            render_area: frame.Rect,
 
             fn transform(self: ScaledLayout, rect: frame.Rect) BuildError!frame.Rect {
-                const x = @as(i64, self.allocation.x) + self.offset_x +
+                const x = @as(i64, self.render_area.x) +
                     @divFloor((@as(i64, rect.x) - self.allocation.x) * self.numerator, self.denominator);
-                const y = @as(i64, self.allocation.y) + self.offset_y +
+                const y = @as(i64, self.render_area.y) +
                     @divFloor(@as(i64, rect.y) * self.numerator, self.denominator);
                 return .{ .x = std.math.cast(i32, x) orelse return error.ArithmeticOverflow, .y = std.math.cast(i32, y) orelse return error.ArithmeticOverflow, .width = try scaledExtent(rect.width, self.numerator, self.denominator), .height = try scaledExtent(rect.height, self.numerator, self.denominator) };
             }
@@ -524,21 +523,34 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (scaled_width > allocation.width or scaled_height > allocation.height) return error.UnsupportedScene;
             const remaining_x = allocation.width - scaled_width;
             const remaining_y = allocation.height - scaled_height;
-            return .{ .allocation = allocation, .base_width = base_width, .numerator = numerator, .denominator = denominator, .offset_x = switch (cell.horizontal_align) {
+            const offset_x: u16 = switch (cell.horizontal_align) {
                 2 => remaining_x / 2,
                 1, 3 => remaining_x,
                 else => 0,
-            }, .offset_y = switch (cell.vertical_align) {
+            };
+            const offset_y: u16 = switch (cell.vertical_align) {
                 1 => remaining_y,
                 2 => remaining_y / 2,
                 else => 0,
-            } };
+            };
+            return .{
+                .allocation = allocation,
+                .base_width = base_width,
+                .numerator = numerator,
+                .denominator = denominator,
+                .render_area = .{
+                    .x = allocation.x + @as(i32, offset_x),
+                    .y = allocation.y + @as(i32, offset_y),
+                    .width = scaled_width,
+                    .height = scaled_height,
+                },
+            };
         }
 
         // Project scaled decorations into each row-local strip.
         fn appendScaledDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
             const sizing = try scaledLayout(ctx, cell, col, row_offset);
-            const clip = (try frame.intersectRects(sizing.allocation, row_clip)) orelse return;
+            const clip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
             if (cell.attrs.underline) {
                 const height = @max(@as(u16, 1), metrics.underline_height);
                 const y = line_offset + metrics.underline_y;
@@ -580,7 +592,7 @@ pub fn Emitter(comptime instrumented: bool) type {
         // strips independently lets the VT's existing row generations drive repair.
         fn appendScaled(ctx: Context, output: []frame.Command, used: *usize, sequence: []const u32, style: cache.FontVariant, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, color: frame.Color) BuildError!void {
             const sizing = try scaledLayout(ctx, cell, col, row_offset);
-            const strip = (try frame.intersectRects(sizing.allocation, row_clip)) orelse return;
+            const strip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
             if (sequence.len == 1 and text.generated.classify(sequence[0]) != null) {
                 const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = 0, .width = sizing.base_width, .height = ctx.cell_height });
                 const proper_fraction = cell.subscale_n != 0 and cell.subscale_d != 0 and cell.subscale_n < cell.subscale_d;
@@ -616,12 +628,12 @@ pub fn Emitter(comptime instrumented: bool) type {
                         .height = raster.height,
                     });
                     if (bounded_symbol) {
-                        const latest = sizing.allocation.x + @as(i32, sizing.allocation.width) - destination.width;
-                        destination.x = std.math.clamp(destination.x, sizing.allocation.x, @max(sizing.allocation.x, latest));
-                        destination.y = @max(destination.y, sizing.allocation.y);
+                        const latest = sizing.render_area.x + @as(i32, sizing.render_area.width) - destination.width;
+                        destination.x = std.math.clamp(destination.x, sizing.render_area.x, @max(sizing.render_area.x, latest));
+                        destination.y = @max(destination.y, sizing.render_area.y);
                     }
                     if (raster.format == .rgba8) {
-                        const fitted = fitColor(destination, sizing.allocation);
+                        const fitted = fitColor(destination, sizing.render_area);
                         if (try frame.intersectRects(fitted, strip)) |clip| {
                             const size = cache.colorAtlasSize(ctx.atlas);
                             try append(ctx.command_bytes_written, output, used, .{ .rgba = .{
