@@ -33642,37 +33642,182 @@ reconciliation:
       logged decode failure. No ordinary status if not requested. Exact flag admission, accounting/eviction transaction and
       error priority when several defects present remain separate qualification; proposed failed-replacement atomicity is
       explicit Howl constraint. Do not infer full oneshot placement/status behavior from this named-upload choice.
-pending_reconciliation:
 - id: iterm-feature-mouse-button-table
-  status: material-originating-extension-conflict
   wire: CSI < Cb ; X ; Y M|m
-  original_author_sources:
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: original-xterm-sgr-button-encoding
+    effect: 'Select original xterm SGR mouse button codes: left0, middle1, right2, wheel up64, wheel down65 for the canonical
+      application-facing events. Motion adds32; no-button motion under all-motion tracking uses3+32=35 before modifiers. Shift4,
+      Meta8, Control16 remain additive; SGR uses decimal Cb with no legacy printable-byte offset, one-based cell X/Y, uppercase
+      M press/motion and lowercase m release retaining released button identity. No ordinary vertical wheel release. Do not
+      adopt iTerm2 feature table''s reversed middle/right or inconsistent wheel values. Pinned iTerm2 enum names ScrollDown4/ScrollUp5
+      and encoder adds64 to low bits, yielding named down64/up65; actual physical direction also depends on platform delta
+      translation and preferences, so do not infer all macOS scroll direction behavior. Additional buttons and horizontal
+      wheel, pixel-coordinate mode, physical input translation, multiple held buttons, report admission, host focus and exact
+      supported tracking modes remain qualification. No new implementation/feature advertisement selected.'
+    selected_source_profiles:
+    - xterm_controls.mouse-sgr
+    - xterm_controls.mouse-normal
+    - xterm_controls.mouse-button-motion
+    - xterm_controls.mouse-any-motion
+  selects:
+    mouse-sgr.button-encoding: effect
+  competing_interpretations_retained:
+  - iterm2_feature_reporting.mouse-button-table
+  reason: Original xterm ctlseqs Normal tracking, Wheel mice and SGR1006 sections define button1..3 as0..2, wheel4/5 with64
+    added, no wheel release, same modifiers and lowercase release. Pinned button.c BtnCode and EmitButtonCode corroborate
+    bit calculation and release distinction. iTerm2 feature page contradictory; exact VT100Output.h defines middle1/right2,
+    VT100Output.m masks button and adds wheel flag, reportForSGRButton formats decimal. PTYMouseHandler.m translates platform
+    scrollingDeltaY into enum; named wheel discrepancy must not be mistaken for end-to-end direction proof. Follow originating
+    xterm protocol rather than normalize source text or use platform enum as authority.
+  evidence_basis: Explicit originating xterm semantic choice, backed by exact implementation and documented adopter discrepancy;
+    no universal adopter equivalence claimed.
+  source_clauses:
   - clause: iterm2_feature_reporting.mouse-button-table
-    meaning: Published feature-reporting table maps1 right/2 other and has inconsistent wheel interpretation.
+    wire: CSI < Cb ; X ; Y M|m
+    section: Features / MOUSE / DECSET(1006)
+    source_revision: Published author page, preserved 2026-11-24
+    url: https://iterm2.com/feature-reporting/
+  - clause: xterm_controls.mouse-any-motion
+    wire: CSI ? 1003 h / CSI ? 1003 l
+    section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Any-event tracking,
+      3108-3113
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  - clause: xterm_controls.mouse-button-motion
+    wire: CSI ? 1002 h / CSI ? 1002 l
+    section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Button-event tracking,
+      3083-3106
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  - clause: xterm_controls.mouse-normal
+    wire: CSI ? 1000 h / CSI ? 1000 l
+    section: Mouse Tracking / mutually exclusive tracking protocols and encoding schemes, lines 2900-3195 / Normal tracking
+      and wheel/other buttons, 2962-3033
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
   - clause: xterm_controls.mouse-sgr
-    meaning: 'Original SGR reports retain normal button values: buttons1,2,3 as0,1,2 and wheel buttons4,5 as64,65, no wheel
-      release (ctlseqs Mouse Tracking / Normal tracking and Wheel mice).'
-  question: Treat source table as possible documentation error; retain both definitions and trace author implementation before
-    selecting or editing a test.
-  decision: null
+    wire: CSI ? 1006 h/l
+    section: Mouse Tracking / Extended coordinates
+    source_revision: dated official control-sequence reference, observed 2026-11-23
+    url: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: iterm-feature-mouse-button-table
+    status: material-originating-extension-conflict
+    wire: CSI < Cb ; X ; Y M|m
+    original_author_sources:
+    - clause: iterm2_feature_reporting.mouse-button-table
+      meaning: Published feature-reporting table maps1 right/2 other and has inconsistent wheel interpretation.
+    - clause: xterm_controls.mouse-sgr
+      meaning: 'Original SGR reports retain normal button values: buttons1,2,3 as0,1,2 and wheel buttons4,5 as64,65, no wheel
+        release (ctlseqs Mouse Tracking / Normal tracking and Wheel mice).'
+    question: Treat source table as possible documentation error; retain both definitions and trace author implementation
+      before selecting or editing a test.
+    decision: null
+    applies_to:
+      clauses:
+      - iterm2_feature_reporting.mouse-button-table
+      - xterm_controls.mouse-sgr
+      scope: CSI < Cb ; X ; Y M|m
   applies_to:
     clauses:
     - iterm2_feature_reporting.mouse-button-table
+    - xterm_controls.mouse-any-motion
+    - xterm_controls.mouse-button-motion
+    - xterm_controls.mouse-normal
     - xterm_controls.mouse-sgr
-    scope: CSI < Cb ; X ; Y M|m
+    scope: 'Select original xterm SGR mouse button codes: left0, middle1, right2, wheel up64, wheel down65 for the canonical
+      application-facing events. Motion adds32; no-button motion under all-motion tracking uses3+32=35 before modifiers. Shift4,
+      Meta8, Control16 remain additive; SGR uses decimal Cb with no legacy printable-byte offset, one-based cell X/Y, uppercase
+      M press/motion and lowercase m release retaining released button identity. No ordinary vertical wheel release. Do not
+      adopt iTerm2 feature table''s reversed middle/right or inconsistent wheel values. Pinned iTerm2 enum names ScrollDown4/ScrollUp5
+      and encoder adds64 to low bits, yielding named down64/up65; actual physical direction also depends on platform delta
+      translation and preferences, so do not infer all macOS scroll direction behavior. Additional buttons and horizontal
+      wheel, pixel-coordinate mode, physical input translation, multiple held buttons, report admission, host focus and exact
+      supported tracking modes remain qualification. No new implementation/feature advertisement selected.'
 - id: iterm-feature-registry-f-collision
-  status: material-originating-extension-conflict
   wire: OSC 1337 ; Capabilities=FeatureString ST (feature F)
-  original_author_sources:
-  - clause: iterm2_feature_reporting.focus
-    meaning: Registry F means FOCUS_REPORTING.
+  status: resolved-by-explicit-captain-choice
+  approved_by: Captain
+  approved_on: '2026-11-26'
+  decision_rule: explicit-captain-choice
+  accepted_interpretation:
+    profile_choice: conservative-conjunctive-f-advertisement
+    effect: For the ambiguous iTerm2 FeatureString F code, emit F exactly once only if both FOCUS_REPORTING and FILE independently
+      satisfy their complete documented advertised-feature requirements and are available under applicable policy. Otherwise
+      omit F even if exactly one is available. Apply same conservative collision rule to OSC1337 Capabilities reply and TERM_FEATURES
+      where either surface is actually supported. No positional, duplicate-count or invented replacement code, and no claim
+      that F identifies which individual capability is supported. This intentionally permits a false-negative advertisement
+      of one implemented feature rather than a false positive for the other. Underlying individual focus and file protocols
+      are not disabled or selected for implementation by this rule; any independent discovery remains its own qualified contract.
+      Full feature-reporting baseline, actual capability qualification, conditional permission and host environment lifetime
+      remain separate. No current support or runtime advertisement inferred.
+    selected_source_profiles:
+    - iterm2_feature_reporting.focus
+    - iterm2_feature_reporting.file
+    - iterm2_feature_reporting.encoding
+  selects:
+    iterm-feature-reporting.f-advertisement: effect
+  competing_interpretations_retained: []
+  reason: Author registry assigns exact Boolean code F twice; encoding is concatenated feature-presence tokens with absence
+    false. Pinned VT100Output.m encodedTermFeaturesForCapabilities independently appends F for focus and file, so one F cannot
+    distinguish either, and repeated F is not a documented separate encoding. If only one is available, emitting F risks a
+    consumer inferring unsupported capability. Requiring both makes every possible advertised interpretation true; omit otherwise.
+    No author clarification recovered, and this is a deliberate conservative Howl policy rather than a corrected upstream
+    registry.
+  evidence_basis: Explicit product policy for ambiguous advertisement; not an original-source correction, new letter assignment
+    or interoperability guarantee.
+  source_clauses:
+  - clause: iterm2_feature_reporting.encoding
+    wire: FeatureString
+    section: Types; Publication / Encoding
+    source_revision: Published author page, preserved 2026-11-24
+    url: https://iterm2.com/feature-reporting/
   - clause: iterm2_feature_reporting.file
-    meaning: Same F means FILE. Pinned VT100Output.m:1569,1576 emits F for both independently.
-  question: No distinct code can be inferred from same character. Retain source ambiguity; recover author clarification or
-    explicit selected response policy before claiming truthful advertisement.
-  decision: null
+    wire: 'OSC 1337 ; File=metadata : base64 ST'
+    section: Features / FILE
+    source_revision: Published author page, preserved 2026-11-24
+    url: https://iterm2.com/feature-reporting/
+  - clause: iterm2_feature_reporting.focus
+    wire: CSI ? 1004 h/l / CSI I / CSI O
+    section: Features / FOCUS_REPORTING
+    source_revision: Published author page, preserved 2026-11-24
+    url: https://iterm2.com/feature-reporting/
+  implementation_policy: semantic-selection-only; disposition, priority, host permission and conformance not established
+  superseded_pending_record:
+    id: iterm-feature-registry-f-collision
+    status: material-originating-extension-conflict
+    wire: OSC 1337 ; Capabilities=FeatureString ST (feature F)
+    original_author_sources:
+    - clause: iterm2_feature_reporting.focus
+      meaning: Registry F means FOCUS_REPORTING.
+    - clause: iterm2_feature_reporting.file
+      meaning: Same F means FILE. Pinned VT100Output.m:1569,1576 emits F for both independently.
+    question: No distinct code can be inferred from same character. Retain source ambiguity; recover author clarification
+      or explicit selected response policy before claiming truthful advertisement.
+    decision: null
+    applies_to:
+      clauses:
+      - iterm2_feature_reporting.file
+      - iterm2_feature_reporting.focus
+      scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
   applies_to:
     clauses:
+    - iterm2_feature_reporting.encoding
     - iterm2_feature_reporting.file
     - iterm2_feature_reporting.focus
-    scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
+    scope: For the ambiguous iTerm2 FeatureString F code, emit F exactly once only if both FOCUS_REPORTING and FILE independently
+      satisfy their complete documented advertised-feature requirements and are available under applicable policy. Otherwise
+      omit F even if exactly one is available. Apply same conservative collision rule to OSC1337 Capabilities reply and TERM_FEATURES
+      where either surface is actually supported. No positional, duplicate-count or invented replacement code, and no claim
+      that F identifies which individual capability is supported. This intentionally permits a false-negative advertisement
+      of one implemented feature rather than a false positive for the other. Underlying individual focus and file protocols
+      are not disabled or selected for implementation by this rule; any independent discovery remains its own qualified contract.
+      Full feature-reporting baseline, actual capability qualification, conditional permission and host environment lifetime
+      remain separate. No current support or runtime advertisement inferred.
+pending_reconciliation: []
