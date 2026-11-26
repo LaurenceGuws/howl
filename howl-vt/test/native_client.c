@@ -262,11 +262,7 @@ static int program_status_proof(void) {
     CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
 
     CHECK(feed_all(value,"\033]7501;process-exited\033\\")==HVT_OK);
-    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
-        && current.data.program_status.action==HVT_PROGRAM_STATUS_PROCESS_EXITED
-        && !current.data.program_status.id_len
-        && !current.data.program_status.has_progress);
-    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_NONE);
 
     CHECK(feed_all(value,"\033]133;A\007\033]133;B\007")==HVT_OK);
     CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS

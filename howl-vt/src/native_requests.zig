@@ -91,7 +91,6 @@ fn project(value: Terminal.Consequence, revision: u64) Error!Projection {
                     out.action = c.HVT_PROGRAM_STATUS_CLEAR;
                     try statusSpan(result.payload, id, &out.id_offset, &out.id_len);
                 },
-                .process_exited => out.action = c.HVT_PROGRAM_STATUS_PROCESS_EXITED,
                 .prompt_started => out.action = c.HVT_PROGRAM_STATUS_PROMPT_STARTED,
                 // Query is answered immediately; it never enters the
                 // consequence FIFO and must not be fabricated as a request.

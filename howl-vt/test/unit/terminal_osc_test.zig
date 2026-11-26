@@ -844,10 +844,8 @@ test "OSC 7501 opt-in status reports are typed FIFO and queries advertise only w
     const clear = terminal.consequenceHead().?.program_status;
     try std.testing.expectEqualStrings("tf", clear.action.clear);
     try terminal.consumeConsequence(clear.generation);
-    try std.testing.expect((try terminal.feed("\x1b]7501;process-exited\x07")).stateChanged());
-    const exit_event = terminal.consequenceHead().?.program_status;
-    try std.testing.expect(exit_event.action == .process_exited);
-    try terminal.consumeConsequence(exit_event.generation);
+    try std.testing.expect(!(try terminal.feed("\x1b]7501;process-exited\x07")).stateChanged());
+    try std.testing.expect(terminal.consequenceHead() == null);
 
     // Invalid id does not turn into a root clear, and unknown OSC bytes
     // cannot acquire a host effect even with status consumption enabled.
@@ -3339,4 +3337,110 @@ test "Rex prompt occurrence admission is opt-in and transactional at FIFO capaci
     try terminal.consumeConsequence(prompt.generation);
     try std.testing.expect(!terminal.hasPendingProgramStatus());
     try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "Rex source message and whole wire bounds reach the typed host occurrence" {
+    const allocator = std.testing.allocator;
+    const status = Terminal.ProgramStatus;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+
+    const message: [2048]u8 = @splat('m');
+    const title: [192]u8 = @splat('t');
+    var message_encoded: [2732]u8 = undefined;
+    var title_encoded: [256]u8 = undefined;
+    const msg = std.base64.standard.Encoder.encode(&message_encoded, &message);
+    const heading = std.base64.standard.Encoder.encode(&title_encoded, &title);
+    var buffer: [4097]u8 = undefined;
+    const report = try std.fmt.bufPrint(&buffer, "\x1b]7501;state=working:app=builder:title={s}:msg={s}\x1b\\", .{ heading, msg });
+    try std.testing.expect(report.len > 2048);
+    try std.testing.expect((try terminal.feed(report)).stateChanged());
+    try std.testing.expect(terminal.consequenceHead() != null);
+    const event = terminal.consequenceHead().?.program_status;
+    var scratch: [status.max_msg_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(&title, event.action.report.titleText(&scratch).?);
+    try std.testing.expectEqualStrings(&message, event.action.report.messageText(&scratch).?);
+    try terminal.consumeConsequence(event.generation);
+
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |terminator| {
+        const prefix = "\x1b]7501;state=working:unknown=";
+        for ([_]usize{ 4096, 4097 }) |length| {
+            @memcpy(buffer[0..prefix.len], prefix);
+            @memset(buffer[prefix.len .. length - terminator.len], 'x');
+            @memcpy(buffer[length - terminator.len .. length], terminator);
+            const before = terminal.semanticSequence();
+            for (buffer[0 .. length - 1]) |byte| {
+                try std.testing.expect(!(try terminal.feed(&.{byte})).stateChanged());
+            }
+            const completed = try terminal.feed(buffer[length - 1 .. length]);
+            if (length == 4096) {
+                try std.testing.expect(completed.stateChanged());
+                const retained = terminal.consequenceHead().?.program_status;
+                try std.testing.expect(retained.action.report.state == .working);
+                try terminal.consumeConsequence(retained.generation);
+            } else {
+                try std.testing.expect(!completed.stateChanged());
+                try std.testing.expectEqual(before, terminal.semanticSequence());
+                try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+            }
+        }
+    }
+    try feed(&terminal, "X");
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+}
+
+test "Rex wire whitespace is trimmed at pair boundaries and never normalized inside values" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    try feed(&terminal, "\x1b]7501;\tstate = working\t:app=foo\tbar: progress = 100 \r:future=value\x07");
+    const report = terminal.consequenceHead().?.program_status;
+    try std.testing.expect(report.action.report.state == .working);
+    try std.testing.expectEqualStrings("", report.action.report.app);
+    try std.testing.expectEqual(@as(?u8, 100), report.action.report.progress);
+    try terminal.consumeConsequence(report.generation);
+    const sequence = terminal.semanticSequence();
+    for ([_][]const u8{
+        "\x1b]75\t01;state=clear\x07",
+        "\x1b]75\x1b01;state=clear\x1b\\",
+        "\x1b]7501;state=work\x00ing\x07",
+        "\x1b]7501;state=clear:id=fo\to\x07",
+    }) |invalid| {
+        try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expect(terminal.consequenceHead() == null);
+    }
+    // Ignored-control bytes still occupy the source's whole-wire budget.
+    var overlong: [4097]u8 = undefined;
+    const prefix = "\x1b]7501;state=working:unknown=";
+    @memcpy(overlong[0..prefix.len], prefix);
+    @memset(overlong[prefix.len .. overlong.len - 1], '\t');
+    overlong[overlong.len - 1] = 0x07;
+    try std.testing.expect(!(try terminal.feed(&overlong)).stateChanged());
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "Rex feature reply precedes DA1 at every input split only with an opted in consumer" {
+    const response = "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth";
+    const da = "\x1b[?62;22c";
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        var wire_buffer: [32]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&wire_buffer, "\x1b]7501;?{s}\x1b[c", .{term});
+        var reply_buffer: [128]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&reply_buffer, "{s}{s}{s}", .{ response, term, da });
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            for ([_]bool{ false, true, false }) |enabled| {
+                terminal.setProgramStatusConsumer(enabled);
+                try feed(&terminal, wire[0..split]);
+                try feed(&terminal, wire[split..]);
+                try std.testing.expectEqualStrings(if (enabled) expected else da, terminal.replyBytes());
+                try consumeReplies(&terminal);
+                try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+            }
+        }
+    }
 }

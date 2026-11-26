@@ -2708,3 +2708,39 @@ test "history anchor follows output, clamps eviction and resets alternate screen
     history.follow(15, 100, true);
     try std.testing.expectEqual(@as(u32, 0), history.offset);
 }
+
+test "Rex actual PTY exit clears transient work and retains final results" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    for ([_]vt.Terminal.ProgramStatus.State{ .done, .@"error" }) |wanted| {
+        var command_buffer: [512]u8 = undefined;
+        const command = try std.fmt.bufPrint(&command_buffer, "printf '\\033]7501;state=working:id=active\\007" ++
+            "\\033]7501;state=blocked:id=waiting:kind=auth\\007" ++
+            "\\033]7501;state={s}:id=first:title=RG9uZQ==\\007" ++
+            "\\033]7501;state={s}:id=second:msg=UmVzdWx0\\007'; exit 0", .{ @tagName(wanted), @tagName(wanted) });
+        const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+            .shell = "/bin/sh",
+            .command = command,
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 8,
+        }, testPresentation(), c.SDL_RegisterEvents(1), false);
+        defer owner.destroy();
+        var completed = false;
+        for (0..5000) |_| {
+            const observed = owner.snapshot();
+            if (observed.failure) |failure| return failure;
+            if (observed.closed and observed.child_exit != null) {
+                try std.testing.expectEqual(@as(?vt.Terminal.ProgramStatus.State, wanted), observed.program_status.state);
+                try std.testing.expectEqual(@as(u8, 2), observed.program_status.count);
+                try std.testing.expect(observed.program_status.kind == null);
+                completed = true;
+                break;
+            }
+            try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+        }
+        try std.testing.expect(completed);
+    }
+}

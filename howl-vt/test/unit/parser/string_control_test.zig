@@ -522,6 +522,7 @@ test "parser string controls: explicit OSC ladder recognizes full command list" 
         .{ .seq = "\x1b]30101\x1b\\", .command = 30101 },
         .{ .seq = "\x1b]5113;cmd=data;AAAA\x1b\\", .command = 5113 },
         .{ .seq = "\x1b]5522;type=write;AAAA\x1b\\", .command = 5522 },
+        .{ .seq = "\x1b]7501;state=working\x07", .command = 7501 },
     };
 
     for (cases) |case| {

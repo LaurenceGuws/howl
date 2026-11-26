@@ -99,7 +99,7 @@ pub const Index = struct {
             .query => false,
             .report => |report| self.applyReport(report),
             .clear => |id| self.clear(id),
-            .process_exited, .prompt_started => self.processExited(),
+            .prompt_started => self.processExited(),
         };
     }
 

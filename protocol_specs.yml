@@ -3464,6 +3464,18 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex source message and whole wire bounds reach the typed host occurrence
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      - file: howl-vt/test/unit/parser/string_control_test.zig
+        test: 'parser string controls: explicit OSC ladder recognizes full command list'
+        relation: protocol-family
       details:
         grammar:
           pairs: pair (":" pair)*
@@ -3485,6 +3497,15 @@ specifications:
           location: Grid::osc_end 7501
           meaning: Zellij routes typed query/report to per-pane attention state; query reply uses incoming terminator. Complete
             grammar/lifetime not established by route.
+        howl_qualification_20261126_rex_03:
+          scope: Dedicated numeric OSC7501 typed parser lane replaces unknown-OSC fallback. Exact 7-bit source command/terminator
+            examples, pair whitespace and malformed selector admission proven. Embedded ignored C0 bytes retained for this lane
+            rather than normalized; stray ESC in body retained. Shared generic framing/cancellation and raw C1 aliases remain
+            separate.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: unknown-keys
       section: Syntax
       level: must
@@ -3504,6 +3525,15 @@ specifications:
       - file: howl-vt/test/unit/program_status_test.zig
         test: Rex validates earlier duplicate text before last value wins
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex source message and whole wire bounds reach the typed host occurrence
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex field limits reject even malformed oversized values before duplicate resolution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Valid repeated title/msg select last value; invalid admitted earlier text cannot be hidden by a duplicate.
@@ -3511,6 +3541,13 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_03:
+          scope: Unknown keys ignored, valid later recognized state wins, malformed optional pair skipped, earlier oversized
+            recognized fields reject before pair skip or duplicate selection.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: invalid-report
       section: Syntax
       level: must
@@ -3537,6 +3574,18 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex fragmented rejected reports preserve the real host index and reply lane
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex source message and whole wire bounds reach the typed host occurrence
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex field limits reject even malformed oversized values before duplicate resolution
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex source key application and decoded text bounds are independent
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Admitted invalid duplicate title/msg Base64, decoded control and invalid UTF-8 reject; rejected clear/replacement
@@ -3545,6 +3594,15 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_03:
+          scope: 4097-byte standard wire rejects; over-cap key/app/title/msg and invalid ID examples reject. Hard encoded-field
+            bounds checked before malformed-value filtering; independent decoded msg2049 rejection despite encoded2732. Invalid
+            control bytes cannot manufacture valid state/ID or normalize app value. Existing duplicated text and host nonmutation
+            proofs retained.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: record-update
       section: Records and ids
       level: defined
@@ -3622,6 +3680,12 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex fragmented rejected reports preserve the real host index and reply lane
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Exact 128-byte slash-inclusive ID, 32-byte segment and eight levels admitted; 129-byte ID, 33-byte segment
@@ -3630,6 +3694,13 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_03:
+          scope: Embedded tab in ID and explicit empty ID rejected rather than root clear; numeric selector with ignored tab
+            or stray ESC cannot become valid Rex. Prior total/segment/depth tests retained.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: tree-clear
       section: Records and ids / States
       level: must
@@ -3677,6 +3748,20 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: OSC 7501 query and process-exited do not invent host status
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_rex_03:
+          scope: Unknown last state ignored, no fallback to idle. Synthetic process-exited body is not a source report and now
+            rejected; actual process exit is a host event.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: lifecycle
       section: States
       level: must
@@ -3710,6 +3795,12 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex reset generation and bank changes preserve only the appropriate records
         relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: Rex actual PTY exit clears transient work and retains final results
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: OSC 7501 query and process-exited do not invent host status
+        relation: protocol-family
       relations:
       - kind: related
         clause: finalterm_shell.prompt-start
@@ -3724,6 +3815,14 @@ specifications:
           method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
+        howl_qualification_20261126_rex_03:
+          scope: Actual child PTY exit clears blocking status and preserves two completed or two failed results in separate
+            runs, combined with existing direct Index proof of transient removal. Synthetic process-exited wire removed; C historical
+            numeric tag3 reserved, no emitted action. Existing ordered prompt, reset and bank proofs retained.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: no-heartbeat
       section: States
       level: must
@@ -3746,6 +3845,16 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_rex_03:
+          scope: Kind ignored for working state in malformed/duplicate fixture; existing recognized blocked-kind tests remain.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: progress
       section: Keys
       level: defined
@@ -3763,6 +3872,20 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_rex_03:
+          scope: Exact100 admitted; negative, plus-prefixed, over100, decimal, underscore and large integer strings treated
+            absent in chosen ASCII-digit profile.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: inherited-app
       section: Keys
       level: must
@@ -3786,6 +3909,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex fragmented rejected reports preserve the real host index and reply lane
         relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex source key application and decoded text bounds are independent
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Host resolves explicit app or nearest existing ancestor with app at summary time, including root; changing/omitting
@@ -3794,6 +3926,13 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_03:
+          scope: App32 accepted;33 rejected, alphabet-invalid optional pair skipped, admitted invalid app name with slash treated
+            absent; embedded tab cannot be silently removed. Existing dynamic inheritance host evidence retained.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: text
       section: Keys
       level: must
@@ -3830,6 +3969,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex host text allocation failure retains the exact FIFO head for retry
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex source message and whole wire bounds reach the typed host occurrence
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex source key application and decoded text bounds are independent
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex field limits reject even malformed oversized values before duplicate resolution
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Validate every syntactically admitted title/msg before duplicate selection, including clear. Valid last value
@@ -3844,6 +3992,14 @@ specifications:
           method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
+        howl_qualification_20261126_rex_03:
+          scope: Max encoded/decoded message and title verified through source body and complete standard wire; decoded2049
+            rejected even when encoded length2732. Oversized malformed title rejects before duplicate resolution. Prior sparse
+            text retention and rollback evidence retained. Empty/absent representation and full security matrix not fully qualified.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: query
       section: Feature detection
       level: must
@@ -3864,6 +4020,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 feature query reply quota rolls back without changing pending statuses
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex feature reply precedes DA1 at every input split only with an opted in consumer
+        relation: protocol-family
       details:
         default_states:
         - idle
@@ -3876,6 +4035,14 @@ specifications:
         - question
         - auth
         detection: Send query followed by CSI c. DA1 arriving before feature response indicates unsupported.
+      evidence:
+        howl_qualification_20261126_rex_03:
+          scope: Both source terminators and every split followed by DA1 produce Rex feature reply first only with opt-in consumer.
+            Disabling again yields DA1 alone. Exact states/kinds bytes, no consequences; existing quota rollback proof retained.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: bounded-sequence
       section: Limits
       level: defined
@@ -3918,6 +4085,18 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex host text allocation failure retains the exact FIFO head for retry
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex source message and whole wire bounds reach the typed host occurrence
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex field limits reject even malformed oversized values before duplicate resolution
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex source key application and decoded text bounds are independent
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
       details:
         limits_bytes:
           whole_sequence_including_OSC_and_ST: 4096
@@ -3946,6 +4125,16 @@ specifications:
           method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
+        howl_qualification_20261126_rex_03:
+          scope: Dedicated Rex limit4096 for standard 7-bit OSC through BEL or ESC-ST; max bodies4088 BEL/4087 ST. At exact4096
+            accepted, at4097 rejected, bytewise fragmented input and recovery proven. Max192 decoded title and2048 decoded msg
+            in same report reach typed host occurrence. Raw C1 framing uses conservative ST bound; no change to other OSC limits.
+            Source field sizes independent; full malformed/cancellation/allocator matrix remains separate. Supersedes earlier
+            implementation observation of2043-byte lower body cap, not original requirement.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: record-capacity
       section: Limits
       level: must
@@ -4023,6 +4212,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex host text allocation failure retains the exact FIFO head for retry
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex feature reply precedes DA1 at every input split only with an opted in consumer
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: OSC 7501 query and process-exited do not invent host status
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Malformed duplicate text cannot mutate or clear retained host state, and rejects emit no reply or consequence.
@@ -4037,6 +4235,14 @@ specifications:
           method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
+        howl_qualification_20261126_rex_03:
+          scope: Malformed embedded control cannot normalize state/ID/application, synthetic exit command rejected, query reply
+            contains fixed capability list only and no record data. Current raw title/msg not published to GUI. No new notification
+            or text-presentation policy.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: presentation
       section: Motivation / In Rex
       level: defined
@@ -4057,6 +4263,25 @@ specifications:
       - kind: related
         clause: rex_status.invalid-report
         role: validation
+      test_locations:
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex skips malformed pairs and uses last recognized values without fabricating state
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex wire whitespace is trimmed at pair boundaries and never normalized inside values
+        relation: protocol-family
+      - file: howl-vt/test/unit/program_status_test.zig
+        test: Rex field limits reject even malformed oversized values before duplicate resolution
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_rex_03:
+          scope: Missing equals, empty key, alphabet-invalid optional value skipped; valid recognized state and app precedence
+            preserved. Invalid ID and over-limit recognized field remain whole-report rejection; raw C0 not stripped out of
+            Rex payload.
+          method: Source-pinned deterministic Zig assertions, native C peer, actual PTY worker exit and ReleaseFast root gates;
+            no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: 71b3630ec01128370d0432d7a49132e1ce214cc4
     - id: screen-reset-lifetime
       section: Records and ids
       level: defined
@@ -32319,9 +32544,10 @@ reconciliation:
     verified_subset: Standalone grammar accepts exact128 bytes and rejects129, segment33 and depth9. Real VT-to-host FIFO
       rejects over-limit clear and invalid duplicated text without mutating existing root/child records, reply queue or semantic
       identity for every split and both BEL/ST.
-    not_full_because: Exact all-field/whole-sequence limits, remaining grammar and complete process-exit/lifecycle proof not
-      fully qualified. Host text retention, prompt ordering, FIFO pressure and reset/bank behavior now have separate narrow
-      evidence on the Rex source clauses. No blanket Rex support claim.
+    not_full_because: Standard BEL/ST source body and independent key/app/text limits now have narrow proofs; actual PTY exit,
+      prompt, bank/reset, FIFO and feature reply ordering likewise. Remaining full malformed/framing and failure-recovery
+      matrix, exact empty-vs-absent field representation, no-heartbeat and broader lifecycle/security proof not complete.
+      No blanket Rex support claim.
     boundary: Current bounded Rex grammar and local app store only. No remote-client conformance, UI text presentation or
       optional bridge/notification claim.
 - id: uapi-context-prose-vs-abnf

@@ -650,6 +650,7 @@ fn cloneOscAction(osc: parser_mod.OscAction, payload: []u8) parser_mod.OscAction
             .term = v.term,
         } },
         .context_signal => .{ .context_signal = .{ .payload = payload, .term = osc.term() } },
+        .program_status => .{ .program_status = .{ .payload = payload, .term = osc.term() } },
         .kitty_color_stack_push => .{ .kitty_color_stack_push = osc.term() },
         .kitty_color_stack_pop => .{ .kitty_color_stack_pop = osc.term() },
         .kitty_file_transfer => .{ .kitty_file_transfer = .{ .payload = payload, .term = osc.term() } },

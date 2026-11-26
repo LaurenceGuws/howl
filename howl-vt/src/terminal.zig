@@ -1618,13 +1618,9 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
         // A commandless OSC is the parser's legacy title form, not OSC 0.
         .raw_title => |v| SemanticEvent{ .title_set = v.payload },
-        // OSC 7501 is shared by pinned Ghostty and newer Kitty. Recognize
-        // only this exact raw selector; no other unknown OSC is promoted.
-        .raw_other => |v| if (std.mem.startsWith(u8, v.payload, "7501;"))
-            SemanticEvent{ .program_status = .{
-                .payload = v.payload["7501;".len..],
-                .term = v.term,
-            } }
+        .raw_other => null,
+        .program_status => |v| if (v.term == .bel or v.payload.len <= program_status_mod.max_st_body_bytes)
+            SemanticEvent{ .program_status = .{ .payload = v.payload, .term = v.term } }
         else
             null,
         .linux_palette => |v| SemanticEvent{ .color_control = .{ .linux_palette = v.payload } },

@@ -3,11 +3,12 @@
 //! The host owns any status records, feature replies and visible UI.
 const std = @import("std");
 
-/// The ordinary OSC transport retains 2048 bytes including "7501;".
-/// The complete 4096-byte status protocol is a future transport cut.
-pub const max_body_bytes: usize = 2048 - "7501;".len;
-/// Maximum decoded message bytes the caller can observe in fixed scratch.
-/// Maximum decoded message bytes the caller can observe in fixed scratch.
+/// Rex revision 0.4 counts the entire 7-bit OSC sequence including ST.
+pub const max_sequence_bytes: usize = 4096;
+/// Largest possible body, with the one-byte BEL terminator.
+pub const max_body_bytes: usize = max_sequence_bytes - "\x1b]7501;".len - 1;
+/// Maximum body when terminated by ESC backslash (also used for C1 ST).
+pub const max_st_body_bytes: usize = max_body_bytes - 1;
 /// Maximum decoded message bytes retained in caller scratch.
 pub const max_msg_bytes: usize = 2048;
 const max_title_bytes: usize = 192;
@@ -22,8 +23,6 @@ const whitespace = " \t\n\r\x0b\x0c";
 
 /// Recognized status states. Clear is a separate action, never a status.
 pub const State = enum { idle, working, done, blocked, @"error" };
-/// User interaction classes accepted only when a report is blocked.
-/// User interaction classes accepted only when a report is blocked.
 /// Interaction kinds accepted only for blocked program reports.
 pub const Kind = enum { permission, question, auth };
 
@@ -37,16 +36,12 @@ pub const Report = struct {
     title: []const u8 = "",
     msg: []const u8 = "",
 
-    /// Decodes validated title bytes into caller-owned bounded scratch.
-    /// Decodes validated title bytes into caller-owned bounded scratch.
     /// Decode validated title into fixed caller-owned scratch.
     pub fn titleText(self: Report, scratch: *[max_msg_bytes]u8) ?[]const u8 {
         if (self.title.len == 0) return "";
         return decodeText(self.title, scratch, max_title_bytes);
     }
 
-    /// Decodes validated message bytes into caller-owned bounded scratch.
-    /// Decodes validated message bytes into caller-owned bounded scratch.
     /// Decode validated message into fixed caller-owned scratch.
     pub fn messageText(self: Report, scratch: *[max_msg_bytes]u8) ?[]const u8 {
         if (self.msg.len == 0) return "";
@@ -57,7 +52,6 @@ pub const Report = struct {
 /// Query recognition does not authorize a reply without a real host consumer.
 pub const Action = union(enum) {
     query,
-    process_exited,
     /// An accepted OSC 133 A, ordered with reports; never parsed as OSC 7501.
     prompt_started,
     clear: []const u8,
@@ -68,7 +62,6 @@ pub const Action = union(enum) {
 pub fn parse(body: []const u8) ?Action {
     if (body.len == 0 or body.len > max_body_bytes) return null;
     if (std.mem.eql(u8, body, "?")) return .query;
-    if (std.mem.eql(u8, body, "process-exited")) return .process_exited;
 
     var id: []const u8 = "";
     var state_field: []const u8 = "";
@@ -86,6 +79,10 @@ pub fn parse(body: []const u8) ?Action {
         const value = std.mem.trim(u8, pair[separator + 1 ..], whitespace);
         if (key.len > max_key_bytes) return null;
         if (!lowercaseKey(key)) continue;
+        // A hard field cap applies even if the pair will later be skipped.
+        if (std.mem.eql(u8, key, "app") and value.len > max_app_bytes) return null;
+        if (std.mem.eql(u8, key, "title") and value.len > max_title_encoded_bytes) return null;
+        if (std.mem.eql(u8, key, "msg") and value.len > max_msg_encoded_bytes) return null;
         if (!validValue(value)) {
             // Invalid id must not silently target the root record.
             if (std.mem.eql(u8, key, "id")) return null;
@@ -101,14 +98,11 @@ pub fn parse(body: []const u8) ?Action {
         } else if (std.mem.eql(u8, key, "progress")) {
             progress_field = value;
         } else if (std.mem.eql(u8, key, "app")) {
-            if (value.len > max_app_bytes) return null;
             app = value;
         } else if (std.mem.eql(u8, key, "title")) {
-            if (value.len > max_title_encoded_bytes) return null;
             if (decodeText(value, &scratch, max_title_bytes) == null) return null;
             title = value;
         } else if (std.mem.eql(u8, key, "msg")) {
-            if (value.len > max_msg_encoded_bytes) return null;
             if (decodeText(value, &scratch, max_msg_bytes) == null) return null;
             msg = value;
         }
@@ -188,7 +182,7 @@ fn validProgress(value: []const u8) ?u8 {
     return @intCast(number);
 }
 
-// Both source references allow padded and unpadded standard base64.
+// Rex permits padded and unpadded standard base64.
 // Decoded UTF-8 may not contain C0, DEL, or C1 control codepoints.
 fn decodeText(encoded: []const u8, scratch: *[max_msg_bytes]u8, max_decoded: usize) ?[]const u8 {
     const decoder = if (std.mem.endsWith(u8, encoded, "="))

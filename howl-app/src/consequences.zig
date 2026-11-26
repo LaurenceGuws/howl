@@ -373,7 +373,7 @@ test "host OSC7501 process exit, user-seen and reset lifetimes are independent" 
     try std.testing.expect(try index.apply(parse("state=blocked:id=waiting:kind=question").?));
     try std.testing.expect(try index.apply(parse("state=done:id=finished").?));
     try std.testing.expect(try index.apply(parse("state=error:id=failed").?));
-    try std.testing.expect(try index.apply(parse("process-exited").?));
+    try std.testing.expect(index.processExited());
     try std.testing.expectEqual(@as(usize, 2), index.len);
     try std.testing.expect(index.summary().state.? == .@"error");
     try std.testing.expect(index.seenByUser());

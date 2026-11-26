@@ -4,7 +4,7 @@ const status = @import("../../src/program_status.zig");
 
 test "OSC 7501 query and process-exited do not invent host status" {
     try std.testing.expect(status.parse("?").? == .query);
-    try std.testing.expect(status.parse("process-exited").? == .process_exited);
+    try std.testing.expect(status.parse("process-exited") == null);
     try std.testing.expect(status.parse("") == null);
     try std.testing.expect(status.parse("??") == null);
     try std.testing.expect(status.parse("state=unknown") == null);
@@ -110,4 +110,62 @@ test "Rex ID limits count separators and reject entire invalid report" {
     try std.testing.expect(status.parse("state=clear:id=" ++ segment ++ "x") == null);
     try std.testing.expect(status.parse("state=clear:id=a/b/c/d/e/f/g/h/i") == null);
     try std.testing.expectEqualStrings("a/b/c/d/e/f/g/h", status.parse("state=working:id=a/b/c/d/e/f/g/h").?.report.id);
+}
+
+test "Rex field limits reject even malformed oversized values before duplicate resolution" {
+    const too_long_app = "abcdefghijklmnopqrstuvwxyz1234567";
+    try std.testing.expect(status.parse("state=working:app=" ++ too_long_app ++ "%:app=ok") == null);
+    const title: [257]u8 = @splat('A');
+    var buf: [512]u8 = undefined;
+    const body = try std.fmt.bufPrint(&buf, "state=working:title={s}%:title=QQ==", .{&title});
+    try std.testing.expect(status.parse(body) == null);
+}
+
+test "Rex source key application and decoded text bounds are independent" {
+    try std.testing.expect(status.parse("state=working:abcdefghijklmnop=value") != null);
+    try std.testing.expect(status.parse("state=working:abcdefghijklmnopq=value") == null);
+    const name = "abcdefghijklmnopqrstuvwxyz123456";
+    try std.testing.expectEqualStrings(name, status.parse("state=working:app=" ++ name).?.report.app);
+    try std.testing.expect(status.parse("state=working:app=" ++ name ++ "7") == null);
+    var encoded: [2736]u8 = undefined;
+    var body: [4096]u8 = undefined;
+    var scratch: [status.max_msg_bytes]u8 = undefined;
+    const message: [2049]u8 = @splat('m');
+    for ([_]usize{ 2048, 2049 }) |len| {
+        const msg = std.base64.standard.Encoder.encode(&encoded, message[0..len]);
+        const wire_body = try std.fmt.bufPrint(&body, "state=working:msg={s}", .{msg});
+        if (len == 2048) {
+            const parsed = status.parse(wire_body).?.report;
+            try std.testing.expectEqualStrings(message[0..len], parsed.messageText(&scratch).?);
+        } else {
+            // 2049 decoded bytes also fit in 2732 encoded bytes.
+            try std.testing.expectEqual(@as(usize, 2732), msg.len);
+            try std.testing.expect(status.parse(wire_body) == null);
+        }
+    }
+    const heading: [193]u8 = @splat('t');
+    for ([_]usize{ 192, 193 }) |len| {
+        const title = std.base64.standard.Encoder.encode(&encoded, heading[0..len]);
+        const wire_body = try std.fmt.bufPrint(&body, "state=working:title={s}", .{title});
+        if (len == 192) {
+            const parsed = status.parse(wire_body).?.report;
+            try std.testing.expectEqualStrings(heading[0..len], parsed.titleText(&scratch).?);
+        } else try std.testing.expect(status.parse(wire_body) == null);
+    }
+}
+
+test "Rex skips malformed pairs and uses last recognized values without fabricating state" {
+    const parsed = status.parse("state=idle:broken:=empty:state=working:unknown=future:app=first:app=bad%value:kind=auth:progress=100").?.report;
+    try std.testing.expect(parsed.state == .working);
+    try std.testing.expectEqualStrings("first", parsed.app);
+    try std.testing.expectEqual(@as(?u8, 100), parsed.progress);
+    try std.testing.expect(parsed.kind == null);
+    try std.testing.expect(status.parse("state=working:state=unrecognized") == null);
+    try std.testing.expect(status.parse("state=clear:id=") == null);
+    try std.testing.expectEqualStrings("", status.parse("state=working:app=first:app=bad/name").?.report.app);
+    for ([_][]const u8{ "-1", "+1", "101", "1.5", "1_0", "99999999999999999999" }) |value| {
+        var buf: [128]u8 = undefined;
+        const body = try std.fmt.bufPrint(&buf, "state=blocked:progress={s}", .{value});
+        try std.testing.expect(status.parse(body).?.report.progress == null);
+    }
 }

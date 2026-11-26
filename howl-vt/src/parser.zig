@@ -1,6 +1,7 @@
 //! Parses bounded terminal bytes and string controls into typed events.
 
 const std = @import("std");
+const program_status = @import("program_status.zig");
 
 // File map:
 //   - parser bounds and borrowed phase-action vocabulary
@@ -117,6 +118,7 @@ pub const OscAction = union(enum) {
     rxvt_extension: OscText,
     iterm2: OscCommandText,
     context_signal: OscText,
+    program_status: OscText,
     kitty_color_stack_push: OscTerminator,
     kitty_color_stack_pop: OscTerminator,
     kitty_file_transfer: OscText,
@@ -149,6 +151,7 @@ pub const OscAction = union(enum) {
             .rxvt_extension => 777,
             .iterm2 => |v| v.command,
             .context_signal => 3008,
+            .program_status => 7501,
             .kitty_color_stack_push => 30001,
             .kitty_color_stack_pop => 30101,
             .kitty_file_transfer => 5113,
@@ -175,6 +178,7 @@ pub const OscAction = union(enum) {
             .shell_mark,
             .rxvt_extension,
             .context_signal,
+            .program_status,
             .kitty_file_transfer,
             .kitty_clipboard,
             => |v| v,
@@ -511,6 +515,18 @@ pub const Parser = struct {
                     break :completed .{ .{ .osc_dispatch = self.osc.snapshot(.fixed) }, null, null };
                 },
             };
+        }
+        // Rex counts the original wire bytes and trims whitespace only at
+        // pair boundaries. Do not normalize embedded ignored C0 bytes out
+        // of its body, or let them silently transform its numeric selector.
+        if (current_state == .osc_string and transition.state == current_state and transition.action == .ignore) {
+            if (self.osc.policy.class == .program_status) {
+                const next_state, const action = self.feedActiveByte(current_state, null, byte);
+                defer self.state = next_state;
+                return self.buildPhases(current_state, next_state, action, byte, null);
+            }
+            if (self.osc.state == .prefix or self.osc.state == .prefix_esc)
+                self.osc.prefix_filtered = true;
         }
         const sos_kind = if (current_state == .sos_pm_apc_string) self.sosPmApcKind() else null;
         const finishing_escape = byte == '\\' and switch (current_state) {
@@ -1863,6 +1879,7 @@ pub const OscControl = struct {
         rxvt_extension,
         iterm2,
         context_signal,
+        program_status,
         kitty_color_stack_push,
         kitty_color_stack_pop,
         kitty_file_transfer,
@@ -1876,6 +1893,7 @@ pub const OscControl = struct {
     allocator: std.mem.Allocator,
     state: OscState = .idle,
     prefix: PrefixState = .start,
+    prefix_filtered: bool = false,
     buffer: std.ArrayList(u8),
     metadata_max_len: ByteLimit,
     clipboard_max_len: ByteLimit,
@@ -1933,6 +1951,9 @@ pub const OscControl = struct {
         c55,
         c66,
         c72,
+        c75,
+        c750,
+        c7501,
         c77,
         c99,
         c104,
@@ -1993,6 +2014,7 @@ pub const OscControl = struct {
     pub fn reset(self: *OscControl) void {
         self.state = .idle;
         self.prefix = .start;
+        self.prefix_filtered = false;
         self.alloc_failed = false;
         self.overflowed = false;
         self.policy = .{ .command = null, .class = .raw_title, .max_len = self.metadata_max_len };
@@ -2086,6 +2108,7 @@ pub const OscControl = struct {
                 .term = term,
             } },
             .context_signal => .{ .context_signal = .{ .payload = self.buffer.items, .term = term } },
+            .program_status => .{ .program_status = .{ .payload = self.buffer.items, .term = term } },
             .kitty_color_stack_push => .{ .kitty_color_stack_push = term },
             .kitty_color_stack_pop => .{ .kitty_color_stack_pop = term },
             .kitty_file_transfer => .{ .kitty_file_transfer = .{ .payload = self.buffer.items, .term = term } },
@@ -2209,6 +2232,7 @@ pub const OscControl = struct {
             self.finishPrefix();
             return .{ .finish = .st };
         }
+        self.prefix_filtered = true;
         self.state = .prefix;
         return self.feedPrefix(byte);
     }
@@ -2256,6 +2280,7 @@ pub const OscControl = struct {
                 }
                 self.state = bodyState(kind);
                 if (kind == .raw and byte == ';') self.policy.class = .raw_other;
+                if (self.policy.class == .program_status) self.append(0x1B);
                 self.append(byte);
                 return .{ .put = byte };
             },
@@ -2306,6 +2331,8 @@ pub const OscControl = struct {
 
     fn promoteRecognizedPrefix(self: *OscControl, next_state: OscState) bool {
         self.policy = self.prefixPolicy() orelse return false;
+        if (self.policy.class == .program_status and self.prefix_filtered)
+            self.overflowed = true;
         self.buffer.clearRetainingCapacity();
         self.prefix = .start;
         self.state = next_state;
@@ -2339,6 +2366,8 @@ pub const OscControl = struct {
             .c5 => advanceC5(byte),
             .c6 => advanceC6(byte),
             .c7 => advanceC7(byte),
+            .c75 => if (byte == '0') .c750 else null,
+            .c750 => if (byte == '1') .c7501 else null,
             .c9 => advanceC9(byte),
             .c10 => advanceC10(byte),
             .c11 => advanceC11(byte),
@@ -2425,6 +2454,7 @@ pub const OscControl = struct {
     fn advanceC7(byte: u8) ?PrefixState {
         return switch (byte) {
             '2' => .c72,
+            '5' => .c75,
             '7' => .c77,
             else => null,
         };
@@ -2589,6 +2619,7 @@ pub const OscControl = struct {
             .c777 => .{ .command = 777, .class = .rxvt_extension, .max_len = self.metadata_max_len },
             .c1337 => .{ .command = 1337, .class = .iterm2, .max_len = self.metadata_max_len },
             .c3008 => .{ .command = 3008, .class = .context_signal, .max_len = self.metadata_max_len },
+            .c7501 => .{ .command = 7501, .class = .program_status, .max_len = program_status.max_body_bytes },
             .c30001 => .{ .command = 30001, .class = .kitty_color_stack_push, .max_len = self.metadata_max_len },
             .c30101 => .{ .command = 30101, .class = .kitty_color_stack_pop, .max_len = self.metadata_max_len },
             .c5113 => .{ .command = 5113, .class = .kitty_file_transfer, .max_len = self.chunk_max_len },
@@ -2893,6 +2924,7 @@ fn appendOwnedAction(
                     .term = v.term,
                 } },
                 .context_signal => .{ .context_signal = .{ .payload = owned, .term = osc.term() } },
+                .program_status => .{ .program_status = .{ .payload = owned, .term = osc.term() } },
                 .kitty_color_stack_push => .{ .kitty_color_stack_push = osc.term() },
                 .kitty_color_stack_pop => .{ .kitty_color_stack_pop = osc.term() },
                 .kitty_file_transfer => .{ .kitty_file_transfer = .{ .payload = owned, .term = osc.term() } },
