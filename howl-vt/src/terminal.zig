@@ -8594,6 +8594,14 @@ pub const Terminal = struct {
         const kitty_flags = self.kitty.activeScreenConst(
             self.screen_state.alt_active,
         ).keyboard.flags;
+        if (event.platform_text) {
+            if (event.key != .unicode or event.legacy_text.len != 0) return error.InvalidText;
+            if (event.text.len > input.max_text_bytes) return error.KeyTextLimit;
+            const extent = try input.committedTextCapacity(event.text);
+            std.debug.assert(extent <= 4 * event.text.len + 5);
+            if (kitty_flags & 8 == 0)
+                return if (event.action == .release) scratch.buf[0..0] else event.text;
+        }
         comptime std.debug.assert(@sizeOf(InputScratch) >=
             input.max_kitty_encoded_bytes);
         const encoded = input.encodeEvent(

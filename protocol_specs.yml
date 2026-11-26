@@ -9318,6 +9318,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_modes_test.zig
         test: Kitty author functional repertoire encodes every named identity and event kind
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty platform text intent follows current bank without fabricating legacy characters
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: pending platform keys follow live negotiation and close at the SDL batch boundary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key press without modifiers or additional fields omits first parameter; repeat/release with reporting
@@ -9353,6 +9359,16 @@ specifications:
           method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
             provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
+        howl_qualification_20261126_keyboard_07:
+          scope: All32 documented flag combinations for platform-origin bare press/repeat/release (96 cases) and associated
+            text press/repeat (64 cases); exact action fields and release suppression. Actual child receives no-text transition
+            order and focus retirement exactly once. Release uses retained identity and latest routing class; current negotiated
+            mode controls emitted bytes. A program changing its reporting mode mid-hold is not promised retroactive press
+            events.
+          method: Pinned Kitty author protocol and encoder a79f376; SDL reference 7bbd9d5 Wayland key/text dispatch and separate
+            IME events; canonical flag-domain proof and actual headless SDL/PTY red-green/mode-transition proof; no blanket
+            FULL promotion
+          baseline: 50f317cd5dd59b07e3ce5a7d8e099046c2fd61e8
     - id: alternate-keys
       section: Report alternate keys
       level: defined
@@ -9468,6 +9484,12 @@ specifications:
       - file: howl-vt/src/native.zig
         test: every native key tag means its exact canonical key
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty platform text intent follows current bank without fabricating legacy characters
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: pending platform keys follow live negotiation and close at the SDL batch boundary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Letter-key prefix omission verified under flags8 and31 as well as1 and2; no wider all-key coverage claim.
@@ -9514,6 +9536,16 @@ specifications:
           method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
             provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
+        howl_qualification_20261126_keyboard_07:
+          scope: Known printable platform keys retain a physical identity even without a text commit; one pending transition
+            closes before the next physical input/ownership boundary or drained SDL batch. Report-all emits bare physical
+            identity, legacy emits only actual committed text. Extended live child proof of no-text press/repeat/release,
+            interposed modifier and focus retirement. Mode changes while text pending use current canonical flags, not captured
+            UI flag snapshot. No complete physical compositor repertoire or cross-mode synthetic historical press claim.
+          method: Pinned Kitty author protocol and encoder a79f376; SDL reference 7bbd9d5 Wayland key/text dispatch and separate
+            IME events; canonical flag-domain proof and actual headless SDL/PTY red-green/mode-transition proof; no blanket
+            FULL promotion
+          baseline: 50f317cd5dd59b07e3ce5a7d8e099046c2fd61e8
     - id: associated-text
       section: Report associated text
       level: defined
@@ -9554,6 +9586,15 @@ specifications:
       - file: howl-app/src/terminal.zig
         test: live maximum Kitty text commit reaches child intact before later input
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty platform text intent follows current bank without fabricating legacy characters
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: platform key text admission rejects controls and invalid scalars without changing raw input
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: pending platform keys follow live negotiation and close at the SDL batch boundary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_02:
           scope: Typed report-all plus associated-text input with no known key identity encodes key0 and both UTF-8 codepoints
@@ -9571,6 +9612,16 @@ specifications:
           method: Pinned Kitty author keyboard protocol and encoder a79f376; actual headless SDL/PTY red-green, deterministic
             pressure, UTF8 and allocation proofs, ReleaseFast root gates; no blanket FULL promotion
           baseline: 7b6c5b146ce3c2c3cc2d05d845abfa8c598cf395
+        howl_qualification_20261126_keyboard_07:
+          scope: Platform-owned text and identity remain independent. Immediate text attaches to the pending physical key;
+            nonempty preedit cancels association, late text after batch closure has no retained physical association and follows
+            text-only key0. A commit exceeding64-byte physical text bound uses complete bounded committed-text lane, not truncation.
+            Real child proves65-byte text-only commit. Strict text validation before host admission; raw byte input unchanged.
+            SDL lacks a correlation identifier for delayed IME text; no universal physical IME attribution claim.
+          method: Pinned Kitty author protocol and encoder a79f376; SDL reference 7bbd9d5 Wayland key/text dispatch and separate
+            IME events; canonical flag-domain proof and actual headless SDL/PTY red-green/mode-transition proof; no blanket
+            FULL promotion
+          baseline: 50f317cd5dd59b07e3ce5a7d8e099046c2fd61e8
     - id: legacy
       section: Legacy key event encoding
       level: defined
@@ -9635,6 +9686,15 @@ specifications:
       - file: howl-app/src/input.zig
         test: SDL extended functional key mapping preserves explicit keypad provenance
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty platform text intent follows current bank without fabricating legacy characters
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: platform key text admission rejects controls and invalid scalars without changing raw input
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: pending platform keys follow live negotiation and close at the SDL batch boundary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Legacy arrows restored after LazyGit negotiation exit and bank return; legacy lock modifier omitted. Existing
@@ -9670,6 +9730,15 @@ specifications:
           method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
             provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
+        howl_qualification_20261126_keyboard_07:
+          scope: Platform text intent emits only supplied printable UTF8 in legacy mode; absent committed text and release
+            are silent. Active-bank change, keyboard action mode and live negotiation transitions proven. No inferred character
+            from a bare key; prior explicit typed keys and raw-byte inputs retain their behavior. No-text deferred events
+            conservatively do not count as typing/acknowledgment activity.
+          method: Pinned Kitty author protocol and encoder a79f376; SDL reference 7bbd9d5 Wayland key/text dispatch and separate
+            IME events; canonical flag-domain proof and actual headless SDL/PTY red-green/mode-transition proof; no blanket
+            FULL promotion
+          baseline: 50f317cd5dd59b07e3ce5a7d8e099046c2fd61e8
     - id: event-envelope
       section: docs/keyboard-protocol.rst:125-146
       level: defined
@@ -9730,6 +9799,12 @@ specifications:
       - file: howl-vt/src/native.zig
         test: every native key tag means its exact canonical key
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty platform text intent follows current bank without fabricating legacy characters
+        relation: protocol-family
+      - file: howl-app/src/input.zig
+        test: pending platform keys follow live negotiation and close at the SDL batch boundary
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_keyboard_01:
           scope: Pinned source explicitly omits both fields for functional letter keys when no modifiers or other fields.
@@ -9772,6 +9847,15 @@ specifications:
           method: Pinned Kitty author functional table and encoder/keys.c a79f376; SDL reference 7bbd9d5 public keycode/scancode
             provenance; typed and native C matrix, actual headless SDL/PTY red-green; no blanket FULL promotion
           baseline: 808b289818f66600bb02d6166b540b6bfc97df3a
+        howl_qualification_20261126_keyboard_07:
+          scope: Exact current-mode bare/associated text wire forms across documented flag domain. Real PTY witness of no-text
+            repeat/release, ordered modifier, focus retirement, negotiated up/down transitions while a physical event is pending,
+            and late/oversized commit key0. No timer-based heuristic or fabricated characters. Scope is local SDL event-batch
+            policy and canonical worker encoding; no actual non-US/physical IME claim.
+          method: Pinned Kitty author protocol and encoder a79f376; SDL reference 7bbd9d5 Wayland key/text dispatch and separate
+            IME events; canonical flag-domain proof and actual headless SDL/PTY red-green/mode-transition proof; no blanket
+            FULL promotion
+          baseline: 50f317cd5dd59b07e3ce5a7d8e099046c2fd61e8
     - id: modifier-mask
       section: docs/keyboard-protocol.rst:186-219
       level: defined

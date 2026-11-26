@@ -444,7 +444,9 @@ const State = struct {
         var task = supplied;
         const bytes = taskBytes(task);
         if (bytes.len > pty_vt.input_event_limit) return error.InputLimit;
-        if (task == .input and task.input == .committed_text) {
+        if (task == .input and (task.input == .committed_text or
+            (task.input == .key and task.input.key.platform_text)))
+        {
             const extent = try vt.Terminal.committedTextCapacity(bytes);
             std.debug.assert(extent <= 4 * bytes.len + 5);
         }
@@ -1137,7 +1139,7 @@ fn inputActivity(task: Task) bool {
     return switch (task.input) {
         .bytes, .paste, .committed_text => |bytes| bytes.len != 0,
         .key => |key| key.action != .release and switch (key.key) {
-            .unicode => true,
+            .unicode => !key.platform_text or key.text.len != 0,
             .named => |named| !vt.Terminal.isModifierKey(named),
         },
         else => false,

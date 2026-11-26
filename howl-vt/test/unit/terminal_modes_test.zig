@@ -4973,3 +4973,81 @@ test "Kitty additional functional keys preserve legacy navigation and modifier s
     try std.testing.expectEqualStrings("", encodeKey(&terminal, .{ .named = .scroll_lock }, .{}));
     try std.testing.expectEqualStrings("", encodeKey(&terminal, .{ .named = .iso_level5_shift }, .{}));
 }
+
+test "Kitty platform text intent follows current bank without fabricating legacy characters" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    const key = try Terminal.Key.initUnicode('a');
+    for (0..32) |flags| {
+        var wire: [24]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&wire, "\x1b[={d}u", .{flags}));
+        for ([_]Terminal.KeyAction{ .press, .repeat, .release }) |action| {
+            var event: @FieldType(Terminal.InputEvent, "key") = .{
+                .key = key,
+                .action = action,
+                .mods = .{ .shift = true },
+                .shifted = 'A',
+                .platform_text = true,
+            };
+            const report_all = flags & 8 != 0;
+            const report_events = flags & 2 != 0;
+            const alternate = flags & 4 != 0;
+            var bare = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = event });
+            defer bare.deinit();
+            var expected_buf: [48]u8 = undefined;
+            const identity = if (alternate) "97:65" else "97";
+            const expected_bare = if (!report_all or (action == .release and !report_events))
+                ""
+            else if (action == .press or !report_events)
+                try std.fmt.bufPrint(&expected_buf, "\x1b[{s};2u", .{identity})
+            else
+                try std.fmt.bufPrint(&expected_buf, "\x1b[{s};2:{d}u", .{ identity, @backingInt(action) });
+            try std.testing.expectEqualStrings(expected_bare, bare.bytes);
+            if (action == .release) continue;
+            event.text = "é界";
+            var committed = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = event });
+            defer committed.deinit();
+            const expected_text = if (!report_all)
+                "é界"
+            else if (flags & 16 == 0)
+                expected_bare
+            else if (action == .press or !report_events)
+                try std.fmt.bufPrint(&expected_buf, "\x1b[{s};2;233:30028u", .{identity})
+            else
+                try std.fmt.bufPrint(&expected_buf, "\x1b[{s};2:2;233:30028u", .{identity});
+            try std.testing.expectEqualStrings(expected_text, committed.bytes);
+        }
+    }
+    const pending: Terminal.InputEvent = .{ .key = .{ .key = key, .platform_text = true } };
+    try feed(&terminal, "\x1b[=31u\x1b[?47h");
+    var legacy = try terminal.encodeInput(std.testing.allocator, &scratch, pending);
+    defer legacy.deinit();
+    try std.testing.expectEqualStrings("", legacy.bytes);
+    try feed(&terminal, "\x1b[?47l");
+    var enhanced = try terminal.encodeInput(std.testing.allocator, &scratch, pending);
+    defer enhanced.deinit();
+    try std.testing.expectEqualStrings("\x1b[97u", enhanced.bytes);
+    try feed(&terminal, "\x1b[2h");
+    var locked = try terminal.encodeInput(std.testing.allocator, &scratch, pending);
+    defer locked.deinit();
+    try std.testing.expectEqualStrings("", locked.bytes);
+}
+
+test "platform key text admission rejects controls and invalid scalars without changing raw input" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+    const key = try Terminal.Key.initUnicode('a');
+    const oversized: [Terminal.maximum_key_text_bytes + 1]u8 = @splat('x');
+    for ([_][]const u8{ "\x1b[=0u", "\x1b[=8u", "\x1b[=31u" }) |mode| {
+        try feed(&terminal, mode);
+        try std.testing.expectError(error.InvalidText, terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = key, .platform_text = true, .text = "\n" } }));
+        try std.testing.expectError(error.InvalidUtf8, terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = key, .platform_text = true, .text = "\xff" } }));
+        try std.testing.expectError(error.KeyTextLimit, terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = key, .platform_text = true, .text = &oversized } }));
+        try std.testing.expectError(error.InvalidText, terminal.encodeInput(std.testing.allocator, &scratch, .{ .key = .{ .key = .{ .named = .enter }, .platform_text = true } }));
+        var raw = try terminal.encodeInput(std.testing.allocator, &scratch, .{ .bytes = "\n" });
+        defer raw.deinit();
+        try std.testing.expectEqualStrings("\n", raw.bytes);
+    }
+}

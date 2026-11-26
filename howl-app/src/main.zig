@@ -1454,6 +1454,21 @@ pub const App = struct {
         return !unchanged;
     }
     fn event(self: *App, value: c.SDL_Event) !void {
+        // These events can submit terminal input or change its owner. Retire
+        // earlier key intent first, but allow unrelated worker/render wakes
+        // between a key-down and its immediate SDL text event.
+        switch (value.type) {
+            c.SDL_EVENT_MOUSE_BUTTON_DOWN,
+            c.SDL_EVENT_MOUSE_BUTTON_UP,
+            c.SDL_EVENT_MOUSE_MOTION,
+            c.SDL_EVENT_MOUSE_WHEEL,
+            c.SDL_EVENT_DROP_FILE,
+            c.SDL_EVENT_DROP_TEXT,
+            c.SDL_EVENT_WINDOW_FOCUS_GAINED,
+            c.SDL_EVENT_WINDOW_FOCUS_LOST,
+            => try self.keyboard.flushPending(),
+            else => {},
+        }
         if (try self.chromeEvent(value)) return;
         self.input_timestamp = value.common.timestamp;
         switch (value.type) {
@@ -2562,6 +2577,10 @@ pub fn main(initial: std.process.Init) !void {
             if (app.processEvent(event)) redraw = true;
             if (!app.running or !c.SDL_PollEvent(&event)) break;
         }
+        if (app.running) app.keyboard.flushPending() catch |failure| {
+            app.report(failure);
+            redraw = true;
+        };
     }
 }
 fn setClipboard(bytes: []const u8) !void {

@@ -117,7 +117,7 @@ test "paste encoding distinguishes borrowed and owned results" {
     try std.testing.expectEqual(@as(?std.mem.Allocator, null), bracketed.allocator);
 }
 
-/// Borrow-free physical key event with typed identity and complete modifiers.
+/// Physical key event with typed identity, modifiers and borrowed text.
 pub const KeyEvent = struct {
     key: InputKey,
     mods: Modifier = .{},
@@ -128,6 +128,9 @@ pub const KeyEvent = struct {
     legacy_text: []const u8 = "",
     /// Borrows committed text for this press/repeat until encoding returns.
     text: []const u8 = "",
+    /// The platform, not the key identity, supplies legacy text. A missing
+    /// commit never fabricates a character; report-all still reports the key.
+    platform_text: bool = false,
 };
 
 /// Identifies caller focus gained or lost for terminal focus reporting.
