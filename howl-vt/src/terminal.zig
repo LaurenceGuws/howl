@@ -1134,7 +1134,10 @@ fn decodeCsi(
                 .bottom = if (params.len >= 2 and params[1] > 0) paramAtOrDefault1(params, 1) - 1 else null,
             } };
         },
-        'J' => return decodeEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)) orelse return null, false),
+        'J' => return if (params.len == 1 and params[0] == 22)
+            SemanticEvent{ .erase_display_scroll_complete = false }
+        else
+            decodeEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)) orelse return null, false),
         'K' => return SemanticEvent{
             .erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,
         },
@@ -4085,17 +4088,20 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             ) or graphics_changed;
             return graphics_changed or changed;
         },
-        .erase_display_complete, .erase_display_scroll_complete => |protected| {
+        .erase_display_complete => |protected| return eraseCompleteDisplay(vt, protected),
+        .erase_display_scroll_complete => {
             const screen = vt.screen_state.active();
-            const changed = screen.eraseDisplay(.all, protected);
-            const origin = graphicsScreenOrigin(vt);
-            return vt.graphics.erase(
-                graphicsBank(vt),
-                origin,
-                origin + screen.rows - 1,
-                0,
-                screen.cols - 1,
-            ) or changed;
+            const count = if (vt.screen_state.alt_active) 0 else screen.displayArchiveRows();
+            const progress = applyDisplayArchive(vt, count);
+            if (progress.blocked) |failure| {
+                std.debug.assert(vt.stream_state.pending_input == null);
+                vt.stream_state.pending_input = .{
+                    .work = .{ .archive_display = count - progress.completed },
+                    .failure = failure,
+                };
+                return progress.completed != 0;
+            }
+            return eraseCompleteDisplay(vt, false) or progress.completed != 0;
         },
         .erase_display_scrollback => |protected| {
             return vt.screen_state.active().eraseDisplay(.scrollback, protected);
@@ -4269,6 +4275,35 @@ const ScrollUpProgress = struct {
     completed: u16 = 0,
     blocked: ?stream_state_mod.InputBlock = null,
 };
+
+fn eraseCompleteDisplay(vt: *Terminal, protected: bool) bool {
+    const screen = vt.screen_state.active();
+    const changed = screen.eraseDisplay(.all, protected);
+    const origin = graphicsScreenOrigin(vt);
+    return vt.graphics.erase(
+        graphicsBank(vt),
+        origin,
+        origin + screen.rows - 1,
+        0,
+        screen.cols - 1,
+    ) or changed;
+}
+
+fn applyDisplayArchive(vt: *Terminal, count: u16) ScrollUpProgress {
+    const screen = vt.screen_state.active();
+    var progress: ScrollUpProgress = .{};
+    while (progress.completed < count) {
+        screen.archiveDisplayRow() catch |failure| {
+            progress.blocked = switch (failure) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.Capacity => error.HistoryCapacity,
+            };
+            return progress;
+        };
+        progress.completed += 1;
+    }
+    return progress;
+}
 
 // Primary top-anchored full-width rows are admitted one at a time. Their
 // image anchors remain in history coordinates; fixed rows below the margin move
@@ -4755,6 +4790,16 @@ const TerminalStream = struct {
                         input_blocked = failure;
                     }
                     break :scrolled progress.completed != 0;
+                },
+                .archive_display => |remaining| archived: {
+                    const progress = applyDisplayArchive(self.terminal, remaining);
+                    if (progress.blocked) |failure| {
+                        self.terminal.stream_state.pending_input.?.work = .{ .archive_display = remaining - progress.completed };
+                        self.terminal.stream_state.pending_input.?.failure = failure;
+                        input_blocked = failure;
+                        break :archived progress.completed != 0;
+                    }
+                    break :archived eraseCompleteDisplay(self.terminal, false) or progress.completed != 0;
                 },
                 .repeat => |remaining| repeated: {
                     const progress = self.terminal.screen_state.active().repeatPrecedingGrowing(remaining);

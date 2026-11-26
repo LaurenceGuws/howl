@@ -2319,3 +2319,151 @@ test "OSC 66 horizontal edit and erase matrix clears intersected rectangles and 
         }
     }
 }
+
+test "OSC 66 insert mode shifts every occupied row and preserves fitting scalar tails" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 12, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "\x1b[1;3H\x1b]66;w=3;abc\u{301}\u{302}\x07\x1b[2;3Hdef\x1b[3;3Hkeep\x1b[1;3H\x1b[4h\x1b]66;s=2;X\x07");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 4), view.cursor_col);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, 3).y);
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(u21, &.{ 'a', 'b', 'c', 0x301, 0x302 }, view.cellScalarsAt(0, 4, &scalars));
+    try std.testing.expectEqual(@as(u8, 3), view.cellInfoAt(0, 4).width);
+    try std.testing.expect(view.cellInfoAt(0, 4).explicit_width);
+    try std.testing.expectEqual(@as(u21, 'd'), view.cellAt(1, 4));
+    try std.testing.expectEqual(@as(u21, 'f'), view.cellAt(1, 6));
+    try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(2, 2));
+    try feedChanged(&terminal, "\x1b[4l\x1b[3;3H\x1b]66;w=1;Q\x07");
+    try std.testing.expectEqual(@as(u21, 'e'), terminal.semanticView(0).cellAt(2, 3));
+}
+
+test "OSC 66 line insertion and deletion retain only complete surviving rectangles" {
+    const cases = [_]struct { command: []const u8, a_row: ?u16, b_row: ?u16 }{
+        .{ .command = "\x1b[2;1H\x1b[L", .a_row = 2, .b_row = null },
+        .{ .command = "\x1b[3;1H\x1b[L", .a_row = null, .b_row = null },
+        .{ .command = "\x1b[2;1H\x1b[M", .a_row = null, .b_row = 3 },
+        .{ .command = "\x1b[4;1H\x1b[M", .a_row = 1, .b_row = 3 },
+        .{ .command = "\x1b[3;1H\x1b[2M", .a_row = null, .b_row = 2 },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 6, 10, 0);
+        defer terminal.deinit();
+        try feedChanged(&terminal, "Z\x1b[2;2H\x1b]66;s=2;A\u{301}\u{302}\u{303}\u{304}\x07\x1b[5;6H\x1b]66;s=2;B\u{301}\u{302}\u{303}\u{304}\x07");
+        try feedChanged(&terminal, case.command);
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(0, 0));
+        var scalars: [24]u21 = undefined;
+        for ([_]?u16{ case.a_row, case.b_row }, [_]u16{ 1, 5 }, [_]u21{ 'A', 'B' }) |expected_row, col, cp| {
+            for (0..view.rows) |row| for (0..2) |x| {
+                const r: u16 = @intCast(row);
+                const cell = view.cellInfoAt(r, col + @as(u16, @intCast(x)));
+                if (expected_row != null and r >= expected_row.? and r < expected_row.? + 2) {
+                    try std.testing.expectEqual(@as(u8, 2), cell.width);
+                    try std.testing.expectEqual(@as(u8, 2), cell.height);
+                    try std.testing.expectEqual(@as(u8, @intCast(r - expected_row.?)), cell.y);
+                    try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+                    try std.testing.expectEqualSlices(u21, &.{ cp, 0x301, 0x302, 0x303, 0x304 }, view.cellScalarsAt(r, col + @as(u16, @intCast(x)), &scalars));
+                } else {
+                    try std.testing.expectEqual(@as(u8, 1), cell.width);
+                    try std.testing.expectEqual(@as(u8, 1), cell.height);
+                    try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+                }
+            };
+        }
+    }
+}
+
+test "ED22 archives complete sized rectangles and leaves cursor fixed" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 12, 8);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "A\x1b[2;3H\x1b]66;s=2:w=2;B\u{301}\u{302}\u{303}\u{304}\x07\x1b[4;8H");
+    try feedChanged(&terminal, "\x1b[22J");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 3), view.history_count);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 7), view.cursor_col);
+    for (0..view.rows) |row| for (0..view.cols) |col| {
+        const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+        try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+        try std.testing.expectEqual(@as(u8, 1), cell.height);
+    };
+    const retained = terminal.semanticView(3);
+    try std.testing.expectEqual(@as(u21, 'A'), retained.cellAt(0, 0));
+    var scalars: [24]u21 = undefined;
+    for (0..2) |y| for (0..4) |x| {
+        const r: u16 = @intCast(y + 1);
+        const c: u16 = @intCast(x + 2);
+        const cell = retained.cellInfoAt(r, c);
+        try std.testing.expectEqual(@as(u8, 4), cell.width);
+        try std.testing.expectEqual(@as(u8, 2), cell.height);
+        try std.testing.expectEqual(@as(u8, @intCast(x)), cell.x);
+        try std.testing.expectEqual(@as(u8, @intCast(y)), cell.y);
+        try std.testing.expect(cell.explicit_width);
+        try std.testing.expectEqualSlices(u21, &.{ 'B', 0x301, 0x302, 0x303, 0x304 }, retained.cellScalarsAt(r, c, &scalars));
+    };
+    try std.testing.expect(!(try terminal.feed("\x1b[22J")).stateChanged());
+    try std.testing.expectEqual(@as(u32, 3), terminal.semanticView(0).history_count);
+}
+
+test "ED22 resumes a partially admitted archive before erasing or consuming later input" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 3, 2048, 8);
+    defer terminal.deinit();
+    var row: [2048]u8 = @splat('A');
+    try feed(&terminal, &row);
+    try feed(&terminal, "\x1b[2;1H");
+    @memset(&row, 'B');
+    try feed(&terminal, &row);
+    try feed(&terminal, "\x1b[3;7H\x1b[22");
+    // Use the same dense-row allocation boundary as the bulk-scroll proof.
+    failing.fail_index = failing.alloc_index + 2;
+    const blocked = try terminal.feedAtServiceBoundary("JX", 1);
+    try std.testing.expectEqual(@as(usize, 1), blocked.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, blocked.input_blocked.?);
+    try std.testing.expect(!blocked.summary.historyLost());
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 6), terminal.semanticView(0).cursor_col);
+    const repeated = try terminal.feedAtServiceBoundary("X", 2);
+    try std.testing.expectEqual(@as(usize, 0), repeated.consumed);
+    try std.testing.expectEqual(error.OutOfMemory, repeated.input_blocked.?);
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    failing.fail_index = std.math.maxInt(usize);
+    const resumed = try terminal.feedAtServiceBoundary("X", 3);
+    try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expect(!resumed.summary.historyLost());
+    try std.testing.expectEqual(@as(u32, 2), terminal.semanticView(0).history_count);
+    const retained = terminal.semanticView(2);
+    try std.testing.expectEqual(@as(u21, 'A'), retained.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), retained.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), retained.cellAt(1, 2047));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(2, 6));
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_col);
+}
+
+test "ED22 archives only eligible primary viewport and leaves private and malformed forms separate" {
+    for ([_][]const u8{ "\x1b[2;4r", "\x1b[?1049h" }) |setup| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 12, 8);
+        defer terminal.deinit();
+        try feed(&terminal, setup);
+        try feedChanged(&terminal, "\x1b[2;3H\x1b]66;s=2;X\x07\x1b[2;8H");
+        const sequence = terminal.semanticSequence();
+        for ([_][]const u8{ "\x1b[?22J", "\x1b[22;1J", "\x1b[22K" }) |invalid| {
+            try std.testing.expect(!(try terminal.feed(invalid)).stateChanged());
+            try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        }
+        try feedChanged(&terminal, "\x1b[22J");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u32, 0), view.history_count);
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 7), view.cursor_col);
+        for (0..view.rows) |row| for (0..view.cols) |col| {
+            try std.testing.expectEqual(@as(u21, 0), view.cellAt(@intCast(row), @intCast(col)));
+        };
+    }
+}

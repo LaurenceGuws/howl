@@ -885,6 +885,27 @@ pub const Screen = struct {
         store.commitPush(&prepared);
     }
 
+    /// Counts the used viewport prefix eligible for ED22 archival.
+    /// Alternate screen has no history. Partial vertical margins do not
+    /// authorize an archive; the terminal still performs the display erase.
+    pub fn displayArchiveRows(self: *const Screen) u16 {
+        if (self.history_capacity == 0 or self.scroll_top != 0 or self.scrollBottom() != self.rows -| 1) return 0;
+        var count = self.rows;
+        while (count != 0 and self.visibleRowStateLen(count - 1) == 0) : (count -= 1) {}
+        return count;
+    }
+
+    /// Archives the first physical row without clearing a crossing cluster.
+    /// Admission is completed before any mutation, regardless of DECSLRM.
+    pub fn archiveDisplayRow(self: *Screen) error{ OutOfMemory, Capacity }!void {
+        std.debug.assert(self.history_capacity != 0 and self.scroll_top == 0 and self.scrollBottom() == self.rows - 1);
+        var prepared = try self.prepareScrollHistoryOne(0, self.rows - 1, false);
+        defer self.discardPreparedHistory(&prepared);
+        // Full viewport archival retains every row, including continuations.
+        self.wrap_pending = false;
+        self.scrollUpPrepared(if (prepared) |*row| row else null);
+    }
+
     // The full semantic row is required when reserving before cluster clearing;
     // the actual retained extent is selected again after that clearing.
     fn historyRowSource(self: *const Screen, row: u16, full: bool) history_store_mod.Source {
@@ -3083,6 +3104,10 @@ pub const Screen = struct {
         const cells = self.cells orelse return changed;
         const top = self.cursor.row;
         const start_col = self.cursor.col;
+        if (self.insert_mode) {
+            for (top..top + height) |row|
+                changed = self.insertColumnsInRow(@intCast(row), physical_width) or changed;
+        }
         const lead_index = self.rowStart(top) + start_col;
         const old_lead = cells[lead_index];
         const candidate_tail = if (scalars.len > scalar_storage.inline_scalars)
@@ -4260,15 +4285,8 @@ pub const Screen = struct {
             ) or changed;
             // A full-screen upward move has no cells below the bottom edge:
             // a block wholly inside the moved rows remains intact.
-            if (!(top == 0 and bounded_bottom == self.rows - 1 and full_width)) {
-                changed = self.clearNonSemanticClustersIntersecting(
-                    bounded_bottom,
-                    bounded_bottom + 1,
-                    0,
-                    self.cols,
-                    full_width,
-                ) or changed;
-            }
+            if (bounded_bottom + 1 < self.rows and full_width)
+                changed = self.clearClustersCrossingRow(bounded_bottom + 1) or changed;
         }
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
@@ -4311,7 +4329,6 @@ pub const Screen = struct {
 
         var clear_row = bounded_bottom - (amount - 1);
         while (clear_row <= bounded_bottom) : (clear_row += 1) {
-            changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
         return self.noteAllRowsChange(changed);
@@ -4346,12 +4363,7 @@ pub const Screen = struct {
                 // beginning at the top edge, however, can move intact.
                 // Kitty's IL boundary cleanup makes this same distinction;
                 // do not erase its lead merely because it is at the edge.
-                const cells = self.cells.?;
-                for (0..self.cols) |col| {
-                    const cell = cells[self.rowStart(top) + col];
-                    if (cell.y != 0)
-                        changed = self.clearClusterAt(top, @intCast(col), false) or changed;
-                }
+                changed = self.clearClustersCrossingRow(top) or changed;
             }
         } else {
             changed = self.clearClustersIntersecting(top, top + 1, 0, self.cols) or changed;
@@ -4382,7 +4394,6 @@ pub const Screen = struct {
 
         var clear_row = top;
         while (clear_row < top + amount) : (clear_row += 1) {
-            changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
         return self.noteAllRowsChange(changed);
@@ -5057,6 +5068,19 @@ pub const Screen = struct {
         const cut = if (toward_left) left + amount else right - (amount - 1);
         changed = self.clearClusterCrossingColumn(row, cut) or changed;
         changed = self.clearClusterCrossingColumn(row, right + 1) or changed;
+        return changed;
+    }
+
+    // Only a lower-row continuation crosses this horizontal cut.
+    // A complete rectangle on either side must survive the row movement.
+    fn clearClustersCrossingRow(self: *Screen, row: u16) bool {
+        if (!self.nonsemantic_clusters_possible or row >= self.rows) return false;
+        const cells = self.cells orelse return false;
+        var changed = false;
+        for (0..self.cols) |col| {
+            if (cells[self.rowStart(row) + col].y != 0)
+                changed = self.clearClusterAt(row, @intCast(col), false) or changed;
+        }
         return changed;
     }
 

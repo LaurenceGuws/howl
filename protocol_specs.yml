@@ -10846,6 +10846,21 @@ specifications:
       - file: howl-vt/src/screen.zig
         test: graphic placement reserves history before skipping multiple obstructed rows
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 insert mode shifts every occupied row and preserves fitting scalar tails
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 line insertion and deletion retain only complete surviving rectangles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ED22 archives complete sized rectangles and leaves cursor fixed
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ED22 resumes a partially admitted archive before erasing or consuming later input
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ED22 archives only eligible primary viewport and leaves private and malformed forms separate
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_03:
           scope: Cell ownership, exact compact-history restore/reflow and selected overwrite/combining mutations. Explicit
@@ -10864,6 +10879,14 @@ specifications:
           method: Pinned Kitty a79f376 text-sizing-protocol.rst overwriting/editing clauses and screen.c move_cursor_past_multicell/handle_fixed_width_multicell_command;
             VT red-green, exact cells, fault injection and horizontal edit matrix; no blanket FULL promotion
           baseline: a4d4fdb59a00f11f351ee27df8d80272776729c0
+        howl_qualification_20261126_text_size_05:
+          scope: Selected vertical IL/DL, ordinary ED22 and sized IRM geometry and scalar ownership. Complete archive retained
+            including multicell strips, resumable under allocation pressure before further input. No new public C ABI, renderer
+            or remote qualification. Existing top-anchored DL history policy and combined margins not redefined.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c screen_move_into_scrollback, screen_insert_lines,
+            screen_delete_lines_impl, handle_fixed_width_multicell_command; VT red-green, exact cell/history and retry witnesses;
+            no blanket FULL promotion
+          baseline: 34a964d830db49f041357951bf43a19fe35ace33
     - id: detection
       section: Detecting if the terminal supports this protocol
       level: defined
@@ -10922,6 +10945,23 @@ specifications:
       - CSI X
       rule: ICH/DCH erase multiline clusters intersecting affected row suffix and single-row clusters split at edit boundaries;
         ECH erases whole intersecting clusters.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 horizontal edit and erase matrix clears intersected rectangles and retains unrelated cells
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 insert mode shifts every occupied row and preserves fitting scalar tails
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_05:
+          scope: Existing per-row shift and cluster-boundary cleanup owner reused by sized insert-mode writes across all occupied
+            rows. Actual sized insert test preserves intact one-row packed scalar tail and ordinary lower row text, unrelated
+            row and explicit width; ordinary replacement after IRM reset. Eight earlier ICH/DCH/ECH/EL1/ED1 cases linked to
+            direct source clause. No universal combined-margin or image shift claim.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c screen_move_into_scrollback, screen_insert_lines,
+            screen_delete_lines_impl, handle_fixed_width_multicell_command; VT red-green, exact cell/history and retry witnesses;
+            no blanket FULL promotion
+          baseline: 34a964d830db49f041357951bf43a19fe35ace33
     - id: display-line-edits
       section: docs/text-sizing-protocol.rst:327-348
       level: defined
@@ -10933,6 +10973,43 @@ specifications:
       - CSI M
       rule: ED/EL erase intersecting clusters; ED22 first archives screen including clusters. IL removes clusters split at
         insertion or bottom edge; DL removes clusters intersecting deleted rows.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 line insertion and deletion retain only complete surviving rectangles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ED22 archives complete sized rectangles and leaves cursor fixed
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ED22 resumes a partially admitted archive before erasing or consuming later input
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: ED22 archives only eligible primary viewport and leaves private and malformed forms separate
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: ED22 archives used primary lines and preserves cursor'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty OSC 66 multiline lead survives admitted CSI L and M'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 horizontal edit and erase matrix clears intersected rectangles and retains unrelated cells
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_05:
+          scope: Full-width interior IL/DL cases erase split rectangles and retain complete surviving blocks and overflow
+            scalar sequences, including a block touching the physical bottom. Cleanup distinguishes a cluster crossing a row
+            boundary from one merely touching it, and vacated row copies are not treated as independent owners after the move.
+            Ordinary ED22 archives the used viewport prefix (including lower-row continuations) on primary screen with full
+            vertical margins; then clears display with cursor fixed. Alternate/partial vertical region clears without archival.
+            Retained row state extent is the local definition of used rows. Interrupted archive retains exact remaining row
+            count and prevents later input overtaking; no loss on tested allocation failure. Private ED22 remains unsupported;
+            DEC selective erasure and ED3 unchanged. Full horizontal-margin combinations, DL at top-anchored history boundary,
+            and independent graphics-only ED22 extent remain separately unqualified.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c screen_move_into_scrollback, screen_insert_lines,
+            screen_delete_lines_impl, handle_fixed_width_multicell_command; VT red-green, exact cell/history and retry witnesses;
+            no blanket FULL promotion
+          baseline: 34a964d830db49f041357951bf43a19fe35ace33
     - id: wrap-size
       section: docs/text-sizing-protocol.rst:219-232
       level: defined

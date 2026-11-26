@@ -259,7 +259,7 @@ pub const LineFeed = enum { index, next_line, next_line_tab };
 pub const PendingInput = struct {
     // Sized payload borrows the OSC parser buffer. No parser input may run
     // until the pending operation completes or is explicitly reset.
-    work: union(enum) { codepoint: u21, repeat: u16, scroll_up: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: LineFeed },
+    work: union(enum) { codepoint: u21, repeat: u16, scroll_up: u16, archive_display: u16, sized_text: struct { payload: []const u8, offset: usize }, line_feed: LineFeed },
     failure: InputBlock,
 };
 

@@ -295,7 +295,7 @@ test "terminal: Kitty private erase preserves attrs but Howl protects DEC charac
     }
 }
 
-test "terminal: pinned Kitty ED22 moves visible lines to history while Howl ignores it" {
+test "terminal: ED22 archives used primary lines and preserves cursor" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer terminal.deinit();
     try feed(&terminal, "\x1b[1;1Hone\x1b[2;1Htwo");
@@ -303,12 +303,14 @@ test "terminal: pinned Kitty ED22 moves visible lines to history while Howl igno
     try std.testing.expectEqual(@as(u32, 0), before.history_count);
     const sequence = terminal.semanticSequence();
     try std.testing.expect(!(try terminal.feed("\x1b[22")).stateChanged());
-    try std.testing.expect(!(try terminal.feed("J")).stateChanged());
+    try std.testing.expect((try terminal.feed("J")).stateChanged());
     const after = terminal.semanticView(0);
-    try std.testing.expectEqual(sequence, terminal.semanticSequence());
-    try std.testing.expectEqual(@as(u32, 0), after.history_count);
-    try std.testing.expectEqual(@as(u21, 'o'), after.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 't'), after.cellAt(1, 0));
+    try std.testing.expect(terminal.semanticSequence() > sequence);
+    try std.testing.expectEqual(@as(u32, 2), after.history_count);
+    try std.testing.expectEqual(@as(u21, 0), after.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'o'), terminal.semanticView(2).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), after.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 't'), terminal.semanticView(2).cellAt(1, 0));
     try std.testing.expectEqual(before.cursor_row, after.cursor_row);
     try std.testing.expectEqual(before.cursor_col, after.cursor_col);
     try std.testing.expectEqualStrings("", terminal.replyBytes());
