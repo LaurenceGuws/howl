@@ -401,12 +401,18 @@ fn resetXtermDynamicColor(colors: *TerminalColorState, command: u16, payload: []
     resetDynamicColor(colors, key, defaults);
 }
 
+const IntensityPolicy = enum { reject, clip };
+
 fn parseColor(value: []const u8) ?Rgb {
+    return parseColorWithIntensity(value, .reject);
+}
+
+fn parseColorWithIntensity(value: []const u8, policy: IntensityPolicy) ?Rgb {
     const color_text = stripAlpha(std.mem.trim(u8, value, " \t\r\n"));
     if (color_text.len == 0) return null;
     if (std.mem.startsWith(u8, color_text, "#")) return parseHashColor(color_text[1..]);
     if (std.mem.startsWith(u8, color_text, "rgb:")) return parseRgbColor(color_text[4..]);
-    if (std.mem.startsWith(u8, color_text, "rgbi:")) return parseRgbiColor(color_text[5..]);
+    if (std.mem.startsWith(u8, color_text, "rgbi:")) return parseRgbiColor(color_text[5..], policy);
     if (std.ascii.eqlIgnoreCase(color_text, "black")) return .{ .r = 0, .g = 0, .b = 0 };
     if (std.ascii.eqlIgnoreCase(color_text, "red")) return .{ .r = 255, .g = 0, .b = 0 };
     if (std.ascii.eqlIgnoreCase(color_text, "green")) return .{ .r = 0, .g = 255, .b = 0 };
@@ -731,7 +737,7 @@ fn appendColorOsc(output: *replies.Buffer, color: Rgb) replies.AppendError!void 
 // Any malformed or negative value requests the host background-opacity
 // fallback, represented by null rather than by a second guessed alpha.
 fn parseKittyOpacity(value: []const u8) ?f32 {
-    if (value.len == 0 or value.len > 32) return null;
+    if (!isDecimalFloat(value)) return null;
     const opacity = std.fmt.parseFloat(f32, value) catch return null;
     if (!std.math.isFinite(opacity) or opacity < 0) return null;
     return @min(1, opacity);
@@ -740,19 +746,23 @@ fn parseKittyOpacity(value: []const u8) ?f32 {
 // Parses and applies a recognized Kitty color key, ignoring invalid values.
 fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) void {
     if (kittyTransparentBackgroundIndex(key)) |index| {
+        if (value.len == 0) {
+            colors.transparent_background[index] = null;
+            return;
+        }
         const at = std.mem.indexOfScalar(u8, value, '@');
-        const rgb = parseColor(if (at) |pos| value[0..pos] else value) orelse return;
+        const rgb = parseColorWithIntensity(if (at) |pos| value[0..pos] else value, .clip) orelse return;
         const opacity = if (at) |pos| parseKittyOpacity(value[pos + 1 ..]) else null;
         colors.transparent_background[index] = .{ .rgb = rgb, .opacity = opacity };
         return;
     }
     if (kittyPaletteIndex(key)) |idx| {
-        if (parseColor(value)) |color| colors.palette[idx] = color;
+        if (parseColorWithIntensity(value, .clip)) |color| colors.palette[idx] = color;
         return;
     }
     if (value.len == 0) {
         setSpecialColorDynamic(colors, key);
-    } else if (parseColor(value)) |color| {
+    } else if (parseColorWithIntensity(value, .clip)) |color| {
         if (specialColorKey(key)) |special| setSpecialColor(colors, special, color);
     }
 }
@@ -828,29 +838,14 @@ fn stripAlpha(value: []const u8) []const u8 {
 }
 
 fn parseHashColor(hex: []const u8) ?Rgb {
-    return switch (hex.len) {
-        3 => blk: {
-            const r = parseHexNibble(hex[0]) orelse return null;
-            const g = parseHexNibble(hex[1]) orelse return null;
-            const b = parseHexNibble(hex[2]) orelse return null;
-            break :blk .{ .r = r * 0x11, .g = g * 0x11, .b = b * 0x11 };
-        },
-        6 => .{
-            .r = parseHexByte(hex[0..2]) orelse return null,
-            .g = parseHexByte(hex[2..4]) orelse return null,
-            .b = parseHexByte(hex[4..6]) orelse return null,
-        },
-        9 => .{
-            .r = parseHexByte(hex[0..2]) orelse return null,
-            .g = parseHexByte(hex[3..5]) orelse return null,
-            .b = parseHexByte(hex[6..8]) orelse return null,
-        },
-        12 => .{
-            .r = parseHexByte(hex[0..2]) orelse return null,
-            .g = parseHexByte(hex[4..6]) orelse return null,
-            .b = parseHexByte(hex[8..10]) orelse return null,
-        },
-        else => null,
+    if (hex.len != 3 and hex.len != 6 and hex.len != 9 and hex.len != 12) return null;
+    const digits = hex.len / 3;
+    // Retain the pinned implementation's short-component expansion and
+    // high-byte truncation, but validate even the discarded low digits.
+    return .{
+        .r = parseRgbComponent(hex[0..digits]) orelse return null,
+        .g = parseRgbComponent(hex[digits .. digits * 2]) orelse return null,
+        .b = parseRgbComponent(hex[digits * 2 ..]) orelse return null,
     };
 }
 
@@ -863,28 +858,40 @@ fn parseRgbColor(text: []const u8) ?Rgb {
     return .{ .r = r, .g = g, .b = b };
 }
 
-// xterm XParseColor intensity components are finite fractions in [0, 1].
-// Kitty rounds each accepted channel to RGB8; do not let malformed floats,
-// infinities or negative values wrap or mutate a prior valid color.
-fn parseRgbiColor(text: []const u8) ?Rgb {
+// Legacy OSC uses its existing strict range; Kitty OSC21 clips finite
+// decimal intensities before the common RGB8 quantization.
+fn parseRgbiColor(text: []const u8, policy: IntensityPolicy) ?Rgb {
     var parts = std.mem.splitScalar(u8, text, '/');
-    const r = parseIntensity(parts.next() orelse return null) orelse return null;
-    const g = parseIntensity(parts.next() orelse return null) orelse return null;
-    const b = parseIntensity(parts.next() orelse return null) orelse return null;
+    const r = parseIntensity(parts.next() orelse return null, policy) orelse return null;
+    const g = parseIntensity(parts.next() orelse return null, policy) orelse return null;
+    const b = parseIntensity(parts.next() orelse return null, policy) orelse return null;
     if (parts.next() != null) return null;
     return .{ .r = r, .g = g, .b = b };
 }
 
-fn parseIntensity(text: []const u8) ?u8 {
-    if (text.len == 0 or text.len > 32) return null;
+// The native float parser also accepts hexadecimal floats and digit
+// separators. Neither is part of the decimal OSC colour grammar.
+fn isDecimalFloat(text: []const u8) bool {
+    if (text.len == 0 or text.len > 32) return false;
+    for (text) |byte| switch (byte) {
+        '0'...'9', '.', '+', '-', 'e', 'E' => {},
+        else => return false,
+    };
+    return true;
+}
+
+fn parseIntensity(text: []const u8, policy: IntensityPolicy) ?u8 {
+    if (!isDecimalFloat(text)) return null;
     const intensity = std.fmt.parseFloat(f64, text) catch return null;
-    if (!std.math.isFinite(intensity) or intensity < 0 or intensity > 1) return null;
-    return @intFromFloat(@round(intensity * 255.0));
+    if (!std.math.isFinite(intensity)) return null;
+    if (policy == .reject and (intensity < 0 or intensity > 1)) return null;
+    return @intFromFloat(@round(std.math.clamp(intensity, 0, 1) * 255.0));
 }
 
 fn parseRgbComponent(text: []const u8) ?u8 {
     if (text.len == 0 or text.len > 4) return null;
-    const value = std.fmt.parseUnsigned(u16, text, 16) catch return null;
+    var value: u16 = 0;
+    for (text) |digit| value = (value << 4) | (parseHexNibble(digit) orelse return null);
     return switch (text.len) {
         1 => @intCast(value * 17),
         2 => @intCast(value),
@@ -892,11 +899,6 @@ fn parseRgbComponent(text: []const u8) ?u8 {
         4 => @intCast(value >> 8),
         else => null,
     };
-}
-
-fn parseHexByte(text: []const u8) ?u8 {
-    if (text.len != 2) return null;
-    return std.fmt.parseUnsigned(u8, text, 16) catch null;
 }
 
 fn parseHexNibble(byte: u8) ?u8 {

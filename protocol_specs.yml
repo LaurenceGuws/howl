@@ -10436,6 +10436,15 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.color_push
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: kitty color stack owns indexed sequential bounded and report semantics
+        relation: protocol-family
       evidence:
         adopter_observations:
         - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/vt-parser.c
@@ -10443,6 +10452,15 @@ specifications:
           sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
           location: dispatch_osc 30001
           meaning: Already indexed original; pinned route calls screen_push_colors index0, payload not interpreted.
+        howl_qualification_20261127_colour_01:
+          scope: Actual all256 palette entries and represented optional/dynamic colours, including explicit opacity and unset
+            values, snapshot under OSC30001. Existing ten-slot bounded shared stack and indexed extent policy preserved. No
+            new copy owner. Full palette test crosses a later host-default replacement and alternate screen; snapshot remains
+            independent.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: pop
       section: Saving and restoring colors
       level: defined
@@ -10456,6 +10474,18 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.color_pop
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: kitty color stack owns indexed sequential bounded and report semantics
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: color stack restores displayed cursor colors in both banks
+        relation: protocol-family
       evidence:
         adopter_observations:
         - url: https://github.com/kovidgoyal/kitty/blob/a79f376b85fd95e3dfd0589877123996bacd4184/kitty/vt-parser.c
@@ -10463,6 +10493,15 @@ specifications:
           sha256: bef2b9266aef2c139d9d6b8deb366fa84770b3f3b3e5ef997e236e1e5111b99c
           location: dispatch_osc 30101
           meaning: Pinned route calls screen_pop_colors index0; shared xterm color-stack backend, no extra protocol invented.
+        howl_qualification_20261127_colour_01:
+          scope: Shared CSI#Q restores OSC30001 snapshot including exact all256 palette, foreground/background, cursor/text,
+            selection and transparent metadata across host baseline and screen-bank changes. OSC30101 restores explicit unset
+            facts; empty sequential pop no-op. Subsequent bare reset uses latest configured defaults, not snapshot. Existing
+            indexed slot/default extent divergence and RIS policy unchanged.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: set
       section: Setting and querying colors
       level: defined
@@ -10476,6 +10515,31 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.kitty_color
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clips finite intensity components without changing legacy rejection
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 validates every hexadecimal digit and decimal intensity operand
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clipped set and dynamic unset roll back together on reply pressure
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: OSC21 uses shared bounded RGB8 parsing with its own finite rgbi clipping policy. Every hex digit, including
+            discarded precision, must be valid; decimal float tokens exclude hex floats and separators. Ordered set/query
+            and unset tested; no title fallback, no new parser lane. Mixed clipped set/unset rolls back on reply exhaustion.
+            Named-colour vocabulary and visual_bell setter remain incomplete.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: query
       section: Querying current color values
       level: defined
@@ -10489,6 +10553,33 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.osc.kitty_color
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clips finite intensity components without changing legacy rejection
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 validates every hexadecimal digit and decimal intensity operand
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clipped set and dynamic unset roll back together on reply pressure
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: current Kitty OSC 21 preserves duplicate query chronology and encodes unknown names
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: Exact RGB8 and dynamic-empty replies at observation points; all splits of clipped signed/exponent input,
+            post-reset/stack query, and atomic multi-query pressure proof. Legacy OSC4/10 strict range and distinct RGB reply
+            framing retained. No complete unknown/color-name or opacity-fallback host query guarantee.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: named-slots
       section: docs/color-stack.rst:58-82
       level: defined
@@ -10497,6 +10588,29 @@ specifications:
       - OSC 21
       rule: Palette0..255, foreground/background, selection_background/foreground,cursor/cursor_text,visual_bell,transparent_background_color1..7.
         Palette cannot be dynamic; other dynamic meanings advisory.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: current Kitty OSC 21 retains eight opacity-aware transparent background slots
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: color stack restores displayed cursor colors in both banks
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: Exact all256 palette and represented foreground/background, cursor/cursor_text, selection, and eight transparent
+            slots (observed author implementation supports8 despite document1..7). Dynamic palette request ignored; explicit
+            unset transparent slot distinct from configured reset. visual_bell remains recognized but no retained explicit
+            value/host visual bell effect; named-colour repertoire scoped.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: reset-dynamic
       section: docs/color-stack.rst:124-147
       level: defined
@@ -10504,6 +10618,29 @@ specifications:
       dispatch:
       - OSC 21
       rule: Bare key restores configured default; key= dynamic/unset; explicit value sets; ordered set/query may coexist.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clipped set and dynamic unset roll back together on reply pressure
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: transparent color host defaults copy to presentation but renderer policy stays separate
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: Empty transparent slot value now clears to unset (documented dynamic meaning; pinned transparent helper instead
+            ignores empty). Bare key restores configured default, including after a new host baseline and stack restore. Optional
+            cursor dynamic empty remains distinct. Required palette/foreground/background cannot become dynamic; existing
+            no-op policy retained. Exact pressure rollback.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: unknown-query-field
       section: docs/color-stack.rst:106-121
       level: defined
@@ -10511,18 +10648,85 @@ specifications:
       dispatch:
       - OSC 21
       rule: One encoded unknown-name field per unknown requested field, in request order; no verbatim echo or padding.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: current Kitty OSC 21 preserves duplicate query chronology and encodes unknown names
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: current Kitty OSC 21 unknown control names never echo attacker text
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 strips non-ASCII across split VT input before replying
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: Existing ordered duplicate unknown-field proof, unpadded standard base64 and printable ASCII sanitation retained;
+            qualified against existing grouped reply and pressure owner. Bare unknown and invalid setter names likewise reported,
+            no direct echo. Namespace choice unchanged.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: color-encoding
       section: docs/color-stack.rst:152-180
       level: defined
       wire: 'rgb:R/G/B / #RGB... / rgbi:r/g/b'
       rule: rgb components1..4 hex digits scaled by precision; hash forms3/6/9/12 digits specify MSBs of 16-bit components,
         not replication. rgbi floats with optional sign/exponent clipped [0,1].
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clips finite intensity components without changing legacy rejection
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 validates every hexadecimal digit and decimal intensity operand
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: OSC21 finite rgbi signed decimal/exponent values clip to [0,1] and round to RGB8; reject nonfinite, malformed,
+            hex floats, separators and extra operands. Legacy OSC4/10 retains out-of-range rejection. Common strict hex decoder
+            validates all1..4 digits per component and preserves pinned implementation short-hash replication and high-byte
+            truncation; source prose instead specifies MSB-only hash and precision scaling, so this aspect remains a documented
+            discrepancy rather than blanket conformance. Five existing named colours retained, full author vocabulary pending.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
     - id: alpha
       section: docs/color-stack.rst:72-76,182-191
       level: defined
       wire: color@alpha
       rule: Default1; clip to [0,1], negative context-specific meaning (transparent-background slot uses configured opacity).
         Source example rgb:ff0000@0.1 differs from slash grammar; preserve ambiguity.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty colour stack retains all palette and dynamic values independently of later host defaults
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: current Kitty OSC 21 retains eight opacity-aware transparent background slots
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: transparent color host defaults copy to presentation but renderer policy stays separate
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: current Kitty transparent color query quota rolls back set and reply
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty OSC 21 clipped set and dynamic unset roll back together on reply pressure
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_colour_01:
+          scope: Existing transparent alpha quantization and configured fallback retained, decimal-only lexical admission
+            applied to explicit opacity. Empty dynamic slot clears independent of host baseline and round-trips through stack;
+            alpha-bearing saved state and pressure rollback tested. Absent/negative/malformed opacity still uses existing
+            host fallback metadata; query fallback1.0 and nontransparent alpha ignored under existing author path. Actual
+            host background opacity and compositor behavior unqualified.
+          method: Pinned Kitty a79f376 docs/color-stack.rst SHA256 8563284e275c4e98535bcbfbfee2bad034cd51a8f68f027d448a4e05c8f13cd2,
+            kitty/colors.c parse_sharp/parse_rgb/parse_rgbi and window.py color_control; exact wire red-green, all256 palette/stack/default
+            and transactional reply witnesses; documented discrepancies retained, no blanket FULL promotion
+          baseline: b21e573d7039c60876c4c07946802e35b266efe6
   kitty_notification:
     title: Kitty desktop notifications (OSC 99)
     author: Kovid Goyal / kitty

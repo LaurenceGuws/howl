@@ -3501,3 +3501,119 @@ test "Rex CAN SUB cancel incomplete reports and recover at every input split" {
         }
     }
 }
+
+test "Kitty OSC 21 clips finite intensity components without changing legacy rejection" {
+    const wire = "\x1b]21;foreground=rgbi:-0.5/+5e-1/1.25;foreground=?;7=rgbi:2/-2/.25;7=?;cursor=rgbi:+.1/-.1/1e+1;cursor=?\x1b\\";
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        try std.testing.expectEqualStrings("\x1b]21;foreground=rgb:00/80/ff;7=rgb:ff/00/40;cursor=rgb:1a/00/ff\x1b\\", terminal.replyBytes());
+        const before = terminal.presentation();
+        try std.testing.expectEqual(Rgb{ .r = 0, .g = 128, .b = 255 }, before.foreground);
+        try std.testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 64 }, before.palette[7]);
+        try std.testing.expectEqual(@as(?Rgb, .{ .r = 26, .g = 0, .b = 255 }), before.cursor);
+        try terminal.consumeReplyBytes(terminal.replyBytes().len);
+        try std.testing.expect(!(try terminal.feed("\x1b]4;7;rgbi:2/-2/.25\x07\x1b]10;rgbi:-0.5/0.5/1.25\x07")).stateChanged());
+        try std.testing.expectEqualDeep(before, terminal.presentation());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
+test "Kitty OSC 21 validates every hexadecimal digit and decimal intensity operand" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]21;foreground=#123456;7=#abcdef\x07");
+    const before = terminal.presentation();
+    for ([_][]const u8{
+        "#12z456789",     "#123x456789ab", "#123456789abz",
+        "#1_2345",        "#+12345",       "rgb:1_2/34/56",
+        "rgb:+1/2/3",     "rgb:1/2/3/4",   "rgbi:0x1p-1/0/1",
+        "rgbi:1_0/0/1",   "rgbi:nan/0/1",  "rgbi:inf/0/1",
+        "rgbi:1e999/0/1", "rgbi:1//0",     "rgbi:1/0/0/0",
+    }) |invalid| {
+        var bytes: [256]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b]21;foreground={s};7={s}\x07", .{ invalid, invalid });
+        try std.testing.expect(!(try terminal.feed(command)).stateChanged());
+        try std.testing.expectEqualDeep(before, terminal.presentation());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+    try feed(&terminal, "\x1b]21;foreground=#123456789;foreground=?;7=rgb:1/234/5678;7=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;foreground=rgb:12/45/78;7=rgb:11/23/56\x1b\\", terminal.replyBytes());
+}
+
+test "Kitty OSC 21 transparent dynamic and bare reset remain distinct across the color stack" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.transparent_background[0] = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 }, .opacity = 0.4 };
+    defaults.cursor = .{ .r = 4, .g = 5, .b = 6 };
+    defaults.palette[7] = .{ .r = 7, .g = 8, .b = 9 };
+    terminal.setColorDefaults(defaults);
+    try feed(&terminal, "\x1b]21;transparent_background_color1=;transparent_background_color1=?;cursor=;cursor=?;7=;7=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;transparent_background_color1=;cursor=;7=rgb:07/08/09\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try feed(&terminal, "\x1b]30001\x1b\\\x1b]21;transparent_background_color1;cursor;7=#abcdef;transparent_background_color1=?;cursor=?;7=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;transparent_background_color1=rgb:01/02/03@0.4000;cursor=rgb:04/05/06;7=rgb:ab/cd/ef\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try feed(&terminal, "\x1b]30101\x1b\\\x1b]21;transparent_background_color1=?;cursor=?;7=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;transparent_background_color1=;cursor=;7=rgb:07/08/09\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try feed(&terminal, "\x1b]21;transparent_background_color1;cursor;7;transparent_background_color1=?;cursor=?;7=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;transparent_background_color1=rgb:01/02/03@0.4000;cursor=rgb:04/05/06;7=rgb:07/08/09\x1b\\", terminal.replyBytes());
+}
+
+test "Kitty colour stack retains all palette and dynamic values independently of later host defaults" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    var expected: [256]Rgb = undefined;
+    for (&expected, 0..) |*color, index| {
+        const r: u8 = @intCast(index);
+        color.* = .{ .r = r, .g = 255 - r, .b = r ^ 0xa5 };
+        var bytes: [64]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&bytes, "\x1b]21;{d}=rgb:{x:0>2}/{x:0>2}/{x:0>2}\x07", .{ index, color.r, color.g, color.b }));
+    }
+    try feed(&terminal, "\x1b]21;foreground=#112233;background=#445566;cursor=#778899;cursor_text=#aabbcc;selection_background=#ddeeff;selection_foreground=;transparent_background_color8=#123456@0.25\x07");
+    const saved = terminal.presentation();
+    try std.testing.expectEqualSlices(Rgb, &expected, &saved.palette);
+    try std.testing.expectEqual(@as(?Rgb, .{ .r = 0x77, .g = 0x88, .b = 0x99 }), saved.cursor);
+    try std.testing.expectEqual(@as(?Rgb, null), saved.selection_foreground);
+    try std.testing.expectEqual(@as(?f32, 0.25), saved.transparent_background[7].?.opacity);
+    try feed(&terminal, "\x1b]30001\x1b\\\x1b[?1049h");
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.foreground = .{ .r = 9, .g = 8, .b = 7 };
+    defaults.cursor = .{ .r = 6, .g = 5, .b = 4 };
+    defaults.palette[255] = .{ .r = 1, .g = 2, .b = 3 };
+    terminal.setColorDefaults(defaults);
+    try feed(&terminal, "\x1b]21;foreground=#000000;255=#ffffff;transparent_background_color8=\x07\x1b[#Q");
+    try std.testing.expectEqualDeep(saved, terminal.presentation());
+    try feed(&terminal, "\x1b[?1049l");
+    try std.testing.expectEqualDeep(saved, terminal.presentation());
+    try std.testing.expect(!(try terminal.feed("\x1b]30101\x07")).stateChanged());
+    try feed(&terminal, "\x1b]21;foreground;cursor;255;transparent_background_color8;foreground=?;cursor=?;255=?;transparent_background_color8=?\x07");
+    try std.testing.expectEqualStrings("\x1b]21;foreground=rgb:09/08/07;cursor=rgb:06/05/04;255=rgb:01/02/03;transparent_background_color8=\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
+    try std.testing.expectEqual(defaults.cursor, terminal.presentation().cursor);
+    try std.testing.expectEqual(defaults.palette[255], terminal.presentation().palette[255]);
+    try std.testing.expectEqual(@as(?@import("../../src/properties.zig").TransparentBackgroundColor, null), terminal.presentation().transparent_background[7]);
+}
+
+test "Kitty OSC 21 clipped set and dynamic unset roll back together on reply pressure" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]21;foreground=#123456;transparent_background_color1=#abcdef@0.2\x07");
+    const before = terminal.presentation();
+    const command = "\x1b]21;foreground=rgbi:-1/0.5/2;foreground=?;transparent_background_color1=;transparent_background_color1=?\x1b\\";
+    const response = "\x1b]21;foreground=rgb:00/80/ff;transparent_background_color1=\x1b\\";
+    const filler = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes - response.len + 1, false);
+    defer std.testing.allocator.free(filler);
+    try std.testing.expectError(error.ReplyLimit, terminal.feed(command));
+    try std.testing.expectEqualDeep(before, terminal.presentation());
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, command);
+    try std.testing.expectEqualStrings(response, terminal.replyBytes());
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 128, .b = 255 }, terminal.presentation().foreground);
+    try std.testing.expect(terminal.presentation().transparent_background[0] == null);
+}
