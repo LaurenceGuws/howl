@@ -3566,6 +3566,18 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex app replacement and nearest ancestor inheritance are live
         relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex retains decoded title and message sparsely and replaces omitted fields
+        relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex text allocation failure preserves replacement and eviction state
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: Rex host text allocation failure retains the exact FIFO head for retry
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: Rex buffered PTY reports reach the host in order without pressure drops
+        relation: protocol-family
       details:
         id_grammar: segment ("/" segment)*
         segment: '[A-Za-z0-9_.+-]{1,32}'
@@ -3577,6 +3589,14 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_02:
+          scope: Decoded title/msg retained together in exact-sized per-record allocation, omitted fields replaced, padded/unpadded
+            equivalent text does not allocate or change record urgency. Replacement allocates before mutation; full-index insertion
+            allocates before evicting; OOM preserves prior state and exact queued report for retry at drain boundary. Real worker
+            recovery from OOM is not claimed. Empty vs absent text representation and full grammar remain qualification.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: id-rejection
       section: Records and ids
       level: defined
@@ -3626,6 +3646,19 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.osc.program_status
+      - file: howl-app/src/consequences.zig
+        test: Rex reset generation and bank changes preserve only the appropriate records
+        relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex text allocation failure preserves replacement and eviction state
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_rex_02:
+          scope: Text allocations freed when records removed through clear/reset/user acknowledgement/process exit and eviction;
+            allocator-backed tests check cleanup. Existing subtree semantics unchanged.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: states
       section: States
       level: defined
@@ -3665,10 +3698,32 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: OSC 7501 host consumer observes reset generation without claiming a UI
         relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: Rex prompt ordering preserves fresh reports and cannot be hidden by later shell marks
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex prompt occurrence admission is opt-in and transactional at FIFO capacity
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: Rex buffered PTY reports reach the host in order without pressure drops
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: Rex reset generation and bank changes preserve only the appropriate records
+        relation: protocol-family
       relations:
       - kind: related
         clause: finalterm_shell.prompt-start
         role: lifecycle
+      evidence:
+        howl_qualification_20261126_rex_02:
+          scope: Accepted OSC133 A becomes an ordered typed prompt-start event in the existing status FIFO, not a synthetic
+            OSC7501 body. Preflight before shell-mark mutation; opt-in only. All splits preserve old done/error, clear prior
+            working/blocked, retain fresh status, even with later B/C. Actual buffered PTY service delivers twelve reports in
+            order instead of discarding under pressure. Existing host process-exit/user acknowledgment still apply; full actual
+            process-exit boundary proof remains.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: no-heartbeat
       section: States
       level: must
@@ -3766,6 +3821,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex fragmented rejected reports preserve the real host index and reply lane
         relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex retains decoded title and message sparsely and replaces omitted fields
+        relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex text allocation failure preserves replacement and eviction state
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: Rex host text allocation failure retains the exact FIFO head for retry
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Validate every syntactically admitted title/msg before duplicate selection, including clear. Valid last value
@@ -3773,6 +3837,13 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_02:
+          scope: Host now retains validated decoded title/msg, rather than discarding them. No text allocation for empty reports;
+            no raw text copied into GUI summary or reply lane. Text omitted on replacement clears old text. Presentation is
+            separate and not yet targeted; no claim of all field-size maxima.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: query
       section: Feature detection
       level: must
@@ -3835,6 +3906,18 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex fragmented rejected reports preserve the real host index and reply lane
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex prompt occurrence admission is opt-in and transactional at FIFO capacity
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: Rex buffered PTY reports reach the host in order without pressure drops
+        relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex text allocation failure preserves replacement and eviction state
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: Rex host text allocation failure retains the exact FIFO head for retry
+        relation: protocol-family
       details:
         limits_bytes:
           whole_sequence_including_OSC_and_ST: 4096
@@ -3856,6 +3939,13 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_02:
+          scope: Existing lower OSC body cap unchanged. Bounded eight-entry FIFO preflight prevents partial shell-mark commit
+            on full queue; actual app service retains unread suffix and drains status before more bytes. Host sparse text allocation
+            bounds and failure atomicity proved in scoped tests; exact transport limits remain open.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: record-capacity
       section: Limits
       level: must
@@ -3876,6 +3966,12 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex retains at least 64 independent records and refreshes eviction recency
         relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex text allocation failure preserves replacement and eviction state
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: Rex buffered PTY reports reach the host in order without pressure drops
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Real host Index chooses 64 fixed slots; 64 distinct records coexist, identical report refreshes eviction recency,
@@ -3885,6 +3981,14 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_02:
+          scope: Preserve chosen64 records and LRU; text allocation failure cannot evict a record or advance recency. Actual
+            app buffered service yields to drain ordered status occurrences before parsing further input; twelve distinct reports
+            delivered in order. Sparse text storage keeps fixed Index size at most16KiB; separate bounded text allocations,
+            maximum accepted record text governed by source field and lower current transport bounds.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: record-security
       section: Security
       level: must
@@ -3913,6 +4017,12 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: Rex fragmented rejected reports preserve the real host index and reply lane
         relation: protocol-family
+      - file: howl-app/src/program_status.zig
+        test: Rex retains decoded title and message sparsely and replaces omitted fields
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: Rex host text allocation failure retains the exact FIFO head for retry
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_rex_01:
           scope: Malformed duplicate text cannot mutate or clear retained host state, and rejects emit no reply or consequence.
@@ -3920,6 +4030,13 @@ specifications:
           method: Source-pinned deterministic Zig assertion evidence; root ReleaseFast gates; no FULL promotion
           source_revision: Rex 0.4 2026-10-10
           baseline: 3fd6d62ead57be9d9109c4dc92a87279f44aa3ce
+        howl_qualification_20261126_rex_02:
+          scope: Validated text stored privately in host record, no raw title/msg in current copied GUI summary or child replies.
+            Host allocation failure preserves old summary and pending event; explicit drain retry succeeds. No new notification
+            or external text presentation policy.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: presentation
       section: Motivation / In Rex
       level: defined
@@ -3953,6 +4070,21 @@ specifications:
       - kind: related
         clause: dec_vt420.soft-terminal-reset
         role: reset
+      test_locations:
+      - file: howl-app/src/consequences.zig
+        test: Rex reset generation and bank changes preserve only the appropriate records
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Rex prompt occurrence admission is opt-in and transactional at FIFO capacity
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_rex_02:
+          scope: Real host drain preserves status across alternate bank changes and DECSTR; RIS clears old store and skips stale
+            report/prompt occurrences by reset generation while admitting a fresh post-reset report. No general reset qualification
+            beyond Rex.
+          method: Source-pinned deterministic Zig assertions, native C peer, ReleaseFast root gates; no FULL promotion
+          source_revision: Rex 0.4 2026-10-10
+          baseline: a61abbd891f26fc8f7c190fef08eb4ee91a3b33d
     - id: progress-bridge
       section: Relationship to other sequences
       level: defined
@@ -32187,8 +32319,9 @@ reconciliation:
     verified_subset: Standalone grammar accepts exact128 bytes and rejects129, segment33 and depth9. Real VT-to-host FIFO
       rejects over-limit clear and invalid duplicated text without mutating existing root/child records, reply queue or semantic
       identity for every split and both BEL/ST.
-    not_full_because: Exact all-field/whole-sequence limits and complete record lifecycle, error/pressure and remaining grammar
-      matrix not fully qualified. No title/msg retained by current host Index; no blanket Rex support claim.
+    not_full_because: Exact all-field/whole-sequence limits, remaining grammar and complete process-exit/lifecycle proof not
+      fully qualified. Host text retention, prompt ordering, FIFO pressure and reset/bank behavior now have separate narrow
+      evidence on the Rex source clauses. No blanket Rex support claim.
     boundary: Current bounded Rex grammar and local app store only. No remote-client conformance, UI text presentation or
       optional bridge/notification claim.
 - id: uapi-context-prose-vs-abnf

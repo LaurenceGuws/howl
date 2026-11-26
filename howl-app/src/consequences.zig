@@ -89,7 +89,7 @@ pub fn drain(
             },
             .bell => result.attention = true,
             .program_status => |request| {
-                if (request.reset_generation == current_reset and statuses.apply(request.action))
+                if (request.reset_generation == current_reset and (try statuses.apply(request.action)))
                     result.status_changed = true;
             },
             .notification => |request| if (request.kind != .message) {
@@ -106,7 +106,8 @@ test "real host OSC7501 consumes and publishes status instead of an inert VT eve
     const allocator = std.testing.allocator;
     var terminal = try vt.Terminal.init(allocator, 2, 8);
     defer terminal.deinit();
-    var statuses: host_status.Index = .{};
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
     terminal.setProgramStatusConsumer(true);
     try std.testing.expect((try terminal.feed("\x1b]7501;state=working:id=sync:progress=40\x1b\\")).stateChanged());
     var first = try drain(&terminal, allocator, .dark, &statuses);
@@ -147,7 +148,8 @@ test "real host OSC7501 consumes and publishes status instead of an inert VT eve
 }
 
 test "terminal consequences own latest clipboard, attention and typed reply FIFO" {
-    var statuses: host_status.Index = .{};
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -167,7 +169,8 @@ test "terminal consequences own latest clipboard, attention and typed reply FIFO
 }
 
 test "terminal consequences decline container geometry and window mutation without changing VT" {
-    var statuses: host_status.Index = .{};
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -208,7 +211,8 @@ test "terminal consequences decline container geometry and window mutation witho
 }
 
 test "terminal consequences only request attention for focus and attention notifications" {
-    var statuses: host_status.Index = .{};
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -238,7 +242,8 @@ test "terminal consequences only request attention for focus and attention notif
 }
 
 test "terminal consequence replies pass through PTY before subsequent input" {
-    var statuses: host_status.Index = .{};
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
@@ -279,7 +284,8 @@ test "terminal consequence replies pass through PTY before subsequent input" {
 }
 
 test "clipboard allocation pressure retains the exact FIFO head until successful direct retry" {
-    var statuses: host_status.Index = .{};
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
     const allocator = std.testing.allocator;
     var terminal: vt.Terminal = undefined;
     try vt.Terminal.initWithHistoryInto(&terminal, allocator, 4, 20, 8);
@@ -295,46 +301,49 @@ test "clipboard allocation pressure retains the exact FIFO head until successful
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }
 
-test "host OSC7501 per-pane index remains compact and allocation-free" {
+test "host OSC7501 per-pane index remains compact with sparse text storage" {
     try std.testing.expect(@sizeOf(host_status.Index) <= 16 * 1024);
     try std.testing.expect(@sizeOf(host_status.Summary) <= 64);
     try std.testing.expectEqual(@as(usize, 64), host_status.max_records);
 }
 
 test "host status snapshot includes only validated app name for toast" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     const parse = vt.Terminal.ProgramStatus.parse;
-    try std.testing.expect(index.apply(parse("state=working:id=compile:app=zig:progress=32").?));
+    try std.testing.expect(try index.apply(parse("state=working:id=compile:app=zig:progress=32").?));
     const current = index.summary();
     try std.testing.expectEqualStrings("zig", current.appText());
     try std.testing.expectEqual(@as(?u8, 32), current.progress);
-    try std.testing.expect(index.apply(parse("state=working:id=compile:app=cargo:progress=32").?));
+    try std.testing.expect(try index.apply(parse("state=working:id=compile:app=cargo:progress=32").?));
     try std.testing.expectEqualStrings("cargo", index.summary().appText());
     try std.testing.expect(@sizeOf(host_status.Index) <= 16 * 1024);
     try std.testing.expect(@sizeOf(host_status.Summary) <= 64);
 }
 
 test "host OSC7501 index preserves most urgent program, ties and count" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     const parse = vt.Terminal.ProgramStatus.parse;
-    try std.testing.expect(index.apply(parse("state=working:id=compile:progress=40").?));
-    try std.testing.expect(index.apply(parse("state=blocked:kind=permission:id=install").?));
+    try std.testing.expect(try index.apply(parse("state=working:id=compile:progress=40").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:kind=permission:id=install").?));
     try std.testing.expect(index.summary().state.? == .blocked);
     try std.testing.expect(index.summary().kind.? == .permission);
     try std.testing.expectEqual(@as(u8, 1), index.summary().count);
-    try std.testing.expect(index.apply(parse("state=blocked:kind=question:id=download").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:kind=question:id=download").?));
     try std.testing.expect(index.summary().kind.? == .question);
     try std.testing.expectEqual(@as(u8, 2), index.summary().count);
-    try std.testing.expect(index.apply(parse("state=done:id=compile").?));
+    try std.testing.expect(try index.apply(parse("state=done:id=compile").?));
     try std.testing.expect(index.summary().state.? == .blocked);
-    try std.testing.expect(!index.apply(parse("state=blocked:kind=question:id=download").?));
+    try std.testing.expect(!(try index.apply(parse("state=blocked:kind=question:id=download").?)));
     try std.testing.expect(index.summary().state.? == .blocked);
     try std.testing.expectEqual(@as(u8, 2), index.summary().count);
     try std.testing.expectEqual(@as(usize, 3), index.len);
 }
 
 test "host OSC7501 clear only exact ID descendants and retains neighboring records" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     const parse = vt.Terminal.ProgramStatus.parse;
     for ([_][]const u8{
         "state=working:id=sync",
@@ -342,94 +351,98 @@ test "host OSC7501 clear only exact ID descendants and retains neighboring recor
         "state=done:id=sync/setup/key",
         "state=error:id=synchronize",
         "state=idle:id=other",
-    }) |body| try std.testing.expect(index.apply(parse(body).?));
+    }) |body| try std.testing.expect(try index.apply(parse(body).?));
     try std.testing.expectEqual(@as(usize, 5), index.len);
-    try std.testing.expect(index.apply(parse("state=clear:id=sync/setup").?));
+    try std.testing.expect(try index.apply(parse("state=clear:id=sync/setup").?));
     try std.testing.expectEqual(@as(usize, 3), index.len);
-    try std.testing.expect(index.apply(parse("state=clear:id=sync").?));
+    try std.testing.expect(try index.apply(parse("state=clear:id=sync").?));
     try std.testing.expectEqual(@as(usize, 2), index.len);
     try std.testing.expect(index.summary().state.? == .@"error");
-    try std.testing.expect(!index.apply(parse("state=clear:id=sync").?));
-    try std.testing.expect(index.apply(parse("state=clear").?));
+    try std.testing.expect(!(try index.apply(parse("state=clear:id=sync").?)));
+    try std.testing.expect(try index.apply(parse("state=clear").?));
     try std.testing.expectEqual(@as(usize, 0), index.len);
     try std.testing.expect(index.summary().state == null);
 }
 
 test "host OSC7501 process exit, user-seen and reset lifetimes are independent" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     const parse = vt.Terminal.ProgramStatus.parse;
     try std.testing.expect(!index.syncReset(1));
-    try std.testing.expect(index.apply(parse("state=working:id=active:progress=25").?));
-    try std.testing.expect(index.apply(parse("state=blocked:id=waiting:kind=question").?));
-    try std.testing.expect(index.apply(parse("state=done:id=finished").?));
-    try std.testing.expect(index.apply(parse("state=error:id=failed").?));
-    try std.testing.expect(index.apply(parse("process-exited").?));
+    try std.testing.expect(try index.apply(parse("state=working:id=active:progress=25").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:id=waiting:kind=question").?));
+    try std.testing.expect(try index.apply(parse("state=done:id=finished").?));
+    try std.testing.expect(try index.apply(parse("state=error:id=failed").?));
+    try std.testing.expect(try index.apply(parse("process-exited").?));
     try std.testing.expectEqual(@as(usize, 2), index.len);
     try std.testing.expect(index.summary().state.? == .@"error");
     try std.testing.expect(index.seenByUser());
     try std.testing.expect(index.summary().state == null);
-    try std.testing.expect(index.apply(parse("state=working:id=new").?));
+    try std.testing.expect(try index.apply(parse("state=working:id=new").?));
     try std.testing.expect(index.syncReset(2));
     try std.testing.expect(!index.syncReset(2));
     try std.testing.expectEqual(@as(usize, 0), index.len);
 }
 
 test "host OSC7501 fixed index evicts least recently reported records" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     for (0..host_status.max_records) |i| {
         var buffer: [70]u8 = undefined;
         const text = try std.fmt.bufPrint(&buffer, "state=working:id=job{d}", .{i});
-        try std.testing.expect(index.apply(vt.Terminal.ProgramStatus.parse(text).?));
+        try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse(text).?));
     }
     try std.testing.expectEqual(host_status.max_records, index.len);
     // Re-report unchanged job0, refreshing its eviction recency only.
-    try std.testing.expect(!index.apply(vt.Terminal.ProgramStatus.parse("state=working:id=job0").?));
-    try std.testing.expect(index.apply(vt.Terminal.ProgramStatus.parse("state=blocked:id=new:kind=auth").?));
+    try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=working:id=job0").?)));
+    try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=blocked:id=new:kind=auth").?));
     try std.testing.expectEqual(host_status.max_records, index.len);
-    try std.testing.expect(!index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=job1").?));
-    try std.testing.expect(index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=job0").?));
+    try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=job1").?)));
+    try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=job0").?));
     try std.testing.expectEqual(host_status.max_records - 1, index.len);
 }
 
 test "Rex retains at least 64 independent records and refreshes eviction recency" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     const parse = vt.Terminal.ProgramStatus.parse;
     for (0..64) |i| {
         var buffer: [64]u8 = undefined;
         const body = try std.fmt.bufPrint(&buffer, "state=working:id=job{d}", .{i});
-        try std.testing.expect(index.apply(parse(body).?));
+        try std.testing.expect(try index.apply(parse(body).?));
     }
     try std.testing.expectEqual(@as(usize, 64), index.len);
     try std.testing.expectEqual(@as(u8, 64), index.summary().count);
-    try std.testing.expect(!index.apply(parse("state=working:id=job0").?));
-    try std.testing.expect(index.apply(parse("state=working:id=job64").?));
+    try std.testing.expect(!(try index.apply(parse("state=working:id=job0").?)));
+    try std.testing.expect(try index.apply(parse("state=working:id=job64").?));
     try std.testing.expectEqual(@as(usize, 64), index.len);
-    try std.testing.expect(!index.apply(parse("state=clear:id=job1").?));
-    try std.testing.expect(index.apply(parse("state=clear:id=job0").?));
-    try std.testing.expect(index.apply(parse("state=clear:id=job63").?));
+    try std.testing.expect(!(try index.apply(parse("state=clear:id=job1").?)));
+    try std.testing.expect(try index.apply(parse("state=clear:id=job0").?));
+    try std.testing.expect(try index.apply(parse("state=clear:id=job63").?));
 }
 
 test "Rex app replacement and nearest ancestor inheritance are live" {
-    var index: host_status.Index = .{};
+    var index = host_status.Index.init(std.testing.allocator);
+    defer index.deinit();
     const parse = vt.Terminal.ProgramStatus.parse;
-    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:app=local:kind=permission:progress=42").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:id=build/test/child:app=local:kind=permission:progress=42").?));
     try std.testing.expectEqualStrings("local", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:kind=permission:progress=42").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:id=build/test/child:kind=permission:progress=42").?));
     try std.testing.expectEqualStrings("", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=idle:app=root").?));
+    try std.testing.expect(try index.apply(parse("state=idle:app=root").?));
     try std.testing.expectEqualStrings("root", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=idle:id=build:app=build").?));
+    try std.testing.expect(try index.apply(parse("state=idle:id=build:app=build").?));
     try std.testing.expectEqualStrings("build", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=idle:id=build/test:app=nearest").?));
+    try std.testing.expect(try index.apply(parse("state=idle:id=build/test:app=nearest").?));
     try std.testing.expectEqualStrings("nearest", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=idle:id=build/test").?));
+    try std.testing.expect(try index.apply(parse("state=idle:id=build/test").?));
     try std.testing.expectEqualStrings("build", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=idle:id=build:app=other").?));
+    try std.testing.expect(try index.apply(parse("state=idle:id=build:app=other").?));
     try std.testing.expectEqualStrings("other", index.summary().appText());
-    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:app=override").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:id=build/test/child:app=override").?));
     try std.testing.expectEqualStrings("override", index.summary().appText());
     try std.testing.expect(index.summary().kind == null and index.summary().progress == null);
-    try std.testing.expect(index.apply(parse("state=blocked:id=build/test/child:app=invalid/name").?));
+    try std.testing.expect(try index.apply(parse("state=blocked:id=build/test/child:app=invalid/name").?));
     try std.testing.expectEqualStrings("other", index.summary().appText());
 }
 
@@ -450,7 +463,8 @@ test "Rex fragmented rejected reports preserve the real host index and reply lan
             for (0..wire.len + 1) |split| {
                 var terminal = try vt.Terminal.init(allocator, 2, 8);
                 defer terminal.deinit();
-                var index: host_status.Index = .{};
+                var index = host_status.Index.init(std.testing.allocator);
+                defer index.deinit();
                 terminal.setProgramStatusConsumer(true);
                 const seed = "\x1b]7501;state=working:app=root\x07" ++
                     "\x1b]7501;state=blocked:id=" ++ id ++ ":kind=auth\x1b\\";
@@ -475,4 +489,95 @@ test "Rex fragmented rejected reports preserve the real host index and reply lan
             }
         }
     }
+}
+
+test "Rex prompt ordering preserves fresh reports and cannot be hidden by later shell marks" {
+    const allocator = std.testing.allocator;
+    const seed = "\x1b]7501;state=working:id=old\x07" ++
+        "\x1b]7501;state=blocked:id=waiting\x07" ++
+        "\x1b]7501;state=done:id=done\x07" ++
+        "\x1b]7501;state=error:id=failed\x07";
+    const wire = "\x1b]133;A\x07\x1b]133;B\x07" ++
+        "\x1b]7501;state=blocked:id=new:kind=auth\x1b\\\x1b]133;C\x07";
+    for (0..wire.len + 1) |split| {
+        var terminal = try vt.Terminal.init(allocator, 2, 8);
+        defer terminal.deinit();
+        var index = host_status.Index.init(std.testing.allocator);
+        defer index.deinit();
+        terminal.setProgramStatusConsumer(true);
+        try std.testing.expect((try terminal.feed(seed)).stateChanged());
+        var initial = try drain(&terminal, allocator, .dark, &index);
+        defer initial.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 4), index.len);
+        for ([_][]const u8{ wire[0..split], wire[split..] }) |part| {
+            const fed = try terminal.feed(part);
+            std.debug.assert(!fed.titleChanged());
+            var applied = try drain(&terminal, allocator, .dark, &index);
+            defer applied.deinit(allocator);
+        }
+        try std.testing.expectEqual(@as(usize, 3), index.len);
+        try std.testing.expectEqual(@as(?vt.Terminal.ProgramStatus.Kind, .auth), index.summary().kind);
+        try std.testing.expectEqual(@as(u8, 'C'), terminal.shellMark().kind);
+        try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=old").?)));
+        try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=waiting").?)));
+        try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=new").?));
+        try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=done").?));
+        try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=failed").?));
+        try std.testing.expectEqual(@as(usize, 0), index.len);
+    }
+}
+
+test "Rex host text allocation failure retains the exact FIFO head for retry" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var index = host_status.Index.init(failing.allocator());
+    defer index.deinit();
+    var terminal = try vt.Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    try std.testing.expect((try terminal.feed("\x1b]7501;state=working:id=job:title=T2xk\x07")).stateChanged());
+    var initial = try drain(&terminal, allocator, .dark, &index);
+    defer initial.deinit(allocator);
+    const before = index.summary();
+    try std.testing.expect((try terminal.feed("\x1b]7501;state=done:id=job:msg=TmV3\x07")).stateChanged());
+    const id = terminal.consequenceHead().?.id();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, drain(&terminal, allocator, .dark, &index));
+    try std.testing.expectEqualDeep(before, index.summary());
+    try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    failing.fail_index = std.math.maxInt(usize);
+    var retried = try drain(&terminal, allocator, .dark, &index);
+    defer retried.deinit(allocator);
+    try std.testing.expect(retried.status_changed);
+    try std.testing.expect(index.summary().state.? == .done);
+    try std.testing.expect(terminal.consequenceHead() == null);
+}
+
+test "Rex reset generation and bank changes preserve only the appropriate records" {
+    const allocator = std.testing.allocator;
+    var index = host_status.Index.init(allocator);
+    defer index.deinit();
+    var terminal = try vt.Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+    terminal.setProgramStatusConsumer(true);
+    try std.testing.expect((try terminal.feed("\x1b]7501;state=working:id=old:title=T2xk\x07")).stateChanged());
+    var initial = try drain(&terminal, allocator, .dark, &index);
+    defer initial.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), index.len);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[!p\x1b[?1049l")).stateChanged());
+    var unchanged = try drain(&terminal, allocator, .dark, &index);
+    defer unchanged.deinit(allocator);
+    try std.testing.expect(!unchanged.status_changed);
+    try std.testing.expectEqual(@as(usize, 1), index.len);
+    try std.testing.expect((try terminal.feed("\x1b]133;A\x07\x1b]7501;state=error:id=stale\x07\x1bc\x1b]7501;state=working:id=fresh:msg=TmV3\x07")).stateChanged());
+    var reset = try drain(&terminal, allocator, .dark, &index);
+    defer reset.deinit(allocator);
+    try std.testing.expect(reset.status_changed);
+    try std.testing.expectEqual(@as(usize, 1), index.len);
+    try std.testing.expect(index.summary().state.? == .working);
+    try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=old").?)));
+    try std.testing.expect(!(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=stale").?)));
+    try std.testing.expect(try index.apply(vt.Terminal.ProgramStatus.parse("state=clear:id=fresh").?));
+    try std.testing.expectEqual(@as(usize, 0), index.len);
 }

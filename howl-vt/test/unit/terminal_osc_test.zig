@@ -3308,3 +3308,35 @@ test "OSC 72 caller events use exact framing bounds and opaque base64" {
         .bytes = "",
     } }, std.testing.allocator));
 }
+
+test "Rex prompt occurrence admission is opt-in and transactional at FIFO capacity" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]133;A\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    terminal.setProgramStatusConsumer(true);
+    for (0..8) |_| try feed(&terminal, "\x1b]7501;state=working:id=old\x07");
+    const before = terminal.shellMark();
+    const identity = terminal.semanticSequence();
+    const head = terminal.consequenceHead().?.id();
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]133;A;fresh\x1b\\"));
+    try std.testing.expectEqual(before.generation, terminal.shellMark().generation);
+    try std.testing.expectEqual(identity, terminal.semanticSequence());
+    try std.testing.expectEqual(head, terminal.consequenceHead().?.id());
+    try std.testing.expectEqual(@as(u16, 8), terminal.consequenceCount());
+    try terminal.consumeConsequence(head);
+    try feed(&terminal, "\x1b]133;A;fresh\x1b\\");
+    try std.testing.expectEqual(before.generation + 1, terminal.shellMark().generation);
+    try std.testing.expectEqualStrings("fresh", terminal.shellMark().metadata);
+    for (0..7) |_| {
+        const retained = terminal.consequenceHead().?.program_status;
+        try std.testing.expect(retained.action == .report);
+        try terminal.consumeConsequence(retained.generation);
+    }
+    const prompt = terminal.consequenceHead().?.program_status;
+    try std.testing.expect(prompt.action == .prompt_started);
+    try std.testing.expectEqualStrings("", prompt.payload);
+    try terminal.consumeConsequence(prompt.generation);
+    try std.testing.expect(!terminal.hasPendingProgramStatus());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}

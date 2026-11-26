@@ -58,6 +58,8 @@ pub const Report = struct {
 pub const Action = union(enum) {
     query,
     process_exited,
+    /// An accepted OSC 133 A, ordered with reports; never parsed as OSC 7501.
+    prompt_started,
     clear: []const u8,
     report: Report,
 };

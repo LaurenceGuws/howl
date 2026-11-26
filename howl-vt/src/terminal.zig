@@ -2238,7 +2238,15 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .shell_integration_set => |integration| return vt.properties.replaceShellIntegration(integration.version, integration.shell),
         .working_directory_report => |directory| return vt.properties.replaceWorkingDirectory(directory.kind, directory.value),
         .remote_host_report => |remote_host| return vt.properties.replaceRemoteHost(remote_host),
-        .shell_mark => |mark| try vt.properties.replaceShellMark(mark.kind, mark.status, mark.metadata),
+        .shell_mark => |mark| {
+            if (mark.kind == 'A' and vt.program_status_consumer) {
+                const id = try vt.consequences.prepareProgramStatus();
+                try vt.properties.replaceShellMark(mark.kind, mark.status, mark.metadata);
+                vt.consequences.commitProgramStatus(id, null);
+            } else {
+                try vt.properties.replaceShellMark(mark.kind, mark.status, mark.metadata);
+            }
+        },
         .task_progress => |value| return vt.properties.replaceProgress(value),
         .program_status => |value| {
             // A terminal with no registered host consumer must not claim
@@ -8313,6 +8321,11 @@ pub const Terminal = struct {
     pub fn setProgramStatusConsumer(self: *Terminal, enabled: bool) void {
         self.requireNoPreparedResize();
         self.program_status_consumer = enabled;
+    }
+
+    /// Ordered status occurrences must reach their host, not a lossy pressure fallback.
+    pub fn hasPendingProgramStatus(self: *const Terminal) bool {
+        return self.consequences.program_status_count != 0;
     }
 
     /// Borrows the oldest retained consequence across every protocol family.

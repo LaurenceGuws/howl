@@ -128,7 +128,7 @@ enum hvt_legacy_operation { HVT_LEGACY_TEK_POINT_PLOT=1, HVT_LEGACY_TEK_GRAPH=2,
 enum hvt_dcs_operation { HVT_DCS_XTSETTCAP=1, HVT_DCS_DECUDK=2, HVT_DCS_DECAUPSS=3, HVT_DCS_ITERM_TMUX_HOOK=4, HVT_DCS_ITERM_SSH_HOOK=5, HVT_DCS_ITERM_TMUX_WRAP=6, HVT_DCS_KITTY_REMOTE_COMMAND=7, HVT_DCS_KITTY_OVERLAY_READY=8, HVT_DCS_KITTY_RESULT=9, HVT_DCS_KITTY_PRINT=10, HVT_DCS_KITTY_ECHO=11, HVT_DCS_KITTY_SSH=12, HVT_DCS_KITTY_ASKPASS=13, HVT_DCS_KITTY_CLONE=14, HVT_DCS_KITTY_EDIT=15 };
 enum hvt_string_operation { HVT_STRING_APC=1, HVT_STRING_PM=2, HVT_STRING_SOS=3 };
 /* OSC 7501: default-disabled host effect. These tags are additive to native v2. */
-enum hvt_program_status_action { HVT_PROGRAM_STATUS_NONE=0, HVT_PROGRAM_STATUS_REPORT=1, HVT_PROGRAM_STATUS_CLEAR=2, HVT_PROGRAM_STATUS_PROCESS_EXITED=3 };
+enum hvt_program_status_action { HVT_PROGRAM_STATUS_NONE=0, HVT_PROGRAM_STATUS_REPORT=1, HVT_PROGRAM_STATUS_CLEAR=2, HVT_PROGRAM_STATUS_PROCESS_EXITED=3, HVT_PROGRAM_STATUS_PROMPT_STARTED=4 };
 enum hvt_program_state { HVT_PROGRAM_STATE_NONE=0, HVT_PROGRAM_STATE_IDLE=1, HVT_PROGRAM_STATE_WORKING=2, HVT_PROGRAM_STATE_DONE=3, HVT_PROGRAM_STATE_BLOCKED=4, HVT_PROGRAM_STATE_ERROR=5 };
 enum hvt_program_kind { HVT_PROGRAM_KIND_NONE=0, HVT_PROGRAM_KIND_PERMISSION=1, HVT_PROGRAM_KIND_QUESTION=2, HVT_PROGRAM_KIND_AUTH=3 };
 enum hvt_color_preference { HVT_COLOR_DARK=1, HVT_COLOR_LIGHT=2 };
@@ -161,6 +161,7 @@ typedef struct hvt_request_string { uint8_t operation, _reserved[7]; } hvt_reque
  * returned by hvt_copy_request_payload for the same occurrence_id. App is
  * a validated ASCII name, title/msg are base64 encoded; UTF-8 decoding and
  * presentation policy remain with the native caller.
+ * PROMPT_STARTED is an ordered OSC 133 A lifecycle event with empty payload.
  * No pointer survives consume/reset; old queued reset_generation is retained.
  * This arm fits the original 32-byte v2 union without changing its layout. */
 typedef struct hvt_request_program_status {
@@ -456,7 +457,7 @@ uint32_t hvt_get_interaction(const hvt_terminal *, hvt_interaction *);
  * IDs are scoped to one terminal lifetime; stale/type/required-reply rejection preserves head.
  * Pointer query_requested remains distinct from canonical reply_required. */
 /* Enabled must be 0 or 1. Enabling explicitly opts the VT owner into OSC
- * 7501 capability replies and typed status events; the default is disabled.
+ * 7501 capability replies and typed status/prompt events; the default is disabled.
  * Disabling affects future input, not pending exact-head requests. A host
  * must still apply policy and consume already queued status events. */
 uint32_t hvt_set_program_status_consumer(hvt_terminal *, uint8_t enabled);

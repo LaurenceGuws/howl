@@ -116,15 +116,16 @@ pub const ProgramStatusOccurrence = struct {
     generation: u64,
     reset_generation: u64,
     action: program_status.Action,
-    /// Complete validated original OSC 7501 body, borrowed only until
-    /// terminal mutation or matching consumption. C copies it by exact ID.
+    /// Validated original OSC 7501 body, or empty for an internal prompt boundary.
+    /// Borrowed until terminal mutation or exact-head consumption.
     payload: []const u8,
 };
 
 const ProgramStatusOwned = struct {
     generation: u64,
     reset_generation: u64,
-    payload: []u8,
+    // Null denotes an accepted OSC 133 A; no synthetic wire payload.
+    payload: ?[]u8,
 
     fn view(self: *const ProgramStatusOwned) ProgramStatusOccurrence {
         // The admission path validated and then copied this exact body.
@@ -132,8 +133,8 @@ const ProgramStatusOwned = struct {
         return .{
             .generation = self.generation,
             .reset_generation = self.reset_generation,
-            .action = program_status.parse(self.payload).?,
-            .payload = self.payload,
+            .action = if (self.payload) |body| program_status.parse(body).? else .prompt_started,
+            .payload = self.payload orelse "",
         };
     }
 };
@@ -518,7 +519,7 @@ pub const State = struct {
         }
         for (0..self.program_status_count) |offset| {
             const index = (@as(usize, self.program_status_start) + offset) % program_status_capacity;
-            self.allocator.free(self.program_status_packets[index].payload);
+            if (self.program_status_packets[index].payload) |payload| self.allocator.free(payload);
         }
         for (0..self.file_transfer_count) |offset| {
             const index = (@as(usize, self.file_transfer_start) + offset) % file_transfer_capacity;
@@ -615,9 +616,21 @@ pub const State = struct {
     pub fn retainProgramStatus(self: *State, payload: []const u8) Error!void {
         if (program_status.parse(payload) == null) return error.ConsequenceLimit;
         try ensureRetainedBound(byteCount(payload), program_status.max_body_bytes);
-        if (self.program_status_count == program_status_capacity) return error.ConsequencePressure;
-        const id = try self.nextConsequenceId();
+        const id = try self.prepareProgramStatus();
         const owned = try self.allocator.dupe(u8, payload);
+        self.commitProgramStatus(id, owned);
+    }
+
+    /// Reserve admission before the caller commits a shell mark. No mutation.
+    pub fn prepareProgramStatus(self: *const State) Error!u64 {
+        if (self.program_status_count == program_status_capacity) return error.ConsequencePressure;
+        return self.nextConsequenceId();
+    }
+
+    /// Commit the preflighted occurrence synchronously, after all fallible work.
+    /// Null payload is the internal prompt-start boundary.
+    pub fn commitProgramStatus(self: *State, id: u64, owned: ?[]u8) void {
+        std.debug.assert(self.program_status_count < program_status_capacity);
         const index = (self.program_status_start + self.program_status_count) % program_status_capacity;
         self.commitConsequenceId(id);
         self.program_status_packets[index] = .{
@@ -635,7 +648,7 @@ pub const State = struct {
 
     fn consumeProgramStatus(self: *State) void {
         std.debug.assert(self.program_status_count != 0);
-        self.allocator.free(self.program_status_packets[self.program_status_start].payload);
+        if (self.program_status_packets[self.program_status_start].payload) |payload| self.allocator.free(payload);
         self.program_status_start = (self.program_status_start + 1) % program_status_capacity;
         self.program_status_count -= 1;
     }

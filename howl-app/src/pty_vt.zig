@@ -249,6 +249,7 @@ pub const Core = struct {
         }
         try self.processBuffered(timestamp_ns, &synchronized_output);
         if (self.input_retry_at == null and self.terminal.replyBytes().len == 0 and
+            !self.terminal.hasPendingProgramStatus() and
             self.read_start == self.read_end and readable and !self.stream_closed)
         {
             var read_calls: u8 = 0;
@@ -282,6 +283,9 @@ pub const Core = struct {
     fn processBuffered(self: *Core, timestamp_ns: u64, synced: *vt.Terminal.SynchronizedOutputProgress) ServiceError!void {
         if (self.input_retry_at) |deadline| if (timestamp_ns < deadline) return;
         while (self.read_start < self.read_end or self.terminal.inputBlocked()) {
+            // The worker drains ordered status/prompt events between prefixes.
+            // Unlike disposable attention, these reports cannot be dropped.
+            if (self.terminal.hasPendingProgramStatus()) return;
             const blocked = self.terminal.inputBlocked();
             if (!blocked) {
                 self.collectReplies() catch |failure| switch (failure) {
@@ -365,6 +369,7 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
     const current = machine.consequenceHead() orelse return error.ConsequencePressure;
     const id = current.id();
     switch (current) {
+        .program_status => return error.ConsequencePressure,
         .clipboard => |request| if (request.kind == .query) {
             const replied = machine.replyClipboard(id, "") catch |failure| switch (failure) {
                 // zig-audit: acknowledge unreachable
@@ -748,4 +753,35 @@ test "exited child with queued input still yields final PTY output and exit obse
     // PTY masters may still accept a write after the child has exited; the
     // scripted ChildClosed writer above independently proves that branch.
     if (core.write_closed) try std.testing.expect(core.undelivered_bytes != 0);
+}
+
+test "Rex buffered PTY reports reach the host in order without pressure drops" {
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 8, 0);
+    defer core.terminal.deinit();
+    core.terminal.setProgramStatusConsumer(true);
+    var used: usize = 0;
+    for (0..12) |i| {
+        const body = try std.fmt.bufPrint(core.reads[used..], "\x1b]7501;state=working:id=job{d}\x07", .{i});
+        used += body.len;
+    }
+    core.read_end = used;
+    var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
+    var seen: usize = 0;
+    for (0..13) |_| {
+        try core.processBuffered(1, &synchronized);
+        while (core.terminal.consequenceHead()) |head| {
+            var expected: [16]u8 = undefined;
+            const id = try std.fmt.bufPrint(&expected, "job{d}", .{seen});
+            try std.testing.expectEqualStrings(id, head.program_status.action.report.id);
+            seen += 1;
+            try core.terminal.consumeConsequence(head.id());
+        }
+        if (core.read_end == 0) break;
+    }
+    try std.testing.expectEqual(@as(usize, 12), seen);
+    try std.testing.expectEqual(@as(usize, 0), core.read_end);
 }

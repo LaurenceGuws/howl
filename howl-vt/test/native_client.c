@@ -268,6 +268,14 @@ static int program_status_proof(void) {
         && !current.data.program_status.has_progress);
     CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
 
+    CHECK(feed_all(value,"\033]133;A\007\033]133;B\007")==HVT_OK);
+    CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS
+        && current.data.program_status.action==HVT_PROGRAM_STATUS_PROMPT_STARTED
+        && !current.reply_required && !current.data.program_status.id_len);
+    CHECK(hvt_copy_request_payload(value,current.occurrence_id,bytes,sizeof bytes,&required)==HVT_OK
+        && required==0);
+    CHECK(hvt_consume_request(value,current.occurrence_id)==HVT_OK);
+
     CHECK(feed_all(value,"\033]7501;state=working:id=prior\033\\")==HVT_OK);
     CHECK(hvt_request_head(value,&current)==HVT_OK && current.kind==HVT_REQUEST_PROGRAM_STATUS);
     const uint64_t reset=current.data.program_status.reset_generation;
@@ -571,7 +579,7 @@ _Static_assert(HVT_MAX_IMAGE_STORAGE_BYTES==67108864,"HVT_MAX_IMAGE_STORAGE_BYTE
 
 _Static_assert(HVT_REQUEST_PROGRAM_STATUS==13,"program status additive request kind");
 _Static_assert(HVT_PROGRAM_STATUS_REPORT==1 && HVT_PROGRAM_STATUS_CLEAR==2 &&
-    HVT_PROGRAM_STATUS_PROCESS_EXITED==3,"native action tags");
+    HVT_PROGRAM_STATUS_PROCESS_EXITED==3 && HVT_PROGRAM_STATUS_PROMPT_STARTED==4,"native action tags");
 _Static_assert(sizeof(hvt_request_program_status)==32 &&
     _Alignof(hvt_request_program_status)==8,"native status descriptor layout");
 _Static_assert(offsetof(hvt_request_program_status,reset_generation)==0 &&

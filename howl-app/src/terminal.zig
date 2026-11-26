@@ -309,10 +309,9 @@ const State = struct {
     stopping: bool = false,
     status: Status = .{},
     /// One host-owned per-pane OSC 7501 index, not a second VT database.
-    program_status_index: host_status.Index = .{},
+    program_status_index: host_status.Index,
     /// A user-input acknowledgment may change the header without changing VT.
     program_status_changed_pending: bool = false,
-    shell_mark_seen: u64 = 0,
     pending_colors: ?vt.Terminal.ColorDefaults = null,
     pending_cursor: ?vt.Terminal.CursorStyle = null,
     color_preference: vt.Terminal.ColorSchemePreference = .dark,
@@ -381,6 +380,7 @@ const State = struct {
             .core = core,
             .projection = output_owner,
             .history_capacity = launch.history_rows,
+            .program_status_index = host_status.Index.init(allocator),
             .color_preference = desktop.colorPreference(launch.color_defaults.background),
             .wake_fd = fd,
             .event_type = event_type,
@@ -398,6 +398,7 @@ const State = struct {
         self.wake();
         if (self.thread) |thread| thread.join();
         self.cancelPending();
+        self.program_status_index.deinit();
         closeWake(self.wake_fd);
         if (self.clipboard) |bytes| self.allocator.free(bytes);
         self.projection.destroy();
@@ -879,12 +880,6 @@ const State = struct {
         if (host.attention and !self.attention.swap(true, .acq_rel)) host_notify = true;
         if (host_notify) self.notify();
         const observation = self.observe();
-        const mark = observation.shellMark();
-        if (mark.generation != self.shell_mark_seen) {
-            self.shell_mark_seen = mark.generation;
-            if (mark.kind == 'A' and self.program_status_index.processExited())
-                program_status_dirty = true;
-        }
         const live = observation.semanticView(0);
         self.viewport.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.output_gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
@@ -1227,6 +1222,7 @@ test "projection retry clears only worker output blockage and restores a credit"
     const before = core.terminal.observation().semanticSequence();
     var state: State = .{
         .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
         .io = threaded.io(),
         .core = core,
         .projection = undefined,
@@ -1238,6 +1234,7 @@ test "projection retry clears only worker output blockage and restores a credit"
         .output_gate = .{ .pending = false },
         .credit = .init(false),
     };
+    defer state.program_status_index.deinit();
     try state.apply(.retry_projection);
     try std.testing.expect(state.blocked_presentation == null);
     try std.testing.expect(state.status.presentation_failure == null);
@@ -1259,6 +1256,7 @@ test "selected terminal text survives ordinary output but not admitted CSI line 
     defer core.terminal.deinit();
     var state: State = .{
         .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
         .io = threaded.io(),
         .core = &core,
         .projection = undefined,
@@ -1266,6 +1264,7 @@ test "selected terminal text survives ordinary output but not admitted CSI line 
         .wake_fd = -1,
         .event_type = 0,
     };
+    defer state.program_status_index.deinit();
     try std.testing.expect((try core.terminal.feed("alpha")).stateChanged());
     const context = selection.Context.fromView(core.terminal.semanticView(0));
     try state.applySelection(.{
@@ -1324,6 +1323,7 @@ test "selected terminal text invalidates only when selected rows are rewritten" 
     defer core.terminal.deinit();
     var state: State = .{
         .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
         .io = threaded.io(),
         .core = &core,
         .projection = undefined,
@@ -1331,6 +1331,7 @@ test "selected terminal text invalidates only when selected rows are rewritten" 
         .wake_fd = -1,
         .event_type = 0,
     };
+    defer state.program_status_index.deinit();
     try std.testing.expect((try core.terminal.feed("alpha\x1b[2;1Hbeta")).stateChanged());
     try state.applySelection(.{
         .serial = 1,
@@ -1399,6 +1400,7 @@ test "full PTY outbox retains accepted input in FIFO order until capacity return
     defer closeWake(wake_fd);
     var state: State = .{
         .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
         .io = threaded.io(),
         .core = core,
         .projection = undefined,
@@ -1406,6 +1408,7 @@ test "full PTY outbox retains accepted input in FIFO order until capacity return
         .wake_fd = wake_fd,
         .event_type = 0,
     };
+    defer state.program_status_index.deinit();
     defer state.cancelPending();
     try state.submit(.{ .input = .{ .bytes = "FIRST_123456789" } });
     var configuration: Configuration = .{ .config = testPresentation(), .surface = null };
@@ -1442,6 +1445,7 @@ test "borrowed-control rejection compacts a wrapped queue without retiring later
     defer closeWake(wake_fd);
     var state: State = .{
         .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
         .io = threaded.io(),
         .core = core,
         .projection = undefined,
@@ -1450,6 +1454,7 @@ test "borrowed-control rejection compacts a wrapped queue without retiring later
         .event_type = 0,
         .head = queue_limit - 2,
     };
+    defer state.program_status_index.deinit();
     defer state.cancelPending();
     try state.submit(.{ .input = .{ .bytes = "A" } });
     var configuration: Configuration = .{ .config = testPresentation(), .surface = null };
@@ -1484,6 +1489,7 @@ test "late accepted input after PTY write closure retires without killing read-s
     defer closeWake(wake_fd);
     var state: State = .{
         .allocator = std.testing.allocator,
+        .program_status_index = host_status.Index.init(std.testing.allocator),
         .io = threaded.io(),
         .core = core,
         .projection = undefined,
@@ -1491,6 +1497,7 @@ test "late accepted input after PTY write closure retires without killing read-s
         .wake_fd = wake_fd,
         .event_type = 0,
     };
+    defer state.program_status_index.deinit();
     defer state.cancelPending();
     try state.submit(.{ .input = .{ .bytes = "LATE\n" } });
     try state.submit(.{ .input = .{ .paste = "SECOND" } });

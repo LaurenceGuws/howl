@@ -1,7 +1,8 @@
 //! Bounded OSC 7501 status index owned by one Howl terminal worker.
 //! VT validates protocol bytes and transports typed events. This host owns
 //! per-pane status identity, recency, clear/seen/exit/reset lifetimes,
-//! and a tiny copied UI summary. No renderer access, allocation or raw messages.
+//! and a tiny copied UI summary. Text storage is sparse, bounded and host-owned;
+//! raw text never enters the GUI summary or the child reply lane.
 const std = @import("std");
 const vt = @import("howl_vt");
 
@@ -38,6 +39,8 @@ const Record = struct {
     progress: ?u8,
     changed_at: u64,
     reported_at: u64,
+    text: []u8,
+    title_len: u16,
 
     fn idBytes(self: *const Record) []const u8 {
         return self.id[0..self.id_len];
@@ -46,32 +49,57 @@ const Record = struct {
     fn appText(self: *const Record) []const u8 {
         return self.app[0..self.app_len];
     }
+
+    fn titleText(self: *const Record) []const u8 {
+        return self.text[0..self.title_len];
+    }
+
+    fn messageText(self: *const Record) []const u8 {
+        return self.text[self.title_len..];
+    }
 };
 
 /// Fixed per-window host status store. No app-global state or activity clock.
 pub const Index = struct {
+    allocator: std.mem.Allocator,
     records: [max_records]Record = undefined,
     len: usize = 0,
     sequence: u64 = 0,
     reset_generation: u64 = 0,
+
+    /// Empty indexes own no text allocations.
+    pub fn init(allocator: std.mem.Allocator) Index {
+        return .{ .allocator = allocator };
+    }
+
+    /// Releases all retained record text through the initializer allocator.
+    pub fn deinit(self: *Index) void {
+        self.releaseRecords();
+        self.* = undefined;
+    }
+
+    fn releaseRecords(self: *Index) void {
+        for (self.records[0..self.len]) |record| self.allocator.free(record.text);
+        self.len = 0;
+    }
 
     /// Discards prior process status when VT signals a hard reset.
     /// Caller must ignore old queued events with earlier reset tags.
     pub fn syncReset(self: *Index, current: u64) bool {
         if (self.reset_generation == current) return false;
         const changed = self.len != 0;
-        self.len = 0;
+        self.releaseRecords();
         self.reset_generation = current;
         return changed;
     }
 
     /// Applies a validated, borrowed OSC 7501 event within this host owner.
-    pub fn apply(self: *Index, action: status.Action) bool {
+    pub fn apply(self: *Index, action: status.Action) std.mem.Allocator.Error!bool {
         return switch (action) {
             .query => false,
             .report => |report| self.applyReport(report),
             .clear => |id| self.clear(id),
-            .process_exited => self.processExited(),
+            .process_exited, .prompt_started => self.processExited(),
         };
     }
 
@@ -162,18 +190,37 @@ pub const Index = struct {
         return self.sequence;
     }
 
-    fn applyReport(self: *Index, report: status.Report) bool {
+    fn applyReport(self: *Index, report: status.Report) std.mem.Allocator.Error!bool {
         std.debug.assert(report.id.len <= 128);
-        const now = self.nextSequence();
-        var index: usize = undefined;
-        if (self.find(report.id)) |existing| {
-            index = existing;
+        var title_scratch: [status.max_msg_bytes]u8 = undefined;
+        var msg_scratch: [status.max_msg_bytes]u8 = undefined;
+        // The VT admission path validated both fields before retaining the event.
+        const title = report.titleText(&title_scratch).?;
+        const msg = report.messageText(&msg_scratch).?;
+        const existing = self.find(report.id);
+        if (existing) |index| {
             const old = &self.records[index];
             const changed = old.state != report.state or
                 old.kind != report.kind or old.progress != report.progress or
-                !std.mem.eql(u8, old.appText(), report.app);
-            old.reported_at = now;
-            if (!changed) return false;
+                !std.mem.eql(u8, old.appText(), report.app) or
+                !std.mem.eql(u8, old.titleText(), title) or
+                !std.mem.eql(u8, old.messageText(), msg);
+            if (!changed) {
+                old.reported_at = self.nextSequence();
+                return false;
+            }
+        }
+
+        // One exact-sized allocation per nonempty record. Prepare it before
+        // changing recency, freeing an existing record, or evicting a victim.
+        const text = try self.allocator.alloc(u8, title.len + msg.len);
+        @memcpy(text[0..title.len], title);
+        @memcpy(text[title.len..], msg);
+        const now = self.nextSequence();
+        var index: usize = undefined;
+        if (existing) |found| {
+            index = found;
+            self.allocator.free(self.records[index].text);
         } else if (self.len < max_records) {
             index = self.len;
             self.len += 1;
@@ -182,17 +229,22 @@ pub const Index = struct {
             for (self.records[1..self.len], 1..) |record, i| {
                 if (record.reported_at < self.records[index].reported_at) index = i;
             }
+            self.allocator.free(self.records[index].text);
         }
         const entry = &self.records[index];
+        entry.* = .{
+            .id_len = @intCast(report.id.len),
+            .app_len = @intCast(report.app.len),
+            .state = report.state,
+            .kind = report.kind,
+            .progress = report.progress,
+            .changed_at = now,
+            .reported_at = now,
+            .text = text,
+            .title_len = @intCast(title.len),
+        };
         @memcpy(entry.id[0..report.id.len], report.id);
-        entry.id_len = @intCast(report.id.len);
         @memcpy(entry.app[0..report.app.len], report.app);
-        entry.app_len = @intCast(report.app.len);
-        entry.state = report.state;
-        entry.kind = report.kind;
-        entry.progress = report.progress;
-        entry.changed_at = now;
-        entry.reported_at = now;
         return true;
     }
 
@@ -214,6 +266,7 @@ pub const Index = struct {
 
     fn remove(self: *Index, index: usize) void {
         std.debug.assert(index < self.len);
+        self.allocator.free(self.records[index].text);
         self.len -= 1;
         if (index < self.len) self.records[index] = self.records[self.len];
     }
@@ -227,4 +280,65 @@ fn rank(state: status.State) u8 {
         .@"error" => 4,
         .blocked => 5,
     };
+}
+
+test "Rex retains decoded title and message sparsely and replaces omitted fields" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var index = Index.init(failing.allocator());
+    defer index.deinit();
+    const parse = status.parse;
+    try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
+    try std.testing.expect(try index.apply(parse("state=working:id=job").?));
+    try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
+    try std.testing.expect(try index.apply(parse("state=working:id=job:title=UGxhbg==:msg=QXBwbHk=").?));
+    const record = &index.records[index.find("job").?];
+    try std.testing.expectEqualStrings("Plan", record.titleText());
+    try std.testing.expectEqualStrings("Apply", record.messageText());
+    try std.testing.expectEqual(@as(usize, 9), record.text.len);
+    const allocations = failing.alloc_index;
+    try std.testing.expect(!(try index.apply(parse("state=working:id=job:title=UGxhbg:msg=QXBwbHk").?)));
+    try std.testing.expectEqual(allocations, failing.alloc_index);
+    try std.testing.expect(try index.apply(parse("state=working:id=job:title=TmV3").?));
+    try std.testing.expectEqualStrings("New", record.titleText());
+    try std.testing.expectEqualStrings("", record.messageText());
+    try std.testing.expect(try index.apply(parse("state=working:id=job").?));
+    try std.testing.expectEqualStrings("", record.titleText());
+    try std.testing.expectEqualStrings("", record.messageText());
+    try std.testing.expectEqual(@as(usize, 0), record.text.len);
+    try std.testing.expect(index.syncReset(1));
+    try std.testing.expectEqual(@as(usize, 0), index.len);
+}
+
+test "Rex text allocation failure preserves replacement and eviction state" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var index = Index.init(failing.allocator());
+    defer index.deinit();
+    const parse = status.parse;
+    try std.testing.expect(try index.apply(parse("state=working:id=job0:title=T2xk:msg=Qm9keQ==").?));
+    for (1..max_records) |i| {
+        var buffer: [64]u8 = undefined;
+        const body = try std.fmt.bufPrint(&buffer, "state=working:id=job{d}", .{i});
+        try std.testing.expect(try index.apply(parse(body).?));
+    }
+    const before = index.sequence;
+    const record = &index.records[index.find("job0").?];
+    const reported = record.reported_at;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, index.apply(parse("state=done:id=job0:title=TmV3").?));
+    try std.testing.expectEqual(before, index.sequence);
+    try std.testing.expectEqual(reported, record.reported_at);
+    try std.testing.expectEqualStrings("Old", record.titleText());
+    try std.testing.expectEqualStrings("Body", record.messageText());
+    try std.testing.expectError(error.OutOfMemory, index.apply(parse("state=done:id=new:msg=TmV3").?));
+    try std.testing.expectEqual(before, index.sequence);
+    try std.testing.expectEqual(max_records, index.len);
+    try std.testing.expect(index.find("new") == null);
+    try std.testing.expectEqualStrings("Old", record.titleText());
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expect(try index.apply(parse("state=done:id=new:msg=TmV3").?));
+    try std.testing.expect(index.find("job0") == null);
+    try std.testing.expectEqualStrings("New", index.records[index.find("new").?].messageText());
+    try std.testing.expect(index.seenByUser());
+    try std.testing.expect(index.processExited());
+    try std.testing.expectEqual(@as(usize, 0), index.len);
 }
