@@ -124,6 +124,8 @@ pub const Cell = struct {
     vertical_align: u2 = 0,
     horizontal_align: u2 = 0,
     semantic_width: bool = false,
+    // Application-assigned OSC 66 occupancy must survive later selectors.
+    explicit_width: bool = false,
     attrs: CellAttrs,
 };
 

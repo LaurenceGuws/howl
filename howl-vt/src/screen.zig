@@ -3107,6 +3107,55 @@ pub const Screen = struct {
             self.cursor.setColByClient(right - physical_width + 1);
             changed = true;
         }
+        if (self.nonsemantic_clusters_possible) {
+            const cells = self.cells orelse return changed;
+            // Search the whole incoming top-row span. A lower continuation
+            // is protected even with DECAWM disabled. Each successful skip
+            // advances the candidate; each line feed commits before retry.
+            var placed = false;
+            for (0..@as(usize, self.rows) + 1) |_| {
+                var candidate = self.cursor.col;
+                while (@as(u32, candidate) + physical_width <= @as(u32, right) + 1) {
+                    var next = candidate;
+                    for (candidate..candidate + physical_width) |col| {
+                        const observed = cells[self.rowStart(self.cursor.row) + col];
+                        if (observed.y == 0) continue;
+                        next = @intCast(col -| observed.x + observed.width);
+                        std.debug.assert(next > col);
+                        break;
+                    }
+                    if (next == candidate) {
+                        if (candidate != self.cursor.col) {
+                            self.cursor.setColByClient(candidate);
+                            changed = true;
+                        }
+                        placed = true;
+                        break;
+                    }
+                    candidate = next;
+                }
+                if (placed) break;
+                // Below the scroll region at the physical bottom a line
+                // feed cannot move. Use the author's last-line fallback.
+                if (self.cursor.row == self.rows - 1 and self.cursor.row != self.scrollBottom()) {
+                    self.cursor.setColByClient(right - physical_width + 1);
+                    changed = true;
+                    placed = true;
+                    break;
+                }
+                if (grow and self.cursor.row == self.scrollBottom()) {
+                    history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        error.Capacity => return error.HistoryCapacity,
+                    };
+                }
+                self.setRowWrapped(self.cursor.row, true);
+                self.lineFeedWithHistory(&history);
+                self.cursor.setColByClient(left);
+                changed = true;
+            }
+            std.debug.assert(placed);
+        }
         const bottom = self.scrollBottom();
         if (self.cursor.row + height - 1 > bottom) {
             const full_width = !self.left_right_margin_mode or
@@ -3156,8 +3205,10 @@ pub const Screen = struct {
         var row = top;
         while (row < top + height) : (row += 1) {
             var col = start_col;
-            while (col < start_col + physical_width) : (col += 1)
-                changed = self.clearClusterAt(row, col, false) or changed;
+            while (col < start_col + physical_width) : (col += 1) {
+                const observed = cells[self.rowStart(row) + col];
+                changed = self.clearClusterAt(row, col, observed.x != 0 or observed.y != 0) or changed;
+            }
         }
 
         var cell = Cell{
@@ -3169,6 +3220,7 @@ pub const Screen = struct {
             .subscale_d = parsed.subscale_d,
             .vertical_align = parsed.vertical_align,
             .horizontal_align = parsed.horizontal_align,
+            .explicit_width = parsed.width != 0,
             .attrs = self.current_attrs,
         };
         row = top;
@@ -3360,7 +3412,10 @@ pub const Screen = struct {
         const pos = self.previousLeadCellPos() orelse return null;
         const cells = self.cells orelse return null;
         const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
-        const anchor_row = pos.row -| observed.y;
+        // A retained continuation whose lead is already in immutable
+        // history is not an invitation to append to an unrelated live cell.
+        if (observed.y > pos.row) return null;
+        const anchor_row = pos.row - observed.y;
         const anchor_col = pos.col -| observed.x;
         const idx = self.rowStart(anchor_row) + @as(u32, anchor_col);
         const lead_cell = &cells[@intCast(idx)];
@@ -3402,8 +3457,17 @@ pub const Screen = struct {
             if (grow) return error.ScalarCapacity;
             return false;
         }
-        const changes_presentation = if (previous) |last| last.isEmojiPresentationBase() else false;
-        if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
+        // Width-changing helpers operate on ordinary one-row geometry.
+        // Never reinterpret application width or collapse a scaled rectangle.
+        const lead_height = lead_cell.height;
+        const can_resize = !lead_cell.explicit_width and lead_height == 1 and
+            lead_cell.subscale_n == 0 and lead_cell.subscale_d == 0 and
+            lead_cell.vertical_align == 0 and lead_cell.horizontal_align == 0;
+        const changes_presentation = can_resize and (if (previous) |last| last.isEmojiPresentationBase() else false);
+        const widens = lead_cell.width == 1 and
+            ((cp == 0xfe0f and changes_presentation) or
+                (can_resize and properties.isSpacingMark() and properties.width() > 0));
+        if (widens and
             self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
         {
             return false;
@@ -3412,7 +3476,7 @@ pub const Screen = struct {
         // Widening at the right edge can scroll. Reserve before appending the
         // selector or moving the existing grapheme so retry cannot duplicate it.
         var history: ?history_store_mod.Store.Prepared = null;
-        if (grow and cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
+        if (grow and widens and
             self.auto_wrap and anchor_col == self.cursorRightBoundaryAt(anchor_row, anchor_col) and
             self.cursor.row == self.scrollBottom())
         {
@@ -3449,7 +3513,7 @@ pub const Screen = struct {
         }
         lead_cell.combining_len = combining_index + 1;
         var final_width = lead_cell.width;
-        if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation) {
+        if (widens) {
             self.widenPresentation(anchor_row, anchor_col, &history);
             final_width = 2;
         } else if (cp == 0xfe0e and lead_cell.width == 2 and changes_presentation) {
@@ -3465,9 +3529,7 @@ pub const Screen = struct {
         }
         // Combining and presentation-width edits are uncommon enough that the
         // scan hint can safely fall back to the canonical full-row calculation.
-        self.forgetRowScanEnd(anchor_row);
-        self.markRowChanged(anchor_row);
-        return true;
+        return self.noteRowRangeChange(anchor_row, anchor_row + lead_height - 1, true);
     }
 
     fn widenPresentation(self: *Screen, row: u16, col: u16, history: *?history_store_mod.Store.Prepared) void {
@@ -9561,4 +9623,55 @@ test "zero-count scroll still cancels pending wrap after multicell admission" {
     try std.testing.expect(screen.scrollUpRegion(0, 2, 0));
     try std.testing.expect(!screen.wrap_pending);
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+}
+
+test "OSC 66 explicit width ownership survives compact history restore and reflow" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("w=1;☺"));
+    try std.testing.expect(screen.cellInfoAt(0, 0).explicit_width);
+    try std.testing.expect(try screen.tryScrollUpRegionOne(0, 1));
+    try std.testing.expect(screen.historyCellAt(0, 0).explicit_width);
+    try std.testing.expect(screen.scrollDownFromHistory(1).changed);
+    try screen.resize(std.testing.allocator, 3, 6);
+    var found = false;
+    for (0..screen.rows) |row| {
+        for (0..screen.cols) |col| {
+            const r: u16 = @intCast(row);
+            const c: u16 = @intCast(col);
+            const cell = screen.cellInfoAt(r, c);
+            if (cell.codepoint != 0x263a) continue;
+            try std.testing.expect(!found);
+            found = true;
+            try std.testing.expect(cell.explicit_width);
+            screen.cursor.setPositionByClient(r, c + 1);
+            try std.testing.expect(screen.writeCodepoint(0xfe0f));
+            try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(r, c).width);
+            try std.testing.expectEqual(@as(u16, c + 1), screen.cursor.col);
+            var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+            try std.testing.expectEqualSlices(u32, &.{ 0x263a, 0xfe0f }, screen.cellScalarsAt(r, c, &scalars));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "OSC 66 later combining preserves scaled rectangle and invalidates every strip" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 4, 8);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expect(screen.writeSizedText("s=2;☺"));
+    const first = screen.rowGeneration(0).?;
+    const second = screen.rowGeneration(1).?;
+    try std.testing.expect(screen.writeCodepoint(0xfe0e));
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, &.{ 0x263a, 0xfe0e }, screen.cellScalarsAt(0, 0, &scalars));
+    for (0..2) |row| for (0..2) |col| {
+        const cell = screen.cellInfoAt(@intCast(row), @intCast(col));
+        try std.testing.expectEqual(@as(u8, 2), cell.width);
+        try std.testing.expectEqual(@as(u8, 2), cell.height);
+        try std.testing.expectEqual(@as(u8, @intCast(row)), cell.y);
+        try std.testing.expectEqual(@as(u8, @intCast(col)), cell.x);
+    };
+    try std.testing.expect(screen.rowGeneration(0).? > first);
+    try std.testing.expect(screen.rowGeneration(1).? > second);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
 }

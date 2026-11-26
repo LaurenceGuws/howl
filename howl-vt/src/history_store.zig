@@ -19,7 +19,8 @@ const ColdMeta = packed struct(u64) {
     vertical_align: u2,
     horizontal_align: u2,
     semantic_width: bool,
-    _padding: u14 = 0,
+    explicit_width: bool,
+    _padding: u13 = 0,
 };
 
 const ColdCell = struct {
@@ -826,6 +827,7 @@ pub const Store = struct {
                         .vertical_align = value.vertical_align,
                         .horizontal_align = value.horizontal_align,
                         .semantic_width = value.semantic_width,
+                        .explicit_width = value.explicit_width,
                     },
                 };
             }
@@ -879,6 +881,7 @@ pub const Store = struct {
             .vertical_align = cold.meta.vertical_align,
             .horizontal_align = cold.meta.horizontal_align,
             .semantic_width = cold.meta.semantic_width,
+            .explicit_width = cold.meta.explicit_width,
             .attrs = attrs,
         };
     }

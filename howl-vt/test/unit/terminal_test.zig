@@ -2148,3 +2148,85 @@ test "OSC 66 implicit selectors and spacing marks measure clusters while explici
     try std.testing.expectEqual(@as(u8, 3), explicit.cellInfoAt(1, 1).width);
     try std.testing.expectEqualSlices(u21, &.{ 0x1f610, 0xfe0e }, explicit.cellScalarsAt(1, 1, &scalars));
 }
+
+test "OSC 66 explicit width survives later selectors and ordinary replacement retires the width lock" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 12, 4);
+    defer terminal.deinit();
+    var scalars: [24]u21 = undefined;
+    try feedChanged(&terminal, "\x1b]66;w=1;☺\x07\u{fe0f}A");
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, 0).width);
+    try std.testing.expectEqualSlices(u21, &.{ 0x263a, 0xfe0f }, view.cellScalarsAt(0, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 1));
+
+    try feedChanged(&terminal, "\x1b[2;1H\x1b]66;w=2;😐\x07\u{fe0e}B");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(1, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, 1).x);
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f610, 0xfe0e }, view.cellScalarsAt(1, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(1, 2));
+
+    try feedChanged(&terminal, "\x1b[3;1H\x1b]66;w=1;X\x07\x1b[3;1HAB\x1b[3;1H☺\u{fe0f}");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(2, 0).width);
+    try std.testing.expectEqualSlices(u21, &.{ 0x263a, 0xfe0f }, view.cellScalarsAt(2, 0, &scalars));
+}
+
+test "OSC 66 sized writes preserve lower-row blocks and erase top interiors with spaces" {
+    for ([_]bool{ false, true }) |wrap| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 5, 12, 0);
+        defer terminal.deinit();
+        if (!wrap) try feed(&terminal, "\x1b[?7l");
+        try feedChanged(&terminal, "\x1b]66;s=2:w=2;A\x07\x1b]66;s=2:w=2;B\x07");
+        // The incoming span begins in A's lower row; it must skip both A and B.
+        try feedChanged(&terminal, "\x1b[2;3H\x1b]66;w=2;C\x07");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 4));
+        try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(1, 8));
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, 7).y);
+        try std.testing.expectEqual(@as(u16, 10), view.cursor_col);
+        // Top-row interior overwrite uses spaces, not erased zero cells.
+        try feedChanged(&terminal, "\x1b[1;2H\x1b]66;w=1;D\x07");
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, ' '), after.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'D'), after.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, ' '), after.cellAt(1, 3));
+        try std.testing.expectEqual(@as(u21, 'B'), after.cellAt(0, 4));
+    }
+}
+
+test "OSC 66 later positive spacing marks resize only unlocked ordinary geometry" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "\x1b]66;w=1;\u{e01}\x07\u{e33}A");
+    var view = terminal.semanticView(0);
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, 0).width);
+    try std.testing.expectEqualSlices(u21, &.{ 0xe01, 0xe33 }, view.cellScalarsAt(0, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 1));
+    try feedChanged(&terminal, "\x1b[2;1H\u{e01}\u{e33}B\x1b[3;1H\x1b]66;;\u{e81}\x07\u{eb3}C");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(1, 0).width);
+    try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(2, 0).width);
+    try std.testing.expectEqual(@as(u21, 'C'), view.cellAt(2, 2));
+}
+
+test "OSC 66 lower-row span skip crosses the right margin even without autowrap" {
+    for ([_]bool{ false, true }) |wrap| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 0);
+        defer terminal.deinit();
+        if (!wrap) try feed(&terminal, "\x1b[?7l");
+        try feedChanged(&terminal, "\x1b[1;3H\x1b]66;s=2:w=3;A\x07");
+        // The starting cell is free, but the incoming width overlaps a lower
+        // continuation. There is no remaining three-cell span on this row.
+        try feedChanged(&terminal, "\x1b[2;1H\x1b]66;w=3;B\x07");
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, 7).y);
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+    }
+}

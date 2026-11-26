@@ -10828,6 +10828,25 @@ specifications:
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
         note: Narrow regression evidence at a89ed30; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 sized writes preserve lower-row blocks and erase top interiors with spaces
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 explicit width ownership survives compact history restore and reflow
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 later combining preserves scaled rectangle and invalidates every strip
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_03:
+          scope: Cell ownership, exact compact-history restore/reflow and selected overwrite/combining mutations. Explicit
+            width metadata travels with the cell rather than a separate mutable map. Cold record remains 32 bytes; visible
+            Cell 72 bytes, alignment4 in local x86_64 probe. ICH/DCH/ECH/ED/EL/IL/DL matrices remain separately qualified
+            only where evidence exists.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c draw_combining_char/move_cursor_past_multicell;
+            VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
+            FULL promotion
+          baseline: 86dbb20a16298396777116670570415633e704ee
     - id: detection
       section: Detecting if the terminal supports this protocol
       level: defined
@@ -10925,6 +10944,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: multi-row OSC 66 resumes after a wrap and partial history admission
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 lower-row span skip crosses the right margin even without autowrap
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 sized writes preserve lower-row blocks and erase top interiors with spaces
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_01:
           scope: Pending right-margin wrap honoured before next sized block, including width1 after ordinary output and successive
@@ -10935,12 +10960,49 @@ specifications:
             and screen.c; VT red-green, explicit geometry matrix and CPR split proof, retained pressure tests; no blanket
             FULL promotion
           baseline: a54d459fe81985a580470341aa21b573dbeb3660
+        howl_qualification_20261126_text_size_03:
+          scope: Sized incoming width scans the full candidate top-row span, skipping lower-row continuations to find fitting
+            placement; verified crossing line boundary with wrapping enabled and disabled. Existing ordinary right-margin/reflow
+            proofs retained. Not a complete claim for vertical margins, DEC line geometry, history pressure or ordinary character
+            writes.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c draw_combining_char/move_cursor_past_multicell;
+            VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
+            FULL promotion
+          baseline: 86dbb20a16298396777116670570415633e704ee
     - id: overwrite-order
       section: docs/text-sizing-protocol.rst:234-253
       level: defined
       wire: text / OSC 66 intersecting multicell block
       rule: 'Priority: combining attaches to existing block; top-left overwrite erases entire block; other top-row overwrite
         replaces entire block by spaces; later-row overwrite skips past occupied cells before writing independently of DECAWM.'
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 sized writes preserve lower-row blocks and erase top interiors with spaces
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 lower-row span skip crosses the right margin even without autowrap
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width survives later selectors and ordinary replacement retires the width lock
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 later combining preserves scaled rectangle and invalidates every strip
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_text_size_03:
+          scope: Sized incoming span skips existing lower-row continuations before overwriting; repeated adjacent skips and
+            crossing right margin even with DECAWM disabled verified. Top-row interior overwrite replaces intersected block
+            with spaces; top-left clears. Existing ordinary overwrite witness linked; no general claim for ordinary multi-block
+            spans, scroll-pressure or geometry below active margins. Combining attaches in selected later ordinary stream
+            cases, preserves scaled rectangle and marks all visible strips. A lead already in immutable history is not mistaken
+            for an unrelated live cell.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c draw_combining_char/move_cursor_past_multicell;
+            VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
+            FULL promotion
+          baseline: 86dbb20a16298396777116670570415633e704ee
     - id: segmentation
       section: docs/text-sizing-protocol.rst:353-425
       level: defined
@@ -10966,6 +11028,18 @@ specifications:
       - file: howl-vt/src/screen.zig
         test: growing OSC 66 resumes at the first uncommitted cluster
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width survives later selectors and ordinary replacement retires the width lock
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 later positive spacing marks resize only unlocked ordinary geometry
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 later combining preserves scaled rectangle and invalidates every strip
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 explicit width ownership survives compact history restore and reflow
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_02:
           scope: OSC66 natural-width admission and emission now share one bounded cluster iterator driven by existing generated
@@ -10981,6 +11055,15 @@ specifications:
             property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
             byte-offset/admission and retained pressure proofs; no blanket FULL promotion
           baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
+        howl_qualification_20261126_text_size_03:
+          scope: Selected ordinary scalar continuation after completed OSC66 joins stored grapheme without destroying its
+            explicit-width provenance. Positive-width Thai/Lao SpacingMark widens unlocked ordinary geometry only; explicit
+            application width stays fixed. Later scaled combining invalidates all visible strips. Malformed UTF8, generic
+            zero-width boundary and previous wrapped-line attachment semantics remain outstanding.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c draw_combining_char/move_cursor_past_multicell;
+            VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
+            FULL promotion
+          baseline: 86dbb20a16298396777116670570415633e704ee
     - id: scalar-width
       section: docs/text-sizing-protocol.rst:426-461
       level: defined
@@ -11032,6 +11115,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_test.zig
         test: OSC 66 explicit width and scale matrix preserves fractional occupancy and cursor position
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 explicit width survives later selectors and ordinary replacement retires the width lock
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 explicit width ownership survives compact history restore and reflow
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: OSC 66 later positive spacing marks resize only unlocked ordinary geometry
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: OSC 66 later combining preserves scaled rectangle and invalidates every strip
+        relation: protocol-family
       evidence:
         howl_qualification_20261126_text_size_02:
           scope: Within one OSC66 command, natural block width is measured before scaling, following pinned author variable-width
@@ -11044,6 +11139,17 @@ specifications:
             property and grapheme source hashes byte-identical; deterministic VT red-green mixed cluster/split, selector/spacing,
             byte-offset/admission and retained pressure proofs; no blanket FULL promotion
           baseline: ce6a52ba2f7906ac0f2f95ca8f663732357f79eb
+        howl_qualification_20261126_text_size_03:
+          scope: Explicit width is retained in each sized cell and compact history; later ordinary VS16/VS15 and Thai/Lao
+            spacing marks cannot resize the locked allocation. Normal replacement clears the lock. Exact history restoration
+            and fitting reflow preserve width and scalars. Ordinary/unscaled natural width uses existing one-row widening/narrowing
+            helpers, extended to positive SpacingMark; scaled/fractional blocks conservatively retain allocation on later
+            selectors rather than incorrectly using the one-row helper. Later scaled natural VS15 width reduction and cross-command
+            OSC-only attachment remain unqualified.
+          method: Pinned Kitty a79f376 text-sizing-protocol.rst and screen.c draw_combining_char/move_cursor_past_multicell;
+            VT red-green, compact history/reflow, row provenance and bounded geometry tests, local record size probe; no blanket
+            FULL promotion
+          baseline: 86dbb20a16298396777116670570415633e704ee
   kitty_pointer:
     title: Kitty mouse pointer shape control
     author: Kovid Goyal / kitty
