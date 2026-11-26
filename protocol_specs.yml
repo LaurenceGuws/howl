@@ -28892,6 +28892,23 @@ specifications:
           location: decset_decrst/decrqm2027
           meaning: Build-gated grapheme shaping, mode report tied to configured width method; do not infer full Unicode Core
             semantics.
+        howl_qualification_20261126_unicode_core_01:
+          scope: Implements negotiated mode2027 as a terminal-wide policy applied to both Screen owners, reset default, exact
+            DECRQM2/1/2 and every input split. Parameterized mode save/restore slot admitted; existing curated parameterless
+            saved modes unchanged, separate saved-mode lifecycle proof pending. Disabled mode retains the existing deterministic
+            Kitty writer and width behavior; no second engine, no locale switch. Enabled policy selects the accepted Contour
+            draft interpretation for later streamed codepoints. Residual guarantees recorded rather than blanket FULL.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
+        relation: protocol-family
+      - file: howl-vt/src/mode_report.zig
+        test: DEC report inventory distinguishes reset set and unsupported modes
+        relation: protocol-family
     - id: clusters
       section: Semantics / Grapheme Cluster
       level: defined
@@ -28903,6 +28920,25 @@ specifications:
       - kind: related
         clause: kitty_text_size.segmentation
         role: adjacent-grapheme-profile
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core distinguishes addressed overwrite from consecutive grapheme input
+        relation: protocol-family
+      - file: howl-vt/src/unicode_17.zig
+        test: Unicode 17 generated transitions pass Kitty's complete grapheme proof
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_unicode_core_01:
+          scope: One per-screen consecutive-write witness uses actual lead position, cursor identity/cut and row generation;
+            reused generated Unicode17 grapheme transitions. Selected RI, Prepend+ASCII, combining with interposed SGR, ZWJ/modifier
+            and positive-width spacing mark sequences retain exact scalars without extra cursor advance. Enabled spacing marks
+            do not widen; disabled mode unchanged. ASCII prefix yields when a preceding nonordinary cluster may join. Exact
+            24-scalar admission bound retained. Complete corpus validates grapheme transitions, not every wire/owner interaction.
+            No claim of complete cross-command/resize/history attachment or pressure qualification.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
     - id: overwrite
       section: Semantics / Grapheme Cluster
       level: defined
@@ -28917,6 +28953,21 @@ specifications:
       - kind: related
         clause: kitty_text_size.overwrite-order
         role: adjacent-profile
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core distinguishes addressed overwrite from consecutive grapheme input
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_unicode_core_01:
+          scope: Explicit cursor addressing retires consecutive-write authority, including same-coordinate CUP; a subsequent
+            write replaces the addressed cell rather than concatenating to a neighbouring RI cluster. Row/cursor identity
+            prevents reusing a stale prior lead after changed geometry; bank switch and replacement resize retire witness.
+            Selected addressed RI overwrite and subsequent ordinary/combining write proof; broader controls, edit/margin/saturation
+            cases not universally qualified.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
     - id: emoji
       section: Semantics / Emoji
       level: defined
@@ -28928,6 +28979,22 @@ specifications:
       - kind: related
         clause: contour_unicode_core.clusters
         role: width
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core distinguishes addressed overwrite from consecutive grapheme input
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_unicode_core_01:
+          scope: Representative emoji ZWJ/modifier sequence retains one scalar cluster occupying two cells, no extra logical
+            advance. Exact cursor and subsequent text witness. Font fallback/single-image visual policy not yet qualified,
+            no claim of all emoji sequences.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
     - id: vs16
       section: Semantics / Variation Selector16
       level: defined
@@ -28938,6 +29005,20 @@ specifications:
       - kind: related
         clause: kitty_text_size.variation-selectors
         role: adjacent-profile
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_unicode_core_01:
+          scope: Enabled later VS16 forces width2 for admitted joined unlocked unscaled cluster, including A example, rather
+            than requiring Kitty eligible emoji base. Existing explicit-width and scaled/fractional OSC66 geometry authority
+            retained, so interaction between negotiated profile and those distinct controls remains scoped. Dedicated margin
+            relocation and allocation-pressure proof pending.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
     - id: vs15
       section: Semantics / Variation Selector15
       level: defined
@@ -28947,6 +29028,19 @@ specifications:
       relations:
       - kind: conflicts
         clause: mintty_controls.emoji-width-rules
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_unicode_core_01:
+          scope: Enabled later VS15 preserves existing width (wide emoji stays2) whereas resetting2027 restores Kitty natural-width
+            narrowing (same emoji becomes1). Both use existing scalar continuation and output owners. OSC66 in-command premeasurement
+            remains Kitty-specific; actual font presentation preference is not separately qualified.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
     - id: margin
       section: Semantics / Margins and AutoWrap with Emoji
       level: defined
@@ -28972,6 +29066,19 @@ specifications:
       - kind: related
         clause: dec_vt420.soft-terminal-reset
         role: reset
+      test_locations:
+      - file: howl-vt/test/unit/terminal_test.zig
+        test: Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261126_unicode_core_01:
+          scope: DECSTR disables negotiated policy across both banks; RIS clears mode, verified exact DECRPM2 on return. Bank
+            changes alone preserve negotiated mode but retire the current consecutive-write witness. No claim of independent
+            all-saved-mode reset tests.
+          method: Preserved Contour Terminal Unicode Core draft git64f53851 SHA256 f23237de5dd88ec8fee0c8059a6c979ca2eecc3e4c8fdf8ce4c4d86b7a2e47af;
+            accepted unicode-core-vs-mintty-2027 decision; deterministic VT red-green, split/width/overwrite proofs; no blanket
+            FULL promotion
+          baseline: 6e858cae5500bf5c10181406d0f445bc0025902d
   microsoft_win32_input:
     title: 'Improved keyboard handling in ConPTY: win32-input-mode'
     author: Mike Griese / Microsoft

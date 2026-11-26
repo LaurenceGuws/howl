@@ -339,6 +339,9 @@ pub const Screen = struct {
     // Loss identity, repeat source, rendition, tab, and pixel-size state.
     history_loss_generation: u64,
     last_graphic: ?LastGraphic,
+    // The negotiated profile changes continuation policy, not cell layout.
+    unicode_core: bool = false,
+    unicode_origin: ?UnicodeOrigin = null,
     current_attrs: CellAttrs,
     tab_stops: tab_stops_mod.State,
     cell_pixel_size: ?CellPixelSize,
@@ -670,6 +673,7 @@ pub const Screen = struct {
     fn replacementBase(self: *const Screen, allocator: std.mem.Allocator) Screen {
         var replacement = self.*;
         replacement.allocator = allocator;
+        replacement.unicode_origin = null;
         replacement.cells = null;
         replacement.scalars = null;
         replacement.row_flags = null;
@@ -1313,6 +1317,8 @@ pub const Screen = struct {
         self.scroll_top = 0;
         self.scroll_bottom = self.rows -| 1;
         self.last_graphic = null;
+        self.unicode_core = false;
+        self.unicode_origin = null;
         self.current_attrs = initial_cell_attrs;
         if (self.cells) |c| @memset(c, blank_cell);
         if (self.scalars) |*storage| storage.clearAll();
@@ -1620,6 +1626,7 @@ pub const Screen = struct {
     }
 
     fn applyCursorMove(self: *Screen, event: Screen.Action) void {
+        self.breakUnicodeStream();
         self.wrap_pending = false;
         switch (event) {
             .cursor_up => |n| self.setCursorRowClamped(@max(self.cursor.row -| n, self.cursorTopBoundary())),
@@ -1649,6 +1656,7 @@ pub const Screen = struct {
     }
 
     fn applyCursorPosition(self: *Screen, row: u16, col: u16) void {
+        self.breakUnicodeStream();
         const resolved_row = @min(self.resolveAbsoluteRow(row), self.rows -| 1);
         self.cursor.setPositionByClient(
             resolved_row,
@@ -1950,6 +1958,7 @@ pub const Screen = struct {
 
     /// Moves the alternate-screen cursor to origin and clears pending wrap.
     pub fn resetCursorForAltEntry(self: *Screen) void {
+        self.breakUnicodeStream();
         self.cursor.resetForAltEntry();
         self.wrap_pending = false;
         self.current_attrs = initial_cell_attrs;
@@ -2673,6 +2682,54 @@ pub const Screen = struct {
     // Text and grapheme admission
     // -------------------------------------------------------------------------
 
+    const GraphicPosition = struct { row: u16, col: u16 };
+    const UnicodeOrigin = struct {
+        lead: GraphicPosition,
+        cursor_col: u16,
+        cursor_row: u16,
+        wrap: bool,
+        movement: u64,
+        generation: u64,
+    };
+
+    /// Selects the negotiated Contour profile without changing existing cells.
+    pub fn setUnicodeCore(self: *Screen, enabled: bool) bool {
+        if (self.unicode_core == enabled) return false;
+        self.unicode_core = enabled;
+        self.unicode_origin = null;
+        return true;
+    }
+
+    /// Ends a consecutive graphic stream when a caller addresses another cut.
+    pub fn breakUnicodeStream(self: *Screen) void {
+        if (self.unicode_core) self.unicode_origin = null;
+    }
+
+    fn rememberUnicodeOrigin(self: *Screen, row: u16, col: u16) void {
+        if (!self.unicode_core) return;
+        const generation = self.rowGeneration(row) orelse {
+            self.unicode_origin = null;
+            return;
+        };
+        self.unicode_origin = .{
+            .lead = .{ .row = row, .col = col },
+            .cursor_col = self.cursor.col,
+            .cursor_row = self.cursor.row,
+            .wrap = self.wrap_pending,
+            .movement = self.cursor.position_changed_by_client_at,
+            .generation = generation,
+        };
+    }
+
+    fn unicodeContinuation(self: *const Screen) ?GraphicPosition {
+        const origin = self.unicode_origin orelse return null;
+        if (origin.movement != self.cursor.position_changed_by_client_at or
+            origin.cursor_row != self.cursor.row or origin.cursor_col != self.cursor.col or
+            origin.wrap != self.wrap_pending or self.rowGeneration(origin.lead.row) != origin.generation)
+            return null;
+        return origin.lead;
+    }
+
     /// Write one byte per cell through the terminal's graphic write path.
     pub fn writeText(self: *Screen, text: []const u8) void {
         for (text) |byte| self.writeCell(@intCast(byte));
@@ -2692,6 +2749,14 @@ pub const Screen = struct {
         if (self.cols == 0 or self.rows == 0 or self.wrap_pending or self.insert_mode or
             self.left_right_margin_mode) return 0;
         const cells = self.cells orelse return 0;
+        // Prepend and other non-ASCII clusters must be allowed to join the
+        // first ASCII scalar before a fast prefix overwrites the next cell.
+        if (self.unicode_core) {
+            if (self.unicodeContinuation()) |origin| {
+                const lead = cells[self.rowStart(origin.row) + origin.col];
+                if (lead.codepoint < 0x20 or lead.codepoint > 0x7e or lead.combining_len != 0) return 0;
+            }
+        }
         const flags = self.row_flags orelse return 0;
         var physical_row = @as(u32, self.row_origin) + @as(u32, self.cursor.row);
         if (physical_row >= self.rows) physical_row -= self.rows;
@@ -2756,6 +2821,7 @@ pub const Screen = struct {
             generations[physical_row].generation = next - 1;
             self.next_row_generation = next;
         }
+        self.rememberUnicodeOrigin(self.cursor.row, after - 1);
     }
 
     fn writeStyledAsciiPrefix(self: *Screen, bytes: []const u8, physical_row: u32, col: u16, matching_span: bool) usize {
@@ -2985,7 +3051,8 @@ pub const Screen = struct {
             };
         }
         self.last_graphic = graphic;
-        const after = self.cursor.col + graphic.width;
+        const written_col = self.cursor.col;
+        const after = written_col + graphic.width;
         if (self.history_capacity != 0)
             @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
         if (after <= right) {
@@ -2997,6 +3064,7 @@ pub const Screen = struct {
             self.cursor.setColByClient(right);
         }
         self.markRowChanged(self.cursor.row);
+        self.rememberUnicodeOrigin(self.cursor.row, written_col);
         return true;
     }
 
@@ -3198,7 +3266,9 @@ pub const Screen = struct {
         } else {
             self.cursor.setColByClient(right);
         }
-        return self.noteRowRangeChange(top, top + height - 1, changed);
+        const mutated = self.noteRowRangeChange(top, top + height - 1, changed);
+        self.rememberUnicodeOrigin(top, start_col);
+        return mutated;
     }
 
     /// Write one codepoint with Unicode occupancy, insertion, wrapping, dirty, and cursor semantics.
@@ -3274,7 +3344,8 @@ pub const Screen = struct {
             }
         }
         self.last_graphic = .{ .codepoint = cp, .width = width };
-        const after = self.cursor.col + width;
+        const written_col = self.cursor.col;
+        const after = written_col + width;
         if (self.history_capacity != 0)
             @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
         if (after <= right) {
@@ -3294,6 +3365,7 @@ pub const Screen = struct {
                 row.background.end = 0;
             }
         }
+        self.rememberUnicodeOrigin(self.cursor.row, written_col);
         return true;
     }
 
@@ -3303,7 +3375,7 @@ pub const Screen = struct {
         properties: unicode.Properties,
         comptime grow: bool,
     ) (if (grow) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!?bool else ?bool) {
-        const pos = self.previousLeadCellPos() orelse return null;
+        const pos = (if (self.unicode_core) self.unicodeContinuation() else self.previousLeadCellPos()) orelse return null;
         const cells = self.cells orelse return null;
         const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
         // A retained continuation whose lead is already in immutable
@@ -3360,9 +3432,9 @@ pub const Screen = struct {
             lead_cell.vertical_align == 0 and lead_cell.horizontal_align == 0;
         const presentation_base = if (previous) |last| last.isEmojiPresentationBase() else false;
         const widens = can_widen and lead_cell.width == 1 and
-            ((cp == 0xfe0f and presentation_base) or
-                (properties.isSpacingMark() and properties.width() > 0));
-        const narrows = !lead_cell.explicit_width and cp == 0xfe0e and
+            ((cp == 0xfe0f and (self.unicode_core or presentation_base)) or
+                (!self.unicode_core and properties.isSpacingMark() and properties.width() > 0));
+        const narrows = !self.unicode_core and !lead_cell.explicit_width and cp == 0xfe0e and
             lead_cell.width == 2 * @as(u16, lead_height) and presentation_base;
         if (widens and
             self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
@@ -3426,7 +3498,15 @@ pub const Screen = struct {
         }
         // Combining and presentation-width edits are uncommon enough that the
         // scan hint can safely fall back to the canonical full-row calculation.
-        return self.noteRowRangeChange(anchor_row, anchor_row + lead_height - 1, true);
+        const changed = self.noteRowRangeChange(anchor_row, anchor_row + lead_height - 1, true);
+        if (self.unicode_core and widens) {
+            // Widening may have moved the lead across the right margin.
+            if (self.previousLeadCellPos()) |new_pos| {
+                const new_cell = cells[self.rowStart(new_pos.row) + new_pos.col];
+                self.rememberUnicodeOrigin(new_pos.row - new_cell.y, new_pos.col - new_cell.x);
+            } else self.unicode_origin = null;
+        } else self.rememberUnicodeOrigin(anchor_row, anchor_col);
+        return changed;
     }
 
     fn widenPresentation(self: *Screen, row: u16, col: u16, history: *?history_store_mod.Store.Prepared) void {
@@ -3586,7 +3666,7 @@ pub const Screen = struct {
         }
     }
 
-    fn previousLeadCellPos(self: *const Screen) ?struct { row: u16, col: u16 } {
+    fn previousLeadCellPos(self: *const Screen) ?GraphicPosition {
         const right = self.cursorRightBoundary();
         if (self.wrap_pending) return .{ .row = self.cursor.row, .col = right };
         if (!self.auto_wrap and self.cursor.col == right) {

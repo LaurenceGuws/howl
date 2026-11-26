@@ -2369,6 +2369,7 @@ fn decModeReportView(vt: *const Terminal) mode_report_mod.DecView {
         .report_key_up = vt.modes.report_key_up,
         .bracketed_paste = vt.modes.bracketed_paste,
         .synchronized_output = vt.modes.synchronized_output,
+        .unicode_core = active.unicode_core,
         .inband_resize_notifications = vt.modes.inband_resize_notifications,
         .visibility_reporting = vt.modes.visibility_reporting,
         .color_preference_notifications = vt.modes.color_preference_notifications,
@@ -7606,6 +7607,8 @@ pub const Terminal = struct {
 
         changed = replaceBool(&self.screen_state.primary.insert_mode, false) or changed;
         changed = replaceBool(&self.screen_state.alternate.insert_mode, false) or changed;
+        changed = self.screen_state.primary.setUnicodeCore(false) or changed;
+        changed = self.screen_state.alternate.setUnicodeCore(false) or changed;
         changed = self.screen_state.primary.setLeftRightMarginMode(false) or changed;
         changed = self.screen_state.alternate.setLeftRightMarginMode(false) or changed;
         changed = replaceBool(&self.screen_state.primary.cursor.visible, true) or changed;
@@ -7835,6 +7838,8 @@ pub const Terminal = struct {
             const graphics_changed = self.graphics.clearBank(.alternate);
             std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
         }
+        self.screen_state.primary.breakUnicodeStream();
+        self.screen_state.alternate.breakUnicodeStream();
         self.screen_state.alt_active = enable_alt;
         if (enable_alt) {
             self.screen_state.alternate.resetCursorForAltEntry();
@@ -8147,6 +8152,11 @@ pub const Terminal = struct {
             1337 => replaceBool(&self.modes.report_key_up, enabled),
             2004 => replaceBool(&self.modes.bracketed_paste, enabled),
             2026 => replaceBool(&self.modes.synchronized_output, enabled),
+            2027 => result: {
+                var changed = self.screen_state.primary.setUnicodeCore(enabled);
+                changed = self.screen_state.alternate.setUnicodeCore(enabled) or changed;
+                break :result changed;
+            },
             2048 => replaceBool(&self.modes.inband_resize_notifications, enabled),
             2033 => replaceBool(&self.modes.visibility_reporting, enabled),
             2031 => replaceBool(&self.modes.color_preference_notifications, enabled),

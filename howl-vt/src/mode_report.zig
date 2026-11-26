@@ -31,6 +31,7 @@ pub const DecView = struct {
     report_key_up: bool = false,
     bracketed_paste: bool = false,
     synchronized_output: bool = false,
+    unicode_core: bool = false,
     inband_resize_notifications: bool = false,
     visibility_reporting: bool = false,
     color_preference_notifications: bool = false,
@@ -86,6 +87,7 @@ pub fn decState(view: DecView, mode: u16) u8 {
         1337 => boolState(view.report_key_up),
         2004 => boolState(view.bracketed_paste),
         2026 => boolState(view.synchronized_output),
+        2027 => boolState(view.unicode_core),
         2048 => boolState(view.inband_resize_notifications),
         2033 => boolState(view.visibility_reporting),
         2031 => boolState(view.color_preference_notifications),
@@ -137,7 +139,7 @@ fn boolState(enabled: bool) u8 {
 test "DEC report inventory distinguishes reset set and unsupported modes" {
     const boolean_modes = [_]u16{
         1,  3,    40,   41,   95,   5,    6,    7,    8,    12,   45,   69,   80,   66,   25,
-        47, 1047, 1049, 1004, 1007, 1036, 1337, 2004, 2026, 2048, 2031, 5522, 1045, 2033,
+        47, 1047, 1049, 1004, 1007, 1036, 1337, 2004, 2026, 2048, 2031, 5522, 1045, 2033, 2027,
     };
     for (boolean_modes) |mode| try std.testing.expectEqual(@as(u8, 2), decState(.{}, mode));
     try std.testing.expectEqual(@as(u8, 0), decState(.{}, 65535));
@@ -163,6 +165,7 @@ test "DEC report inventory distinguishes reset set and unsupported modes" {
         .report_key_up = true,
         .bracketed_paste = true,
         .synchronized_output = true,
+        .unicode_core = true,
         .inband_resize_notifications = true,
         .visibility_reporting = true,
         .color_preference_notifications = true,

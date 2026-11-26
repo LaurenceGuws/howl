@@ -2519,3 +2519,55 @@ test "OSC 66 streamed VS15 narrows complete natural rectangles without moving th
     try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
 }
+
+test "Unicode Core mode2027 negotiates exact width policy and resets independently of Kitty defaults" {
+    const wire = "\x1b[?2027$p\x1b[?2027h\x1b[?2027$p😐\u{fe0e}A\u{fe0f}\x1b[?2027l\x1b[?2027$p😐\u{fe0e}B";
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 16, 4);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        try std.testing.expectEqualStrings("\x1b[?2027;2$y\x1b[?2027;1$y\x1b[?2027;2$y", terminal.replyBytes());
+        var view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(0, 0).width);
+        try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(0, 2).width);
+        try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(0, 4).width);
+        try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 5));
+        try std.testing.expectEqual(@as(u16, 6), view.cursor_col);
+        try terminal.consumeReplyBytes(terminal.replyBytes().len);
+        try feed(&terminal, "\x1b[?2027h\x1b[?47h\x1b[?2027$p\x1b[!p\x1b[?2027$p\x1b[?47l\x1b[?2027$p");
+        try std.testing.expectEqualStrings("\x1b[?2027;1$y\x1b[?2027;2$y\x1b[?2027;2$y", terminal.replyBytes());
+        try terminal.consumeReplyBytes(terminal.replyBytes().len);
+        try feed(&terminal, "\x1b[?2027h\x1bc\x1b[?2027$p");
+        try std.testing.expectEqualStrings("\x1b[?2027;2$y", terminal.replyBytes());
+        view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
+    }
+}
+
+test "Unicode Core distinguishes addressed overwrite from consecutive grapheme input" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 16, 0);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "\x1b[?2027h🇿\x1b[1;3H🇧\x1b[1;1H\x1b[1;3H🇦");
+    var scalars: [24]u21 = undefined;
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{0x1f1ff}, view.cellScalarsAt(0, 0, &scalars));
+    try std.testing.expectEqualSlices(u21, &.{0x1f1e6}, view.cellScalarsAt(0, 2, &scalars));
+    try std.testing.expectEqual(@as(u16, 4), view.cursor_col);
+    try feedChanged(&terminal, "\x1b[2;1H\u{d4e}A");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{ 0xd4e, 'A' }, view.cellScalarsAt(1, 0, &scalars));
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_col);
+    try feedChanged(&terminal, "\u{301}\x1b[31m\u{302}X");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{ 0xd4e, 'A', 0x301, 0x302 }, view.cellScalarsAt(1, 0, &scalars));
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+    try feedChanged(&terminal, "\x1b[3;1H👩🏽‍💻\u{e01}\u{e33}Y");
+    view = terminal.semanticView(0);
+    try std.testing.expectEqualSlices(u21, &.{ 0x1f469, 0x1f3fd, 0x200d, 0x1f4bb }, view.cellScalarsAt(2, 0, &scalars));
+    try std.testing.expectEqual(@as(u8, 2), view.cellInfoAt(2, 0).width);
+    try std.testing.expectEqualSlices(u21, &.{ 0xe01, 0xe33 }, view.cellScalarsAt(2, 2, &scalars));
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(2, 2).width);
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(2, 3));
+}
