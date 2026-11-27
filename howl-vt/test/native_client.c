@@ -74,7 +74,9 @@ static uint32_t feed_all(hvt_terminal *value,const char *bytes) {
         const uint32_t status=hvt_feed(value,(const uint8_t *)bytes+offset,length-offset,17,&progress);
         if (status!=HVT_OK) return status;
         if (progress.input_block == HVT_INPUT_OUT_OF_MEMORY) return HVT_OUT_OF_MEMORY;
-        if (progress.input_block == HVT_INPUT_SCALAR_CAPACITY) return HVT_RESOURCE_LIMIT;
+        if (progress.input_block == HVT_INPUT_SCALAR_CAPACITY ||
+            progress.input_block == HVT_INPUT_HISTORY_CAPACITY ||
+            progress.input_block == HVT_INPUT_REPLY_LIMIT) return HVT_RESOURCE_LIMIT;
         if (!progress.consumed || progress.consumed>length-offset) return HVT_INTERNAL;
         offset+=progress.consumed;
     }
@@ -85,6 +87,66 @@ static uint32_t drain(hvt_terminal *value) {
     size_t count=0;
     uint32_t status=hvt_copy_replies(value,bytes,sizeof bytes,&count);
     return status==HVT_OK ? hvt_consume_replies(value,count) : status;
+}
+
+static int graphics_reply_pressure_proof(void) {
+    int failed=0;
+    hvt_terminal *value=NULL;
+    const hvt_config config={2,8,4,0,8,16};
+    hvt_feed_progress progress={0};
+    hvt_graphics manifest={0};
+    hvt_image images[1];
+    hvt_image_placement placements[1];
+    hvt_state before={0},after={0};
+    size_t count=0;
+    uint8_t bytes[65536];
+    const char final[]="\033_Gm=0;BA==\033\\";
+    const char ack[]="\033_Gi=71,p=3;OK\033\\";
+    const char query[]="\033_Ga=q,i=19,e=T,f=32;\033\\";
+    const char features[]="\033_Gi=19,e=T,f=32;OK\033\\";
+    CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_OK);
+    CHECK(feed_all(value,"\033_Ga=T,i=71,p=3,s=1,v=1,C=1,m=1;AQID\033\\")==HVT_OK);
+    for (size_t n=0;n<sizeof bytes/4;++n) CHECK(feed_all(value,"\033[5n")==HVT_OK);
+    CHECK(hvt_observe(value,0,&before)==HVT_OK);
+    CHECK(hvt_feed(value,(const uint8_t *)final,sizeof final-1,17,&progress)==HVT_OK);
+    CHECK(progress.input_block==HVT_INPUT_REPLY_LIMIT && progress.consumed==sizeof final-1 && !progress.mutations);
+    CHECK(hvt_observe(value,0,&after)==HVT_OK && memcmp(&before,&after,sizeof before)==0);
+    CHECK(hvt_feed(value,NULL,0,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_REPLY_LIMIT && !progress.consumed);
+    CHECK(hvt_resize(value,3,8,8,16)==HVT_BUSY);
+    CHECK(hvt_copy_graphics(value,0,NULL,0,NULL,0,&manifest)==HVT_OK && !manifest.image_count);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==sizeof bytes);
+    for (size_t n=0;n<sizeof bytes;n+=4) CHECK(memcmp(bytes+n,"\033[0n",4)==0);
+    CHECK(hvt_consume_replies(value,count)==HVT_OK);
+    CHECK(hvt_feed(value,NULL,0,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_READY && !progress.consumed);
+    CHECK((progress.mutations&HVT_MUTATION_IMAGES)!=0);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==sizeof ack-1 && memcmp(bytes,ack,count)==0);
+    CHECK(hvt_copy_graphics(value,0,images,1,placements,1,&manifest)==HVT_OK && manifest.image_count==1 && manifest.placement_count==1);
+    CHECK(hvt_consume_replies(value,count)==HVT_OK);
+    CHECK(hvt_feed(value,NULL,0,17,&progress)==HVT_OK && !progress.consumed && !progress.mutations);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && !count);
+
+    /* A feature query reserves its exact response, not ordinary 96-byte
+       headroom, and may complete a service prefix without new input bytes. */
+    for (size_t n=0;n<sizeof bytes/4;++n) CHECK(feed_all(value,"\033[5n")==HVT_OK);
+    const uint64_t graphic_revision=manifest.graphics_revision;
+    CHECK(hvt_feed(value,(const uint8_t *)query,sizeof query-1,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_REPLY_LIMIT && progress.consumed==sizeof query-1);
+    CHECK(hvt_consume_replies(value,sizeof features-2)==HVT_OK);
+    CHECK(hvt_feed(value,NULL,0,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_REPLY_LIMIT && !progress.consumed);
+    CHECK(hvt_consume_replies(value,1)==HVT_OK);
+    CHECK(hvt_feed(value,NULL,0,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_READY && !progress.consumed);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==sizeof bytes && memcmp(bytes+count-(sizeof features-1),features,sizeof features-1)==0);
+    CHECK(hvt_copy_graphics(value,0,images,1,placements,1,&manifest)==HVT_OK && manifest.graphics_revision==graphic_revision && manifest.image_count==1);
+    /* RIS discards pending work instead of replying after reset. */
+    CHECK(hvt_feed(value,(const uint8_t *)query,sizeof query-1,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_REPLY_LIMIT);
+    CHECK(hvt_reset(value)==HVT_OK);
+    CHECK(hvt_consume_replies(value,sizeof bytes)==HVT_OK);
+    CHECK(hvt_feed(value,NULL,0,17,&progress)==HVT_OK && progress.input_block==HVT_INPUT_READY && !progress.consumed && !progress.mutations);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && !count);
+    CHECK(feed_all(value,query)==HVT_OK);
+    CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==sizeof features-1 && memcmp(bytes,features,count)==0);
+cleanup:
+    hvt_release(&value);
+    return failed;
 }
 
 static int graphics_proof(void) {
@@ -357,6 +419,7 @@ int main(void) {
     const char expected_uri[]="https://example.invalid/vt";
     CHECK(hvt_cpp_proof()==0 && hvt_abi_version()==HVT_NATIVE_VERSION);
     CHECK(graphics_proof()==0);
+    CHECK(graphics_reply_pressure_proof()==0);
     CHECK(output_proof()==0);
     CHECK(hvt_create(0,&config,&value)==HVT_VERSION_MISMATCH && !value);
     CHECK(hvt_create(HVT_NATIVE_VERSION,NULL,&value)==HVT_INVALID_ARGUMENT && !value);

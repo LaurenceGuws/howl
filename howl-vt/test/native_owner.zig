@@ -14,6 +14,8 @@ fn feedAll(value: *owner.Owner, bytes: []const u8) !void {
         const progress = try owner.feed(value, bytes[offset..], 17);
         if (progress.input_block == c.HVT_INPUT_OUT_OF_MEMORY) return error.OutOfMemory;
         if (progress.input_block == c.HVT_INPUT_SCALAR_CAPACITY) return error.ScalarCapacity;
+        if (progress.input_block == c.HVT_INPUT_HISTORY_CAPACITY) return error.HistoryCapacity;
+        if (progress.input_block == c.HVT_INPUT_REPLY_LIMIT) return error.ReplyLimit;
         try std.testing.expect(progress.consumed > 0 and progress.consumed <= bytes.len - offset);
         offset += progress.consumed;
     }

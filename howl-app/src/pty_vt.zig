@@ -240,8 +240,10 @@ pub const Core = struct {
     /// Retained bytes can advance without a new PTY readiness event.
     pub fn bufferedOutputRunnable(self: *const Core) bool {
         const replies = self.terminal.replyBytes().len;
-        return self.input_retry_at == null and !self.hostBoundary() and self.read_start < self.read_end and
-            (replies == 0 or replies <= self.writes.remaining());
+        const reply_blocked = if (self.terminal.inputBlockReason()) |reason| reason == error.ReplyLimit else false;
+        return self.input_retry_at == null and !self.hostBoundary() and
+            (self.read_start < self.read_end or reply_blocked) and
+            (self.write_closed or replies <= self.writes.remaining());
     }
 
     /// Whether new PTY readability can cause progress. Polling POLLIN while a
@@ -251,6 +253,12 @@ pub const Core = struct {
         if (self.stream_closed or self.terminal.inputBlocked() or self.input_retry_at != null or self.hostBoundary() or
             self.read_start != self.read_end) return false;
         return self.write_closed or self.terminal.replyBytes().len <= self.writes.remaining();
+    }
+
+    // Reply pressure cannot recover until earlier replies leave VT; storage
+    // pressure retains the existing independent retry policy.
+    fn replyCollectionAdmissible(self: *const Core) bool {
+        return if (self.terminal.inputBlockReason()) |reason| reason == error.ReplyLimit else true;
     }
 
     fn collectReplies(self: *Core) error{WriteQueueFull}!void {
@@ -294,14 +302,14 @@ pub const Core = struct {
     pub fn service(self: *Core, readable: bool, writable: bool, timestamp_ns: u64) ServiceError!Service {
         var synchronized_output: vt.Terminal.SynchronizedOutputProgress = .{};
         if (writable and self.writePending()) try self.flushWriteTurn(&self.transport);
-        if (!self.terminal.inputBlocked()) {
+        if (self.replyCollectionAdmissible()) {
             self.collectReplies() catch |failure| switch (failure) {
                 error.WriteQueueFull => return self.result(timestamp_ns, synchronized_output),
             };
         }
         try self.processBuffered(timestamp_ns, &synchronized_output);
         if (self.input_retry_at == null and self.terminal.replyBytes().len == 0 and
-            !self.hostBoundary() and
+            !self.terminal.inputBlocked() and !self.hostBoundary() and
             self.read_start == self.read_end and readable and !self.stream_closed)
         {
             var read_calls: u8 = 0;
@@ -339,7 +347,7 @@ pub const Core = struct {
             // prefixes. Later replies cannot overtake a pending preference query.
             if (self.hostBoundary()) return;
             const blocked = self.terminal.inputBlocked();
-            if (!blocked) {
+            if (self.replyCollectionAdmissible()) {
                 self.collectReplies() catch |failure| switch (failure) {
                     error.WriteQueueFull => return,
                 };
@@ -353,6 +361,13 @@ pub const Core = struct {
             if (progress.input_blocked) |failure| {
                 if (failure == error.ScalarCapacity) return error.ScalarCapacity;
                 if (failure == error.HistoryCapacity) return error.HistoryCapacity;
+                if (failure == error.ReplyLimit) {
+                    // The retry either drains earlier replies at the loop head
+                    // or yields to PTY writability without a timer spin.
+                    std.debug.assert(self.terminal.replyBytes().len != 0);
+                    self.input_retry_at = null;
+                    continue;
+                }
                 self.input_retry_at = timestamp_ns +| input_retry_ns;
                 return;
             }
@@ -722,6 +737,63 @@ test "VT reply bytes precede later app input without loss on full outbox" {
     try std.testing.expectEqualSlices(u8, reply, core.writes.bytes[0..reply.len]);
     try std.testing.expectEqualStrings("late", core.writes.bytes[reply.len..core.writes.count]);
     try std.testing.expectEqual(@as(usize, 0), core.terminal.replyBytes().len);
+}
+
+test "Kitty retained packet resumes only when app reply outbox can advance" {
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    for ([_][]const u8{ "", "Z\x1b[5n" }) |tail| {
+        core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+        try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 3, 12, 0);
+        defer core.terminal.deinit();
+        try std.testing.expect(!(try core.terminal.feed("\x1b_Ga=T,i=71,p=3,s=1,v=1,C=1,m=1;AQID\x1b\\")).stateChanged());
+        for (0..write_queue_bytes / 4) |_|
+            try std.testing.expect((try core.terminal.feed("\x1b[5n")).stateChanged());
+        const prior = try allocator.dupe(u8, core.terminal.replyBytes());
+        defer allocator.free(prior);
+        try std.testing.expectEqual(@as(usize, write_queue_bytes), prior.len);
+        const final = "\x1b_Gm=0;BA==\x1b\\";
+        const blocked = try core.terminal.feedAtServiceBoundary(final, 1);
+        try std.testing.expectEqual(error.ReplyLimit, blocked.input_blocked.?);
+        try std.testing.expectEqual(final.len, blocked.consumed);
+        @memset(core.writes.bytes[0..], 'x');
+        core.writes.count = write_queue_bytes;
+        @memcpy(core.reads[0..tail.len], tail);
+        core.read_end = tail.len;
+        var synced: vt.Terminal.SynchronizedOutputProgress = .{};
+        try std.testing.expect(!core.bufferedOutputRunnable());
+        try std.testing.expect(!core.readAdmissible());
+        try core.processBuffered(2, &synced);
+        try std.testing.expect(core.inputBlocked());
+        try std.testing.expectEqual(@as(usize, 0), core.read_start);
+        try std.testing.expectEqualSlices(u8, prior, core.terminal.replyBytes());
+        try std.testing.expectEqual(@as(usize, 0), core.terminal.images(0).imageCount());
+
+        core.writes.consume(write_queue_bytes);
+        try std.testing.expect(core.bufferedOutputRunnable());
+        try core.processBuffered(3, &synced);
+        try std.testing.expect(!core.inputBlocked());
+        try std.testing.expectEqualSlices(u8, prior, core.writes.pending());
+        const ack = "\x1b_Gi=71,p=3;OK\x1b\\";
+        try std.testing.expectEqualStrings(ack, core.terminal.replyBytes());
+        try std.testing.expectEqual(@as(usize, 0), core.read_start);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, core.terminal.images(0).image(0).?.pixels);
+        try std.testing.expect(!core.bufferedOutputRunnable());
+        try std.testing.expect(!core.readAdmissible());
+        core.writes.consume(write_queue_bytes);
+        try core.processBuffered(4, &synced);
+        const expected = if (tail.len != 0) ack ++ "\x1b[0n" else ack;
+        // For a completed read, service's initial collection handles the
+        // outstanding acknowledgement even with no remaining input.
+        try core.collectReplies();
+        try std.testing.expectEqualStrings(expected, core.writes.pending());
+        try std.testing.expectEqual(@as(usize, 0), core.terminal.replyBytes().len);
+        try std.testing.expectEqual(@as(usize, 0), core.read_end);
+        try std.testing.expect(core.readAdmissible());
+        if (tail.len != 0)
+            try std.testing.expectEqual(@as(u21, 'Z'), core.terminal.semanticView(0).cellAt(0, 0));
+    }
 }
 
 test "child write closure accounts for undelivered suffix and leaves read-side service available" {

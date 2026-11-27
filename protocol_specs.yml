@@ -10105,6 +10105,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty over-envelope capture cancels only its own unfinished transfer
+        relation: protocol-family
+      - file: howl-vt/src/stream_state.zig
+        test: string run capture shares generic and Kitty bounds across fragments
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: APC G metadata and payload share existing bounded parser packet owner, split static and multi-command wire
@@ -10121,6 +10127,15 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_05:
+          scope: The bounded APC owner preserves graphics classification after discarding over-limit bytes. ESC-ST, CAN
+            and C1-ST cancellation discard only the incomplete graphics transfer, leave retained prior image intact, and
+            prevent later continuation completing the rejected transfer. Unrelated generic APC overflow does not cancel
+            an active graphics upload. Existing limits unchanged; selected framing only.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
+            native C peer; scoped local service policy, no blanket FULL promotion
+          baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
     - id: rgb-rgba
       section: Transferring pixel data / RGB and RGBA data
       level: defined
@@ -10417,6 +10432,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty frame reply includes exact admitted frame number'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty service retains completed final chunk at reply pressure without replay
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: Kitty retained packet resumes only when app reply outbox can advance
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Nonzero q overrides inherited quiet on continuation; explicit/implicit0 inherits prior setting, q1 suppresses
@@ -10448,6 +10469,17 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_05:
+          scope: Only known pre-dispatch ordinary or exact feature reply capacity failures are converted to pending service
+            input. Ordinary 96-byte reservation retained, 95-byte boundary proven; older queued bytes preserved. Native
+            C peer graphics_reply_pressure_proof proves additive HVT_INPUT_REPLY_LIMIT, unchanged record layout, drain and
+            zero-new-byte resume, resize busy while pending, one exact ACK and no duplicate. App drains old replies before
+            resuming and uses actual outbox capacity rather than scalar allocation retry timing. Not general protocol ReplyLimit
+            or OOM recovery.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
+            native C peer; scoped local service policy, no blanket FULL promotion
+          baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
     - id: frame-load
       section: Animation / Transferring animation frame data
       level: defined
@@ -10616,6 +10648,15 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: static image allocation failure leaves the plane reusable
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty service retains completed final chunk at reply pressure without replay
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty over-envelope capture cancels only its own unfinished transfer
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: Kitty retained packet resumes only when app reply outbox can advance
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -10652,6 +10693,18 @@ specifications:
             lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
             Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
           baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
+        howl_qualification_20261127_kitty_graphics_05:
+          scope: Completed final chunk encountering preflight reply pressure remains in the existing bounded capture; service
+            consumes its prefix exactly once and retains unread suffix. Repeated blocked resume consumes zero, no retained-image
+            mutation; after freeing required headroom resume commits exact pixels at final cursor and emits one ACK before
+            following text/DA1. App outbox fixture covers pending-only and nonempty input tail, prior replies before ACK
+            and subsequent DSR. Overflow cancellation preserves old image and prevents stale continuation. Explicit whole-slice
+            feed replay semantics unchanged; OOM and other failures not made resumable. Other unrelated graphics-command
+            interruption policies remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
+            native C peer; scoped local service policy, no blanket FULL promotion
+          baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -10677,6 +10730,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty graphics placement features negotiate only represented keys'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics placement feature replies are atomically quota bounded'
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Existing feature queries interleaved during unfinished static image preserve load, ignore payload, report
@@ -10696,6 +10752,15 @@ specifications:
             docs lines548-609; graphics.c supported_keys_for_query and response formatting; deterministic red-green and existing
             scope proofs; no blanket FULL promotion
           baseline: a4a0380797a385c369750dc8437a15da6369bf58
+        howl_qualification_20261127_kitty_graphics_05:
+          scope: 'Existing Zig placement feature exact quota proof plus actual native C peer graphics_reply_pressure_proof:
+            one byte short remains blocked, exact additional byte allows zero-new-byte service resume and exact feature
+            reply without graphics generation mutation. Hard reset discards pending packet while preserving earlier queued
+            bytes. Existing supported-action/value policy retained, no host media capability grant.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
+            native C peer; scoped local service policy, no blanket FULL promotion
+          baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
     - id: image-number
       section: docs/graphics-protocol.rst:967-996
       level: defined

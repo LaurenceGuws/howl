@@ -7001,3 +7001,74 @@ test "terminal: Kitty query action capability precedes DA1 without retained data
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
 }
+
+test "Kitty service retains completed final chunk at reply pressure without replay" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 12);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b_Ga=T,i=77,p=9,s=1,v=1,C=1,m=1;AQID\x1b\\");
+    const filler = try reply_fill.fill(&terminal, allocator, 64 * 1024 - 95, false);
+    defer allocator.free(filler);
+    const before = terminal.images(0).generation;
+    const final = "\x1b_Gm=0;BA==\x1b\\";
+    const tail = "Z\x1b[c";
+    const first = try terminal.feedAtServiceBoundary("A" ++ final ++ tail, 1);
+    try std.testing.expectEqual(error.ReplyLimit, first.input_blocked.?);
+    try std.testing.expectEqual(@as(usize, 1 + final.len), first.consumed);
+    try std.testing.expect(first.summary.mutations.text);
+    try std.testing.expect(!first.summary.mutations.images);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(before, terminal.images(0).generation);
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try std.testing.expectError(error.InputPending, terminal.resize(5, 12));
+    const stalled = try terminal.feedAtServiceBoundary(tail, 2);
+    try std.testing.expectEqual(error.ReplyLimit, stalled.input_blocked.?);
+    try std.testing.expectEqual(@as(usize, 0), stalled.consumed);
+    try std.testing.expect(!stalled.summary.stateChanged());
+    try std.testing.expectEqual(before, terminal.images(0).generation);
+    try terminal.consumeReplyBytes(1);
+    const resumed = try terminal.feedAtServiceBoundary(tail, 3);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expectEqual(@as(usize, 0), resumed.consumed);
+    try std.testing.expect(resumed.summary.mutations.images);
+    try std.testing.expect(!resumed.summary.mutations.text);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.col);
+    try std.testing.expectEqualSlices(u8, filler[1..], terminal.replyBytes()[0 .. filler.len - 1]);
+    try std.testing.expectEqualStrings("\x1b_Gi=77,p=9;OK\x1b\\", terminal.replyBytes()[filler.len - 1 ..]);
+    try consumeReplies(&terminal);
+    const following = try terminal.feedAtServiceBoundary(tail, 4);
+    try std.testing.expectEqual(tail.len, following.consumed);
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqualStrings("\x1b[?62;22c", terminal.replyBytes());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+}
+
+test "Kitty over-envelope capture cancels only its own unfinished transfer" {
+    const allocator = std.testing.allocator;
+    const overflow: [8193]u8 = @splat('x');
+    for ([_][]const u8{ "\x1b\\", "\x18", "\x9c" }) |ending| {
+        var terminal = try Terminal.init(allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b_Ga=T,i=71,p=3,s=1,v=1,C=1,q=2;AQIDBA==\x1b\\");
+        const original = terminal.images(0).generation;
+        try feed(&terminal, "\x1b_Ga=T,i=71,p=3,s=1,v=1,C=1,q=2,m=1;BQYH\x1b\\");
+        try feed(&terminal, "\x1b_G");
+        try feed(&terminal, &overflow);
+        try feed(&terminal, ending);
+        try std.testing.expectEqual(original, terminal.images(0).generation);
+        try feed(&terminal, "\x1b_Gm=0,q=2;CA==\x1b\\");
+        try std.testing.expectEqual(original, terminal.images(0).generation);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        // Unrelated generic APC overflow must not cancel a graphics load.
+        try feed(&terminal, "\x1b_Ga=t,i=72,s=1,v=1,q=2,m=1;CQoL\x1b\\");
+        try feed(&terminal, "\x1b_X");
+        try feed(&terminal, &overflow);
+        try feed(&terminal, "\x1b\\");
+        try feed(&terminal, "\x1b_Gm=0;DA==\x1b\\");
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+        try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, terminal.images(0).image(1).?.pixels);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}

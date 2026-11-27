@@ -125,7 +125,7 @@ const ClipboardRequestView = consequences.ClipboardRequestView;
 
 const SemanticEventError = consequences.Error || properties.PropertyError || replies.AppendError;
 const ContainerSerializationError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
-const GraphicsEventError = error{ OutOfMemory, ReplyLimit };
+const GraphicsEventError = error{ OutOfMemory, ReplyLimit, ReplyPressure };
 const ConsequencePressureRelief = *const fn (*Terminal) TerminalFeedError!void;
 
 /// Bounds one retained consequence payload owned by this composition state.
@@ -4610,6 +4610,7 @@ const TerminalStream = struct {
     terminal: *Terminal,
     consequence_pressure_relief: ?ConsequencePressureRelief = null,
     consequence_pressure_relieved: bool = false,
+    retain_kitty_reply_pressure: bool = false,
     // Transient feed-local facts, never retained on Terminal or per-byte results.
     synchronized_output: TerminalSynchronizedOutputProgress = .{},
     synchronized_output_held: bool = false,
@@ -4703,33 +4704,39 @@ const TerminalStream = struct {
 
         for (phases) |phase| {
             if (phase) |action| {
-                const graphics_before = self.terminal.graphics.generation();
-                const effect = try self.applyAction(action);
-                var event_mutations = effect.mutations;
-                if (self.terminal.graphics.generation() != graphics_before)
-                    event_mutations.images = true;
-                if (effect.changed and
-                    !effect.suppress_owner_fallback and
-                    !event_mutations.stateChanged())
-                    event_mutations.mode = true;
-                self.content_mode_changed = self.content_mode_changed or
-                    (event_mutations.mode and !effect.cursor_or_bracket_only);
-                mutations.merge(event_mutations);
-                const held_before = self.synchronized_output_held;
-                if (event_mutations.mode) self.synchronized_output_held = self.terminal.synchronizedOutput();
-                std.debug.assert(self.synchronized_output_held == self.terminal.synchronizedOutput());
-                if (held_before and !self.synchronized_output_held) {
-                    self.synchronized_output = .{ .ended = true };
-                } else {
-                    if (self.synchronized_output_held and (!held_before or effect.synchronized_begin))
-                        self.synchronized_output.began = true;
-                    if (effect.changed or event_mutations.stateChanged())
-                        self.synchronized_output.trailing_effect = true;
-                }
+                mutations.merge(try self.applyRecordedAction(action));
             }
         }
 
         return .{ .byte_count = 1, .mutations = mutations };
+    }
+
+    // Record an admitted parser action, including a resumed completed APC,
+    // through the same semantic and synchronized-output owner.
+    fn applyRecordedAction(self: *TerminalStream, action: parser_mod.Action) TerminalFeedError!MutationSet {
+        const graphics_before = self.terminal.graphics.generation();
+        const effect = try self.applyAction(action);
+        var event_mutations = effect.mutations;
+        if (self.terminal.graphics.generation() != graphics_before)
+            event_mutations.images = true;
+        if (effect.changed and
+            !effect.suppress_owner_fallback and
+            !event_mutations.stateChanged())
+            event_mutations.mode = true;
+        self.content_mode_changed = self.content_mode_changed or
+            (event_mutations.mode and !effect.cursor_or_bracket_only);
+        const held_before = self.synchronized_output_held;
+        if (event_mutations.mode) self.synchronized_output_held = self.terminal.synchronizedOutput();
+        std.debug.assert(self.synchronized_output_held == self.terminal.synchronizedOutput());
+        if (held_before and !self.synchronized_output_held) {
+            self.synchronized_output = .{ .ended = true };
+        } else {
+            if (self.synchronized_output_held and (!held_before or effect.synchronized_begin))
+                self.synchronized_output.began = true;
+            if (effect.changed or event_mutations.stateChanged())
+                self.synchronized_output.trailing_effect = true;
+        }
+        return event_mutations;
     }
 
     // Consume only parser-proven inert scratch/payload. Mutations, replies and
@@ -4798,6 +4805,7 @@ const TerminalStream = struct {
         consequences_before: u16,
         consequence_head_before: ?u64,
     ) TerminalFeedError!TerminalFeedProgress {
+        self.retain_kitty_reply_pressure = true;
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
         self.synchronized_output = .{};
         self.synchronized_output_held = self.terminal.synchronizedOutput();
@@ -4809,6 +4817,13 @@ const TerminalStream = struct {
         var input_blocked: ?stream_state_mod.InputBlock = null;
         if (self.terminal.stream_state.pending_input) |pending| {
             const changed = switch (pending.work) {
+                .kitty_packet => resumed: {
+                    self.terminal.stream_state.pending_input = null;
+                    summary.mutations.merge(try self.applyRecordedAction(.apc_end));
+                    if (self.terminal.stream_state.pending_input) |blocked|
+                        input_blocked = blocked.failure;
+                    break :resumed false;
+                },
                 .codepoint => |value| self.terminal.screen_state.active().writeCodepointGrowing(value) catch |failure| blocked: {
                     self.terminal.stream_state.pending_input.?.failure = failure;
                     input_blocked = failure;
@@ -4861,10 +4876,10 @@ const TerminalStream = struct {
                 },
             };
             summary.mutations.text = changed;
-            self.synchronized_output.trailing_effect = changed;
+            self.synchronized_output.trailing_effect = self.synchronized_output.trailing_effect or changed;
             if (input_blocked == null) self.terminal.stream_state.pending_input = null;
         }
-        while (input_blocked == null and consumed < bytes.len) {
+        while (input_blocked == null and self.terminal.reply_buffer.len() == replies_before and consumed < bytes.len) {
             const byte = bytes[consumed];
             if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
                 const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
@@ -5280,10 +5295,17 @@ const TerminalStream = struct {
             return discardedStringControl();
         }
         if (capture.isKittyGraphics()) {
-            defer capture.reset();
-            return .{
-                .changed = try applyKittyGraphicsPacket(self.terminal, capture.payload()[1..]),
+            defer if (self.terminal.stream_state.pending_input == null) capture.reset();
+            const changed = applyKittyGraphicsPacket(self.terminal, capture.payload()[1..]) catch |failure| switch (failure) {
+                error.ReplyPressure => {
+                    if (!self.retain_kitty_reply_pressure) return error.ReplyLimit;
+                    std.debug.assert(self.terminal.stream_state.pending_input == null);
+                    self.terminal.stream_state.pending_input = .{ .work = .kitty_packet, .failure = error.ReplyLimit };
+                    return discardedStringControl();
+                },
+                else => |other| return other,
             };
+            return .{ .changed = changed };
         }
         const payload: consequences.StringInput = .{
             .kind = capture.payloadKind(),
@@ -5320,10 +5342,12 @@ fn discardedStringControl() EventEffect {
 
 fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEventError!bool {
     const response_reserve: usize = 96;
+    // Only known queue headroom failures are retryable. Formatting and
+    // allocation failures remain exceptional, never replayed after dispatch.
     if (terminal.graphics.mayRespond(packet)) {
         if (terminal.reply_buffer.bytes().len >
             replies.max_bytes - response_reserve)
-            return error.ReplyLimit;
+            return error.ReplyPressure;
         try terminal.reply_buffer.ensureUnusedCapacity(response_reserve);
     }
     const active = terminal.screen_state.activeConst();
@@ -5362,7 +5386,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         const id_text = std.fmt.bufPrint(&id_buf, "i={d}", .{result.response_id.?}) catch
             return error.ReplyLimit;
         const required: usize = "\x1b_G".len + id_text.len + features.len + ";OK\x1b\\".len;
-        if (required > replies.max_bytes -| terminal.reply_buffer.bytes().len) return error.ReplyLimit;
+        if (required > replies.max_bytes -| terminal.reply_buffer.bytes().len) return error.ReplyPressure;
         try terminal.reply_buffer.ensureUnusedCapacity(@intCast(required));
         const before = terminal.reply_buffer.len();
         errdefer terminal.reply_buffer.truncate(before);
@@ -7276,10 +7300,11 @@ pub const Terminal = struct {
     }
 
     /// Applies a prefix until a reply, host consequence, synchronized release,
-    /// or input-storage pressure. Continue at the reported `consumed` offset.
-    /// Blocked work is retained; retry after backoff with the unread suffix,
-    /// including an empty slice when the operation ended the previous read. A still
-    /// blocked retry consumes zero bytes. Defer geometry changes until it succeeds.
+    /// or retained input pressure. Continue at the reported `consumed` offset.
+    /// Drain replies for ReplyLimit, or release input-storage pressure, then
+    /// retry with the unread suffix (empty if the operation ended the read).
+    /// A blocked retry consumes zero bytes; a resumed reply may also end a
+    /// prefix before consuming any suffix. Defer geometry changes until recovery.
     pub fn feedAtServiceBoundary(
         self: *Terminal,
         bytes: []const u8,
@@ -7305,9 +7330,14 @@ pub const Terminal = struct {
         return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief);
     }
 
-    /// Reports whether input retained work awaiting storage.
+    /// Reports whether decoded input is retained awaiting admission.
     pub fn inputBlocked(self: *const Terminal) bool {
         return self.stream_state.pending_input != null;
+    }
+
+    /// Identifies the resource that must become available before retry.
+    pub fn inputBlockReason(self: *const Terminal) ?stream_state_mod.InputBlock {
+        return if (self.stream_state.pending_input) |pending| pending.failure else null;
     }
 
     fn feedAtServiceBoundaryImpl(
@@ -7630,6 +7660,9 @@ pub const Terminal = struct {
         self.alternate_savepoint.clear();
         self.charset = .{};
         self.stream_state.parser.resetTextEncoding();
+        if (self.stream_state.pending_input) |pending| {
+            if (pending.work == .kitty_packet) self.stream_state.string.reset();
+        }
         self.stream_state.pending_input = null;
         self.reply_buffer.resetFraming();
         self.xtchecksum_flags = 0;
