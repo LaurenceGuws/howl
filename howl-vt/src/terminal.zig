@@ -4721,6 +4721,7 @@ const TerminalStream = struct {
 
         errdefer {
             state.abortMultipart(self.terminal.allocator);
+            if (self.terminal.kitty_write) |writer| writer.fail(.EIO);
             state.parser.reset();
             state.dcs.reset();
             state.string.reset();
@@ -4790,6 +4791,7 @@ const TerminalStream = struct {
         const count = state.parser.plainApcPayloadPrefix(bytes);
         errdefer {
             state.abortMultipart(self.terminal.allocator);
+            if (self.terminal.kitty_write) |writer| writer.fail(.EIO);
             state.parser.reset();
             state.dcs.reset();
             state.string.reset();
@@ -5018,6 +5020,10 @@ const TerminalStream = struct {
                 self.terminal.stream_state.discardMultipart(self.terminal.allocator);
                 break :cancel discardedStringControl();
             },
+            .kitty_clipboard_cancel => if (self.terminal.kitty_write != null or self.terminal.hasPendingKittyClipboard())
+                try self.applyEvent(.{ .osc = .{ .kitty_clipboard = .{ .payload = "", .term = .st } } })
+            else
+                discardedStringControl(),
             .screen_title => |title| try self.applyEvent(.{ .screen_title = title }),
             .apc_start => self.startString(.apc),
             .apc_put => |byte| self.putString(byte),
@@ -6311,6 +6317,16 @@ pub const Terminal = struct {
     pub const KittyReadRequest = clipboard_mod.KittyReadRequest;
     /// One caller-approved MIME read response step.
     pub const KittyReadReply = clipboard_mod.KittyReadReply;
+    /// Caller-selected clipboard location and write response vocabulary.
+    pub const KittyLocation = clipboard_mod.KittyLocation;
+    /// Reports staging, ready, ignored or aborted write progress.
+    pub const KittyWriteProgress = clipboard_mod.KittyWriteProgress;
+    /// Final status supplied by the embedding clipboard owner.
+    pub const KittyWriteStatus = clipboard_mod.KittyWriteStatus;
+    /// Owns completed MIME bytes until caller deinit.
+    pub const KittyWriteData = clipboard_mod.KittyWriteData;
+    /// Borrows the prepared write result without copying payloads.
+    pub const KittyWriteView = clipboard_mod.KittyWriteView;
     /// Reports a reply prefix larger than the currently retained byte count.
     pub const ReplyConsumeError = error{InvalidReplyCount};
     /// Reports stale or mismatched caller state, allocation failure, or bounded reply saturation.
@@ -6347,7 +6363,7 @@ pub const Terminal = struct {
         /// Pointer-shape queries request a reply but may instead be consumed by policy.
         pub fn requiresReply(self: Consequence) bool {
             return switch (self) {
-                .clipboard => |value| value.kind == .query or value.read_started,
+                .clipboard => |value| value.kind == .query or value.read_started or value.write_owned,
                 .container => |value| isContainerQuery(value.request),
                 .color_preference_query => true,
                 .notification, .program_status, .pointer_shape, .file_transfer, .drag_drop, .bell, .legacy_control, .media_copy, .dcs, .string_control => false,
@@ -7284,6 +7300,8 @@ pub const Terminal = struct {
     properties: properties.State,
     reply_buffer: replies.Buffer,
     consequences: consequences.State,
+    // Only an explicit caller-authorized write owns transient decoded bytes.
+    kitty_write: ?*clipboard_mod.KittyWrite = null,
     /// Host explicitly opts in before any OSC 7501 query can advertise support.
     program_status_consumer: bool = false,
     locator: locator_mod.State = .{},
@@ -7396,6 +7414,7 @@ pub const Terminal = struct {
     pub fn deinit(self: *Terminal) void {
         self.requireNoPreparedResize();
         const allocator = self.allocator;
+        self.discardKittyWrite();
         self.graphics.deinit();
         self.consequences.deinit();
         self.properties.deinit();
@@ -7781,6 +7800,7 @@ pub const Terminal = struct {
         self.xtchecksum_flags = 0;
         self.kitty = .{};
         self.locator.reset();
+        self.discardKittyWrite();
         self.consequences.resetTerminal();
         self.properties.resetTerminal();
         const graphics_changed = self.graphics.reset();
@@ -8654,7 +8674,11 @@ pub const Terminal = struct {
     pub fn consequenceHead(self: *const Terminal) ?Consequence {
         const head = self.consequences.head() orelse return null;
         return switch (head) {
-            .clipboard => |value| .{ .clipboard = value },
+            .clipboard => |value| clipboard: {
+                var request = value;
+                request.write_owned = self.kitty_write != null and value.protocol == .kitty_5522;
+                break :clipboard .{ .clipboard = request };
+            },
             .notification => |value| .{ .notification = value },
             .program_status => |value| .{ .program_status = value },
             .pointer_shape => |value| .{ .pointer_shape = value },
@@ -9104,10 +9128,106 @@ pub const Terminal = struct {
         self.requireNoPreparedResize();
         const request = try self.kittyClipboardHead(generation);
         if (request.read_started) return error.InvalidClipboardResponse;
+        const replace_write = clipboard_mod.isKittyWriteStart(request.payload);
+        if (self.kitty_write != null and !replace_write) {
+            var scratch: KittyReadScratch = undefined;
+            if (clipboard_mod.inspectKittyRead(request.payload, &scratch) == null)
+                return error.InvalidClipboardResponse;
+        }
         try clipboard_mod.appendKittyRefusal(&self.reply_buffer, request.payload);
+        if (replace_write) self.discardKittyWrite();
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
         advanceIdentity(&self.semantic_sequence);
         self.content_sequence = self.semantic_sequence;
+    }
+
+    fn discardKittyWrite(self: *Terminal) void {
+        if (self.kitty_write) |writer| writer.deinit();
+        self.kitty_write = null;
+    }
+
+    /// Inspect a validated write start without granting any clipboard access.
+    pub fn inspectKittyClipboardWrite(self: *const Terminal, generation: u64) error{StaleClipboardRequest}!?KittyLocation {
+        const request = try self.kittyClipboardHead(generation);
+        return clipboard_mod.inspectKittyWrite(request.payload);
+    }
+
+    /// Explicit caller approval starts one bounded transient write. An
+    /// accepted fresh start replaces the previous write; allocation failure
+    /// preserves the exact pending start and previous staging.
+    pub fn beginKittyClipboardWrite(self: *Terminal, generation: u64, location: KittyLocation) KittyReadReplyError!void {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        if (request.read_started) return error.InvalidClipboardResponse;
+        const writer = try clipboard_mod.KittyWrite.init(self.allocator, request.payload, location);
+        self.discardKittyWrite();
+        self.kitty_write = writer;
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+    }
+
+    /// Process exactly one continuation. The final valid packet remains at
+    /// the head until the caller accepts the prepared data or returns an error.
+    /// Invalid input discards all staging before retryable error admission.
+    pub fn stageKittyClipboardWrite(self: *Terminal, generation: u64) KittyReadReplyError!KittyWriteProgress {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        if (request.read_started or clipboard_mod.isKittyWriteStart(request.payload))
+            return error.InvalidClipboardResponse;
+        var scratch: KittyReadScratch = undefined;
+        if (clipboard_mod.inspectKittyRead(request.payload, &scratch) != null)
+            return error.InvalidClipboardResponse;
+        var progress: KittyWriteProgress = .ignored;
+        if (self.kitty_write) |writer| {
+            if (writer.ready) return .ready;
+            if (writer.failure == null) {
+                progress = writer.stage(request.payload) catch |failure| aborted: {
+                    writer.fail(switch (failure) {
+                        error.InvalidClipboardResponse => .EINVAL,
+                        error.ClipboardLimit => .EFBIG,
+                        error.OutOfMemory => .EIO,
+                    });
+                    break :aborted .aborted;
+                };
+            }
+            if (writer.failure) |status| {
+                try writer.appendStatus(&self.reply_buffer, status);
+                self.discardKittyWrite();
+                progress = .aborted;
+            }
+            if (progress == .ready) return progress;
+        }
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+        return progress;
+    }
+
+    /// Borrow complete data at the retained final write packet. The caller
+    /// may prepare an external clipboard replacement without changing VT.
+    pub fn inspectKittyClipboardWriteData(self: *const Terminal, generation: u64) KittyReadReplyError!KittyWriteView {
+        const request = try self.kittyClipboardHead(generation);
+        const writer = self.kitty_write orelse return error.InvalidClipboardResponse;
+        if (request.read_started or !writer.ready) return error.InvalidClipboardResponse;
+        return writer.contents.view();
+    }
+
+    /// Caller confirms completion or failure. DONE is admitted only on
+    /// explicit acceptance; then ownership moves without copying. If reply
+    /// admission fails, retain the exact result and retry serialization only.
+    pub fn finishKittyClipboardWrite(self: *Terminal, generation: u64, status: KittyWriteStatus) KittyReadReplyError!?KittyWriteData {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        const writer = self.kitty_write orelse return error.InvalidClipboardResponse;
+        if (request.read_started or !writer.ready) return error.InvalidClipboardResponse;
+        try writer.appendStatus(&self.reply_buffer, status);
+        const completed = if (status == .DONE) writer.take() else null;
+        self.discardKittyWrite();
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+        return completed;
     }
 
     /// Queue one exact reply for the matching FIFO-head OSC 22 query.

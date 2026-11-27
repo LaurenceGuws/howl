@@ -12528,6 +12528,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read inventory bounds and RIS revoke only the started transfer
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty malformed write releases transaction and ignores stale continuations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write concatenation accepts every split of a padded binary value
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
@@ -12550,6 +12565,17 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_03:
+          scope: Explicit caller acceptance of a validated write start selects one lazy transient decoded owner; the existing
+            raw OSC5522 FIFO owns input packets and final completion identity. Stage exact continuations, final packet remains
+            until caller confirms acceptance or failure. Shared response serializer routes one terminal status. Malformed or cancelled
+            recognized packets cannot silently disappear inside selected writes; ordered discarded-packet marker retained when
+            a Kitty packet is pending or write active. Existing default application refusal, parser packet limit and unsupported
+            paste detection unchanged. No host access.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+            deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+          baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12620,6 +12646,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty clipboard refusal allocation failure does not consume a request
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty malformed write releases transaction and ignores stale continuations
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write accepts the full 64 MiB byte budget without alias duplication
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write refuses the first byte beyond its actual 64 MiB budget
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Current application declines selected valid write starts with EPERM and structurally unambiguous writes with
@@ -12631,6 +12672,18 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_03:
+          scope: Selected caller-authorized write begins only with matching validated clipboard location. Stage bytes without
+            publishing; exact complete end permits immutable borrowed view. Caller confirmation DONE moves completed allocations
+            without copying, or selected error discards them. Whole reply admission precedes transfer; pressure keeps prepared
+            result and caller retries serialization only. Actual64MiB accepted and first excess byte rejected by decoded owner.
+            Malformed, OOM and cancellation paths abort, later unassociated continuation ignored. Opening policy still uses initial
+            refusal; no actual OS clipboard commit, permission prompt, or full write error API for arbitrary precompletion host
+            failure.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+            deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+          baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
     - id: password
       section: Avoiding repeated permission prompts
       level: defined
@@ -12724,6 +12777,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read bounds and completion pressure retain the started request until retry
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty malformed write releases transaction and ignores stale continuations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected read/write denial replies echo only allowed ASCII id characters, omit id when sanitized empty, use bounded
@@ -12743,6 +12808,14 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_03:
+          scope: Write response carries sanitized original start ID, not a continuation ID. Optional continuation ID must exactly
+            match raw start ID under selected local policy. Status retry retains original route, and fresh start replaces prior
+            selected writer. No concurrent independent multiplexer write sessions or full ID compatibility claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+            deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+          baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
     - id: mime-alias
       section: docs/clipboard.rst:162-173
       level: defined
@@ -12750,6 +12823,30 @@ specifications:
       dispatch:
       - OSC 5522
       rule: Space-separated MIME aliases share already transmitted target data; between initial write and end-of-data.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write accepts the full 64 MiB byte budget without alias duplication
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty write MIME metadata count is bounded independently of payload bytes
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_03:
+          scope: Aliases share the target direct byte range, with forward target reservation supported before target data arrives.
+            Repeated identical alias mapping idempotent; reject cycles, alias chains, conflicting direct/alias names, and unresolved
+            targets at final packet. Local metadata limit256 distinct names and4096 bytes/name; alias references do not duplicate
+            payload byte accounting. Pinned Kitty commit maps aliases to target positions; its permissive overwrite/missing target
+            behavior not selected.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+            deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+          baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
     - id: base64-admission
       section: docs/clipboard.rst:23-45
       level: defined
@@ -12768,6 +12865,21 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write concatenation accepts every split of a padded binary value
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty malformed write releases transaction and ignores stale continuations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write accepts the full 64 MiB byte budget without alias duplication
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write refuses the first byte beyond its actual 64 MiB budget
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
@@ -12789,6 +12901,17 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_03:
+          scope: Decode complete padded quartets incrementally across packet splits; keep at most three encoded tail bytes and
+            padding state. Require complete group before switching direct MIME or ending, reject invalid alphabet, noncanonical
+            padding, data after padding, missing MIME and filtered-control corruption. Each packet may contribute at most4096
+            decoded bytes under selected bounded rule. Tests cover every split of representative padded binary, malformed and
+            incomplete groups, and actual64MiB decoded capacity through real staged Base64 packets. No full allocator/metadata/wire
+            Cartesian claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+            deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+          baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
     - id: read-response
       section: docs/clipboard.rst:47-102
       level: defined
@@ -12861,6 +12984,30 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: unsupported MIME clipboard policy returns routed errors without granting host access
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty malformed write releases transaction and ignores stale continuations
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write accepts the full 64 MiB byte budget without alias duplication
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty decoded write refuses the first byte beyond its actual 64 MiB budget
+        relation: protocol-family
+      - file: howl-vt/src/clipboard.zig
+        test: Kitty write MIME metadata count is bounded independently of payload bytes
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write concatenation accepts every split of a padded binary value
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: No active write is admitted by this profile; continuations, aliases and end are ignored after denial. No multipart
@@ -12870,6 +13017,17 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_03:
+          scope: Selected write assembly accepts sequential direct groups and aliases, exact bare wdata end (no MIME/data), bound64MiB
+            decoded unique bytes,256 names and4096 name bytes. Real decoded payload capacity and plus-one refusal, EINVAL/EFBIG/EIO
+            abort/release, retained error or DONE under reply pressure, stale continuation suppression and RIS revocation. Caller
+            confirms prepared result before DONE, can report final error instead. Tests at decoded owner use real Base64 packets
+            without exercising all 64MiB through OSC framing. Actual host writes, arbitrary opening/ongoing host failure reporting,
+            all metadata/cancellation and permission policy remain open.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+            deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+          baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
     - id: paste-password
       section: docs/clipboard.rst:200-221,264-266
       level: defined
@@ -41772,10 +41930,10 @@ reconciliation:
     verified_subset: Exact malformed payload transport, filtered selector rejection, valid and invalid selected start refusal
       with safe routing id, no host clipboard result, FIFO identity and allocation/reply failure recovery, 7-bit status
       framing, ordered host boundary, unsupported DECRPM and ordinary DEC2004 fallback.
-    boundary: Initial negative/caller refusal and selected transport/detection assessment. Caller-supplied positive MIME
-      response is separately assessed by kitty-clipboard-caller-read-stream. Actual host listing/read/write, transaction
-      and alias data, minimum64MB, permission/UI, one-use password, supported paste precedence, native C typed helpers and
-      full integration remain open.
+    boundary: Initial negative/caller refusal and selected transport/detection assessment. Caller-positive read and write
+      staging separately assessed by kitty-clipboard-caller-read-stream and kitty-clipboard-caller-write-transaction. Actual
+      host listing/read/write, permission/UI, tokens, supported paste precedence, native C typed helpers and full integration
+      remain open.
     not_full_because: No complete OSC5522 or paste-event exchange, real host permission/data path or positive capability
       advertisement implemented.
   applies_to:
@@ -41858,9 +42016,9 @@ reconciliation:
       boundary, malformed/wrong-head/location/order/size rejection, allocation and reply pressure retry, active-head consumption
       protection and RIS revocation.
     boundary: Caller supplies data and permission; no actual host clipboard reads, native C positive helper, actual MIME
-      availability/permission UI, complete request metadata and all allocation/framing combinations, transactional writes,
-      aliases or paste token/precedence. Direct caller must service the pending read before later reply-generating input;
-      app continues to decline all MIME access.
+      availability/permission UI, complete request metadata and all allocation/framing combinations, or paste token/precedence.
+      Caller-owned write assembly separately assessed by kitty-clipboard-caller-write-transaction. Direct caller must service
+      pending read before later reply-generating input; app continues to decline all MIME access.
     not_full_because: Selected positive read wire machinery is qualified with synthetic caller data, not the full clipboard
       exchange, real host data access or supported paste event contract.
   applies_to:
@@ -41874,4 +42032,87 @@ reconciliation:
     - rockorager_paste.read
     - rockorager_paste.security
     scope: Selected solicited caller-supplied MIME response steps; no host access or capability advertisement grant.
+- id: kitty-clipboard-caller-write-transaction
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-write-contract-and-bounded-caller-owned-completion
+  operator_alignment: '2026-11-27: operator approved wave03 transactional writes, MIME aliases, concatenated Base64, atomic
+    completion and minimum64MB acceptance. No actual host clipboard permission granted.'
+  accepted_interpretation:
+    effect: Caller explicitly selects a validated write start at its matching location, creating one lazy transient decoded
+      owner. Stage ordered direct MIME groups with incremental standard Base64 decode and at most three tail bytes, validate
+      group completion before switch/end. Enforce64MiB unique decoded payload,256 distinct names,4096 bytes/name and <=4096
+      decoded bytes per packet. Alias names reference direct byte ranges, can reserve forward targets, reject unresolved
+      targets, conflicting names or chains/cycles; identical alias repetition idempotent. Optional continuation id must
+      exactly match original raw id; reply sanitizes original start identity. Exact no-mime/no-data wdata marks prepared
+      result, keep final FIFO head; caller explicitly confirms acceptance and DONE then moves owned allocations, or error
+      discards. Invalid/cancelled/overflowed recognized input and allocation failure abort staging; error admission retry
+      retains route/status, no stale continuation commit. RIS cancels active staging; queued raw occurrences and admitted
+      reply bytes retain existing policy. Default app refusal and unsupported5522 unchanged. No host access or native
+      C helper.
+  selects:
+    kitty.clipboard.caller-write-transaction: effect
+  reason: Author specifies concatenated padded Base64 per MIME, sequential groups, aliases to original data, no-data final
+    packet, DONE only on success and minimum64MB acceptance. Use shared response/FIFO and one bounded transient decoded
+    owner, hand completed data to caller without copying or performing host I/O. Local stricter alias/metadata and routing
+    rules, conservative cancellation on captured OSC loss/feed failure, and 64MiB cap are explicit scope choices rather
+    than complete author implementation parity.
+  evidence_basis: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+    lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
+    deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected caller-authorized transactional MIME write and bounded decoded ownership
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/clipboard.zig:KittyWrite
+    - howl-vt/src/clipboard.zig:KittyWriteData
+    - howl-vt/src/terminal.zig:stageKittyClipboardWrite
+    - howl-vt/src/terminal.zig:finishKittyClipboardWrite
+    - howl-vt/src/parser.zig:exitPhase
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty malformed write releases transaction and ignores stale continuations
+      relation: protocol-family
+    - file: howl-vt/src/clipboard.zig
+      test: Kitty decoded write accepts the full 64 MiB byte budget without alias duplication
+      relation: protocol-family
+    - file: howl-vt/src/clipboard.zig
+      test: Kitty decoded write refuses the first byte beyond its actual 64 MiB budget
+      relation: protocol-family
+    - file: howl-vt/src/clipboard.zig
+      test: Kitty write MIME metadata count is bounded independently of payload bytes
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty write concatenation accepts every split of a padded binary value
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
+      relation: protocol-family
+    verified_subset: Caller-selected primary/clipboard start, forward aliases share exact bytes, split binary Base64,
+      exact final acceptance and DONE retry, malformed/incomplete/alias/cancellation/overflow abort, stale suppression,
+      actual64MiB direct owner acceptance and plus-one rejection,256-name capacity, allocation and reply-pressure error
+      recovery, reset revocation and independent completed ownership.
+    boundary: Synthetic data only; no actual OS clipboard write/read or user permission grant, native C typed write API,
+      full host opening/ongoing error API, token/UI and paste events, full malformed/routing/allocation/transport matrix.
+      Capacity tests use actual decoded-owner packets rather than full64MiB terminal-wire path. Local metadata/alias/continuation-ID
+      policies remain selected, not source-wide parity.
+    not_full_because: Selected bounded write and transfer machinery is qualified, but the full clipboard exchange, actual
+      host data/permission and supported paste contract remain incomplete.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.write
+    - kitty_clipboard.mux-id
+    - kitty_clipboard.mime-alias
+    - kitty_clipboard.base64-admission
+    - kitty_clipboard.write-data
+    scope: Selected caller-authorized write staging and completion, no host permission or positive advertisement grant.
 pending_reconciliation: []

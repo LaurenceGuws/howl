@@ -46,6 +46,8 @@ pub const ClipboardRequestView = struct {
     protocol: ClipboardProtocol,
     /// True after OK until the exact selected read completes or resets.
     read_started: bool = false,
+    /// True for an OSC5522 packet while a selected write owns continuation.
+    write_owned: bool = false,
 };
 
 /// Reports allocation failure, one intrinsically invalid retained bound, or

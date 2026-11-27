@@ -134,7 +134,7 @@ pub const KittyReadError = replies.AppendError || error{InvalidClipboardResponse
 const max_read_chunk = 4096;
 const mime_whitespace = " \t\r\n\x0b\x0c";
 const KittyOperation = enum { read, write };
-const KittyStatus = enum { OK, DATA, DONE, ENOSYS, EPERM, EBUSY, EINVAL };
+const KittyStatus = enum { OK, DATA, DONE, ENOSYS, EPERM, EBUSY, EINVAL, EIO, EFBIG };
 const KittyStart = struct {
     kind: KittyOperation,
     id: []const u8,
@@ -361,6 +361,331 @@ pub fn appendKittyRead(output: *replies.Buffer, raw: []const u8, progress: ?cons
     }
 }
 
+/// Maximum owned decoded bytes across all direct MIME entries. Aliases
+/// never consume this budget a second time.
+pub const max_write_bytes: usize = 64 * 1024 * 1024;
+const max_write_mimes = 256;
+const max_mime_name_bytes = 4096;
+
+/// Terminal write completion is chosen by the authorized embedding caller.
+pub const KittyWriteStatus = enum { DONE, EIO, EINVAL, ENOSYS, EPERM, EBUSY, EFBIG };
+/// Staging result: only ready permits observing or transferring the complete data.
+pub const KittyWriteProgress = enum { ignored, staged, ready, aborted };
+const WriteStageError = error{ InvalidClipboardResponse, ClipboardLimit, OutOfMemory };
+/// Reports an invalid selected write start or allocation failure.
+pub const KittyWriteInitError = error{ InvalidClipboardResponse, OutOfMemory };
+
+const MimeRange = struct { start: usize, len: usize };
+const MimeEntry = struct {
+    name: []const u8,
+    range: ?MimeRange = null,
+    alias: ?u16 = null,
+};
+
+/// Borrows one completed immutable MIME inventory until its owner mutates.
+pub const KittyWriteView = struct {
+    location: KittyLocation,
+    bytes: []const u8,
+    entries: []const MimeEntry,
+
+    /// Count of direct and aliased names.
+    pub fn count(self: KittyWriteView) usize {
+        return self.entries.len;
+    }
+
+    /// Borrow a name and its shared payload by inventory index.
+    pub fn entry(self: KittyWriteView, index: usize) ?struct { mime: []const u8, bytes: []const u8 } {
+        if (index >= self.entries.len) return null;
+        const item = self.entries[index];
+        const target = if (item.alias) |alias| self.entries[alias] else item;
+        const range = target.range orelse return null;
+        return .{ .mime = item.name, .bytes = self.bytes[range.start..][0..range.len] };
+    }
+
+    /// Borrow the direct or aliased payload of a named MIME.
+    pub fn get(self: KittyWriteView, name: []const u8) ?[]const u8 {
+        for (self.entries, 0..) |item, index| {
+            if (std.mem.eql(u8, item.name, name)) return if (self.entry(index)) |value| value.bytes else null;
+        }
+        return null;
+    }
+};
+
+/// Caller-owned completed clipboard bytes. The transaction owner moves
+/// these allocations once, after the caller accepts the prepared result.
+pub const KittyWriteData = struct {
+    allocator: std.mem.Allocator,
+    location: KittyLocation,
+    bytes: std.ArrayList(u8) = .empty,
+    entries: std.ArrayList(MimeEntry) = .empty,
+
+    /// Releases every unique allocation, never freeing an alias payload twice.
+    pub fn deinit(self: *KittyWriteData) void {
+        for (self.entries.items) |item| self.allocator.free(item.name);
+        self.entries.deinit(self.allocator);
+        self.bytes.deinit(self.allocator);
+        self.* = .{ .allocator = self.allocator, .location = self.location };
+    }
+
+    /// Borrows the completed inventory from caller ownership.
+    pub fn view(self: *const KittyWriteData) KittyWriteView {
+        return .{ .location = self.location, .bytes = self.bytes.items, .entries = self.entries.items };
+    }
+
+    fn indexOf(self: *const KittyWriteData, name: []const u8) ?u16 {
+        for (self.entries.items, 0..) |item, index| {
+            if (std.mem.eql(u8, item.name, name)) return @intCast(index);
+        }
+        return null;
+    }
+
+    fn ensureName(self: *KittyWriteData, name: []const u8) WriteStageError!u16 {
+        if (name.len > max_mime_name_bytes or !validMimeName(name)) return error.InvalidClipboardResponse;
+        if (self.indexOf(name)) |index| return index;
+        if (self.entries.items.len == max_write_mimes) return error.ClipboardLimit;
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        const index: u16 = @intCast(self.entries.items.len);
+        if (self.entries.items.len == self.entries.capacity)
+            try self.entries.ensureTotalCapacityPrecise(self.allocator, @min(max_write_mimes, @max(8, self.entries.capacity * 2)));
+        self.entries.appendAssumeCapacity(.{ .name = owned });
+        return index;
+    }
+
+    fn appendBytes(self: *KittyWriteData, bytes: []const u8) WriteStageError!void {
+        if (bytes.len > max_write_bytes - self.bytes.items.len) return error.ClipboardLimit;
+        const required = self.bytes.items.len + bytes.len;
+        if (required > self.bytes.capacity)
+            try self.bytes.ensureTotalCapacityPrecise(self.allocator, @min(max_write_bytes, @max(required, self.bytes.capacity * 2)));
+        self.bytes.appendSliceAssumeCapacity(bytes);
+    }
+};
+
+/// Validated write start location, without a permission grant.
+pub fn inspectKittyWrite(raw: []const u8) ?KittyLocation {
+    var scratch: KittyReadScratch = undefined;
+    const request = kittyStart(raw, &scratch) orelse return null;
+    return if (request.kind == .write and request.valid) request.location else null;
+}
+
+/// Whether the exact packet is a structurally recognized start, including
+/// an invalid encoded write. Continuations use the separate grammar below.
+pub fn isKittyWriteStart(raw: []const u8) bool {
+    var scratch: KittyReadScratch = undefined;
+    const request = kittyStart(raw, &scratch) orelse return false;
+    return request.kind == .write;
+}
+
+const WritePacketKind = enum { data, alias, end };
+const WritePacket = struct {
+    kind: WritePacketKind,
+    mime: []const u8,
+    data: []const u8,
+};
+
+fn parseWritePacket(raw: []const u8, route: []const u8, scratch: *KittyReadScratch) ?WritePacket {
+    const separator = std.mem.indexOfScalar(u8, raw, ';') orelse raw.len;
+    const data = if (separator == raw.len) "" else raw[separator + 1 ..];
+    var fields = std.mem.splitScalar(u8, raw[0..separator], ':');
+    var kind: ?WritePacketKind = null;
+    var mime: ?[]const u8 = null;
+    var seen_id = false;
+    while (fields.next()) |field| {
+        const equals = std.mem.indexOfScalar(u8, field, '=') orelse return null;
+        const key = field[0..equals];
+        const value = field[equals + 1 ..];
+        if (std.mem.eql(u8, key, "type")) {
+            if (kind != null) return null;
+            kind = if (std.mem.eql(u8, value, "wdata")) .data else if (std.mem.eql(u8, value, "walias")) .alias else return null;
+        } else if (std.mem.eql(u8, key, "mime")) {
+            if (mime != null) return null;
+            mime = encodedText(value, scratch) orelse return null;
+            if (!validMimeName(mime.?) or mime.?.len > max_mime_name_bytes) return null;
+        } else if (std.mem.eql(u8, key, "id")) {
+            if (seen_id or !std.mem.eql(u8, value, route)) return null;
+            seen_id = true;
+        } else return null;
+    }
+    const operation = kind orelse return null;
+    if (mime == null) {
+        if (operation != .data or data.len != 0) return null;
+        return .{ .kind = .end, .mime = "", .data = "" };
+    }
+    return .{ .kind = operation, .mime = mime.?, .data = data };
+}
+
+fn alphabetByte(byte: u8) bool {
+    return switch (byte) {
+        'A'...'Z', 'a'...'z', '0'...'9', '+', '/' => true,
+        else => false,
+    };
+}
+
+/// Owns a single admitted transient write. No allocation occurs for a
+/// terminal without an explicitly authorized start; no host I/O occurs here.
+pub const KittyWrite = struct {
+    contents: KittyWriteData,
+    route: []u8,
+    current: ?u16 = null,
+    tail: [3]u8 = undefined,
+    tail_len: u2 = 0,
+    padded: bool = false,
+    ready: bool = false,
+    failure: ?KittyWriteStatus = null,
+
+    /// Allocates the small owner and route only after caller selection.
+    pub fn init(allocator: std.mem.Allocator, raw: []const u8, location: KittyLocation) KittyWriteInitError!*KittyWrite {
+        var scratch: KittyReadScratch = undefined;
+        const request = kittyStart(raw, &scratch) orelse return error.InvalidClipboardResponse;
+        if (request.kind != .write or !request.valid or request.location != location)
+            return error.InvalidClipboardResponse;
+        const value = try allocator.create(KittyWrite);
+        errdefer allocator.destroy(value);
+        value.* = .{
+            .contents = .{ .allocator = allocator, .location = location },
+            .route = try allocator.dupe(u8, request.id),
+        };
+        return value;
+    }
+
+    /// Releases staging and route. Completed data may already have moved.
+    pub fn deinit(self: *KittyWrite) void {
+        const allocator = self.contents.allocator;
+        self.contents.deinit();
+        allocator.free(self.route);
+        allocator.destroy(self);
+    }
+
+    /// Release all staged bytes on first failure; retain only routing and
+    /// status until that error can be admitted into the bounded reply queue.
+    pub fn fail(self: *KittyWrite, status: KittyWriteStatus) void {
+        if (self.failure != null) return;
+        std.debug.assert(status != .DONE);
+        self.contents.deinit();
+        self.current = null;
+        self.tail_len = 0;
+        self.padded = false;
+        self.ready = false;
+        self.failure = status;
+    }
+
+    /// Serialize status with the original start identity, not the last chunk.
+    pub fn appendStatus(self: *const KittyWrite, output: *replies.Buffer, status: KittyWriteStatus) replies.AppendError!void {
+        try appendKittyResponse(output, .{
+            .kind = .write,
+            .id = self.route,
+            .valid = true,
+            .location = self.contents.location,
+            .mime_types = "",
+        }, switch (status) {
+            .DONE => KittyStatus.DONE,
+            .EIO => KittyStatus.EIO,
+            .EINVAL => KittyStatus.EINVAL,
+            .ENOSYS => KittyStatus.ENOSYS,
+            .EPERM => KittyStatus.EPERM,
+            .EBUSY => KittyStatus.EBUSY,
+            .EFBIG => KittyStatus.EFBIG,
+        }, "", "");
+    }
+
+    // Close the previous group before a new direct MIME begins.
+    fn closeGroup(self: *KittyWrite) WriteStageError!void {
+        if (self.tail_len != 0) return error.InvalidClipboardResponse;
+        self.current = null;
+        self.padded = false;
+    }
+
+    fn appendData(self: *KittyWrite, mime: []const u8, data: []const u8) WriteStageError!void {
+        const index = try self.contents.ensureName(mime);
+        if (self.current != index) {
+            try self.closeGroup();
+            const item = &self.contents.entries.items[index];
+            if (item.alias != null or item.range != null) return error.InvalidClipboardResponse;
+            item.range = .{ .start = self.contents.bytes.items.len, .len = 0 };
+            self.current = index;
+        }
+        if (self.padded and data.len != 0) return error.InvalidClipboardResponse;
+        var encoded: [consequences.retained_packet_bytes_max + 3]u8 = undefined;
+        const prefix: usize = self.tail_len;
+        @memcpy(encoded[0..prefix], self.tail[0..prefix]);
+        @memcpy(encoded[prefix..][0..data.len], data);
+        const all = encoded[0 .. prefix + data.len];
+        const complete_len = all.len - all.len % 4;
+        const complete = all[0..complete_len];
+        const tail = all[complete_len..];
+        const padded = std.mem.endsWith(u8, complete, "=");
+        if (padded and tail.len != 0) return error.InvalidClipboardResponse;
+        for (tail, 0..) |byte, position| {
+            if (!alphabetByte(byte) and !(byte == '=' and position == 2)) return error.InvalidClipboardResponse;
+        }
+        const decoder = std.base64.standard.Decoder;
+        const size = decoder.calcSizeForSlice(complete) catch return error.InvalidClipboardResponse;
+        if (size > max_read_chunk) return error.InvalidClipboardResponse;
+        var decoded: [max_read_chunk]u8 = undefined;
+        decoder.decode(decoded[0..size], complete) catch return error.InvalidClipboardResponse;
+        try self.contents.appendBytes(decoded[0..size]);
+        self.contents.entries.items[index].range.?.len += size;
+        @memcpy(self.tail[0..tail.len], tail);
+        self.tail_len = @intCast(tail.len);
+        self.padded = self.padded or padded;
+    }
+
+    fn addAliases(self: *KittyWrite, target_name: []const u8, encoded: []const u8) WriteStageError!void {
+        var scratch: KittyReadScratch = undefined;
+        const names = encodedText(encoded, &scratch) orelse return error.InvalidClipboardResponse;
+        const target = try self.contents.ensureName(target_name);
+        if (self.contents.entries.items[target].alias != null) return error.InvalidClipboardResponse;
+        var tokens = std.mem.tokenizeAny(u8, names, mime_whitespace);
+        if (tokens.peek() == null) return error.InvalidClipboardResponse;
+        while (tokens.next()) |name| {
+            const alias = try self.contents.ensureName(name);
+            if (alias == target) return error.InvalidClipboardResponse;
+            const item = &self.contents.entries.items[alias];
+            if (item.range != null) return error.InvalidClipboardResponse;
+            if (item.alias) |prior| {
+                if (prior != target) return error.InvalidClipboardResponse;
+                continue;
+            }
+            // A forward target is reserved by aliases already pointing at
+            // it. It cannot later become an alias or form a cycle.
+            for (self.contents.entries.items) |entry_value| {
+                if (entry_value.alias == alias) return error.InvalidClipboardResponse;
+            }
+            item.alias = target;
+        }
+    }
+
+    /// Stages one bounded packet. Failure invalidates the whole transaction
+    /// at the terminal owner, not just this fragment.
+    pub fn stage(self: *KittyWrite, raw: []const u8) WriteStageError!KittyWriteProgress {
+        std.debug.assert(self.failure == null and !self.ready and raw.len <= consequences.retained_packet_bytes_max);
+        var scratch: KittyReadScratch = undefined;
+        const packet = parseWritePacket(raw, self.route, &scratch) orelse return error.InvalidClipboardResponse;
+        switch (packet.kind) {
+            .data => try self.appendData(packet.mime, packet.data),
+            .alias => try self.addAliases(packet.mime, packet.data),
+            .end => {
+                try self.closeGroup();
+                for (self.contents.entries.items) |item| {
+                    const direct = if (item.alias) |target| self.contents.entries.items[target] else item;
+                    if (direct.range == null) return error.InvalidClipboardResponse;
+                }
+                self.ready = true;
+                return .ready;
+            },
+        }
+        return .staged;
+    }
+
+    /// Move completed allocations to the caller without copying bytes.
+    pub fn take(self: *KittyWrite) KittyWriteData {
+        std.debug.assert(self.ready and self.failure == null);
+        const result = self.contents;
+        self.contents = .{ .allocator = result.allocator, .location = result.location };
+        return result;
+    }
+};
+
 fn decodeSetInto(raw: []const u8, output: []u8) IntoError!u64 {
     const request = parseEnvelope(raw) orelse return error.InvalidOsc52Payload;
     if (request.kind == .query) return error.UnsupportedOsc52Query;
@@ -456,4 +781,85 @@ test "OSC 52 query failures preserve prior reply bytes" {
     );
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expectEqualStrings("kept", output.bytes());
+}
+
+test "Kitty decoded write accepts the full 64 MiB byte budget without alias duplication" {
+    const allocator = std.testing.allocator;
+    const writer = try KittyWrite.init(allocator, "type=write:id=large", .clipboard);
+    defer writer.deinit();
+    const prefix = "type=wdata:mime=YXBwbGljYXRpb24vb2N0ZXQtc3RyZWFt;";
+    const raw: [4095]u8 = @splat(0xa5);
+    const encoder = std.base64.standard.Encoder;
+    var packet: [prefix.len + encoder.calcSize(raw.len)]u8 = undefined;
+    @memcpy(packet[0..prefix.len], prefix);
+    var remaining: usize = max_write_bytes;
+    while (remaining != 0) {
+        const count = @min(remaining, raw.len);
+        const encoded = encoder.encode(packet[prefix.len..], raw[0..count]);
+        try std.testing.expectEqual(KittyWriteProgress.staged, try writer.stage(packet[0 .. prefix.len + encoded.len]));
+        remaining -= count;
+        try std.testing.expect(writer.contents.bytes.capacity <= max_write_bytes);
+    }
+    try std.testing.expectEqual(max_write_bytes, writer.contents.bytes.items.len);
+    try std.testing.expectEqual(max_write_bytes, writer.contents.bytes.capacity);
+    try std.testing.expectEqual(KittyWriteProgress.staged, try writer.stage("type=walias:mime=YXBwbGljYXRpb24vb2N0ZXQtc3RyZWFt;YmluYXJ5"));
+    try std.testing.expectEqual(KittyWriteProgress.ready, try writer.stage("type=wdata"));
+    var completed = writer.take();
+    defer completed.deinit();
+    const view = completed.view();
+    const bytes = view.get("application/octet-stream").?;
+    try std.testing.expectEqual(max_write_bytes, bytes.len);
+    try std.testing.expectEqual(bytes.ptr, view.get("binary").?.ptr);
+    try std.testing.expect(std.mem.allEqual(u8, bytes, 0xa5));
+    try std.testing.expectEqual(@as(usize, 0), writer.contents.bytes.capacity);
+}
+
+test "Kitty decoded write refuses the first byte beyond its actual 64 MiB budget" {
+    const allocator = std.testing.allocator;
+    const writer = try KittyWrite.init(allocator, "type=write:id=large", .clipboard);
+    defer writer.deinit();
+    const prefix = "type=wdata:mime=YQ==;";
+    const raw: [4095]u8 = @splat(0x42);
+    const encoder = std.base64.standard.Encoder;
+    var packet: [prefix.len + encoder.calcSize(raw.len)]u8 = undefined;
+    @memcpy(packet[0..prefix.len], prefix);
+    var remaining: usize = max_write_bytes;
+    while (remaining != 0) {
+        const count = @min(remaining, raw.len);
+        const encoded = encoder.encode(packet[prefix.len..], raw[0..count]);
+        try std.testing.expectEqual(KittyWriteProgress.staged, try writer.stage(packet[0 .. prefix.len + encoded.len]));
+        remaining -= count;
+    }
+    // Use another MIME: the first group's final padding is already complete.
+    try std.testing.expectError(error.ClipboardLimit, writer.stage("type=wdata:mime=Yg==;QQ=="));
+    try std.testing.expectEqual(max_write_bytes, writer.contents.bytes.items.len);
+    writer.fail(.EFBIG);
+    try std.testing.expectEqual(@as(usize, 0), writer.contents.bytes.capacity);
+    try std.testing.expectEqual(@as(usize, 0), writer.contents.entries.capacity);
+    var output = replies.Buffer.init(allocator);
+    defer output.deinit();
+    try writer.appendStatus(&output, writer.failure.?);
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EFBIG:id=large\x1b\\", output.bytes());
+}
+
+test "Kitty write MIME metadata count is bounded independently of payload bytes" {
+    const writer = try KittyWrite.init(std.testing.allocator, "type=write", .clipboard);
+    defer writer.deinit();
+    const encoder = std.base64.standard.Encoder;
+    for (0..max_write_mimes + 1) |index| {
+        var name: [32]u8 = undefined;
+        const mime = try std.fmt.bufPrint(&name, "text/x-{d}", .{index});
+        var encoded: [44]u8 = undefined;
+        const enc = encoder.encode(&encoded, mime);
+        var packet: [96]u8 = undefined;
+        const raw = try std.fmt.bufPrint(&packet, "type=wdata:mime={s};", .{enc});
+        if (index == max_write_mimes) {
+            try std.testing.expectError(error.ClipboardLimit, writer.stage(raw));
+        } else {
+            try std.testing.expectEqual(KittyWriteProgress.staged, try writer.stage(raw));
+        }
+    }
+    try std.testing.expectEqual(max_write_mimes, writer.contents.entries.items.len);
+    try std.testing.expectEqual(max_write_mimes, writer.contents.entries.capacity);
+    try std.testing.expectEqual(@as(usize, 0), writer.contents.bytes.items.len);
 }

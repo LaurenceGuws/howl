@@ -4779,3 +4779,198 @@ test "Kitty read inventory bounds and RIS revoke only the started transfer" {
     try terminal.replyKittyClipboardRead(id + 1, .done);
     try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:id=next\x1b\\\x1b]5522;type=read:status=DATA:id=next:mime=Lg==\x1b\\\x1b]5522;type=read:status=DONE:id=next\x1b\\", terminal.replyBytes());
 }
+
+test "Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]5522;type=write:loc=primary:id=a/b+\x07");
+    const start = terminal.consequenceHead().?.id();
+    try std.testing.expectEqual(@as(?Terminal.KittyLocation, .primary), try terminal.inspectKittyClipboardWrite(start));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.beginKittyClipboardWrite(start, .clipboard));
+    try terminal.beginKittyClipboardWrite(start, .primary);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    for ([_][]const u8{
+        "\x1b]5522;type=walias:mime=dGV4dC9wbGFpbg==;dGV4dC9odG1sIHRleHQveC1jdXN0b20=\x07",
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;AA\x1b\\",
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;EC/\x07",
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;w==\x07",
+        "\x1b]5522;type=wdata:mime=aW1hZ2UvcG5n;AQI=\x07",
+    }) |packet| {
+        try feed(&terminal, packet);
+        const id = terminal.consequenceHead().?.id();
+        try std.testing.expectError(error.ReplyRequired, terminal.consumeConsequence(id));
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.staged, try terminal.stageKittyClipboardWrite(id));
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+    try feed(&terminal, "\x1b]5522;type=wdata\x07");
+    const end = terminal.consequenceHead().?.id();
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(end));
+    const view = try terminal.inspectKittyClipboardWriteData(end);
+    try std.testing.expect(view.location == .primary);
+    try std.testing.expectEqual(@as(usize, 4), view.count());
+    const original = view.get("text/plain").?;
+    try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, original);
+    try std.testing.expectEqual(original.ptr, view.get("text/html").?.ptr);
+    try std.testing.expectEqual(original.ptr, view.get("text/x-custom").?.ptr);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, view.get("image/png").?);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectError(error.ReplyRequired, terminal.consumeConsequence(end));
+    const fill = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes, false);
+    defer std.testing.allocator.free(fill);
+    try std.testing.expectError(error.ReplyLimit, terminal.finishKittyClipboardWrite(end, .DONE));
+    try std.testing.expectEqual(end, terminal.consequenceHead().?.id());
+    try std.testing.expectEqualSlices(u8, original, (try terminal.inspectKittyClipboardWriteData(end)).get("text/plain").?);
+    try std.testing.expectEqualStrings(fill, terminal.replyBytes());
+    try consumeReplies(&terminal);
+    var completed = (try terminal.finishKittyClipboardWrite(end, .DONE)) orelse return error.TestUnexpectedResult;
+    defer completed.deinit();
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=DONE:id=ab+\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, completed.view().get("text/html").?);
+    terminal.hardReset();
+    try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, completed.view().get("text/plain").?);
+}
+
+test "Kitty malformed write releases transaction and ignores stale continuations" {
+    for ([_][]const u8{
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;!!!!\x07",
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;QR==\x07",
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;QQ==AAAA\x07",
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;Q\x01Q==\x07",
+        "\x1b]5522;type=wdata;AAAA\x07",
+        "\x1b]5522;type=wdata:mime=!!!!;QQ==\x07",
+        "\x1b]5522;type=walias:mime=dGV4dC9wbGFpbg==;!!!!\x07",
+    }) |bad| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b]5522;type=write:id=keep\x07");
+        try terminal.beginKittyClipboardWrite(terminal.consequenceHead().?.id(), .clipboard);
+        try feed(&terminal, "\x1b]5522;type=wdata:mime=aW1hZ2UvcG5n;AQID\x07");
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.staged, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+        try feed(&terminal, bad);
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.aborted, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+        try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EINVAL:id=keep\x1b\\", terminal.replyBytes());
+        try consumeReplies(&terminal);
+        try feed(&terminal, "\x1b]5522;type=wdata\x07");
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.ignored, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try feed(&terminal, "\x1b]5522;type=write:id=new\x07");
+        try terminal.beginKittyClipboardWrite(terminal.consequenceHead().?.id(), .clipboard);
+        try feed(&terminal, "\x1b]5522;type=wdata\x07");
+        const end = terminal.consequenceHead().?.id();
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(end));
+        try std.testing.expectEqual(@as(usize, 0), (try terminal.inspectKittyClipboardWriteData(end)).count());
+        try std.testing.expect((try terminal.finishKittyClipboardWrite(end, .EIO)) == null);
+        try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EIO:id=new\x1b\\", terminal.replyBytes());
+    }
+}
+
+test "Kitty write concatenation accepts every split of a padded binary value" {
+    const sample = "AAEC/w==";
+    for (1..sample.len) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b]5522;type=write:id=split\x07");
+        try terminal.beginKittyClipboardWrite(terminal.consequenceHead().?.id(), .clipboard);
+        for ([_][]const u8{ sample[0..split], sample[split..] }) |part| {
+            var bytes: [96]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&bytes, "\x1b]5522;type=wdata:mime=YQ==;{s}\x1b\\", .{part});
+            for (wire[0 .. wire.len - 1]) |byte| try std.testing.expect(!(try terminal.feed(&.{byte})).stateChanged());
+            try feed(&terminal, wire[wire.len - 1 ..]);
+            try std.testing.expectEqual(Terminal.KittyWriteProgress.staged, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+        }
+        try feed(&terminal, "\x1b]5522;type=wdata\x07");
+        const end = terminal.consequenceHead().?.id();
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(end));
+        var completed = (try terminal.finishKittyClipboardWrite(end, .DONE)).?;
+        defer completed.deinit();
+        try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, completed.view().get("a").?);
+    }
+}
+
+test "Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets" {
+    const start = "\x1b]5522;type=write:id=route\x07";
+    const end = "\x1b]5522;type=wdata\x07";
+    const data_a = "\x1b]5522;type=wdata:mime=YQ==;QQ==\x07";
+    const data_b = "\x1b]5522;type=wdata:mime=Yg==;Qg==\x07";
+    const alias_b = "\x1b]5522;type=walias:mime=YQ==;Yg==\x07";
+    const alias_a = "\x1b]5522;type=walias:mime=Yg==;YQ==\x07";
+    const cases = [_]struct { prior: []const u8, bad: []const u8 }{
+        .{ .prior = "\x1b]5522;type=wdata:mime=YQ==;QQ=\x07", .bad = end },
+        .{ .prior = "\x1b]5522;type=wdata:mime=YQ==;Q\x07", .bad = data_b },
+        .{ .prior = data_a ++ data_b, .bad = data_a },
+        .{ .prior = alias_b, .bad = end },
+        .{ .prior = alias_b, .bad = alias_a },
+        .{ .prior = alias_b, .bad = data_b },
+        .{ .prior = data_a ++ data_b, .bad = alias_b },
+        .{ .prior = data_a, .bad = "\x1b]5522;type=wdata:id=other:mime=YQ==;QQ==\x07" },
+        .{ .prior = data_a, .bad = "\x1b]5522;type=wdata:mime=YQ==;AAAA\x18" },
+        .{ .prior = data_a, .bad = "\x1b]5522;type=wdata:mime=YQ==;AAAA\x1a" },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, start);
+        try terminal.beginKittyClipboardWrite(terminal.consequenceHead().?.id(), .clipboard);
+        try feed(&terminal, case.prior);
+        while (terminal.consequenceHead()) |head| {
+            try std.testing.expectEqual(Terminal.KittyWriteProgress.staged, try terminal.stageKittyClipboardWrite(head.id()));
+        }
+        try feed(&terminal, case.bad);
+        const bad = terminal.consequenceHead().?.id();
+        try std.testing.expectEqual(Terminal.KittyWriteProgress.aborted, try terminal.stageKittyClipboardWrite(bad));
+        try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EINVAL:id=route\x1b\\", terminal.replyBytes());
+    }
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const huge: [expected_clipboard_packet_bytes + 1]u8 = @splat('A');
+    // Queue start and overflow in one feed: the cancellation must not
+    // disappear just because the caller has not accepted the start yet.
+    try feed(&terminal, start ++ "\x1b]5522;type=wdata:mime=YQ==;");
+    try feed(&terminal, &huge);
+    try feed(&terminal, "\x07" ++ end);
+    try terminal.beginKittyClipboardWrite(terminal.consequenceHead().?.id(), .clipboard);
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.aborted, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.ignored, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EINVAL:id=route\x1b\\", terminal.replyBytes());
+}
+
+test "Kitty write abort reply pressure and allocation failure preserve ordered recovery" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.init(failing.allocator(), 3, 8);
+    defer terminal.deinit();
+    const start = "\x1b]5522;type=write:id=keep\x07";
+    const data = "\x1b]5522;type=wdata:mime=YQ==;QQ==\x07";
+    const end = "\x1b]5522;type=wdata\x07";
+    try feed(&terminal, start);
+    const id = terminal.consequenceHead().?.id();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.beginKittyClipboardWrite(id, .clipboard));
+    try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
+    failing.fail_index = std.math.maxInt(usize);
+    try terminal.beginKittyClipboardWrite(id, .clipboard);
+    const filled = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes, false);
+    defer std.testing.allocator.free(filled);
+    try feed(&terminal, data);
+    const chunk = terminal.consequenceHead().?.id();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.ReplyLimit, terminal.stageKittyClipboardWrite(chunk));
+    try std.testing.expectEqual(chunk, terminal.consequenceHead().?.id());
+    try std.testing.expectEqualStrings(filled, terminal.replyBytes());
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.inspectKittyClipboardWriteData(chunk));
+    failing.fail_index = std.math.maxInt(usize);
+    try consumeReplies(&terminal);
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.aborted, try terminal.stageKittyClipboardWrite(chunk));
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EIO:id=keep\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, start ++ data ++ end);
+    try terminal.beginKittyClipboardWrite(terminal.consequenceHead().?.id(), .clipboard);
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.staged, try terminal.stageKittyClipboardWrite(terminal.consequenceHead().?.id()));
+    const prepared = terminal.consequenceHead().?.id();
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(prepared));
+    terminal.hardReset();
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.finishKittyClipboardWrite(prepared, .DONE));
+    try std.testing.expectEqual(Terminal.KittyWriteProgress.ignored, try terminal.stageKittyClipboardWrite(prepared));
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}

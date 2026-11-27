@@ -239,6 +239,7 @@ pub const Action = union(enum) {
     csi_dispatch: CsiAction,
     osc_dispatch: OscAction,
     iterm_multipart_cancel,
+    kitty_clipboard_cancel,
     screen_title: []const u8,
     apc_start,
     apc_put: u8,
@@ -692,14 +693,16 @@ pub const Parser = struct {
                     '\\', 0x9C => OscTerminator.st,
                     else => {
                         const cancel = self.osc.cancelMultipartOnDiscard();
+                        const clipboard = self.osc.policy.class == .kitty_clipboard;
                         self.osc.reset();
-                        break :exit if (cancel) .iterm_multipart_cancel else null;
+                        break :exit if (cancel) .iterm_multipart_cancel else if (clipboard) .kitty_clipboard_cancel else null;
                     },
                 };
                 if (self.osc.didOverflow() or self.osc.malformedMultipart()) {
                     const cancel = self.osc.cancelMultipartOnDiscard();
+                    const clipboard = self.osc.policy.class == .kitty_clipboard;
                     self.osc.reset();
-                    break :exit if (cancel) .iterm_multipart_cancel else null;
+                    break :exit if (cancel) .iterm_multipart_cancel else if (clipboard) .kitty_clipboard_cancel else null;
                 }
                 break :exit .{ .osc_dispatch = self.osc.snapshot(term) };
             },
