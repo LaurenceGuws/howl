@@ -5111,6 +5111,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 explicit image dimensions fit or stretch pixels independently of reserved cursor cells
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_images.single
@@ -5139,6 +5148,16 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_02:
+          scope: Selected single inline PNG accepts explicit cell/px/percent/auto destination geometry through the same Plane;
+            top-left fit or stretch, immutable source bytes. Explicit oversized requests refused; no new host permission or general
+            transfer/detection claim.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), optional arguments and dimension units. Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100InlineImageHelper.m327-466
+            and iTermImageInfo.m390-409; WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/osc.rs1109-1177
+            and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
+            existing Kitty fit controls.
+          baseline: 70819ae722035a1f2edc8803e10be42b830a3743
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -11944,6 +11963,9 @@ specifications:
       - file: howl-vt/test/native_owner.zig
         test: native graphics manifest retains centered pixel offsets spanning multiple cells
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded destination geometry preflights before consuming pixels and identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_04:
           scope: 'Positive source intersections clamp requested extents to the remaining image before aspect-ratio geometry, including
@@ -11976,6 +11998,16 @@ specifications:
             stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
             proofs.
           baseline: 333a723dfd26456138d3bed88dea9f75601ef452
+        howl_qualification_20261127_iterm2_images_02:
+          scope: Shared integer aspect-fit helper preserves previously selected centered Kitty physical two-axis semantics. Unrepresentable
+            one-axis derived u32 extent now rejects transactionally rather than narrowing/trapping; existing Kitty crop/cursor/placement
+            semantics unchanged. No new broader Kitty conformance promotion.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), optional arguments and dimension units. Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100InlineImageHelper.m327-466
+            and iTermImageInfo.m390-409; WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/osc.rs1109-1177
+            and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
+            existing Kitty fit controls.
+          baseline: 70819ae722035a1f2edc8803e10be42b830a3743
     - id: placement-z-order
       section: docs/graphics-protocol.rst:690-698
       level: defined
@@ -24499,6 +24531,18 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 explicit image dimensions fit or stretch pixels independently of reserved cursor cells
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded destination geometry preflights before consuming pixels and identity
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Selected single OSC1337 File=inline=1 PNG with absent/auto dimensions enters canonical graphics Plane at the
@@ -24511,6 +24555,16 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_02:
+          scope: Extends wave01 selected single PNG to explicit dimensions; same bounded capture and canonical decoder. Complete
+            BEL/ST admission, geometry preflight before identity/pixel ownership, immutable source and output cut. No new transfer
+            inventory, host-file permission or multipart assembly.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), optional arguments and dimension units. Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100InlineImageHelper.m327-466
+            and iTermImageInfo.m390-409; WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/osc.rs1109-1177
+            and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
+            existing Kitty fit controls.
+          baseline: 70819ae722035a1f2edc8803e10be42b830a3743
     - id: multipart-start
       section: Protocol
       level: defined
@@ -24620,6 +24674,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 explicit image dimensions fit or stretch pixels independently of reserved cursor cells
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Known unique metadata selects natural-size inline PNG only. Name inert (not decoded or used as a path); decimal
@@ -24631,6 +24691,17 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_02:
+          scope: Known unique width/height accept auto or positive decimal cells, px, and percent; preserveAspectRatio defaults1,
+            0 explicitly stretches when both dimensions provided. Missing/auto axes derive inherent/aspect extent. Percentage
+            clamps at100 as pinned implementations; invalid or zero extents and unknown/duplicate fields refuse without download
+            fallback. Name/progress size remain inert.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), optional arguments and dimension units. Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100InlineImageHelper.m327-466
+            and iTermImageInfo.m390-409; WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/osc.rs1109-1177
+            and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
+            existing Kitty fit controls.
+          baseline: 70819ae722035a1f2edc8803e10be42b830a3743
     - id: dimensions
       section: Protocol / width and height
       level: defined
@@ -24647,6 +24718,18 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 explicit image dimensions fit or stretch pixels independently of reserved cursor cells
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded destination geometry preflights before consuming pixels and identity
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Native-size subset preserves inherent decoded pixel extent and cursor placement. Explicit sized requests refused
@@ -24657,6 +24740,20 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_02:
+          scope: Resolve percent against full current session pixel extent, integer floor, clamp >100. Explicit cells use cell
+            pixels; px exact; one automatic axis derives aspect with floor/min1 even if preserveAspectRatio=0. Both automatic
+            use native pixels without upscaling, shrink oversized natural image to full screen using shared fit arithmetic. Both
+            explicit axes keep reserved box, fit source top-left (author implementation trailing insets) or stretch on preserveAspectRatio=0.
+            Explicit or derived boxes exceeding full-screen bound and unrepresentable/zero dimensions reject; local bounded policy,
+            not exact iTerm2 remaining-width/255-row downscale or WezTerm width-dominant two-axis behavior. Cursor extent uses
+            ceil box/cell. Preserve original RGBA and source crop; existing margins/resize/viewport policies unchanged.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), optional arguments and dimension units. Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100InlineImageHelper.m327-466
+            and iTermImageInfo.m390-409; WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/osc.rs1109-1177
+            and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
+            existing Kitty fit controls.
+          baseline: 70819ae722035a1f2edc8803e10be42b830a3743
     - id: download
       section: More on File Transfers
       level: defined
@@ -40535,11 +40632,12 @@ reconciliation:
     verified_subset: Every split of selected BEL/ST PNG, exact native pixels and cursor, real PNG beyond old metadata
       cap, overflow and allocation-failure recovery, caller-neutral download separation and bare FileEnd, direct held
       output and cross-protocol ownership isolation.
-    boundary: No full source family conformance. Selected single PNG only; explicit dimensions, multipart state, non-PNG
-      formats, large natural-box resizing, actual host downloads, FILE detection, complete allocation/geometry/framing
-      matrix and physical presentation remain unqualified.
-    not_full_because: Only a bounded natural-size PNG subset is implemented and qualified; broader source-defined image/file
-      and sizing behavior remains open.
+    boundary: No full source family conformance. This assessment covers the original single natural PNG subset; explicit dimensions
+      and oversized automatic fit are separately assessed by iterm2-inline-destination-geometry. Multipart state, non-PNG
+      formats, actual host downloads, FILE detection, full allocation/geometry/framing matrix and physical presentation remain
+      open.
+    not_full_because: Original natural-size subset is bounded and separately qualified; broader source-defined image/file
+      behavior and complete geometry matrix remain open.
   applies_to:
     clauses:
     - iterm2_images.single
@@ -40549,4 +40647,73 @@ reconciliation:
     - iterm2_images.download
     - iterm2_osc1337.inline-file
     scope: Selected single inline PNG and bare terminator framing; no broad file transfer or host permission decision.
+- id: iterm2-inline-destination-geometry
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-protocol-author-fit-and-bounded-native-placement
+  operator_alignment: '2026-11-27: operator agreed to explicit destination dimensions and aspect handling as the next
+    iTerm2 image slice. Selected concrete rounding and bounds from inspected source and existing terminal ownership.'
+  accepted_interpretation:
+    effect: Extend the single inline PNG profile to positive decimal cell/px/percent and auto width/height. Percent is
+      floor of full session pixel extent with percent clamped to100. Both auto preserve native size unless larger than
+      full screen, then shrink to fit. One auto axis derives from source aspect using floor/min1. For two explicit axes
+      reserve the requested box, preserve aspect by default using top-left fitting or stretch when preserveAspectRatio=0.
+      Reject zero, unrepresentable or explicit/derived out-of-screen box geometry. Cursor advance uses ceil box/cell,
+      independent of fitted pixel rectangle. Same bounded capture/PNG/Plane and non-Kitty lifecycle; no host file access,
+      scaling of decoded source bytes, extra persistent state or ABI change.
+  selects:
+    iterm2.images.destination-geometry: effect
+  reason: Originating docs require cell, pixel, percentage and auto dimensions, aspect preservation unless explicitly
+    disabled. Pinned iTerm2 uses trailing insets (top-left fit), percent clamp and reserved cell extent; WezTerm also
+    clamps percent and shrinks oversized native automatic images but uses width-dominant two-axis scaling. Select documented
+    fit and author anchor, retain full-session bounded geometry rather than clone remaining-width/255-row author implementation
+    or width-dominant behavior. Share existing Kitty aspect-fit arithmetic without changing Kitty centering.
+  evidence_basis: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+    (2026-11-24), optional arguments and dimension units. Pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100InlineImageHelper.m327-466
+    and iTermImageInfo.m390-409; WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575 wezterm-escape-parser/src/osc.rs1109-1177
+    and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
+    existing Kitty fit controls.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected single inline PNG destination geometry and transactional admission
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/iterm_control.zig:Dimension
+    - howl-vt/src/terminal.zig:resolveItermDestination
+    - howl-vt/src/graphics.zig:makePlacement
+    - howl-vt/src/graphics.zig:PixelExtent
+    - howl-vt/src/graphics.zig:admitDecoded
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 explicit image dimensions fit or stretch pixels independently of reserved cursor cells
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: decoded destination geometry preflights before consuming pixels and identity
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty two-axis placement fits centered pixels and retains requested cursor extent
+      relation: protocol-family
+    verified_subset: Nine explicit/auto sizing cases under BEL/ST, natural shrink and malformed/oversized refusal, decoded-plane
+      preflight/unchanged ownership, exact fitted and stretched draw geometry and immutable held source bytes, prior Kitty
+      centered fit unchanged.
+    boundary: Selected canonical single PNG admission-time geometry. Explicit out-of-screen boxes refused; no full author
+      margin/remaining-width/255-row behavior, resize/refit, all clipping/scroll/geometry extremes, multipart, non-PNG,
+      host download or physical presentation qualification.
+    not_full_because: Selected dimension grammar and geometry subcases proven; broader image family, cursor/margin/resize
+      and full numeric/wire/allocator matrix remain open.
+  applies_to:
+    clauses:
+    - iterm2_images.single
+    - iterm2_images.metadata
+    - iterm2_images.dimensions
+    - iterm2_osc1337.inline-file
+    scope: Single inline PNG destination geometry; extends initial natural-size profile without broad file transfer or
+      host permission decision.
 pending_reconciliation: []

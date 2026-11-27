@@ -363,7 +363,7 @@ const SemanticEvent = union(enum) {
     clipboard_set: []const u8,
     kitty_clipboard_packet: []const u8,
     file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
-    iterm_inline_png: []const u8,
+    iterm_inline_png: iterm_control.InlinePng,
     drag_drop: ParsedDragDrop,
     dec_mode_query: u16,
     sixel_register_count_query,
@@ -5233,7 +5233,7 @@ const TerminalStream = struct {
         else
             graphicsScreenOrigin(self.terminal) + screen.cursor.row;
         const col: u16 = if (self.terminal.modes.sixel_display_mode) 0 else screen.cursor.col;
-        self.terminal.graphics.admitDecoded(
+        const advance = self.terminal.graphics.admitDecoded(
             image.pixels,
             image.width,
             image.height,
@@ -5242,12 +5242,12 @@ const TerminalStream = struct {
             col,
             cell_size.width,
             cell_size.height,
+            null,
         ) catch return discardedStringControl();
         image.pixels = &.{};
         if (!self.terminal.modes.sixel_display_mode) {
-            const occupied_rows = (image.height + cell_size.height - 1) / cell_size.height;
             const saved_col = screen.cursor.col;
-            var remaining = occupied_rows -| 1;
+            var remaining = advance.rows -| 1;
             while (remaining != 0) : (remaining -= 1) {
                 const scrolls = screen.cursor.row == screen.scrollBottom();
                 const before = graphicsScreenOrigin(self.terminal);
@@ -5438,7 +5438,8 @@ fn resolveGraphicsVirtualAnchor(context: graphics_mod.Plane.AnchorContext, index
 
 // A selected iTerm inline file owns decoded PNG pixels directly in VT.
 // No filesystem action or opaque download consequence follows rejection.
-fn applyItermInlinePng(vt: *Terminal, encoded: []const u8) error{OutOfMemory}!bool {
+fn applyItermInlinePng(vt: *Terminal, request: iterm_control.InlinePng) error{OutOfMemory}!bool {
+    const encoded = request.encoded;
     if (encoded.len == 0 or encoded.len % 4 != 0) return false;
     const active = vt.screen_state.activeConst();
     const cell = active.cellPixelSize() orelse return false;
@@ -5453,12 +5454,12 @@ fn applyItermInlinePng(vt: *Terminal, encoded: []const u8) error{OutOfMemory}!bo
     };
     var admitted = false;
     defer if (!admitted) vt.allocator.free(decoded.pixels);
-    // The initial profile selects native pixels, not an invented implicit
-    // shrink or explicit dimension policy. Reject a too-large natural box.
-    if (@as(u64, decoded.width) > @as(u64, active.cols) * cell.width or
-        @as(u64, decoded.height) > @as(u64, active.rows) * cell.height) return false;
+    const destination = resolveItermDestination(request.options, .{
+        .width = decoded.width,
+        .height = decoded.height,
+    }, cell.width, cell.height, active.cols, active.rows) orelse return false;
     const before = vt.graphics.generation();
-    vt.graphics.admitDecoded(
+    const advance = vt.graphics.admitDecoded(
         decoded.pixels,
         decoded.width,
         decoded.height,
@@ -5467,13 +5468,47 @@ fn applyItermInlinePng(vt: *Terminal, encoded: []const u8) error{OutOfMemory}!bo
         active.cursor.col,
         cell.width,
         cell.height,
+        destination,
     ) catch return false;
     admitted = true;
-    const advance: graphics_mod.CursorAdvance = .{
-        .cols = @intCast(1 + (decoded.width - 1) / cell.width),
-        .rows = @intCast(1 + (decoded.height - 1) / cell.height),
-    };
     return applyImageCursorAdvance(vt, advance) or vt.graphics.generation() != before;
+}
+
+// Resolve iTerm units against the full session extent, not the cursor's
+// remaining columns. Explicit boxes outside that bound fail before admission;
+// a native-size auto/auto image may instead shrink to fit. Keep the requested
+// box distinct from the drawn pixels so cursor movement does not depend on fit.
+fn resolveItermDestination(
+    options: iterm_control.InlineOptions,
+    source: graphics_mod.PixelExtent,
+    cell_width: u32,
+    cell_height: u32,
+    cols: u16,
+    rows: u16,
+) ?graphics_mod.DecodedDestination {
+    const screen: graphics_mod.PixelExtent = .{
+        .width = @intCast(@min(@as(u64, cols) * cell_width, std.math.maxInt(u32))),
+        .height = @intCast(@min(@as(u64, rows) * cell_height, std.math.maxInt(u32))),
+    };
+    const width = options.width.resolve(cell_width, cols);
+    const height = options.height.resolve(cell_height, rows);
+    if (screen.width == 0 or screen.height == 0) return null;
+    if (width == null and height == null) {
+        const box = if (source.width > screen.width or source.height > screen.height)
+            source.fitInside(screen)
+        else
+            source;
+        return .{ .box = box, .preserve_aspect = false };
+    }
+    if (width) |value| if (value == 0 or value > screen.width) return null;
+    if (height) |value| if (value == 0 or value > screen.height) return null;
+    const box_width = width orelse @max(1, height.? * source.width / source.height);
+    const box_height = height orelse @max(1, width.? * source.height / source.width);
+    if (box_width > screen.width or box_height > screen.height) return null;
+    return .{
+        .box = .{ .width = @intCast(box_width), .height = @intCast(box_height) },
+        .preserve_aspect = options.preserve_aspect and width != null and height != null,
+    };
 }
 
 fn applyImageCursorAdvance(

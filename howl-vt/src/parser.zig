@@ -68,7 +68,7 @@ pub const max_metadata_control_bytes = metadata_control_max_bytes;
 pub const max_palette_control_bytes = palette_control_max_bytes;
 /// Maximum complete payload accepted for one chunked Kitty control.
 pub const max_chunk_control_bytes = chunk_control_max_bytes;
-/// Local complete OSC payload bound for selected natural-size inline images.
+/// Local complete OSC payload bound for selected inline images.
 /// Ordinary iTerm metadata and unselected file packets keep their old bound.
 pub const max_inline_image_control_bytes: u32 = 1024 * 1024;
 
@@ -2383,7 +2383,7 @@ pub const OscControl = struct {
         // after the exact File= header selects the supported inline profile.
         if (byte == ':' and self.policy.command == 1337 and !self.isInlineImage() and
             self.buffer.items.len < self.policy.max_len and
-            iterm_control.inlineFileHeader(self.buffer.items) == .natural)
+            iterm_control.inlineFileHeader(self.buffer.items) == .selected)
         {
             if (self.prefix_filtered) {
                 self.overflowed = true;

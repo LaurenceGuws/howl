@@ -2988,3 +2988,43 @@ test "iTerm2 inline PNG uses native graphics output and survives held-cut retire
     try std.testing.expectEqual(@as(usize, 0), cleared.snapshot.graphics.images.len);
     try std.testing.expectEqual(@as(usize, 0), cleared.snapshot.graphics.positive.len);
 }
+
+test "iTerm2 sized inline output preserves source pixels and top-left fit across held publication" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.resize(8, 8);
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    try owner.feed("\x1b[H\x1b]1337;File=inline=1;width=6px;height=15px:" ++ png ++ "\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    var pinned = true;
+    defer if (pinned) release(owner, held);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.positive.len);
+    const original = held.snapshot.graphics.positive[0].rgba;
+    try std.testing.expectEqualDeep(output.commands.Rect{ .x = 0, .y = 0, .width = 6, .height = 3 }, original.destination);
+    try std.testing.expectEqualDeep(output.commands.SourceRect{ .x = 0, .y = 0, .width = 2, .height = 1 }, original.resource.source.?);
+    const metrics = owner.acceptedMetrics().?;
+    try owner.feed("\x1b[3;3H\x1b]1337;File=inline=1;width=6px;height=15px;preserveAspectRatio=0:" ++ png ++ "\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualDeep(original, held.snapshot.graphics.positive[0].rgba);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, held.snapshot.graphics.images[0].pixels);
+    release(owner, held);
+    pinned = false;
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expectEqual(@as(usize, 2), next.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 2), next.snapshot.graphics.positive.len);
+    const stretched = next.snapshot.graphics.positive[1].rgba;
+    try std.testing.expectEqualDeep(output.commands.Rect{
+        .x = 2 * @as(i32, metrics.cell_width),
+        .y = 2 * @as(i32, metrics.cell_height),
+        .width = 6,
+        .height = 15,
+    }, stretched.destination);
+    try std.testing.expectEqualDeep(original.resource.source, stretched.resource.source);
+    try std.testing.expectEqualSlices(u8, next.snapshot.graphics.images[0].pixels, next.snapshot.graphics.images[1].pixels);
+    try std.testing.expect(next.snapshot.graphics.images[0].resource.resource != next.snapshot.graphics.images[1].resource.resource);
+}

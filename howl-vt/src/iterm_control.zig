@@ -38,23 +38,76 @@ pub const Command = union(enum) {
     steal_focus,
     request_attention: []const u8,
     file_transfer: []const u8,
-    inline_png: []const u8,
+    inline_png: InlinePng,
 };
 
 const maximum_shell_name_bytes: u8 = 32;
 
+/// One explicitly selected destination dimension; auto derives from source.
+pub const Dimension = union(enum) {
+    auto,
+    cells: u32,
+    pixels: u32,
+    percent: u32,
+
+    /// Returns explicit pixel extent in wide arithmetic, or null for auto.
+    pub fn resolve(self: Dimension, cell_size: u32, cell_count: u16) ?u64 {
+        return switch (self) {
+            .auto => null,
+            .cells => |value| @as(u64, value) * cell_size,
+            .pixels => |value| value,
+            .percent => |value| @as(u64, cell_count) * cell_size * @min(value, 100) / 100,
+        };
+    }
+};
+
+/// Selected image metadata; filename and progress hints remain inert.
+pub const InlineOptions = struct {
+    width: Dimension = .auto,
+    height: Dimension = .auto,
+    preserve_aspect: bool = true,
+};
+
+/// Borrows the completed single-file payload and its selected geometry.
+pub const InlinePng = struct {
+    options: InlineOptions,
+    encoded: []const u8,
+};
+
 /// Selects the single-file inline subset before decoding or host dispatch.
-pub const InlineFileKind = enum { other, unsupported, natural };
+pub const InlineFileKind = union(enum) { other, unsupported, selected: InlineOptions };
+
+fn parseDimension(value: []const u8) ?Dimension {
+    if (std.mem.eql(u8, value, "auto")) return .auto;
+    const number_end = if (std.mem.endsWith(u8, value, "px"))
+        value.len - 2
+    else if (std.mem.endsWith(u8, value, "%"))
+        value.len - 1
+    else
+        value.len;
+    const number = value[0..number_end];
+    if (number.len == 0) return null;
+    for (number) |byte| if (!std.ascii.isDigit(byte)) return null;
+    const count = std.fmt.parseUnsigned(u32, number, 10) catch return null;
+    if (count == 0) return null;
+    return switch (value.len - number_end) {
+        0 => .{ .cells = count },
+        1 => .{ .percent = count },
+        2 => .{ .pixels = count },
+        else => null,
+    };
+}
 
 /// Classifies one complete File= header (without its colon or image data).
 /// An explicit inline request never falls back to the download lane.
-/// The initial PNG profile admits only native-size (auto) dimensions.
+/// The selected PNG profile accepts bounded auto, cell, pixel and percentage dimensions.
 pub fn inlineFileHeader(header: []const u8) InlineFileKind {
     if (!std.mem.startsWith(u8, header, "File=")) return .other;
     var fields = std.mem.splitScalar(u8, header["File=".len..], ';');
     var seen: u8 = 0;
     var inline_intent = false;
     var valid = true;
+    var options: InlineOptions = .{};
     while (fields.next()) |field| {
         const separator = std.mem.indexOfScalar(u8, field, '=') orelse {
             valid = false;
@@ -66,13 +119,16 @@ pub fn inlineFileHeader(header: []const u8) InlineFileKind {
             if (std.mem.eql(u8, value, "1")) inline_intent = true else valid = false;
             break :blk 0;
         } else if (std.mem.eql(u8, key, "width")) blk: {
-            if (!std.mem.eql(u8, value, "auto")) valid = false;
+            if (parseDimension(value)) |dimension| options.width = dimension else valid = false;
             break :blk 1;
         } else if (std.mem.eql(u8, key, "height")) blk: {
-            if (!std.mem.eql(u8, value, "auto")) valid = false;
+            if (parseDimension(value)) |dimension| options.height = dimension else valid = false;
             break :blk 2;
         } else if (std.mem.eql(u8, key, "preserveAspectRatio")) blk: {
-            if (!std.mem.eql(u8, value, "0") and !std.mem.eql(u8, value, "1")) valid = false;
+            if (std.mem.eql(u8, value, "0"))
+                options.preserve_aspect = false
+            else if (!std.mem.eql(u8, value, "1"))
+                valid = false;
             break :blk 3;
         } else if (std.mem.eql(u8, key, "name"))
             4 // Filename is inert display metadata, never a filesystem path.
@@ -93,7 +149,7 @@ pub fn inlineFileHeader(header: []const u8) InlineFileKind {
         seen |= bit;
     }
     if (!inline_intent) return .other;
-    return if (valid) .natural else .unsupported;
+    return if (valid) .{ .selected = options } else .unsupported;
 }
 
 /// Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
@@ -151,7 +207,10 @@ fn parse1337(payload: []const u8) ?Command {
         return switch (inlineFileHeader(payload[0..colon])) {
             .other => .{ .file_transfer = payload },
             .unsupported => null,
-            .natural => if (colon < payload.len) .{ .inline_png = payload[colon + 1 ..] } else null,
+            .selected => |options| if (colon < payload.len) .{ .inline_png = .{
+                .options = options,
+                .encoded = payload[colon + 1 ..],
+            } } else null,
         };
     }
     if (std.mem.eql(u8, key, "MultipartFile") or

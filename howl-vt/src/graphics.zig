@@ -234,7 +234,32 @@ const Loading = struct {
     used: usize = 0,
 };
 
-/// Reports one Kitty placement-driven terminal cursor consequence.
+/// Pixel dimensions independent of the occupied cell rectangle.
+pub const PixelExtent = struct {
+    width: u32,
+    height: u32,
+
+    /// Fits a nonempty source into a nonempty box using integer pixels.
+    /// Round the nonlimiting axis down, with a one-pixel minimum.
+    pub fn fitInside(self: PixelExtent, box: PixelExtent) PixelExtent {
+        std.debug.assert(self.width != 0 and self.height != 0 and box.width != 0 and box.height != 0);
+        const scaled_width = @as(u64, box.height) * self.width;
+        const scaled_height = @as(u64, box.width) * self.height;
+        return if (scaled_height <= scaled_width)
+            .{ .width = box.width, .height = @intCast(@max(1, scaled_height / self.width)) }
+        else
+            .{ .width = @intCast(@max(1, scaled_width / self.height)), .height = box.height };
+    }
+};
+
+/// Optional exact destination box for a decoded, non-Kitty image.
+/// Fit is top-left anchored, independently of Kitty's centered box policy.
+pub const DecodedDestination = struct {
+    box: PixelExtent,
+    preserve_aspect: bool,
+};
+
+/// Reports one placement-driven terminal cursor consequence.
 pub const CursorAdvance = struct {
     cols: u16,
     rows: u16,
@@ -1202,6 +1227,7 @@ pub const Plane = struct {
                 loading.cell_y,
                 loading.z,
                 1,
+                null,
             ) orelse return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet }
         else
             null;
@@ -1361,6 +1387,7 @@ pub const Plane = struct {
             command_value.cell_y,
             command_value.z,
             1,
+            null,
         ) orelse return .{ .response_id = command_value.id, .failure = .invalid, .quiet = command_value.quiet };
         planned.virtual = command_value.unicode_placement;
         if (planned.virtual) {
@@ -1603,8 +1630,9 @@ pub const Plane = struct {
         col: u16,
         cell_width: u32,
         cell_height: u32,
-    ) error{Quota}!void {
-        if (width == 0 or height == 0 or width > max_dimension or height > max_dimension or
+        destination: ?DecodedDestination,
+    ) error{Quota}!CursorAdvance {
+        if (cell_width == 0 or cell_height == 0 or width == 0 or height == 0 or width > max_dimension or height > max_dimension or
             pixels.len > max_image_bytes or pixels.len > max_storage_bytes - self.storage_bytes or
             self.image_count == max_images or self.placement_count == max_placements)
             return error.Quota;
@@ -1612,23 +1640,9 @@ pub const Plane = struct {
         const expected_bytes = std.math.mul(usize, expected, 4) catch return error.Quota;
         if (expected_bytes != pixels.len)
             return error.Quota;
-        const image_id = self.allocateImageId();
-        self.advance();
-        self.content_generation = self.next_generation;
-        self.images[self.image_count] = .{
-            .id = image_id,
-            .bank = bank,
-            .kitty_id = null,
-            .kitty_number = null,
-            .width = width,
-            .height = height,
-            .generation = self.next_generation,
-            .pixels = pixels,
-        };
-        self.image_count += 1;
-        self.storage_bytes += pixels.len;
-        const added = self.addPlacement(
-            image_id,
+        // Plan every fallible geometry check before consuming identity or bytes.
+        var placement_value = makePlacement(
+            1,
             0,
             bank,
             row,
@@ -1646,9 +1660,30 @@ pub const Plane = struct {
             0,
             0,
             0,
-            self.next_generation,
-        );
-        std.debug.assert(added != null);
+            1,
+            destination,
+        ) orelse return error.Quota;
+        const image_id = self.allocateImageId();
+        self.advance();
+        self.content_generation = self.next_generation;
+        self.images[self.image_count] = .{
+            .id = image_id,
+            .bank = bank,
+            .kitty_id = null,
+            .kitty_number = null,
+            .width = width,
+            .height = height,
+            .generation = self.next_generation,
+            .pixels = pixels,
+        };
+        self.image_count += 1;
+        self.storage_bytes += pixels.len;
+        placement_value.image_id = image_id;
+        placement_value.generation = self.next_generation;
+        placement_value.identity = self.next_generation;
+        self.placements[self.placement_count] = placement_value;
+        self.placement_count += 1;
+        return .{ .cols = placement_value.cols, .rows = placement_value.rows };
     }
 
     /// Clears one bank's placements and Kitty data, preserving other banks.
@@ -2233,53 +2268,6 @@ pub const Plane = struct {
     // Placement planning
     // -------------------------------------------------------------------------
 
-    fn addPlacement(
-        self: *Plane,
-        image_id: u32,
-        kitty_id: u32,
-        bank: Bank,
-        row: u64,
-        col: u16,
-        cell_width: u32,
-        cell_height: u32,
-        pixel_width: u32,
-        pixel_height: u32,
-        source_x: u32,
-        source_y: u32,
-        source_width: u32,
-        source_height: u32,
-        columns: u32,
-        rows: u32,
-        cell_x: u32,
-        cell_y: u32,
-        z: i32,
-        placement_generation: u64,
-    ) ?void {
-        self.placements[self.placement_count] = makePlacement(
-            image_id,
-            kitty_id,
-            bank,
-            row,
-            col,
-            cell_width,
-            cell_height,
-            pixel_width,
-            pixel_height,
-            source_x,
-            source_y,
-            source_width,
-            source_height,
-            columns,
-            rows,
-            cell_x,
-            cell_y,
-            z,
-            placement_generation,
-        ) orelse return null;
-        self.placements[self.placement_count].identity = placement_generation;
-        self.placement_count += 1;
-    }
-
     fn placementIndex(self: *const Plane, image_id: u32, kitty_id: u32) ?usize {
         if (kitty_id == 0) return null;
         for (self.placements[0..self.placement_count], 0..) |retained, index|
@@ -2418,6 +2406,7 @@ pub const Plane = struct {
         cell_y: u32,
         z: i32,
         placement_generation: u64,
+        decoded_destination: ?DecodedDestination,
     ) ?Placement {
         std.debug.assert(cell_width != 0 and cell_height != 0);
         if (source_x >= pixel_width or source_y >= pixel_height or
@@ -2442,6 +2431,11 @@ pub const Plane = struct {
             destination_width = ceilRatio(destination_height, source_width, source_height) orelse return null;
         if (requested_rows == 0 and requested_cols != 0)
             destination_height = ceilRatio(destination_width, source_height, source_width) orelse return null;
+        if (decoded_destination) |destination| {
+            destination_width = destination.box.width;
+            destination_height = destination.box.height;
+            if (destination_width == 0 or destination_height == 0) return null;
+        }
         const occupied_cols = ceilRatio(
             1,
             std.math.add(u32, destination_width, cell_x) catch return null,
@@ -2452,23 +2446,27 @@ pub const Plane = struct {
             std.math.add(u32, destination_height, cell_y) catch return null,
             cell_height,
         ) orelse return null;
+        if (decoded_destination != null and
+            (occupied_cols > std.math.maxInt(u16) or occupied_rows > std.math.maxInt(u16))) return null;
         // Keep the requested cell box for cursor motion, margin membership,
         // deletion selectors and parent anchors. Fit the pixels into the
         // remaining box after the client offset, not into a new cell box.
         var offset_x = cell_x;
         var offset_y = cell_y;
-        if (requested_cols != 0 and requested_rows != 0) {
-            const scaled_width = @as(u64, destination_height) * source_width;
-            const scaled_height = @as(u64, destination_width) * source_height;
-            if (scaled_height <= scaled_width) {
-                const fitted: u32 = @intCast(@max(1, scaled_height / source_width));
-                offset_y += (destination_height - fitted) / 2;
-                destination_height = fitted;
-            } else {
-                const fitted: u32 = @intCast(@max(1, scaled_width / source_height));
-                offset_x += (destination_width - fitted) / 2;
-                destination_width = fitted;
+        const box: PixelExtent = .{ .width = destination_width, .height = destination_height };
+        const source: PixelExtent = .{ .width = source_width, .height = source_height };
+        if (decoded_destination) |destination| {
+            if (destination.preserve_aspect) {
+                const fitted = source.fitInside(box);
+                destination_width = fitted.width;
+                destination_height = fitted.height;
             }
+        } else if (requested_cols != 0 and requested_rows != 0) {
+            const fitted = source.fitInside(box);
+            offset_x += (destination_width - fitted.width) / 2;
+            offset_y += (destination_height - fitted.height) / 2;
+            destination_width = fitted.width;
+            destination_height = fitted.height;
         }
         return .{
             .image_id = image_id,
@@ -3211,7 +3209,7 @@ fn inflateLoading(self: *Plane, bank: Bank) std.mem.Allocator.Error!bool {
 fn ceilRatio(a: u32, b: u32, divisor: u32) ?u32 {
     if (divisor == 0) return null;
     const product = std.math.mul(u64, a, b) catch return null;
-    return @intCast((product + divisor - 1) / divisor);
+    return std.math.cast(u32, (product + divisor - 1) / divisor);
 }
 
 fn rectanglesOverlap(
@@ -3878,7 +3876,7 @@ test "plane identities survive Kitty replacement and isolate decoded images from
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
 
     const decoded = try std.testing.allocator.dupe(u8, &.{ 1, 2, 3, 4 });
-    try plane.admitDecoded(decoded, 1, 1, .primary, 1, 1, 1, 1);
+    try std.testing.expectEqualDeep(CursorAdvance{ .cols = 1, .rows = 1 }, try plane.admitDecoded(decoded, 1, 1, .primary, 1, 1, 1, 1, null));
     const decoded_identity = plane.image(1).?.id;
     try std.testing.expect(decoded_identity != kitty_identity);
     try std.testing.expect(!(try plane.command("a=d,d=A", .primary, 0, 0, 0, 1, 1)).changed);
@@ -3899,7 +3897,7 @@ test "plane identities survive Kitty replacement and isolate decoded images from
     };
     try std.testing.expectError(
         error.Quota,
-        plane.admitDecoded(rejected, max_dimension + 1, 1, .primary, 0, 0, 1, 1),
+        plane.admitDecoded(rejected, max_dimension + 1, 1, .primary, 0, 0, 1, 1, null),
     );
     try std.testing.expectEqualDeep(before, .{
         plane.image_count,
@@ -6374,10 +6372,11 @@ test "Kitty full display retirement frees frame and indexed data but preserves r
     try std.testing.expect((try plane.command("a=T,i=11,C=1,s=1,v=1;ERITFA==", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expect((try plane.command("a=T,i=7,C=1,s=1,v=1;FRYXGA==", .alternate, 0, 0, 0, 1, 1)).changed);
     const decoded = try allocator.dupe(u8, &.{ 25, 26, 27, 28 });
-    plane.admitDecoded(decoded, 1, 1, .primary, 2, 1, 1, 1) catch |failure| {
+    const decoded_advance = plane.admitDecoded(decoded, 1, 1, .primary, 2, 1, 1, 1, null) catch |failure| {
         allocator.free(decoded);
         return failure;
     };
+    try std.testing.expectEqualDeep(CursorAdvance{ .cols = 1, .rows = 1 }, decoded_advance);
     const decoded_id = plane.images[plane.image_count - 1].id;
     const virtual = plane.virtualPrototype(.primary, 10, 1).?;
     try std.testing.expectEqual(@as(u16, 7), plane.image_count);
@@ -6573,4 +6572,68 @@ test "Kitty fitted placement margin clipping consumes padding before source pixe
         try std.testing.expectEqual(@as(u16, 1), plane.image_count);
         try std.testing.expectEqual(content, plane.content_generation);
     }
+}
+
+test "decoded destination geometry preflights before consuming pixels and identity" {
+    const allocator = std.testing.allocator;
+    var plane = Plane.init(allocator);
+    defer plane.deinit();
+    const pixels = try allocator.dupe(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 });
+    var admitted = false;
+    defer if (!admitted) allocator.free(pixels);
+    const before = plane.generation();
+    const content = plane.content_generation;
+    const identity = plane.next_image_id;
+    for ([_]PixelExtent{
+        .{ .width = 0, .height = 1 },
+        .{ .width = 1, .height = 0 },
+        .{ .width = 65536, .height = 1 },
+        .{ .width = 1, .height = 65536 },
+    }) |box| {
+        try std.testing.expectError(error.Quota, plane.admitDecoded(
+            pixels,
+            2,
+            1,
+            .primary,
+            0,
+            0,
+            1,
+            1,
+            .{ .box = box, .preserve_aspect = true },
+        ));
+        try std.testing.expectEqual(before, plane.generation());
+        try std.testing.expectEqual(content, plane.content_generation);
+        try std.testing.expectEqual(identity, plane.next_image_id);
+        try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+        try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    }
+    const advance = try plane.admitDecoded(
+        pixels,
+        2,
+        1,
+        .primary,
+        0,
+        0,
+        3,
+        5,
+        .{ .box = .{ .width = 6, .height = 15 }, .preserve_aspect = true },
+    );
+    admitted = true;
+    try std.testing.expectEqualDeep(CursorAdvance{ .cols = 2, .rows = 3 }, advance);
+    try std.testing.expectEqual(identity + 1, plane.next_image_id);
+    try std.testing.expectEqual(before + 1, plane.generation());
+    try std.testing.expectEqual(@as(usize, 8), plane.storage_bytes);
+    const placement_value = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u32, 6), placement_value.pixel_width);
+    try std.testing.expectEqual(@as(u32, 3), placement_value.pixel_height);
+    try std.testing.expectEqual(@as(u32, 0), placement_value.cell_x);
+    try std.testing.expectEqual(@as(u32, 0), placement_value.cell_y);
+    // The shared one-axis ratio preflight must reject an unrepresentable
+    // derived extent rather than narrow it to a u32 or trap in Debug.
+    const rejected = try plane.command("a=T,i=7,C=1,s=1,v=2,c=1;AQIDBAUGBwg=", .primary, 0, 0, 0, std.math.maxInt(u32), 1);
+    try std.testing.expectEqual(@as(?Failure, .invalid), rejected.failure);
+    try std.testing.expectEqual(before + 1, plane.generation());
+    try std.testing.expectEqual(identity + 1, plane.next_image_id);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
 }

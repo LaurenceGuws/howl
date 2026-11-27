@@ -3937,7 +3937,7 @@ test "iTerm2 inline refusal never becomes a download consequence and bare FileEn
     for ([_][]const u8{
         "\x1b]1337;File=inline=1:!!!!\x07",
         "\x1b]1337;File=inline=1:SGVsbG8=\x1b\\",
-        "\x1b]1337;File=inline=1;width=2px:" ++ png ++ "\x07",
+        "\x1b]1337;File=inline=1;width=2pt:" ++ png ++ "\x07",
         "\x1b]1337;File=inline=1;inline=0:" ++ png ++ "\x07",
         "\x1b]1337;File=inline=1:" ++ png[0..8] ++ "\x01" ++ png[8..] ++ "\x07",
         "\x1b]1337;File=inli\x01ne=1:" ++ png ++ "\x07",
@@ -4040,4 +4040,78 @@ test "iTerm2 inline PNG allocation failure preserves prior resource and allows a
     try feed(&terminal, packet ++ "\x1b\\");
     try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
     try std.testing.expectEqual(before.generation + 1, terminal.images(0).generation);
+}
+
+test "iTerm2 explicit image dimensions fit or stretch pixels independently of reserved cursor cells" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const cases = [_]struct {
+        fields: []const u8,
+        width: u32,
+        height: u32,
+        cols: u16,
+        rows: u16,
+    }{
+        .{ .fields = "width=2;height=3", .width = 6, .height = 3, .cols = 2, .rows = 3 },
+        .{ .fields = "width=2;height=3;preserveAspectRatio=0", .width = 6, .height = 15, .cols = 2, .rows = 3 },
+        .{ .fields = "width=7px;height=auto", .width = 7, .height = 3, .cols = 3, .rows = 1 },
+        .{ .fields = "height=6px", .width = 12, .height = 6, .cols = 4, .rows = 2 },
+        .{ .fields = "width=50%;height=25%", .width = 12, .height = 6, .cols = 4, .rows = 2 },
+        .{ .fields = "width=33%;height=11%", .width = 7, .height = 3, .cols = 3, .rows = 1 },
+        .{ .fields = "width=1px;height=1px", .width = 1, .height = 1, .cols = 1, .rows = 1 },
+        .{ .fields = "width=auto;height=auto", .width = 2, .height = 1, .cols = 1, .rows = 1 },
+        .{ .fields = "width=125%;height=1px", .width = 2, .height = 1, .cols = 8, .rows = 1 },
+    };
+    for (cases) |case| for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        var terminal = try Terminal.init(std.testing.allocator, 8, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(3, 5);
+        try feed(&terminal, "\x1b[2;2H");
+        var packet: [256]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&packet, "\x1b]1337;File=inline=1;{s}:{s}{s}", .{ case.fields, sample, term });
+        try std.testing.expect(!(try terminal.feed(wire[0 .. wire.len - 1])).stateChanged());
+        try std.testing.expect((try terminal.feed(wire[wire.len - 1 ..])).mutations.images);
+        const images = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+        const placed = images.placement(0) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(u16, 1), placed.row);
+        try std.testing.expectEqual(@as(u16, 1), placed.col);
+        try std.testing.expectEqual(@as(u32, 0), placed.cell_x);
+        try std.testing.expectEqual(@as(u32, 0), placed.cell_y);
+        try std.testing.expectEqual(case.width, placed.pixel_width);
+        try std.testing.expectEqual(case.height, placed.pixel_height);
+        try std.testing.expectEqual(@as(u32, 2), placed.source_width);
+        try std.testing.expectEqual(@as(u32, 1), placed.source_height);
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, images.image(0).?.pixels);
+        try std.testing.expectEqual(case.rows, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@min(@as(u16, 7), 1 + case.cols), terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    };
+}
+
+test "iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert" {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    var terminal = try Terminal.init(std.testing.allocator, 1, 1);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;File=inline=1:" ++ png ++ "\x07")).stateChanged());
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect((try terminal.feed("\x1b]1337;File=inline=1:" ++ png ++ "\x07")).mutations.images);
+    const before = terminal.images(0);
+    const placement = before.placement(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 1), placement.pixel_width);
+    try std.testing.expectEqual(@as(u32, 1), placement.pixel_height);
+    for ([_][]const u8{
+        "width=0",          "width=0px",        "width=0%",           "width=-1",   "width=+1",  "width=1.5px",
+        "width=4294967296", "width=4294967295", "width=2px",          "height=1px", "height=2",  "height=4294967295px",
+        "width=1; width=1", "width=1;width=1",  "width=1%;height=1%", "width=",     "height=px", "preserveAspectRatio=2",
+    }) |fields| {
+        var packet: [256]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&packet, "\x1b]1337;File=inline=1;{s}:{s}\x1b\\", .{ fields, png });
+        try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(before.generation, after.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+        try std.testing.expectEqualDeep(placement, after.placement(0).?);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
 }
