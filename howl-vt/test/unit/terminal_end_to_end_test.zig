@@ -5008,7 +5008,7 @@ test "terminal: static graphics follow scroll erase resize bank and reset lifeti
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
 
     try std.testing.expect(
-        (try terminal.feed("\x1b[?1049h\x1b_Ga=p,i=7\x1b\\")).stateChanged(),
+        (try terminal.feed("\x1b[?1049h\x1b_Ga=T,i=7,s=1,v=1;BQYHCA==\x1b\\")).stateChanged(),
     );
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
@@ -5031,7 +5031,7 @@ test "terminal: static graphics follow scroll erase resize bank and reset lifeti
     defer committed.deinit();
     committed.commit();
     const resized = terminal.images(0);
-    try std.testing.expectEqual(@as(usize, 1), resized.imageCount());
+    try std.testing.expectEqual(@as(usize, 2), resized.imageCount());
     try std.testing.expect(terminal.images(0).placement(0) == null);
     try std.testing.expectEqualDeep(
         retained_placement,
@@ -7101,4 +7101,59 @@ test "terminal: whole and service feeds commit identical history image and reply
     try std.testing.expectEqual(whole.semanticSequence(), service.semanticSequence());
     try std.testing.expectEqual(whole.contentSequence(), service.contentSequence());
     try std.testing.expectEqualDeep(try whole.feedAt("TAIL", 78), (try service.feedAtServiceBoundary("TAIL", 78)).summary);
+}
+
+test "Kitty bank-local transfer reply pressure preserves the unread screen switch" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b_Ga=T,i=7,p=1,C=1,s=1,v=1,q=2,m=1;AQID\x1b\\");
+    try feed(&terminal, "\x1b[?47h\x1b_Ga=T,i=7,p=1,C=1,s=1,v=1,m=1;BQYH\x1b\\");
+    const filler = try reply_fill.fill(&terminal, allocator, 64 * 1024 - 95, false);
+    defer allocator.free(filler);
+    const final = "\x1b_Gm=0;CA==\x1b\\";
+    const tail = "\x1b[?47l\x1b_Gm=0;BA==\x1b\\";
+    const before = terminal.images(0).generation;
+    const blocked = try terminal.feedAtServiceBoundary(final ++ tail, 1);
+    try std.testing.expectEqual(error.ReplyLimit, blocked.input_blocked.?);
+    try std.testing.expectEqual(final.len, blocked.consumed);
+    try std.testing.expect(terminal.semanticView(0).is_alternate_screen);
+    try std.testing.expectEqual(before, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try terminal.consumeReplyBytes(1);
+    const resumed = try terminal.feedAtServiceBoundary(tail, 2);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expectEqual(@as(usize, 0), resumed.consumed);
+    try std.testing.expect(terminal.semanticView(0).is_alternate_screen);
+    try std.testing.expectEqualStrings("\x1b_Gi=7,p=1;OK\x1b\\", terminal.replyBytes()[filler.len - 1 ..]);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, terminal.images(0).image(0).?.pixels);
+    try feed(&terminal, tail);
+    try std.testing.expect(!terminal.semanticView(0).is_alternate_screen);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(1).?.pixels);
+    try std.testing.expectEqual(terminal.images(0).image(1).?.id, terminal.images(0).placement(1).?.image_id);
+    try std.testing.expectEqualStrings("\x1b_Gi=7,p=1;OK\x1b\\", terminal.replyBytes()[filler.len - 1 ..]);
+}
+
+test "Kitty bank clears and canceled APC preserve the other pending upload" {
+    for ([_][]const u8{
+        "\x1b_Gm=0;CA\x18",
+        "\x1b[?47l\x1b[?1049h",
+        "\x1b[?1047l\x1b[?47h",
+    }) |cancel_wire| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b_Ga=T,i=7,C=1,s=1,v=1,q=2,m=1;AQID\x1b\\");
+        try feed(&terminal, "\x1b[?47h\x1b_Ga=T,i=7,C=1,s=1,v=1,q=2,m=1;BQYH\x1b\\");
+        for (cancel_wire) |byte| try feed(&terminal, &.{byte});
+        try std.testing.expect(terminal.semanticView(0).is_alternate_screen);
+        try feed(&terminal, "\x1b_Gm=0,q=2;CA==\x1b\\");
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try feed(&terminal, "\x1b[?47l\x1b_Gm=0;BA==\x1b\\");
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
 }

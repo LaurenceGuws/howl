@@ -457,9 +457,9 @@ test "native copied graphics preserves dense inventory and sparse physical place
     try std.testing.expectEqual(@as(u32, 0), live.placement_count);
     const history = try graphicsEquivalent(value, std.math.maxInt(u32), &images, &placements);
     try std.testing.expect(history.history_offset > 0 and history.placement_count == 1);
-    try feedAll(value, "\x1b[?1049h\x1b_Ga=p,i=56,p=2,c=1,r=1,U=1,q=2\x1b\\" ++ red_placeholder);
+    try feedAll(value, "\x1b[?1049h\x1b_Ga=T,i=56,p=2,c=1,r=1,U=1,C=1,q=2,s=1,v=1;/wAA/w==\x1b\\" ++ red_placeholder);
     const alternate = try graphicsEquivalent(value, std.math.maxInt(u32), &images, &placements);
-    try std.testing.expect(alternate.alternate_screen == 1 and alternate.history_offset == 0 and alternate.image_count == 2);
+    try std.testing.expect(alternate.alternate_screen == 1 and alternate.history_offset == 0 and alternate.image_count == 3);
     try std.testing.expectEqual(@as(u32, 1), alternate.placement_count);
     try std.testing.expect(owner.observation(value).images(0).placementCount() > alternate.placement_count);
     try feedAll(value, "\x1b[?1049l");

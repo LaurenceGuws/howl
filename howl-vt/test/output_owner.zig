@@ -2809,3 +2809,62 @@ test "Kitty equal z order follows stable image identity after re-put and replace
     try std.testing.expectEqualDeep(scene.images[0].resource, scene.positive[0].rgba.resource.resource);
     try std.testing.expectEqualDeep(scene.images[1].resource, scene.positive[1].rgba.resource.resource);
 }
+
+test "Kitty same client ID in another bank preserves held output and clears only alternate resources" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b_Ga=T,i=56,p=7,C=1,q=2,s=1,v=1;/wAA/w==\x1b\\");
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const before = held.?.snapshot;
+    const resource = before.graphics.images[0].resource;
+    const command = before.graphics.positive[0];
+    const primary_id = owner.observation().images(0).image(0).?.id;
+    const primary_generation = owner.observation().images(0).image(0).?.generation;
+    try owner.feed("\x1b[?47h\x1b_Ga=T,i=56,p=7,C=1,q=2,s=1,v=1;AAD//w==\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, before.graphics.images[0].pixels);
+    try std.testing.expectEqualDeep(resource, before.graphics.images[0].resource);
+    try std.testing.expectEqualDeep(command, before.graphics.positive[0]);
+    try owner.release(held.?);
+    held = null;
+    {
+        const alternate = try owner.hold();
+        defer release(owner, alternate);
+        try std.testing.expect(alternate.snapshot.alternate);
+        try std.testing.expectEqual(@as(usize, 1), alternate.snapshot.graphics.images.len);
+        try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, alternate.snapshot.graphics.images[0].pixels);
+        const observed = owner.observation().images(0);
+        try std.testing.expectEqual(@as(usize, 2), observed.imageCount());
+        try std.testing.expect(observed.image(1).?.id != primary_id);
+        try std.testing.expectEqual(observed.image(1).?.id, observed.placement(1).?.image_id);
+        // Resource slots belong to a cut, not to canonical image IDs.
+        try std.testing.expect(@backingInt(alternate.snapshot.graphics.images[0].resource.generation) > @backingInt(resource.generation));
+        try std.testing.expectEqualDeep(alternate.snapshot.graphics.images[0].resource, alternate.snapshot.graphics.positive[0].rgba.resource.resource);
+    }
+    try owner.feed("\x1b[?47l\x1b[?1049h");
+    try owner.flush();
+    {
+        const cleared = try owner.hold();
+        defer release(owner, cleared);
+        try std.testing.expectEqual(@as(usize, 0), cleared.snapshot.graphics.images.len);
+        try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).imageCount());
+    }
+    try owner.feed("\x1b[?1049l");
+    try owner.flush();
+    const returned = try owner.hold();
+    defer release(owner, returned);
+    try std.testing.expect(!returned.snapshot.alternate);
+    try std.testing.expectEqual(@as(usize, 1), returned.snapshot.graphics.images.len);
+    const observed = owner.observation().images(0);
+    try std.testing.expectEqual(primary_id, observed.image(0).?.id);
+    try std.testing.expectEqual(primary_generation, observed.image(0).?.generation);
+    try std.testing.expectEqual(primary_id, observed.placement(0).?.image_id);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, returned.snapshot.graphics.images[0].pixels);
+    var expected = command;
+    expected.rgba.resource.resource = returned.snapshot.graphics.images[0].resource;
+    try std.testing.expectEqualDeep(expected, returned.snapshot.graphics.positive[0]);
+}

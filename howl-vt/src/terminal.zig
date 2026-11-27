@@ -5261,7 +5261,7 @@ const TerminalStream = struct {
     fn endString(self: *TerminalStream) TerminalFeedError!EventEffect {
         const capture = &self.terminal.stream_state.string;
         if (capture.didOverflow()) {
-            if (capture.isKittyGraphics()) self.terminal.graphics.cancel();
+            if (capture.isKittyGraphics()) self.terminal.graphics.cancel(graphicsBank(self.terminal));
             capture.reset();
             return discardedStringControl();
         }
@@ -5295,7 +5295,7 @@ const TerminalStream = struct {
 
     fn cancelString(self: *TerminalStream) EventEffect {
         const capture = &self.terminal.stream_state.string;
-        if (capture.isKittyGraphics()) self.terminal.graphics.cancel();
+        if (capture.isKittyGraphics()) self.terminal.graphics.cancel(graphicsBank(self.terminal));
         capture.reset();
         return discardedStringControl();
     }
@@ -5315,14 +5315,15 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
     const response_reserve: usize = 96;
     // Only known queue headroom failures are retryable. Formatting and
     // allocation failures remain exceptional, never replayed after dispatch.
-    if (terminal.graphics.mayRespond(packet)) {
+    const bank = graphicsBank(terminal);
+    if (terminal.graphics.mayRespond(packet, bank)) {
         if (terminal.reply_buffer.bytes().len >
             replies.max_bytes - response_reserve)
             return error.ReplyPressure;
         try terminal.reply_buffer.ensureUnusedCapacity(response_reserve);
     }
     const active = terminal.screen_state.activeConst();
-    const bank: graphics_mod.Bank = if (terminal.screen_state.alt_active) .alternate else .primary;
+
     const row: u64 = if (bank == .alternate)
         active.cursor.row
     else
@@ -11675,7 +11676,7 @@ test "image projection requires a virtual prototype in the viewed bank" {
     try std.testing.expect(physical_iterator.next() == null);
 
     try std.testing.expect((try terminal.feed(
-        "\x1b[?1049h\x1b_Ga=p,i=56,p=2,c=1,r=1,U=1,q=2\x1b\\" ++ placeholder,
+        "\x1b[?1049h\x1b_Ga=T,i=56,p=2,c=1,r=1,U=1,C=1,q=2,s=1,v=1;/wAA/w==\x1b\\" ++ placeholder,
     )).stateChanged());
     var alternate = terminal.images(0);
     try std.testing.expectEqual(@as(usize, 3), alternate.placementCount());

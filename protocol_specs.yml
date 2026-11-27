@@ -10111,6 +10111,15 @@ specifications:
       - file: howl-vt/src/stream_state.zig
         test: string run capture shares generic and Kitty bounds across fragments
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty chunk transfers remain independent across screen banks
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty bank clears and canceled APC preserve the other pending upload
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty bank-local transfer reply pressure preserves the unread screen switch
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: APC G metadata and payload share existing bounded parser packet owner, split static and multi-command wire
@@ -10136,6 +10145,15 @@ specifications:
             lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
             native C peer; scoped local service policy, no blanket FULL promotion
           baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Selected complete APC packets resolve continuation and cancellation against the active screen bank; a CAN or
+            bank clear in alternate does not cancel a primary upload. Generic inter-command interruption and exhaustive framing
+            remain separate.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: rgb-rgba
       section: Transferring pixel data / RGB and RGBA data
       level: defined
@@ -10301,6 +10319,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty chunked image replacement preserves a held resource through rejection and commit
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty client IDs and numbered images are bank local with global resource identities
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty same client ID in another bank preserves held output and clears only alternate resources
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Ordinary placement ACK retains p, including max-u32, and missing-image error includes requested identity
@@ -10317,6 +10341,15 @@ specifications:
             lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
             Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
           baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Client image lookup and placement identity are bank local. A put without an admitting image in the current bank
+            rejects; the same client i/p in both banks retains independent canonical image and placement identities. Held output
+            remains immutable.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -10339,6 +10372,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty virtual placements stay invisible and use image selectors for lifetime
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: image projection requires a virtual prototype in the viewed bank
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
@@ -10350,6 +10386,15 @@ specifications:
             graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
             red-green plane and held-output proof; no blanket FULL promotion
           baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Virtual prototypes resolve image identity within the viewed bank. The revised primary/alternate projection proof
+            transmits a distinct alternate image with the same client ID; inactive bank resources remain outside visible placement
+            projection. Anonymous id-zero lookup remains unqualified.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: relative
       section: Relative placements
       level: defined
@@ -10385,6 +10430,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty physical parent retires a wide child fanout with one bounded graph closure
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty physical P Q validates bank and ancestor lifetime without evicting unrelated data
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Replacement seeds all old placement roots in one existing bounded ancestry closure (16 rounds), compacts
@@ -10409,6 +10457,15 @@ specifications:
             graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
             red-green plane and held-output proof; no blanket FULL promotion
           baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: 'Selected P/Q parent lookup stays in the admitting bank: an existing local child cannot attach to a parent present
+            only in the other bank. Retransmission retires the local parent group and preserves the other-bank same-client-ID
+            placement. Existing bounded ancestry proof retained.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: delete
       section: Deleting images
       level: defined
@@ -10440,7 +10497,7 @@ specifications:
         - kitty.graphics.delete_z
         - kitty.graphics.delete_cursor
       - file: howl-vt/src/graphics.zig
-        test: Kitty animation control compose and frame deletion retain Howl shared-plane bank policy
+        test: Kitty animation control compose and frame deletion respect bank-local image identity
         relation: protocol-family
         legacy_records:
         - kitty.graphics.delete_frame
@@ -10449,6 +10506,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty whole-image retirement resolves its owner again after descendant compaction
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty client IDs and numbered images are bank local with global resource identities
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty clearing one bank retires its unplaced data frames and unfinished transfer
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
@@ -10461,6 +10524,15 @@ specifications:
             graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
             red-green plane and held-output proof; no blanket FULL promotion
           baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Selected uppercase I removes only the addressed bank image. Alternate clear also reclaims selected bank Kitty
+            image/frame data while preserving primary data. The shared terminal quota, non-Kitty data policy and unrelated-command
+            interruption remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: replies
       section: Suppressing responses from the terminal
       level: defined
@@ -10499,6 +10571,9 @@ specifications:
         relation: protocol-family
       - file: howl-app/src/pty_vt.zig
         test: Kitty retained packet resumes only when app reply outbox can advance
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty bank-local transfer reply pressure preserves the unread screen switch
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -10542,6 +10617,15 @@ specifications:
             lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
             native C peer; scoped local service policy, no blanket FULL promotion
           baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Inherited quiet and ordinary reply headroom resolve from the active bank transfer. Saturated alternate final
+            packet retains exact consumed cut, resumes with zero new bytes and one ACK before unread primary switch; primary silent
+            transfer then completes without appending another reply.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: frame-load
       section: Animation / Transferring animation frame data
       level: defined
@@ -10568,6 +10652,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty frame reply includes exact admitted frame number'
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty clearing one bank retires its unplaced data frames and unfinished transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: First animation-frame header initializes owned metadata and calls same append path directly; no synthetic
@@ -10588,6 +10675,15 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Frame admission resolves bank-local image identity, including alternate frame data; alternate bank clear releases
+            its frames. Separate bank pending slots route frame continuation through the active bank. Simultaneous frame-load
+            pressure and timing parity not fully qualified.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -10595,10 +10691,19 @@ specifications:
       rule: Controls animation state, loop count, current frame and frame durations.
       test_locations:
       - file: howl-vt/src/graphics.zig
-        test: Kitty animation control compose and frame deletion retain Howl shared-plane bank policy
+        test: Kitty animation control compose and frame deletion respect bank-local image identity
         relation: protocol-family
         legacy_records:
         - kitty.graphics.animate
+      evidence:
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Bank-local client lookup rejects frame selection from the wrong bank and preserves existing primary frame/current-pixel
+            identities; the same operation in the admitting bank succeeds. Animation visibility/timing remains scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: composition
       section: Animation / Composing animation frames
       level: defined
@@ -10606,10 +10711,19 @@ specifications:
       rule: Composes bounded regions from one animation frame to another.
       test_locations:
       - file: howl-vt/src/graphics.zig
-        test: Kitty animation control compose and frame deletion retain Howl shared-plane bank policy
+        test: Kitty animation control compose and frame deletion respect bank-local image identity
         relation: protocol-family
         legacy_records:
         - kitty.graphics.compose
+      evidence:
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Wrong-bank frame composition rejects without changing primary pixels or frame identity; the same command succeeds
+            in the admitting bank. No expanded claim for frame rectangle or allocation cases.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: no-indexed-animation
       section: Indexed color data
       level: defined
@@ -10719,6 +10833,15 @@ specifications:
       - file: howl-app/src/pty_vt.zig
         test: Kitty retained packet resumes only when app reply outbox can advance
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty chunk transfers remain independent across screen banks
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty bank-local transfer reply pressure preserves the unread screen switch
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty bank clears and canceled APC preserve the other pending upload
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -10767,6 +10890,16 @@ specifications:
             lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
             native C peer; scoped local service policy, no blanket FULL promotion
           baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: One bounded pending payload per bank, not a shared transfer cursor. Interleaved static uploads produce distinct
+            exact RGBA; active-bank quiet/preflight, zero-byte retry and selected cancel/clear paths preserve the other transfer.
+            Per-payload bounds unchanged; maximum simultaneous pending payloads now two. Same-bank unrelated-command interruption
+            remains open.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -10838,6 +10971,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty image number gets stable identity for put reply and deletion'
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty client IDs and numbered images are bank local with global resource identities
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Existing generated identity and newest-number selection retained; successful numbered placement now echoes
@@ -10847,6 +10983,15 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Generated client image IDs and newest-number resolution use the admitting bank; the same generated ID and number
+            can exist independently in both banks while internal resource IDs remain globally unique. Selected local numbered
+            put and cross-bank deletion qualified. Global retained storage/slot quota remains a local policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: placement-identity
       section: docs/graphics-protocol.rst:635-660
       level: defined
@@ -10883,6 +11028,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: static image allocation failure leaves the plane reusable
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty client IDs and numbered images are bank local with global resource identities
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty same client ID in another bank preserves held output and clears only alternate resources
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Selected p acknowledgement and same-ID replacement retained output proof. Existing local explicit image-ID
@@ -10909,6 +11060,15 @@ specifications:
             lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
             Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
           baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: 'Supersedes wave03 shared-namespace scope: explicit client ID retransmission retires only its bank-local placement
+            group. Same client i/p in other bank is independent. Held cut keeps pixels and commands; canonical image identities
+            remain stable while draw resource slots may rebind with new generations.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: placement-layout
       section: docs/graphics-protocol.rst:667-688
       level: defined
@@ -11006,6 +11166,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty whole-image retirement resolves its owner again after descendant compaction
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty client IDs and numbered images are bank local with global resource identities
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty animation control compose and frame deletion respect bank-local image identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Geometric matches resolved against one unchanged placement topology before retirement; selected roots,
@@ -11017,6 +11183,14 @@ specifications:
             graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
             red-green plane and held-output proof; no blanket FULL promotion
           baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: ID and number resolution and frame deletion are bank-local; selected uppercase I and wrong-bank frame-delete
+            no-op preserve other-bank image and frame data. Shared quota eviction and other selector geometry remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
     - id: file-read-privacy
       section: docs/graphics-protocol.rst:388-443
       level: defined
@@ -11046,6 +11220,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: native image output resolves physical P Q ancestry without mutating held cuts
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty clearing one bank retires its unplaced data frames and unfinished transfer
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty bank clears and canceled APC preserve the other pending upload
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty same client ID in another bank preserves held output and clears only alternate resources
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Six screen retirement routes (erase, bounds, history eviction, scroll, column shift, clear bank) select
@@ -11058,6 +11241,16 @@ specifications:
             graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
             red-green plane and held-output proof; no blanket FULL promotion
           baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
+        howl_qualification_20261127_kitty_graphics_07:
+          scope: Actual alternate clear retires its Kitty placements, unplaced images, frames and pending upload, preserving primary
+            data and held output. Existing accepted text transitions (47 preserve, 1047 exit clear, 1049 entry clear) and non-Kitty
+            decoded-image policy unchanged; pinned Kitty 1047 clear timing differs. No claim of complete ED/reset/margin or quota
+            parity.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines611-663,967-996,1320-1337; screen.c main_grman/alt_grman allocation and screen_toggle_screen_buffer (174-178,2158-2182,2257-2261);
+            graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
+            Plane red-green, wire/service and held-output tests; no blanket FULL promotion
+          baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
