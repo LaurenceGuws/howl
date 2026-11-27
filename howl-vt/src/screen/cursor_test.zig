@@ -145,3 +145,39 @@ test "screen cursor: alt entry reset keeps visibility and colors outside Kitty c
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 1, .g = 2, .b = 3 }), s.cursor.cursor_color);
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 4, .g = 5, .b = 6 }), s.cursor.cursor_text_color);
 }
+
+test "screen cursor: direct absolute movement reports the exact prior cursor contract" {
+    var s = try Screen.initWithCells(std.testing.allocator, 4, 8);
+    defer s.deinit(std.testing.allocator);
+    s.setDefaultCursorStyle(.{ .shape = .underline, .blink = false });
+    s.cursor.setProgramStyle(.{ .shape = .bar, .blink = true });
+    s.cursor.visible = false;
+    s.cursor.cursor_color = .{ .r = 1, .g = 2, .b = 3 };
+    s.cursor.cursor_text_color = .{ .r = 4, .g = 5, .b = 6 };
+    for ([_]u64{ 0, std.math.maxInt(u64) }) |identity| {
+        for ([_]u64{ 0, 37 }) |timestamp| {
+            for ([_]bool{ false, true }) |pending| {
+                for ([_]u16{ 0, 1, 99 }) |row| {
+                    for ([_]u16{ 0, 1, 99 }) |col| {
+                        s.cursor.setPositionByClient(0, 0);
+                        s.cursor.position_changed_by_client_at = identity;
+                        s.cursor.position_changed_timestamp_ns = 0;
+                        s.setCursorMovementTimestamp(timestamp);
+                        s.wrap_pending = pending;
+                        const before = s.cursor;
+                        const changed = s.moveCursorPosition(row, col);
+                        var expected = before;
+                        expected.row = @min(row, 3);
+                        expected.col = @min(col, 7);
+                        expected.position_changed_by_client_at +|= @intFromBool(expected.row != 0 or expected.col != 0);
+                        expected.position_changed_timestamp_ns = timestamp;
+                        try std.testing.expectEqualDeep(expected, s.cursor);
+                        try std.testing.expectEqual(!std.meta.eql(before, s.cursor) or pending, changed);
+                        try std.testing.expect(!s.wrap_pending);
+                        try std.testing.expect(!s.moveCursorPosition(row, col));
+                    }
+                }
+            }
+        }
+    }
+}

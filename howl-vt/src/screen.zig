@@ -1670,11 +1670,14 @@ pub const Screen = struct {
 
     /// Applies one absolute cursor position and reports exact cursor or pending-wrap mutation.
     pub inline fn moveCursorPosition(self: *Screen, row: u16, col: u16) bool {
-        const cursor_before = self.cursor;
-        const wrap_before = self.wrap_pending;
-        self.wrap_pending = false;
+        const row_before = self.cursor.row;
+        const col_before = self.cursor.col;
+        const timestamp_before = self.cursor.position_changed_timestamp_ns;
+        const wrap_changed = self.cancelPendingWrap();
         self.applyCursorPosition(row, col);
-        return !std.meta.eql(cursor_before, self.cursor) or wrap_before != self.wrap_pending;
+        // Client movement identity advances only when these coordinates change.
+        return wrap_changed or row_before != self.cursor.row or col_before != self.cursor.col or
+            timestamp_before != self.cursor.position_changed_timestamp_ns;
     }
 
     // Applies one cursor-positioning event and reports exact position or pending-wrap mutation.
