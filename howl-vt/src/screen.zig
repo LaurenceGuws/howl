@@ -1397,10 +1397,20 @@ pub const Screen = struct {
         output: *[scalar_storage.maximum_scalars]u32,
     ) []const u32 {
         if (row >= self.rows or col >= self.cols) return &.{};
-        const observed = @call(.always_inline, Screen.cellInfoAt, .{ self, row, col });
-        const lead_row = row -| observed.y;
-        const lead_col = col -| observed.x;
-        const lead = @call(.always_inline, Screen.cellInfoAt, .{ self, lead_row, lead_col });
+        const cells = self.cells orelse return &.{};
+        const start = self.rowStart(row);
+        const observed = &cells[start + col];
+        const lead_start = if (observed.y == 0) start else self.rowStart(row -| observed.y);
+        const index = lead_start + @as(u32, col -| observed.x);
+        return self.copyLeadScalars(&cells[index], index, output);
+    }
+
+    fn copyLeadScalars(
+        self: *const Screen,
+        lead: *const Cell,
+        index: u32,
+        output: *[scalar_storage.maximum_scalars]u32,
+    ) []const u32 {
         if (lead.codepoint == 0) return &.{};
         output[0] = lead.codepoint;
         if (lead.combining_len == 0) return output[0..1];
@@ -1409,7 +1419,6 @@ pub const Screen = struct {
             lead.combining.len,
         );
         @memcpy(output[1..][0..direct], lead.combining[0..direct]);
-        const index = self.rowStart(lead_row) + lead_col;
         const tail = acceptedTail(&self.scalars.?, index, lead.combining_len);
         @memcpy(output[1 + direct ..][0..tail.len], tail);
         return output[0 .. 1 + direct + tail.len];
@@ -3437,13 +3446,15 @@ pub const Screen = struct {
     ) (if (grow) error{ OutOfMemory, ScalarCapacity, HistoryCapacity }!?bool else ?bool) {
         const pos = (if (self.unicode_core) self.unicodeContinuation() else self.previousLeadCellPos()) orelse return null;
         const cells = self.cells orelse return null;
-        const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
+        const start = self.rowStart(pos.row);
+        const observed = &cells[start + pos.col];
         // A retained continuation whose lead is already in immutable
         // history is not an invitation to append to an unrelated live cell.
         if (observed.y > pos.row) return null;
         const anchor_row = pos.row - observed.y;
         const anchor_col = pos.col -| observed.x;
-        const idx = self.rowStart(anchor_row) + @as(u32, anchor_col);
+        const anchor_start = if (observed.y == 0) start else self.rowStart(anchor_row);
+        const idx = anchor_start + @as(u32, anchor_col);
         const lead_cell = &cells[@intCast(idx)];
         if (lead_cell.codepoint == 0) return null;
 
@@ -3470,7 +3481,7 @@ pub const Screen = struct {
         } else false;
         if (!fast_join) {
             var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
-            const accepted = @call(.always_inline, Screen.cellScalarsAt, .{ self, anchor_row, anchor_col, &scalars });
+            const accepted = self.copyLeadScalars(lead_cell, idx, &scalars);
             std.debug.assert(accepted.len != 0);
             var state = unicode.GraphemeState{};
             for (accepted) |scalar|
@@ -9926,5 +9937,36 @@ test "placement without scrolling and transactional scroll share the same commit
         }
         for (0..screen.historyCount()) |row| for (0..screen.cols) |col|
             try std.testing.expectEqualDeep(reference.historyCellAt(@intCast(row), @intCast(col)), screen.historyCellAt(@intCast(row), @intCast(col)));
+    }
+}
+
+test "resolved scalar lead crosses physical row wrap without changing ownership" {
+    const empty = Screen.init(2, 8);
+    var actual: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, &.{}, empty.cellScalarsAt(0, 0, &actual));
+    for ([_]bool{ false, true }) |grow| {
+        var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 8, 4);
+        defer screen.deinit(std.testing.allocator);
+        try std.testing.expect(screen.scrollDownRegion(0, 3, 1));
+        try std.testing.expectEqual(@as(u16, 3), screen.row_origin);
+        try std.testing.expect(screen.writeSizedText("s=2;A\u{0301}\u{0302}\u{0303}\u{0304}"));
+        const initial = [_]u32{ 'A', 0x0301, 0x0302, 0x0303, 0x0304 };
+        for (0..2) |row| for (0..2) |col| {
+            try std.testing.expectEqualSlices(u32, &initial, screen.cellScalarsAt(@intCast(row), @intCast(col), &actual));
+        };
+        // The lower-right continuation lies on physical row zero; the lead
+        // and its overflow range belong to physical row three.
+        screen.cursor.setPositionByClient(1, 2);
+        try std.testing.expect(if (grow) try screen.writeCodepointGrowing(0x200d) else screen.writeCodepoint(0x200d));
+        const joined = initial ++ [_]u32{0x200d};
+        for (0..2) |row| for (0..2) |col| {
+            try std.testing.expectEqualSlices(u32, &joined, screen.cellScalarsAt(@intCast(row), @intCast(col), &actual));
+        };
+        try std.testing.expectEqualSlices(u32, joined[4..], try screen.scalars.?.tail(24, 5));
+        try std.testing.expectEqualSlices(u32, &.{}, screen.cellScalarsAt(1, 2, &actual));
+        try std.testing.expectEqualSlices(u32, &.{}, screen.cellScalarsAt(4, 0, &actual));
+        try std.testing.expect(if (grow) try screen.writeCodepointGrowing('B') else screen.writeCodepoint('B'));
+        try std.testing.expectEqualSlices(u32, &joined, screen.cellScalarsAt(0, 0, &actual));
+        try std.testing.expectEqualSlices(u32, &.{'B'}, screen.cellScalarsAt(1, 2, &actual));
     }
 }
