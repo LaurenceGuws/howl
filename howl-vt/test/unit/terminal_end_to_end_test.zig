@@ -7072,3 +7072,33 @@ test "Kitty over-envelope capture cancels only its own unfinished transfer" {
         try std.testing.expectEqualStrings("", terminal.replyBytes());
     }
 }
+
+test "terminal: whole and service feeds commit identical history image and reply cuts" {
+    var whole = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 1);
+    defer whole.deinit();
+    var service = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 1);
+    defer service.deinit();
+    const setup = "\x1b[2;1H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1,q=2;AQIDBA==\x1b\\\x1b[2S";
+    for ([_]*Terminal{ &whole, &service }) |terminal| {
+        try terminal.setCellPixelSize(1, 1);
+        try feed(terminal, setup);
+        try std.testing.expect(terminal.images(1).placement(0) != null);
+    }
+    const prefix = "\x1b[S\x1b[6n";
+    const expected = try whole.feedAt(prefix, 77);
+    const progress = try service.feedAtServiceBoundary(prefix ++ "TAIL", 77);
+    try std.testing.expectEqual(prefix.len, progress.consumed);
+    try std.testing.expect(progress.input_blocked == null);
+    try std.testing.expectEqualDeep(expected, progress.summary);
+    try std.testing.expect(expected.mutations.images);
+    // Expected capacity eviction advances the viewport, not the failed
+    // history-admission generation.
+    try std.testing.expect(expected.mutations.viewport);
+    try std.testing.expect(!expected.mutations.history_loss);
+    try std.testing.expect(whole.images(1).placement(0) == null);
+    try std.testing.expect(service.images(1).placement(0) == null);
+    try std.testing.expectEqualStrings(whole.replyBytes(), service.replyBytes());
+    try std.testing.expectEqual(whole.semanticSequence(), service.semanticSequence());
+    try std.testing.expectEqual(whole.contentSequence(), service.contentSequence());
+    try std.testing.expectEqualDeep(try whole.feedAt("TAIL", 78), (try service.feedAtServiceBoundary("TAIL", 78)).summary);
+}

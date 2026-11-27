@@ -4704,7 +4704,9 @@ const TerminalStream = struct {
 
         for (phases) |phase| {
             if (phase) |action| {
-                mutations.merge(try self.applyRecordedAction(action));
+                // Keep the parser's ordinary action path inline. Resuming
+                // a completed packet still calls the same semantic owner.
+                mutations.merge(try @call(.always_inline, TerminalStream.applyRecordedAction, .{ self, action }));
             }
         }
 
@@ -4715,7 +4717,7 @@ const TerminalStream = struct {
     // through the same semantic and synchronized-output owner.
     fn applyRecordedAction(self: *TerminalStream, action: parser_mod.Action) TerminalFeedError!MutationSet {
         const graphics_before = self.terminal.graphics.generation();
-        const effect = try self.applyAction(action);
+        const effect = try @call(.always_inline, TerminalStream.applyAction, .{ self, action });
         var event_mutations = effect.mutations;
         if (self.terminal.graphics.generation() != graphics_before)
             event_mutations.images = true;
@@ -4757,63 +4759,84 @@ const TerminalStream = struct {
 
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!TerminalFeedSummary {
-        var summary: TerminalFeedSummary = .{ .mutations = .{} };
-        self.synchronized_output = .{};
-        self.synchronized_output_held = self.terminal.synchronizedOutput();
-        var completed = false;
-        const before = MutationObservation.capture(self.terminal);
-        defer if (!completed) self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
-        const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
-        var consumed: usize = 0;
-        while (consumed < bytes.len) {
-            const byte = bytes[consumed];
-            if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
-                const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
-                if (count != 0) {
-                    summary.mutations.text = true;
-                    consumed += count;
-                } else {
-                    summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
-                    consumed += 1;
-                    if (self.terminal.stream_state.pending_input) |pending| return pending.failure;
-                }
-                continue;
-            }
-            const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
-            if (payload_bytes != 0) {
-                consumed += payload_bytes;
-                continue;
-            }
-            const action = try self.nextSummary(bytes[consumed..]);
-            summary.mutations.merge(action.mutations);
-            consumed += action.byte_count;
-            if (self.terminal.stream_state.pending_input) |pending| return pending.failure;
-        }
-        before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
-        if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
-            summary.mutations.history_loss = true;
-        self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
-        summary.synchronized_output = self.synchronized_output;
-        completed = true;
-        return summary;
+        return (try self.consumeSlice(false, bytes)).summary;
     }
 
-    fn nextServiceBoundarySummary(
-        self: *TerminalStream,
-        bytes: []const u8,
-        replies_before: u32,
-        consequences_before: u16,
-        consequence_head_before: ?u64,
-    ) TerminalFeedError!TerminalFeedProgress {
-        self.retain_kitty_reply_pressure = true;
+    // Both feed contracts share dispatch, mutation observation and commit.
+    // Only the service contract resumes retained input and yields at work
+    // boundaries; compile the boundary checks out of whole-slice feeding.
+    fn consumeSlice(self: *TerminalStream, comptime service: bool, bytes: []const u8) TerminalFeedError!TerminalFeedProgress {
+        self.retain_kitty_reply_pressure = service;
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
         self.synchronized_output = .{};
         self.synchronized_output_held = self.terminal.synchronizedOutput();
-        var consumed: usize = 0;
-        var completed = false;
         const before = MutationObservation.capture(self.terminal);
-        defer if (!completed) self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
-        const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
+        errdefer self.terminal.completeStreamMutation(&summary.mutations, self.content_mode_changed);
+        const replies_before = if (service) self.terminal.reply_buffer.len() else 0;
+        const consequences_before = if (service) self.terminal.consequences.count() else 0;
+        const consequence_head_before = if (service)
+            if (self.terminal.consequenceHead()) |head| head.id() else null
+        else
+            null;
+        var consumed: usize = 0;
+        var input_blocked: ?stream_state_mod.InputBlock = if (service) try self.resumeInput(&summary) else null;
+        // A resumed packet can emit a reply without consuming new bytes.
+        if (input_blocked == null and (!service or self.terminal.reply_buffer.len() == replies_before)) {
+            while (consumed < bytes.len) {
+                const byte = bytes[consumed];
+                if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
+                    const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
+                    if (count != 0) {
+                        summary.mutations.text = true;
+                        consumed += count;
+                    } else {
+                        summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
+                        consumed += 1;
+                        if (self.terminal.stream_state.pending_input) |pending| {
+                            if (!service) return pending.failure;
+                            input_blocked = pending.failure;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
+                if (payload_bytes != 0) {
+                    consumed += payload_bytes;
+                    continue;
+                }
+                const action = try self.nextSummary(bytes[consumed..]);
+                summary.mutations.merge(action.mutations);
+                consumed += action.byte_count;
+                if (self.terminal.stream_state.pending_input) |pending| {
+                    if (!service) return pending.failure;
+                    input_blocked = pending.failure;
+                    break;
+                }
+                if (service) {
+                    if (self.terminal.reply_buffer.len() != replies_before or self.synchronized_output.ended) break;
+                    // Only a semantic mutation can retain a consequence.
+                    if (!action.mutations.stateChanged()) continue;
+                    if (self.terminal.consequences.count() != consequences_before) break;
+                    if (consequences_before == 0) continue;
+                    const head = self.terminal.consequenceHead();
+                    if ((if (head) |value| value.id() else null) != consequence_head_before) break;
+                }
+            }
+        }
+        before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
+        self.terminal.completeStreamMutation(&summary.mutations, self.content_mode_changed);
+        summary.synchronized_output = self.synchronized_output;
+        return .{
+            .summary = summary,
+            .consumed = consumed,
+            .input_blocked = input_blocked,
+            .consequence_pressure_relieved = self.consequence_pressure_relieved,
+        };
+    }
+
+    // Only service callers can resume an already decoded operation.
+    fn resumeInput(self: *TerminalStream, summary: *TerminalFeedSummary) TerminalFeedError!?stream_state_mod.InputBlock {
         var input_blocked: ?stream_state_mod.InputBlock = null;
         if (self.terminal.stream_state.pending_input) |pending| {
             const changed = switch (pending.work) {
@@ -4879,59 +4902,7 @@ const TerminalStream = struct {
             self.synchronized_output.trailing_effect = self.synchronized_output.trailing_effect or changed;
             if (input_blocked == null) self.terminal.stream_state.pending_input = null;
         }
-        while (input_blocked == null and self.terminal.reply_buffer.len() == replies_before and consumed < bytes.len) {
-            const byte = bytes[consumed];
-            if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
-                const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
-                if (count != 0) {
-                    summary.mutations.text = true;
-                    consumed += count;
-                } else {
-                    summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
-                    consumed += 1;
-                    if (self.terminal.stream_state.pending_input) |pending| {
-                        input_blocked = pending.failure;
-                        break;
-                    }
-                }
-                continue;
-            }
-            const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
-            if (payload_bytes != 0) {
-                consumed += payload_bytes;
-                continue;
-            }
-            const action = try self.nextSummary(bytes[consumed..]);
-            const mutations = action.mutations;
-            summary.mutations.merge(mutations);
-            consumed += action.byte_count;
-            if (self.terminal.stream_state.pending_input) |pending| {
-                input_blocked = pending.failure;
-                break;
-            }
-            if (self.terminal.reply_buffer.len() != replies_before) break;
-            if (self.synchronized_output.ended) break;
-            // Retaining a consequence always reports semantic mutation.
-            if (!mutations.stateChanged()) continue;
-            const consequence_count = self.terminal.consequences.count();
-            if (consequence_count != consequences_before) break;
-            if (consequences_before == 0) continue;
-            const consequence_head = self.terminal.consequenceHead();
-            if ((if (consequence_head) |head| head.id() else null) != consequence_head_before)
-                break;
-        }
-        before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
-        if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
-            summary.mutations.history_loss = true;
-        self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
-        summary.synchronized_output = self.synchronized_output;
-        completed = true;
-        return .{
-            .summary = summary,
-            .consumed = consumed,
-            .input_blocked = input_blocked,
-            .consequence_pressure_relieved = self.consequence_pressure_relieved,
-        };
+        return input_blocked;
     }
 
     fn applyOrdinarySgr(
@@ -7290,13 +7261,8 @@ pub const Terminal = struct {
         if (self.stream_state.pending_input) |pending| return pending.failure;
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
-        const graphics_before = self.graphics.generation();
         var stream = TerminalStream.init(self);
-        var summary = try stream.nextSliceSummary(bytes);
-        if (self.graphics.generation() != graphics_before) {
-            summary.mutations.images = true;
-        }
-        return summary;
+        return stream.nextSliceSummary(bytes);
     }
 
     /// Applies a prefix until a reply, host consequence, synchronized release,
@@ -7348,28 +7314,14 @@ pub const Terminal = struct {
     ) FeedError!FeedProgress {
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
-        const graphics_before = self.graphics.generation();
-        const replies_before = self.reply_buffer.len();
-        const consequences_before = self.consequences.count();
-        const consequence_head_before = if (self.consequenceHead()) |head| head.id() else null;
         var stream = if (relief) |callback|
             TerminalStream.initRelievingConsequencePressure(self, callback)
         else
             TerminalStream.init(self);
-        var progress = try stream.nextServiceBoundarySummary(
-            bytes,
-            replies_before,
-            consequences_before,
-            consequence_head_before,
-        );
-        if (self.graphics.generation() != graphics_before) {
-            progress.summary.mutations.images = true;
-        }
-        return progress;
+        return stream.consumeSlice(true, bytes);
     }
 
-    fn completeStreamMutation(self: *Terminal, accepted: MutationSet, content_mode_changed: bool) void {
-        var mutations = accepted;
+    fn completeStreamMutation(self: *Terminal, mutations: *MutationSet, content_mode_changed: bool) void {
         mutations.images = self.graphics.evictBefore(
             self.screen_state.primary.historyRowBase(),
         ) or mutations.images;
