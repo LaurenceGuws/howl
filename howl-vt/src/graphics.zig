@@ -1439,84 +1439,66 @@ pub const Plane = struct {
         if (normalized == 'i' and command_value.id == 0) return .{ .quiet = 2 };
         if (normalized == 'n' and command_value.image_number == 0) return .{ .quiet = 2 };
         if (normalized == 'r' and command_value.x > command_value.y) return .{ .quiet = 2 };
-        const numbered_image_id = if (normalized == 'n')
-            if (self.kittyImageNumberIndex(command_value.image_number)) |index| self.images[index].id else null
-        else
-            null;
-
-        // Resolve all matches against one unchanged placement graph. A
-        // descendant can precede its parent in dense slot order.
+        // Identity selectors resolve one image owner, then select only its
+        // placements. Geometry/range selectors share one image lookup.
         var doomed = PlacementSet.empty;
         var reclaim: [max_images]bool = @splat(false);
-        for (self.placements[0..self.placement_count], 0..) |placement_value, placement_index| {
-            if (placement_value.virtual and normalized != 'i' and normalized != 'n' and normalized != 'r') {
-                continue;
-            }
-            if (normalized == 'n' and placement_value.image_id != numbered_image_id) {
-                continue;
-            }
-            const kitty_id = self.kittyIdForImage(placement_value.image_id);
-            const kitty_number = self.kittyNumberForImage(placement_value.image_id);
-            if (kitty_id == null or placement_value.bank != bank) {
-                continue;
-            }
-            // Identity and range deletion also apply to invisible virtual
-            // prototypes and children whose Unicode parent has no current
-            // text anchor. Geometry selectors require a resolved position.
-            const anchor: Anchor = if (normalized == 'i' or normalized == 'n' or normalized == 'r')
-                .{ .row = 0, .col = 0 }
-            else blk: {
-                const root = self.placementRoot(placement_index) orelse {
-                    continue;
-                };
-                if (root.virtual_index) |virtual_index| {
-                    const source = anchors orelse {
-                        continue;
-                    };
-                    const base = source.resolve(source.context, virtual_index) orelse {
-                        continue;
-                    };
-                    break :blk .{ .row = base.row + root.offset.row, .col = base.col + root.offset.col };
+        var removed_count: usize = 0;
+        if (normalized == 'i' or normalized == 'n') {
+            const image_index = (if (normalized == 'i')
+                self.kittyImageIndex(command_value.id)
+            else
+                self.kittyImageNumberIndex(command_value.image_number)) orelse return .{ .quiet = 2 };
+            const image_value = self.images[image_index];
+            if (command_value.placement_id != 0) {
+                if (self.placementIndex(image_value.id, command_value.placement_id)) |index| {
+                    if (self.placements[index].bank == bank) {
+                        doomed.set(index);
+                        removed_count = 1;
+                    }
                 }
-                break :blk root.offset;
-            };
-            if (!deleteMatches(
-                placement_value,
-                anchor,
-                kitty_id,
-                kitty_number,
-                normalized,
-                command_value,
-                screen_origin,
-                cursor_row,
-                cursor_col,
-            )) {
-                continue;
+            } else {
+                for (self.placements[0..self.placement_count], 0..) |placement_value, index| {
+                    if (placement_value.image_id != image_value.id or placement_value.bank != bank) continue;
+                    doomed.set(index);
+                    removed_count += 1;
+                }
             }
-            doomed.set(placement_index);
-            if (remove_data) {
-                if (self.imageIndex(placement_value.image_id)) |image_index|
-                    reclaim[image_index] = true;
+            if (remove_data and (removed_count != 0 or
+                (command_value.placement_id == 0 and image_value.bank == bank)))
+                reclaim[image_index] = true;
+        } else {
+            for (self.placements[0..self.placement_count], 0..) |placement_value, placement_index| {
+                if (placement_value.bank != bank or (placement_value.virtual and normalized != 'r')) continue;
+                const image_index = self.imageIndex(placement_value.image_id) orelse continue;
+                const kitty_id = self.images[image_index].kitty_id orelse continue;
+                if (normalized == 'r') {
+                    if (kitty_id < command_value.x or kitty_id > command_value.y) continue;
+                } else {
+                    const root = self.placementRoot(placement_index) orelse continue;
+                    const anchor: Anchor = if (root.virtual_index) |virtual_index| blk: {
+                        const source = anchors orelse continue;
+                        const base = source.resolve(source.context, virtual_index) orelse continue;
+                        break :blk .{ .row = base.row + root.offset.row, .col = base.col + root.offset.col };
+                    } else root.offset;
+                    if (!deleteGeometryMatches(placement_value, anchor, normalized, command_value, screen_origin, cursor_row, cursor_col)) continue;
+                }
+                doomed.set(placement_index);
+                removed_count += 1;
+                if (remove_data) reclaim[image_index] = true;
+            }
+            if (remove_data and normalized == 'r' and command_value.placement_id == 0) {
+                for (self.images[0..self.image_count], 0..) |image_value, index| {
+                    if (image_value.bank != bank) continue;
+                    const id = image_value.kitty_id orelse continue;
+                    if (command_value.x <= id and id <= command_value.y) reclaim[index] = true;
+                }
             }
         }
-        if (remove_data and command_value.placement_id == 0) {
-            // Explicit identity/range deletion may reclaim already unplaced
-            // data in this bank. Geometric selectors require a placement hit.
-            for (self.images[0..self.image_count], 0..) |image_value, index| {
-                if (image_value.bank != bank) continue;
-                const matched = switch (normalized) {
-                    'i' => image_value.kitty_id == command_value.id,
-                    'n' => image_value.id == numbered_image_id,
-                    'r' => if (image_value.kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
-                    else => false,
-                };
-                reclaim[index] = reclaim[index] or matched;
-            }
-        }
-        const removed_placements = doomed.count() != 0;
+        const removed_placements = removed_count != 0;
         const prior_images = self.image_count;
         if (removed_placements)
-            self.retirePlacementSet(&doomed, &reclaim, null)
+            self.retirePlacementSet(&doomed, removed_count, &reclaim, null)
         else if (remove_data)
             self.reclaimUnplaced(&reclaim);
         const content_changed = self.image_count != prior_images;
@@ -2506,9 +2488,10 @@ pub const Plane = struct {
     fn commitPlacementChanges(self: *Plane, doomed: *PlacementSet, changed: bool) bool {
         if (!changed) return false;
         const prior_images = self.image_count;
-        if (doomed.count() != 0) {
+        const count = doomed.count();
+        if (count != 0) {
             var reclaim: [max_images]bool = @splat(false);
-            self.retirePlacementSet(doomed, &reclaim, null);
+            self.retirePlacementSet(doomed, count, &reclaim, null);
         }
         self.advance();
         if (self.image_count != prior_images) self.content_generation = self.next_generation;
@@ -2522,9 +2505,10 @@ pub const Plane = struct {
         for (self.placements[0..self.placement_count], 0..) |placement_value, index| {
             if (placement_value.image_id == image_id) doomed.set(index);
         }
-        if (doomed.count() == 0) return;
+        const count = doomed.count();
+        if (count == 0) return;
         var reclaim: [max_images]bool = @splat(false);
-        self.retirePlacementSet(&doomed, &reclaim, image_id);
+        self.retirePlacementSet(&doomed, count, &reclaim, image_id);
     }
 
     // One bounded closure over parent links. Retiring an ancestor also
@@ -2533,9 +2517,31 @@ pub const Plane = struct {
     fn retirePlacementSet(
         self: *Plane,
         doomed: *PlacementSet,
+        count: usize,
         reclaim: *[max_images]bool,
         protected_image_id: ?u32,
     ) void {
+        std.debug.assert(count != 0 and count == doomed.count());
+        // A lone leaf does not need ancestry closure or a dense remap.
+        // Swapping the last slot preserves stable identities; repair its
+        // direct children before exposing the new topology.
+        if (count == 1) {
+            const index = doomed.findFirstSet().?;
+            const removed = self.placements[index];
+            if (!self.hasChildren(removed.identity)) {
+                self.placement_count -= 1;
+                if (index != self.placement_count) {
+                    const moved = self.placements[self.placement_count];
+                    self.placements[index] = moved;
+                    for (self.placements[0..self.placement_count]) |*value| {
+                        if (value.parent_slot == self.placement_count)
+                            value.parent_slot = @intCast(index);
+                    }
+                }
+                self.reclaimUnplaced(reclaim);
+                return;
+            }
+        }
         for (0..max_parent_depth) |_| {
             var extended = false;
             for (self.placements[0..self.placement_count], 0..) |placement_value, i| {
@@ -2552,11 +2558,15 @@ pub const Plane = struct {
         }
         var map: [max_placements]u16 = undefined;
         var retained: usize = 0;
+        var last_reclaimed_id: u32 = 0;
         for (self.placements[0..self.placement_count], 0..) |placement_value, prior| {
             if (doomed.isSet(prior)) {
                 if (placement_value.parent_slot) |parent_slot| {
-                    if (doomed.isSet(parent_slot) and placement_value.image_id != protected_image_id) {
+                    if (doomed.isSet(parent_slot) and placement_value.image_id != protected_image_id and
+                        placement_value.image_id != last_reclaimed_id)
+                    {
                         if (self.imageIndex(placement_value.image_id)) |index| reclaim[index] = true;
+                        last_reclaimed_id = placement_value.image_id;
                     }
                 }
                 continue;
@@ -2582,7 +2592,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.image_count) {
             const image_value = &self.images[index];
-            if (!self.hasPlacement(image_value.id)) {
+            if ((reclaim[index] or image_value.frame_started_ms != null) and !self.hasPlacement(image_value.id)) {
                 if (reclaim[index]) {
                     self.removeImage(index);
                     reclaim[index] = reclaim[self.image_count];
@@ -2813,18 +2823,6 @@ pub const Plane = struct {
                 newest = index;
         }
         return newest;
-    }
-
-    fn kittyIdForImage(self: *const Plane, id: u32) ?u32 {
-        for (self.images[0..self.image_count]) |retained|
-            if (retained.id == id) return retained.kitty_id;
-        return null;
-    }
-
-    fn kittyNumberForImage(self: *const Plane, id: u32) ?u32 {
-        for (self.images[0..self.image_count]) |retained|
-            if (retained.id == id) return retained.kitty_number;
-        return null;
     }
 
     fn allocateKittyId(self: *const Plane) ?u32 {
@@ -3241,11 +3239,9 @@ fn composeRgba(
     }
 }
 
-fn deleteMatches(
+fn deleteGeometryMatches(
     placement_value: Placement,
     anchor: Plane.Anchor,
-    kitty_id: ?u32,
-    kitty_number: ?u32,
     selector: u8,
     command_value: Command,
     screen_origin: u64,
@@ -3260,11 +3256,6 @@ fn deleteMatches(
         std.math.add(u64, screen_origin, command_value.y - 1) catch null;
     return switch (selector) {
         'a' => true,
-        'i' => kitty_id == command_value.id and
-            (command_value.placement_id == 0 or placement_value.kitty_id == command_value.placement_id),
-        'n' => kitty_number == command_value.image_number and
-            (command_value.placement_id == 0 or placement_value.kitty_id == command_value.placement_id),
-        'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
         'p' => command_value.x != 0 and explicit_row != null and
             anchor.col <= @as(i128, command_value.x - 1) and command_value.x - 1 <= right and
             anchor.row <= explicit_row.? and explicit_row.? <= bottom,
