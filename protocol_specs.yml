@@ -10093,6 +10093,24 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.transmit_default
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty chunk quiet overrides and explicit frame continuations retain exact wire ownership
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: canceled Kitty continuation releases transfer without retained mutation'
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: APC G metadata and payload share existing bounded parser packet owner, split static and multi-command wire
+            proofs, CAN cancellation, separate encoded payload ceiling. No new parser lane. Malformed metadata/over-envelope/C1
+            exhaustive proof remains separate.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: rgb-rgba
       section: Transferring pixel data / RGB and RGBA data
       level: defined
@@ -10153,6 +10171,27 @@ specifications:
       level: defined
       wire: f=100
       rule: Accepts a PNG encoded image with dimensions determined from PNG data.
+      test_locations:
+      - file: howl-vt/src/graphics.zig
+        test: Kitty PNG f=100 is chunked bounded and transactional through the graphics plane
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty PNG grows bounded chunk storage without admitting a partial image
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: 'Existing f100 decoder and shared chunk path qualified: PNG-derived dimensions, explicit matching dimensions
+            and conflicting-size rejection, CRC corruption, zlib-wrapped PNG with declared inner size, pinned icat unpadded
+            example and >8KiB ancillary chunk transfer with <=4096 encoded chunks, exact decoded RGBA and no partial placement.
+            Shared encoded chunk ceiling now applies before admission. Not exhaustive PNG color types/interlace/host media
+            or physical pixels.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: compressed
       section: Compression
       level: defined
@@ -10162,6 +10201,23 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty zlib checksum failures preserve images and frames before valid recovery
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty direct zlib transmission is exact bounded and shared by frames
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty PNG f=100 is chunked bounded and transactional through the graphics plane
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: Existing zlib raw/frame and PNG wrapped decompression proofs retained under common encoded-chunk admission.
+            Exact decoded lengths, declared size and bounded allocation policy unchanged; no new codec or host transfer medium.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: mediums
       section: The transmission medium
       level: defined
@@ -10272,6 +10328,33 @@ specifications:
       level: defined
       wire: q=0|1|2
       rule: Selects normal responses or suppresses response categories as documented.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty chunk quiet overrides and explicit frame continuations retain exact wire ownership
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty continuation admits only continuation metadata and retains rejection identity
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: invalid Kitty base64 length cancels transfer without losing response metadata or retained pixels
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics feature queries reserve exact reply bytes atomically'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: Nonzero q overrides inherited quiet on continuation; explicit/implicit0 inherits prior setting, q1 suppresses
+            success and q2 suppresses all. Shared sticky effective quiet for static/frame load; pinned graphics.c static branch
+            updates nonzero value, frame branch uses nonzero current or start. Local common policy for intermediate frame
+            overrides is not universal author equivalence. Exact split wire test shows silent static and explicit frame success,
+            q2-to-q1 failure visible, q1-to-q2 failure silent, q0 inheritance. Append failures retain original id/number,
+            including generated identity, without retained mutation. Existing ordinary conservative96-byte reply reservation,
+            feature exact reservation and short failure tokens retained. Broader placement/frame metadata and early parse/identity
+            rejection formatting, anonymous error policy and silent ordinary reply-pressure admission remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: frame-load
       section: Animation / Transferring animation frame data
       level: defined
@@ -10283,6 +10366,23 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.frame
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty chunk quiet overrides and explicit frame continuations retain exact wire ownership
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty frames compose transactionally and advance on monotonic gaps
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: First animation-frame header initializes owned metadata and calls same append path directly; no synthetic
+            static command. Explicit a=f,m continuation routes into existing frame load; omitted action retained per pinned
+            implementation, rejects extra continuation metadata. Actual split wire root edit retained bytes and suppressed
+            reply; earlier frame transaction/composition proof retained. Intermediate quiet override and frame failure metadata
+            boundaries as documented under replies; no animation timing-policy change.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -10340,6 +10440,53 @@ specifications:
       - APC G
       rule: Encoded chunks <=4096 bytes; nonfinal multiple of four; subsequent chunks only m and optional q, plus a=f for
         animation frames. Finish before other graphics commands; final-chunk cursor used, no display before validation.
+      test_locations:
+      - file: howl-vt/src/graphics.zig
+        test: Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty continuation admits only continuation metadata and retains rejection identity
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty chunk quiet overrides and explicit frame continuations retain exact wire ownership
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: canceled Kitty continuation releases transfer without retained mutation'
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: new transmission cancels an incomplete stream without retained mutation
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: static plane admission is transactional across chunks replacement put and delete
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty PNG f=100 is chunked bounded and transactional through the graphics plane
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty PNG grows bounded chunk storage without admitting a partial image
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty direct zlib transmission is exact bounded and shared by frames
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics feature query cannot cancel an unfinished image'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
+            payload lengths multiple of4. Validate first chunk before allocating, validate continuation metadata by presence
+            (m/q and explicit a=f only for frame load), reject stray fields including explicit default values. First-chunk
+            setup and shared append owner distinct; explicit frame continuation now accepted without rebuilding original header.
+            Original image number, assigned id and quiet retained on append rejection; no partial image or placement before
+            final validation. Exact4096/4100 boundary, invalid nonfinal lengths2/3, ten metadata fields and final-cursor placement.
+            Pinned author implementation also accepts omitted a on frame continuations; retain existing omitted-action and
+            implicit final-m default, independently padded intermediate chunks and unpadded final input. Preserve existing
+            local recovery policy for unmistakable new image header abandoning old incomplete upload; ordinary unrelated intervening
+            commands and over-envelope parse failures not exhaustively qualified. Feature queries stay read-only.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -10349,6 +10496,23 @@ specifications:
       rule: No data or state effect, including active transfer. Echo supported nondefault action-specific values; absent e
         means action unsupported. Exclude a,i,I,m,q from feature field list (i response identity). e only in query; i required.
         DA1 ordering.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics feature query cannot cancel an unfinished image'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics feature queries reserve exact reply bytes atomically'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_01:
+          scope: Existing feature queries interleaved during unfinished static image preserve load, ignore payload, report
+            supported action/keys only and reserve exact bytes atomically. Quiet query can use full reply queue. Direct chunk
+            admission changes do not apply to ignored feature payload within envelope ceiling. Not complete advertised action/value
+            or DA1 ordering qualification; retain existing unsupported host media policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
+            deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
+          baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
     - id: image-number
       section: docs/graphics-protocol.rst:967-996
       level: defined

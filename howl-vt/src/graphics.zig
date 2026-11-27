@@ -34,6 +34,9 @@ const max_frames: usize = 256;
 pub const max_dimension: u32 = 4096;
 /// Bounds one encoded Kitty APC command chunk.
 pub const max_command_bytes: usize = 8192;
+// The packet ceiling also includes metadata. Only the encoded data has
+// the author protocol's separate 4096-byte per-chunk ceiling.
+const max_chunk_bytes: usize = 4096;
 /// Bounds one in-flight compressed direct payload above decoded image quota.
 const max_compressed_bytes: usize = max_image_bytes + 128 * 1024;
 // Indexed images retain their source indices as well as the public RGBA view.
@@ -527,7 +530,10 @@ pub const Plane = struct {
         }
         return switch (command_value.action) {
             't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors),
-            'f' => try self.frame(command_value),
+            'f' => if (self.loading != null and command_value.id == 0 and command_value.image_number == 0)
+                try self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors)
+            else
+                try self.frame(command_value),
             'a' => self.animate(command_value),
             'c' => try self.composeFrames(command_value),
             'p' => self.put(command_value, bank, row, col, cell_width, cell_height),
@@ -556,127 +562,184 @@ pub const Plane = struct {
         colors: *const properties.ColorState,
     ) std.mem.Allocator.Error!Result {
         errdefer self.cancel();
-        if (self.loading == null) {
-            const is_png = command_value.format == 100;
-            if ((command_value.id != 0 and command_value.image_number != 0) or
-                (!is_png and (command_value.width == 0 or command_value.height == 0)) or
-                command_value.width > max_dimension or command_value.height > max_dimension or
-                (command_value.format != 8 and command_value.format != 16 and
-                    command_value.format != 24 and command_value.format != 32 and !is_png))
-                return .{
-                    .response_id = nonzero(command_value.id),
-                    .response_number = nonzero(command_value.image_number),
-                    .failure = .invalid,
-                    .quiet = command_value.quiet,
-                };
-            const channels: usize = switch (command_value.format) {
-                8 => 1,
-                16 => 2,
-                24 => 3,
-                else => 4,
-            };
-            const pixels = std.math.mul(usize, command_value.width, command_value.height) catch
-                return .{
-                    .response_id = nonzero(command_value.id),
-                    .response_number = nonzero(command_value.image_number),
-                    .failure = .quota,
-                    .quiet = command_value.quiet,
-                };
-            const rgba_bytes = std.math.mul(usize, pixels, 4) catch
-                return .{
-                    .response_id = nonzero(command_value.id),
-                    .response_number = nonzero(command_value.image_number),
-                    .failure = .quota,
-                    .quiet = command_value.quiet,
-                };
-            const input_bytes = std.math.mul(usize, pixels, channels) catch
-                return .{
-                    .response_id = nonzero(command_value.id),
-                    .response_number = nonzero(command_value.image_number),
-                    .failure = .quota,
-                    .quiet = command_value.quiet,
-                };
-            if (rgba_bytes > max_image_bytes)
-                return .{
-                    .response_id = nonzero(command_value.id),
-                    .response_number = nonzero(command_value.image_number),
-                    .failure = .quota,
-                    .quiet = command_value.quiet,
-                };
-            const anonymous = command_value.id == 0 and command_value.image_number == 0;
-            const kitty_id = if (command_value.id != 0)
-                command_value.id
-            else if (anonymous)
-                0
-            else
-                self.allocateKittyId() orelse
-                    return .{ .response_number = command_value.image_number, .failure = .quota, .quiet = command_value.quiet };
-            if (command_value.compression != 0 and command_value.compression != 'z')
-                return .{
-                    .response_id = nonzero(command_value.id),
-                    .response_number = nonzero(command_value.image_number),
-                    .failure = .unsupported,
-                    .quiet = command_value.quiet,
-                };
-            if (is_png and command_value.compression == 'z' and
-                (command_value.uncompressed_bytes == 0 or command_value.uncompressed_bytes > max_compressed_bytes))
-                return .{ .response_id = nonzero(command_value.id), .failure = .invalid, .quiet = command_value.quiet };
-            if (!is_png and command_value.uncompressed_bytes != 0 and
-                command_value.uncompressed_bytes != input_bytes)
-                return .{ .response_id = nonzero(command_value.id), .failure = .invalid, .quiet = command_value.quiet };
-            const expected_bytes = if (is_png) command_value.uncompressed_bytes else input_bytes;
-            const storage_bytes = if (is_png)
-                @as(usize, max_command_bytes)
-            else if (command_value.compression == 'z')
-                compressedInputCapacity(input_bytes) orelse
-                    return .{
-                        .response_id = nonzero(command_value.id),
-                        .response_number = nonzero(command_value.image_number),
-                        .failure = .quota,
-                        .quiet = command_value.quiet,
-                    }
-            else
-                input_bytes;
-            const input = try self.allocator.alloc(u8, storage_bytes);
-            self.loading = .{
-                .action = command_value.action,
-                .format = command_value.format,
-                .anonymous = anonymous,
-                .id = kitty_id,
-                .image_number = command_value.image_number,
-                .placement_id = command_value.placement_id,
-                .source_x = command_value.x,
-                .source_y = command_value.y,
-                .source_width = command_value.source_width,
-                .source_height = command_value.source_height,
-                .columns = command_value.columns,
-                .rows = command_value.rows,
-                .cell_x = command_value.cell_x,
-                .cell_y = command_value.cell_y,
-                .background_rgba = 0,
-                .z = command_value.z,
-                .compose_mode = command_value.compose_mode,
-                .unicode_placement = command_value.unicode_placement,
-                .compression = command_value.compression,
-                .expected_bytes = expected_bytes,
-                .width = command_value.width,
-                .height = command_value.height,
-                .quiet = command_value.quiet,
-                .bytes = input,
-            };
-        } else {
+        if (self.loading != null) {
+            // Preserve the existing recovery policy: an unmistakable new
+            // image header abandons an unfinished transfer. Otherwise
+            // validate the continuation by field presence, not values.
             if (command_value.width != 0 or command_value.height != 0 or
                 command_value.id != 0 or command_value.image_number != 0 or command_value.placement_id != 0)
-            {
-                self.cancel();
-                return self.transmit(command_value, bank, row, col, cell_width, cell_height, colors);
-            }
-            if (command_value.format != 32 or command_value.action != 't' or command_value.compression != 0) {
-                self.cancel();
-                return .{ .failure = .invalid, .quiet = command_value.quiet };
-            }
+                self.cancel()
+            else
+                return self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors);
         }
+        if (!validChunk(command_value)) return .{
+            .response_id = nonzero(command_value.id),
+            .response_number = nonzero(command_value.image_number),
+            .failure = .invalid,
+            .quiet = command_value.quiet,
+        };
+        const is_png = command_value.format == 100;
+        if ((command_value.id != 0 and command_value.image_number != 0) or
+            (!is_png and (command_value.width == 0 or command_value.height == 0)) or
+            command_value.width > max_dimension or command_value.height > max_dimension or
+            (command_value.format != 8 and command_value.format != 16 and
+                command_value.format != 24 and command_value.format != 32 and !is_png))
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .invalid,
+                .quiet = command_value.quiet,
+            };
+        const channels: usize = switch (command_value.format) {
+            8 => 1,
+            16 => 2,
+            24 => 3,
+            else => 4,
+        };
+        const pixels = std.math.mul(usize, command_value.width, command_value.height) catch
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .quota,
+                .quiet = command_value.quiet,
+            };
+        const rgba_bytes = std.math.mul(usize, pixels, 4) catch
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .quota,
+                .quiet = command_value.quiet,
+            };
+        const input_bytes = std.math.mul(usize, pixels, channels) catch
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .quota,
+                .quiet = command_value.quiet,
+            };
+        if (rgba_bytes > max_image_bytes)
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .quota,
+                .quiet = command_value.quiet,
+            };
+        const anonymous = command_value.id == 0 and command_value.image_number == 0;
+        const kitty_id = if (command_value.id != 0)
+            command_value.id
+        else if (anonymous)
+            0
+        else
+            self.allocateKittyId() orelse
+                return .{ .response_number = command_value.image_number, .failure = .quota, .quiet = command_value.quiet };
+        if (command_value.compression != 0 and command_value.compression != 'z')
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .unsupported,
+                .quiet = command_value.quiet,
+            };
+        if (is_png and command_value.compression == 'z' and
+            (command_value.uncompressed_bytes == 0 or command_value.uncompressed_bytes > max_compressed_bytes))
+            return .{ .response_id = nonzero(command_value.id), .failure = .invalid, .quiet = command_value.quiet };
+        if (!is_png and command_value.uncompressed_bytes != 0 and
+            command_value.uncompressed_bytes != input_bytes)
+            return .{ .response_id = nonzero(command_value.id), .failure = .invalid, .quiet = command_value.quiet };
+        const expected_bytes = if (is_png) command_value.uncompressed_bytes else input_bytes;
+        const storage_bytes = if (is_png)
+            @as(usize, max_command_bytes)
+        else if (command_value.compression == 'z')
+            compressedInputCapacity(input_bytes) orelse
+                return .{
+                    .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
+                    .failure = .quota,
+                    .quiet = command_value.quiet,
+                }
+        else
+            input_bytes;
+        const input = try self.allocator.alloc(u8, storage_bytes);
+        self.loading = .{
+            .action = command_value.action,
+            .format = command_value.format,
+            .anonymous = anonymous,
+            .id = kitty_id,
+            .image_number = command_value.image_number,
+            .placement_id = command_value.placement_id,
+            .source_x = command_value.x,
+            .source_y = command_value.y,
+            .source_width = command_value.source_width,
+            .source_height = command_value.source_height,
+            .columns = command_value.columns,
+            .rows = command_value.rows,
+            .cell_x = command_value.cell_x,
+            .cell_y = command_value.cell_y,
+            .background_rgba = 0,
+            .z = command_value.z,
+            .compose_mode = command_value.compose_mode,
+            .unicode_placement = command_value.unicode_placement,
+            .compression = command_value.compression,
+            .expected_bytes = expected_bytes,
+            .width = command_value.width,
+            .height = command_value.height,
+            .quiet = command_value.quiet,
+            .bytes = input,
+        };
+        return self.appendChunk(command_value, bank, row, col, cell_width, cell_height, colors);
+    }
 
+    fn validChunk(command_value: Command) bool {
+        return command_value.payload.len <= max_chunk_bytes and
+            (!command_value.more or command_value.payload.len % 4 == 0);
+    }
+
+    fn rejectLoading(self: *Plane, failure: Failure) Result {
+        const loading = self.loading.?;
+        const result: Result = .{
+            .response_id = if (loading.anonymous) null else loading.id,
+            .response_number = nonzero(loading.image_number),
+            .failure = failure,
+            .quiet = loading.quiet,
+        };
+        self.cancel();
+        return result;
+    }
+
+    fn continueChunk(
+        self: *Plane,
+        command_value: Command,
+        bank: Bank,
+        row: u64,
+        col: u16,
+        cell_width: u32,
+        cell_height: u32,
+        colors: *const properties.ColorState,
+    ) std.mem.Allocator.Error!Result {
+        const loading = &self.loading.?;
+        // The pinned implementation inherits an earlier quiet value
+        // unless a nonzero override is sent. Retain one effective value.
+        if (command_value.quiet != 0) loading.quiet = command_value.quiet;
+        const continuation_fields: u32 = (1 << 6) | (1 << 7); // m, q
+        const action_field: u32 = 1 << 0;
+        const explicit_frame = loading.action == 'f' and command_value.action == 'f';
+        const allowed = continuation_fields | (if (explicit_frame) action_field else 0);
+        if (command_value.present & ~allowed != 0)
+            return self.rejectLoading(.invalid);
+        return self.appendChunk(command_value, bank, row, col, cell_width, cell_height, colors);
+    }
+
+    fn appendChunk(
+        self: *Plane,
+        command_value: Command,
+        bank: Bank,
+        row: u64,
+        col: u16,
+        cell_width: u32,
+        cell_height: u32,
+        colors: *const properties.ColorState,
+    ) std.mem.Allocator.Error!Result {
+        errdefer self.cancel();
+        if (!validChunk(command_value)) return self.rejectLoading(.invalid);
         const loading = &self.loading.?;
         // kitten icat emits unpadded base64; both forms are valid Kitty data.
         const decoder = if (std.mem.endsWith(u8, command_value.payload, "="))
@@ -684,10 +747,7 @@ pub const Plane = struct {
         else
             std.base64.standard_no_pad.Decoder;
         const decoded_len = decoder.calcSizeForSlice(command_value.payload) catch {
-            const id = loading.id;
-            const quiet = loading.quiet;
-            self.cancel();
-            return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+            return self.rejectLoading(.invalid);
         };
         if (loading.format == 100 and decoded_len > loading.bytes.len - loading.used) {
             const maximum = if (loading.compression == 'z')
@@ -701,52 +761,33 @@ pub const Plane = struct {
             }
         }
         if (decoded_len > loading.bytes.len - loading.used) {
-            const id = loading.id;
-            const quiet = loading.quiet;
-            self.cancel();
-            return .{ .response_id = id, .failure = .quota, .quiet = quiet };
+            return self.rejectLoading(.quota);
         }
         decoder.decode(
             loading.bytes[loading.used..][0..decoded_len],
             command_value.payload,
         ) catch {
-            const id = loading.id;
-            const quiet = loading.quiet;
-            self.cancel();
-            return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+            return self.rejectLoading(.invalid);
         };
         loading.used += decoded_len;
         if (command_value.more) return .{ .quiet = loading.quiet };
         if (loading.format == 100) {
             if (loading.compression == 'z' and !(try inflateLoading(self))) {
-                const id = self.loading.?.id;
-                const quiet = self.loading.?.quiet;
-                self.cancel();
-                return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+                return self.rejectLoading(.invalid);
             }
             const decoded = png.decode(self.allocator, self.loading.?.bytes[0..self.loading.?.used]) catch |err| {
                 if (err == error.OutOfMemory) return error.OutOfMemory;
-                const id = self.loading.?.id;
-                const quiet = self.loading.?.quiet;
-                self.cancel();
-                return .{
-                    .response_id = id,
-                    .failure = switch (err) {
-                        error.Quota => .quota,
-                        error.Unsupported => .unsupported,
-                        else => .invalid,
-                    },
-                    .quiet = quiet,
-                };
+                return self.rejectLoading(switch (err) {
+                    error.Quota => .quota,
+                    error.Unsupported => .unsupported,
+                    else => .invalid,
+                });
             };
             if ((loading.width != 0 and loading.width != decoded.width) or
                 (loading.height != 0 and loading.height != decoded.height))
             {
                 self.allocator.free(decoded.pixels);
-                const id = loading.id;
-                const quiet = loading.quiet;
-                self.cancel();
-                return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+                return self.rejectLoading(.invalid);
             }
             self.allocator.free(loading.bytes);
             loading.bytes = decoded.pixels;
@@ -758,16 +799,10 @@ pub const Plane = struct {
             loading.compression = 0;
         } else if (loading.compression == 0) {
             if (loading.used != loading.expected_bytes) {
-                const id = loading.id;
-                const quiet = loading.quiet;
-                self.cancel();
-                return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+                return self.rejectLoading(.invalid);
             }
         } else if (!(try inflateLoading(self))) {
-            const id = self.loading.?.id;
-            const quiet = self.loading.?.quiet;
-            self.cancel();
-            return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+            return self.rejectLoading(.invalid);
         }
         return try self.finish(bank, row, col, cell_width, cell_height, colors);
     }
@@ -819,6 +854,12 @@ pub const Plane = struct {
                 return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet }
         else
             byte_count;
+        if (!validChunk(command_value)) return .{
+            .response_id = image_value.kitty_id,
+            .response_number = image_value.kitty_number,
+            .failure = .invalid,
+            .quiet = command_value.quiet,
+        };
         const input = try self.allocator.alloc(u8, storage_bytes);
         self.loading = .{
             .action = 'f',
@@ -846,15 +887,7 @@ pub const Plane = struct {
             .quiet = command_value.quiet,
             .bytes = input,
         };
-        var continuation = command_value;
-        continuation.action = 't';
-        continuation.format = 32;
-        continuation.id = 0;
-        continuation.image_number = 0;
-        continuation.width = 0;
-        continuation.height = 0;
-        continuation.compression = 0;
-        return self.transmit(continuation, .primary, 0, 0, 1, 1, &default_indexed_colors);
+        return self.appendChunk(command_value, .primary, 0, 0, 1, 1, &default_indexed_colors);
     }
 
     fn finishFrame(self: *Plane, loading: Loading) std.mem.Allocator.Error!Result {
@@ -5738,4 +5771,60 @@ test "Kitty zlib checksum failures preserve images and frames before valid recov
     try std.testing.expect(replacement.changed);
     try std.testing.expectEqual(@as(u16, 1), plane.image_count);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, plane.image(0).?.pixels);
+}
+
+test "Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    var packet: [max_command_bytes]u8 = undefined;
+    const payload: [4100]u8 = @splat('A');
+    const large = try std.fmt.bufPrint(&packet, "a=t,f=24,i=7,s=1025,v=1;{s}", .{&payload});
+    const rejected = try plane.command(large, .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(@as(?Failure, .invalid), rejected.failure);
+    try std.testing.expectEqual(@as(?u32, 7), rejected.response_id);
+    try std.testing.expect(plane.loading == null);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+
+    const first = try std.fmt.bufPrint(&packet, "a=T,f=24,i=7,s=1025,v=1,C=1,m=1;{s}", .{payload[0..4096]});
+    const started = try plane.command(first, .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(@as(?Failure, null), started.failure);
+    try std.testing.expect(!started.changed and plane.loading != null);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    const last = try plane.command("m=0;AQID", .primary, 0, 2, 3, 8, 16);
+    try std.testing.expect(last.changed);
+    try std.testing.expectEqual(@as(u64, 2), plane.placements[0].row);
+    try std.testing.expectEqual(@as(u16, 3), plane.placements[0].col);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, plane.image(0).?.pixels[0..4]);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 255 }, plane.image(0).?.pixels[4096..4100]);
+    const generation = plane.generation();
+    for ([_][]const u8{ "AQ", "AQI" }) |partial| {
+        const bad = try std.fmt.bufPrint(&packet, "a=t,i=7,s=1,v=1,m=1;{s}", .{partial});
+        const result = try plane.command(bad, .primary, 0, 0, 0, 8, 16);
+        try std.testing.expectEqual(@as(?Failure, .invalid), result.failure);
+        try std.testing.expectEqual(@as(?u32, 7), result.response_id);
+        try std.testing.expect(plane.loading == null);
+        try std.testing.expectEqual(generation, plane.generation());
+    }
+}
+
+test "Kitty continuation admits only continuation metadata and retains rejection identity" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=t,i=7,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+    const generation = plane.generation();
+    for ([_][]const u8{ "f=32", "s=0", "p=0", "C=0", "U=0", "N=0", "t=d", "a=t", "z=0", "S=0" }) |extra| {
+        const first = try plane.command("a=t,I=44,s=1,v=1,m=1;AQID", .primary, 0, 0, 0, 8, 16);
+        try std.testing.expect(!first.changed and plane.loading != null);
+        const id = plane.loading.?.id;
+        var bytes: [128]u8 = undefined;
+        const body = try std.fmt.bufPrint(&bytes, "m=0,{s};BA==", .{extra});
+        const rejected = try plane.command(body, .primary, 0, 0, 0, 8, 16);
+        try std.testing.expectEqual(@as(?Failure, .invalid), rejected.failure);
+        try std.testing.expectEqual(@as(?u32, id), rejected.response_id);
+        try std.testing.expectEqual(@as(?u32, 44), rejected.response_number);
+        try std.testing.expect(plane.loading == null);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, plane.image(0).?.pixels);
+    }
 }

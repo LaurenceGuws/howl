@@ -6853,3 +6853,23 @@ test "ECMA enclosure survives regional rendition reports and full rendition stac
     try terminal.resize(3, 6);
     for (original, 0..) |cell, col| try std.testing.expectEqualDeep(cell, terminal.semanticView(1).cellInfoAt(0, @intCast(col)));
 }
+
+test "Kitty chunk quiet overrides and explicit frame continuations retain exact wire ownership" {
+    const wire = "\x1b_Ga=t,i=7,s=1,v=1,m=1;AQID\x1b\\\x1b_Gm=0,q=1;BA==\x1b\\" ++
+        "\x1b_Ga=f,i=7,r=1,C=1,m=1;BQYH\x1b\\\x1b_Ga=f,m=0,q=1;CA==\x1b\\" ++
+        "\x1b_Ga=t,i=8,s=1,v=1,q=2,m=1;AQID\x1b\\\x1b_Gm=0,q=1;A\x1b\\" ++
+        "\x1b_Ga=t,i=9,s=1,v=1,q=1,m=1;AQID\x1b\\\x1b_Gm=0,q=2;A\x1b\\" ++
+        "\x1b_Ga=t,i=10,s=1,v=1,q=1,m=1;AQID\x1b\\\x1b_Gm=0,q=0;BA==\x1b\\";
+    for (0..wire.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, wire[0..split]);
+        try feed(&terminal, wire[split..]);
+        try std.testing.expectEqualStrings("\x1b_Gi=8;EINVAL\x1b\\", terminal.replyBytes());
+        const images = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 2), images.imageCount());
+        try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, images.image(0).?.pixels);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, images.image(1).?.pixels);
+        try std.testing.expectEqual(@as(usize, 0), images.placementCount());
+    }
+}
