@@ -13274,3 +13274,104 @@ test "Kitty offscreen physical placement cannot mask a visible virtual animation
     try std.testing.expect(terminal.serviceAnimations(240 * ms).changed);
     try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, terminal.images(0).image(1).?.pixels);
 }
+
+test "Kitty image tail survives bounded history eviction and ED3 without changing source geometry" {
+    const cases = [_]struct { history_capacity: u16, clear: []const u8 }{
+        .{ .history_capacity = 1, .clear = "\x1b[3;1H\n" },
+        .{ .history_capacity = 8, .clear = "\x1b[3J" },
+        .{ .history_capacity = 8, .clear = "\x1b[?3J" },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, case.history_capacity);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=7,C=1,q=2,s=1,v=3;AQIDBAUGBwgJCgsM\x1b\\\x1b[3;1H\n")).stateChanged());
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+        try std.testing.expect((try terminal.feed("\x1b[2;5HX")).stateChanged());
+        const generation = terminal.images(0).generation;
+        const content = terminal.images(0).content_generation;
+        const image_id = terminal.images(0).image(0).?.id;
+        try std.testing.expect((try terminal.feed(case.clear)).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u32, 1), view.history_row_base);
+        const historical = terminal.images(view.history_count);
+        var iterator = historical.placementIterator();
+        const tail = iterator.next() orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(image_id, tail.placement.image_id);
+        try std.testing.expectEqual(@as(i128, -1), tail.top);
+        try std.testing.expectEqual(@as(u32, 0), tail.placement.source_y);
+        try std.testing.expectEqual(@as(u32, 3), tail.placement.source_height);
+        try std.testing.expectEqual(@as(u32, 3), tail.placement.pixel_height);
+        try std.testing.expect(iterator.next() == null);
+        try std.testing.expectEqual(generation, historical.generation);
+        try std.testing.expectEqual(content, historical.content_generation);
+        const live = terminal.images(0);
+        iterator = live.placementIterator();
+        try std.testing.expectEqual(-@as(i128, 1 + view.history_count), (iterator.next() orelse return error.TestUnexpectedResult).top);
+        try std.testing.expect(iterator.next() == null);
+        if (case.history_capacity != 1) {
+            try std.testing.expectEqual(@as(u32, 0), view.history_count);
+            try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(1, 4));
+            try std.testing.expect(!(try terminal.feed(case.clear)).stateChanged());
+        }
+        // Advance the retention boundary beyond the complete image, then
+        // confirm the placement is gone but its named decoded data remains.
+        for (0..3) |_| try std.testing.expect((try terminal.feed("\x1b[3;1H\n")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[3J")).stateChanged());
+        try std.testing.expect(terminal.semanticView(0).history_row_base >= 3);
+        const retired = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 0), retired.placementCount());
+        try std.testing.expectEqual(@as(usize, 1), retired.imageCount());
+        try std.testing.expectEqual(generation + 1, retired.generation);
+        try std.testing.expectEqual(content, retired.content_generation);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, retired.image(0).?.pixels);
+    }
+}
+
+test "Kitty graphics reset distinguishes DECSTR and complete RIS ownership" {
+    for ([_]bool{ false, true }) |parsed| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try std.testing.expect((try terminal.feed("history\x1b[3;1H\n\x1b[1;1H\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;AQIDBA==\x1b\\\x1b_Ga=f,i=7,r=2,z=50,C=1,q=2;BQYHCA==\x1b\\\x1b_Ga=a,i=7,s=3,r=1,z=40,q=2\x1b\\")).stateChanged());
+        try std.testing.expectEqual(@as(?u32, 40), terminal.serviceAnimations(100 * std.time.ns_per_ms).next_ms);
+        try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=8,U=1,C=1,q=2,s=1,v=1;CQoLDA==\x1b\\")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b_Ga=t,i=9,q=2,s=1,v=1,m=1;DQ4P\x1b\\")).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[?47h\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;ERITFA==\x1b\\\x1b[?1h")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b_Ga=t,i=9,q=2,s=1,v=1,m=1;FRYX\x1b\\")).stateChanged());
+        const generation = terminal.graphics.generation();
+        const content = terminal.graphics.content_generation;
+        const last_id = terminal.graphics.next_image_id;
+        const bytes = terminal.graphics.storage_bytes;
+        try std.testing.expectEqual(@as(u16, 3), terminal.graphics.image_count);
+        try std.testing.expectEqual(@as(u16, 3), terminal.graphics.placement_count);
+        try std.testing.expectEqual(@as(u16, 1), terminal.graphics.frame_count);
+        try std.testing.expect((try terminal.feed("\x1b[!p")).stateChanged());
+        try std.testing.expect(terminal.semanticView(0).is_alternate_screen);
+        try std.testing.expectEqual(generation, terminal.graphics.generation());
+        try std.testing.expectEqual(content, terminal.graphics.content_generation);
+        try std.testing.expectEqual(bytes, terminal.graphics.storage_bytes);
+        for (terminal.graphics.loading) |loading| try std.testing.expect(loading != null);
+        if (parsed) {
+            try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+        } else terminal.hardReset();
+        try std.testing.expect(!terminal.semanticView(0).is_alternate_screen);
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+        try std.testing.expectEqual(@as(u21, 'h'), terminal.semanticView(1).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u16, 0), terminal.graphics.image_count);
+        try std.testing.expectEqual(@as(u16, 0), terminal.graphics.placement_count);
+        try std.testing.expectEqual(@as(u16, 0), terminal.graphics.frame_count);
+        try std.testing.expectEqual(@as(usize, 0), terminal.graphics.storage_bytes);
+        try std.testing.expectEqual(generation + 1, terminal.graphics.generation());
+        try std.testing.expectEqual(terminal.graphics.generation(), terminal.graphics.content_generation);
+        for (terminal.graphics.loading) |loading| try std.testing.expect(loading == null);
+        try std.testing.expectEqual(@as(?u32, null), terminal.serviceAnimations(200 * std.time.ns_per_ms).next_ms);
+        try std.testing.expect(!(try terminal.feed("\x1b_Gm=0,q=2;EA==\x1b\\")).mutations.images);
+        try std.testing.expect((try terminal.feed("\x1b[?47h")).stateChanged());
+        try std.testing.expect(!(try terminal.feed("\x1b_Gm=0,q=2;GA==\x1b\\")).mutations.images);
+        try std.testing.expectEqual(@as(u16, 0), terminal.graphics.image_count);
+        try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;CQoLDA==\x1b\\")).stateChanged());
+        try std.testing.expect(terminal.images(0).image(0).?.id > last_id);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}

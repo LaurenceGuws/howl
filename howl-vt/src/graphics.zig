@@ -1685,7 +1685,7 @@ pub const Plane = struct {
         return changed;
     }
 
-    /// Retains only placement anchors representable by one resized screen bank.
+    /// Retains physical placements whose row extent intersects the resized bank.
     ///
     /// Primary callers pass the replacement screen's absolute retained-row
     /// interval (`history_row_base`, `history_count + rows`). Alternate callers
@@ -1709,7 +1709,7 @@ pub const Plane = struct {
             if (retained.bank != bank or retained.virtual) {
                 continue;
             }
-            if (retained.parent_identity == 0 and (retained.row < row_start or retained.row >= row_end or
+            if (retained.parent_identity == 0 and (retained.rows <= row_start -| retained.row or retained.row >= row_end or
                 retained.col >= columns))
             {
                 doomed.set(index);
@@ -1719,13 +1719,17 @@ pub const Plane = struct {
         return self.commitPlacementChanges(&doomed, changed);
     }
 
-    /// Drops primary placements whose complete anchor row was evicted.
+    /// Drops primary roots only when their complete row extent was evicted.
+    /// Crossing placements retain their original geometry for signed viewport
+    /// projection and relative child anchors.
     pub fn evictBefore(self: *Plane, absolute_row: u64) bool {
         if (absolute_row == 0 or self.placement_count == 0) return false;
         var doomed = PlacementSet.empty;
         var changed = false;
         for (self.placements[0..self.placement_count], 0..) |retained, index| {
-            if (retained.bank != .primary or retained.virtual or retained.parent_identity != 0 or retained.row >= absolute_row) {
+            if (retained.bank != .primary or retained.virtual or retained.parent_identity != 0 or
+                retained.rows > absolute_row -| retained.row)
+            {
                 continue;
             }
             doomed.set(index);
@@ -6348,4 +6352,39 @@ test "Kitty full display retirement frees frame and indexed data but preserves r
     try std.testing.expectEqual(@as(?u32, 3), missing.response_frame);
     try std.testing.expectEqual(cleared, plane.generation());
     try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+}
+
+test "Kitty history cutoff retains crossing root geometry until its entire extent retires" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,i=7,p=1,C=1,s=1,v=3;AQIDBAUGBwgJCgsM", .primary, 4, 4, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=t,i=8,s=1,v=1;DQ4PEA==", .primary, 4, 4, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=p,i=8,p=2,P=7,Q=1,V=1", .primary, 4, 4, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=T,i=7,C=1,s=1,v=1;ERITFA==", .alternate, 0, 0, 0, 1, 1)).changed);
+    const root = plane.placement(0).?;
+    const child = plane.placement(1).?;
+    const alternate = plane.placement(2).?;
+    const generation = plane.generation();
+    const content = plane.content_generation;
+    try std.testing.expectEqual(@as(usize, 20), plane.storage_bytes);
+    for ([_]u64{ 5, 6 }) |cutoff| {
+        try std.testing.expect(!plane.evictBefore(cutoff));
+        try std.testing.expect(!plane.retainBankBounds(.primary, cutoff, 8, 8));
+        try std.testing.expectEqualDeep(root, plane.placement(0).?);
+        try std.testing.expectEqualDeep(child, plane.placement(1).?);
+        try std.testing.expectEqualDeep(alternate, plane.placement(2).?);
+        try std.testing.expectEqualDeep(Plane.Anchor{ .row = 5, .col = 0 }, plane.placementAnchor(1).?);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqual(content, plane.content_generation);
+    }
+    try std.testing.expect(plane.evictBefore(7));
+    try std.testing.expectEqual(generation + 1, plane.generation());
+    try std.testing.expectEqual(plane.generation(), plane.content_generation);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+    try std.testing.expect(plane.kittyImageIndex(8, .primary) == null);
+    try std.testing.expect(plane.kittyImageIndex(7, .primary) != null);
+    try std.testing.expectEqualDeep(alternate, plane.placement(0).?);
+    try std.testing.expect(!plane.evictBefore(7));
 }

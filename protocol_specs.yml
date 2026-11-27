@@ -10537,6 +10537,9 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: virtual parent image animation wakes only while matching text exposes the child
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty history cutoff retains crossing root geometry until its entire extent retires
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Replacement seeds all old placement roots in one existing bounded ancestry closure (16 rounds), compacts
@@ -10588,6 +10591,16 @@ specifications:
             child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
             live viewport policy, no blanket FULL promotion
           baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
+        howl_qualification_20261127_kitty_graphics_12:
+          scope: A physical root crossing the retained lower boundary preserves original anchor and child offsets. Complete root
+            retirement closes its descendant group and releases orphan child data once; inactive-bank placement and named root
+            bytes survive. Existing ancestry closure policy remains; independent descendants extending past a fully expired root
+            are not separately qualified.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c modify_refs and scroll_filter_func2479-2508, screen.c do_screen_reset220-291 and screen_erase_in_display3188-3251.
+            Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
+            promotion
+          baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
     - id: delete
       section: Deleting images
       level: defined
@@ -10928,6 +10941,9 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: virtual parent image animation wakes only while matching text exposes the child
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_07:
           scope: Bank-local client lookup rejects frame selection from the wrong bank and preserves existing primary frame/current-pixel
@@ -10959,6 +10975,14 @@ specifications:
             child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
             live viewport policy, no blanket FULL promotion
           baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
+        howl_qualification_20261127_kitty_graphics_12:
+          scope: Existing RIS retires retained animation frames and pending transfers across both banks, leaving no image wake
+            deadline. DECSTR preserves frame storage and graphics identities. No new clock, history-view animation or loop semantics.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c modify_refs and scroll_filter_func2479-2508, screen.c do_screen_reset220-291 and screen_erase_in_display3188-3251.
+            Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
+            promotion
+          baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
     - id: composition
       section: Animation / Composing animation frames
       level: defined
@@ -11142,6 +11166,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -11221,6 +11248,15 @@ specifications:
             deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
             FULL promotion
           baseline: 4ad5135a5eade890744572600b56fffe6072e770
+        howl_qualification_20261127_kitty_graphics_12:
+          scope: Existing DECSTR preserves both bank-local staged uploads; direct and parsed RIS cancel both, stale final chunks
+            cannot publish data, and a later valid admission receives a fresh internal identity. No new malformed framing or medium-policy
+            claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c modify_refs and scroll_filter_func2479-2508, screen.c do_screen_reset220-291 and screen_erase_in_display3188-3251.
+            Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
+            promotion
+          baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -11592,6 +11628,15 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: Kitty live animation visibility retains clipped history tails but ignores fully historical images
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty history cutoff retains crossing root geometry until its entire extent retires
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty image tail survives bounded history eviction and ED3 without changing source geometry
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Six screen retirement routes (erase, bounds, history eviction, scroll, column shift, clear bank) select
@@ -11636,6 +11681,20 @@ specifications:
             child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
             live viewport policy, no blanket FULL promotion
           baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
+        howl_qualification_20261127_kitty_graphics_12:
+          scope: Primary history retirement now requires the complete root row extent to end at or before the retained lower boundary,
+            not merely loss of its anchor. Same lower-bound rule in resize selection; original source/placement geometry, relative
+            offsets, content identity and signed viewport projection survive. Bounded history eviction and ordinary/private ED3
+            cases qualify retained tails and final retirement. Existing ED3 saved-lines-only policy (not Kitty visible clear),
+            upper/column resize bounds and named decoded-data retention remain unchanged. DECSTR preserves graphics and staged
+            transfers in both banks; direct and parsed RIS clear all graphics/frame/transfer state, preserve existing text-history
+            policy, and never recycle image identity. This differs from pinned Kitty reset preserving some historical/virtual
+            refs while clearing text history. No broad reset, reflow, partial erasure or margin parity claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c modify_refs and scroll_filter_func2479-2508, screen.c do_screen_reset220-291 and screen_erase_in_display3188-3251.
+            Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
+            promotion
+          baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
