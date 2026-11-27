@@ -1185,27 +1185,69 @@ test "Unicode-placeholder Kitty image projects without rasterizing its reserved 
     try std.testing.expectEqual(@as(usize, 0), removed.snapshot.graphics.images.len);
 }
 
-test "eight visible Kitty images fail output admission while canonical state progresses" {
+test "all canonical Kitty image identities publish with exact bindings and immutable held cuts" {
     const f = try font(12);
     defer f.deinit();
     const owner = try ready(a, f);
     defer destroy(owner);
+    const count = @import("howl_vt").Terminal.maximum_images;
     const held = try owner.hold();
+    var holding = true;
+    defer if (holding) release(owner, held);
     const original = try a.dupe(output.commands.Command, held.snapshot.glyphs[0]);
     defer a.free(original);
-    for (0..8) |index| {
-        var bytes: [100]u8 = undefined;
-        const command = try std.fmt.bufPrint(&bytes, "\x1b_Ga=T,f=32,s=1,v=1,i={d},C=1,q=2;/wAA/w==\x1b\\", .{100 + index});
+    for (0..count) |index| {
+        const pixels = [4]u8{ @intCast(index), 11, 23, 255 };
+        var encoded: [8]u8 = undefined;
+        const payload = std.base64.standard.Encoder.encode(&encoded, &pixels);
+        var bytes: [128]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b_Ga=T,i={d},C=1,q=2,s=1,v=1;{s}\x1b\\", .{ 100 + index, payload });
         try owner.feed(command);
     }
-    try std.testing.expectError(error.ImageLimit, owner.flush());
+    try std.testing.expectEqual(count, owner.observation().images(0).imageCount());
+    try owner.flush();
     try std.testing.expectEqualDeep(original, held.snapshot.glyphs[0]);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
     release(owner, held);
+    holding = false;
+    const full = try owner.hold();
+    var full_held = true;
+    defer if (full_held) release(owner, full);
+    try std.testing.expectEqual(count, full.snapshot.graphics.images.len);
+    try std.testing.expectEqual(count, full.snapshot.graphics.positive.len);
+    for (full.snapshot.graphics.images, full.snapshot.graphics.positive, 0..) |image, command, index| {
+        try std.testing.expectEqual(try output.commands.ResourceId.init(3 + index), image.resource.resource);
+        try std.testing.expectEqualDeep(image.resource, command.rgba.resource.resource);
+        try std.testing.expectEqualSlices(u8, &.{ @intCast(index), 11, 23, 255 }, image.pixels);
+    }
+    // Re-put one retained image: another placement is not another resource.
+    try owner.feed("\x1b_Ga=p,i=100,C=1,q=2\x1b\\");
+    try owner.flush();
+    // Replace one logical identity and then clear, without disturbing the pin.
+    try owner.feed("\x1b_Ga=T,i=355,C=1,q=2,s=1,v=1;AQIDBA==\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqual(count, full.snapshot.graphics.images.len);
+    for (full.snapshot.graphics.images, full.snapshot.graphics.positive, 0..) |image, command, index| {
+        try std.testing.expectEqualDeep(image.resource, command.rgba.resource.resource);
+        try std.testing.expectEqualSlices(u8, &.{ @intCast(index), 11, 23, 255 }, image.pixels);
+    }
+    release(owner, full);
+    full_held = false;
+    {
+        const changed = try owner.hold();
+        defer release(owner, changed);
+        try std.testing.expectEqual(count, changed.snapshot.graphics.images.len);
+        try std.testing.expectEqual(count + 1, changed.snapshot.graphics.positive.len);
+        try std.testing.expectEqualDeep(changed.snapshot.graphics.positive[0].rgba.resource.resource, changed.snapshot.graphics.positive[1].rgba.resource.resource);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, changed.snapshot.graphics.images[count - 1].pixels);
+        try std.testing.expectEqualDeep(changed.snapshot.graphics.images[count - 1].resource, changed.snapshot.graphics.positive[count].rgba.resource.resource);
+    }
     try owner.feed("\x1b_Ga=d,d=A,q=2\x1b\\");
     try owner.flush();
     const recovered = try owner.hold();
     defer release(owner, recovered);
     try std.testing.expectEqual(@as(usize, 0), recovered.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 0), recovered.snapshot.graphics.positive.len);
 }
 
 test "eight completely clipped Kitty images do not consume output resource quota" {
@@ -1373,9 +1415,9 @@ test "every graphics staging allocation failure retains the previous cut and ret
     const glyphs = try a.dupe(output.commands.Command, original.snapshot.glyphs[0]);
     defer a.free(glyphs);
     try owner.feed("\x1b_Ga=T,f=32,s=1,v=1,i=56,C=1,q=2;/wAA/w==\x1b\\");
-    // Ordering storage, copied RGBA slab, final-command storage.
+    // Ordering storage, copied RGBA slab, final commands, exact descriptors.
     // Each failure starts a clean graphics stage and must preserve the pin.
-    for (0..3) |skip| {
+    for (0..4) |skip| {
         failing.fail_index = failing.alloc_index + skip;
         try std.testing.expectError(error.OutOfMemory, owner.flush());
         try std.testing.expectEqualDeep(glyphs, original.snapshot.glyphs[0]);

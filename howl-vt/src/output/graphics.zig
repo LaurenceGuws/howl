@@ -10,6 +10,11 @@ const maximum_images = limits.maximum_output_images;
 const maximum_bytes = limits.maximum_output_image_bytes;
 const deep_threshold = std.math.minInt(i32) / 2;
 
+comptime {
+    if (maximum_images != VT.maximum_images)
+        @compileError("output image capacity must cover every canonical image identity");
+}
+
 /// One exact immutable image resource borrowed from a held output cut.
 pub const Image = struct {
     resource: frame.ResourceRef,
@@ -29,8 +34,7 @@ pub const View = struct {
 pub const Cut = struct {
     pixels: []u8 = &.{},
     commands: []frame.Command = &.{},
-    images: [maximum_images]Image = undefined,
-    image_count: usize = 0,
+    images: []Image = &.{},
     deep_end: usize = 0,
     negative_end: usize = 0,
     plane_generation: u64 = 0,
@@ -43,10 +47,11 @@ pub const Cut = struct {
     cell_width: u16 = 0,
     cell_height: u16 = 0,
 
-    /// Releases only the pixels and commands privately owned by this cut.
+    /// Releases the exact image descriptors, pixels and commands owned by this cut.
     pub fn deinit(self: *Cut, allocator: std.mem.Allocator) void {
-        allocator.free(self.pixels);
+        allocator.free(self.images);
         allocator.free(self.commands);
+        allocator.free(self.pixels);
         self.* = .{};
     }
 
@@ -56,7 +61,7 @@ pub const Cut = struct {
             .deep = self.commands[0..self.deep_end],
             .negative = self.commands[self.deep_end..self.negative_end],
             .positive = self.commands[self.negative_end..],
-            .images = self.images[0..self.image_count],
+            .images = self.images,
         };
     }
 
@@ -84,7 +89,13 @@ fn findImage(images: VT.Images, image_id: u32) ?VT.Image {
 }
 
 // Temporary native placement keys; only final frame.Command reaches the lease.
-const Ordered = struct { placement: VT.ImagePlacement, top: i32, left: i32, ordinal: u32 };
+const Ordered = struct {
+    placement: VT.ImagePlacement,
+    top: i32,
+    left: i32,
+    ordinal: u32,
+    resource_index: u16 = 0,
+};
 fn orderLessThan(_: void, left: Ordered, right: Ordered) bool {
     const a = left.placement;
     const b = right.placement;
@@ -135,18 +146,15 @@ pub fn build(
     std.sort.heap(Ordered, order.items, {}, orderLessThan);
 
     var selected: [maximum_images]VT.Image = undefined;
+    var image_count: usize = 0;
     var total_bytes: usize = 0;
-    for (order.items) |entry| {
+    for (order.items) |*entry| {
         const placement = entry.placement;
-        var found = false;
-        for (selected[0..result.image_count]) |image| {
-            if (image.id == placement.image_id) {
-                found = true;
-                break;
-            }
-        }
-        if (found) continue;
-        if (result.image_count == maximum_images) return error.ImageLimit;
+        var resource_index: usize = 0;
+        while (resource_index < image_count and selected[resource_index].id != placement.image_id) : (resource_index += 1) {}
+        entry.resource_index = @intCast(resource_index);
+        if (resource_index < image_count) continue;
+        if (image_count == maximum_images) return error.ImageLimit;
         const image = findImage(images, placement.image_id) orelse return error.UnsupportedScene;
         if (image.width == 0 or image.height == 0 or image.width > VT.maximum_image_dimension or image.height > VT.maximum_image_dimension) return error.UnsupportedScene;
         const count = std.math.mul(usize, image.width, image.height) catch return error.ImageBytesLimit;
@@ -154,20 +162,21 @@ pub fn build(
         if (byte_count != image.pixels.len or byte_count > VT.maximum_image_bytes) return error.UnsupportedScene;
         total_bytes = std.math.add(usize, total_bytes, byte_count) catch return error.ImageBytesLimit;
         if (total_bytes > maximum_bytes) return error.ImageBytesLimit;
-        selected[result.image_count] = image;
-        result.image_count += 1;
+        selected[image_count] = image;
+        image_count += 1;
     }
     result.pixels = try allocator.alloc(u8, total_bytes);
     result.commands = try allocator.alloc(frame.Command, order.items.len);
+    result.images = try allocator.alloc(Image, image_count);
     var start: usize = 0;
-    for (selected[0..result.image_count], 0..) |image, index| {
+    for (selected[0..image_count], 0..) |image, index| {
         const end = start + image.pixels.len;
         @memcpy(result.pixels[start..end], image.pixels);
         result.images[index] = .{
             .resource = .{
                 // zig-audit: acknowledge catch_unreachable
-                // reason: Seven bounded external slots have fixed nonzero identities 3 through 9.
-                .resource = frame.ResourceId.init(3 + index) catch unreachable,
+                // reason: Bounded image slots start after the two fixed atlas identities.
+                .resource = frame.ResourceId.init(limits.first_image_resource + index) catch unreachable,
                 .generation = @fromBackingInt(generation),
             },
             .size = .{ .width = @intCast(image.width), .height = @intCast(image.height) },
@@ -181,9 +190,8 @@ pub fn build(
     var negative: usize = 0;
     for (order.items, 0..) |entry, command_index| {
         const placement = entry.placement;
-        var resource_index: usize = 0;
-        while (resource_index < result.image_count and selected[resource_index].id != placement.image_id) : (resource_index += 1) {}
-        if (resource_index == result.image_count) return error.UnsupportedScene;
+        const resource_index = entry.resource_index;
+        std.debug.assert(resource_index < image_count and selected[resource_index].id == placement.image_id);
         const image = selected[resource_index];
         const source_right = std.math.add(u64, placement.source_x, placement.source_width) catch return error.UnsupportedScene;
         const source_bottom = std.math.add(u64, placement.source_y, placement.source_height) catch return error.UnsupportedScene;

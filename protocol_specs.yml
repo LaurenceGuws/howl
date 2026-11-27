@@ -10499,6 +10499,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty centered fit reaches direct output and preserves a held cut across re-put
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: all canonical Kitty image identities publish with exact bindings and immutable held cuts
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: Canvas draws all canonical image slots and retires high identities across cuts
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Ordinary placement ACK retains p, including max-u32, and missing-image error includes requested identity
@@ -10549,6 +10555,16 @@ specifications:
             stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
             proofs.
           baseline: 333a723dfd26456138d3bed88dea9f75601ef452
+        howl_qualification_20261127_kitty_output_capacity:
+          scope: Every canonical image identity can publish one visible RGBA resource in a direct cut; a second placement of the
+            same image shares that resource rather than spending another slot. Replacement and retirement preserve old held cut;
+            actual SDL software renderer uploads and draws the full image count. Remaining placement geometry, output pixel dimensions
+            and command limits remain separate.
+          method: Local optional output ownership and limit contract at 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65, originating
+            Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs1193-1202 retained quota policy. Deterministic 256-resource output
+            red-green, exact allocation and held-cut proofs, SDL software pixel and resource retirement qualification. No new
+            originating protocol requirement.
+          baseline: 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -11383,10 +11399,16 @@ specifications:
         test: Kitty anonymous final placement retirement releases only matched unreachable images
         relation: protocol-family
       - file: howl-vt/test/output_owner.zig
-        test: eight visible Kitty images fail output admission while canonical state progresses
+        test: all canonical Kitty image identities publish with exact bindings and immutable held cuts
         relation: protocol-family
       - file: howl-vt/test/output_owner.zig
         test: eight completely clipped Kitty images do not consume output resource quota
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: every graphics staging allocation failure retains the previous cut and retries
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: Canvas draws all canonical image slots and retires high identities across cuts
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
@@ -11430,6 +11452,21 @@ specifications:
           residual: Global retained budget and generation order differ from author example per-bank/access-time/disk-cache strategies;
             permitted local policy, not an automatic bug. Non-evicting frame admission and presentation cap of seven visible images
             remain separate integration limits.
+        howl_qualification_20261127_kitty_output_capacity:
+          scope: Supersedes wave15 seven-visible-resource output bottleneck. The direct output image count matches the canonical
+            256 retained identities; 64 MiB copied pixel budget and 16384 placement/command bounds unchanged. Exact descriptor
+            slices allocate only for visible unique resources, with no new inline 256-resource arrays. SDL Canvas has two inline
+            atlas slots and on-demand image slots indexed by dense resource identity with exact generation; empty image cut frees
+            all image metadata and textures. Tests cover all 256 visible resources, repeated placement deduplication, replacement/clear
+            with immutable held cut, each graphics-stage allocation failure, real SDL software pixels at every image position,
+            descriptor growth failure preserving prior atlas, stale retirement above old slot9 and malformed dense-layout rejection.
+            This qualifies the selected optional output count, not all physical GPU/byte-pressure/geometry behavior or protocol
+            quota parity.
+          method: Local optional output ownership and limit contract at 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65, originating
+            Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs1193-1202 retained quota policy. Deterministic 256-resource output
+            red-green, exact allocation and held-cut proofs, SDL software pixel and resource retirement qualification. No new
+            originating protocol requirement.
+          baseline: 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65
     - id: direct-chunks
       section: docs/graphics-protocol.rst:470-495
       level: defined
@@ -11787,6 +11824,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty anonymous physical image does not lend its identity to a later virtual image
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: all canonical Kitty image identities publish with exact bindings and immutable held cuts
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: Canvas draws all canonical image slots and retires high identities across cuts
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Selected p acknowledgement and same-ID replacement retained output proof. Existing local explicit image-ID
@@ -11837,6 +11880,16 @@ specifications:
           verified_subset: Nonzero pair replaces exact placement; zero/omitted p accumulates, anonymous p ignored; explicit retransmission
             retires prior local group only after full admission; internal resource ID stable and held cut immutable.
           residual: Full numeric boundary/overflow, parent replacement combinations and output-capacity behavior not exhausted.
+        howl_qualification_20261127_kitty_output_capacity:
+          scope: Dense output slot IDs 3..258 refer to exact cut generations, independently of canonical image identities. One
+            placement maps to its selected resource index; re-put does not duplicate resources. Full-capacity replacement leaves
+            a held cut unchanged. SDL rejects sparse/reordered slot layout and retires stale image occurrences across shrinking
+            and empty cuts, including IDs above the old limit. No canonical ID/ABI change.
+          method: Local optional output ownership and limit contract at 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65, originating
+            Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs1193-1202 retained quota policy. Deterministic 256-resource output
+            red-green, exact allocation and held-cut proofs, SDL software pixel and resource retirement qualification. No new
+            originating protocol requirement.
+          baseline: 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65
     - id: placement-layout
       section: docs/graphics-protocol.rst:667-688
       level: defined
@@ -39978,16 +40031,19 @@ reconciliation:
       test: Kitty row scrolls keep horizontal margin crossing image stationary
       relation: protocol-family
     - file: howl-vt/test/output_owner.zig
-      test: eight visible Kitty images fail output admission while canonical state progresses
+      test: all canonical Kitty image identities publish with exact bindings and immutable held cuts
+      relation: protocol-family
+    - file: howl-app/src/canvas.zig
+      test: Canvas draws all canonical image slots and retires high identities across cuts
       relation: protocol-family
     verified_subset: Bank-local placement and number identity, ancestry, virtual projection, retirement, quota, crop,
       cursor and layer behavior have named proofs. The per-clause closing review records remaining geometry and integration
       differences.
-    boundary: Canonical VT and optional native output. Two-axis fitting is qualified separately by kitty-physical-two-axis-aspect-fit;
-      seven-resource visible output cap, history-advancing margins, remaining geometry/selector/lifetime cases and physical
-      presentation prevent FULL.
-    not_full_because: Canonical VT and optional native output. Seven-resource visible output cap, history-advancing margins,
-      remaining geometry/selector/lifetime cases and physical presentation prevent FULL.
+    boundary: Canonical VT and optional native output. Two-axis fitting and full canonical image-count output capacity
+      are separately qualified; history-advancing margins, remaining geometry/selector/lifetime cases and physical presentation
+      prevent FULL.
+    not_full_because: Canonical VT and optional native output. History-advancing margins, remaining geometry/selector/lifetime
+      cases, output geometry/command/byte limits and physical presentation prevent FULL.
   applies_to:
     clauses:
     - kitty_graphics.put

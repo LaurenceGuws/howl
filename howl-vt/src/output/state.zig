@@ -687,7 +687,7 @@ pub fn State(comptime instrumented: bool) type {
             for (self.resources) |resource| total += resource.pixels.len;
             if (cache.colorAtlasView(self.atlas)) |color| total += color.pixels.len;
             for (self.color_resources) |resource| total += resource.pixels.len;
-            for (self.graphics_cuts) |cut| total += cut.pixels.len;
+            for (self.graphics_cuts) |cut| total += cut.pixels.len + cut.images.len * @sizeOf(graphics_output.Image);
             return total;
         }
         fn committedColorResource(self: *const Candidate) ?frame.ResourceRef {

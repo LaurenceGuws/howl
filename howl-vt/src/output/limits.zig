@@ -15,7 +15,12 @@ pub const maximum_cells: usize = @as(usize, maximum_rows) * @as(usize, maximum_c
 /// Largest terminal image-placement set admitted by maintained renderers.
 pub const maximum_image_placements: usize = 16 * 1024;
 /// Maximum distinct visible RGBA image resources in one direct output cut.
-pub const maximum_output_images: usize = 7;
+/// Keep this aligned with the canonical retained-image identity bound.
+pub const maximum_output_images: usize = 256;
+/// First image resource identity after the alpha and color font atlases.
+pub const first_image_resource: u64 = 3;
+/// Largest dense resource-slot count (two atlases plus retained images).
+pub const maximum_output_resources: usize = maximum_output_images + first_image_resource - 1;
 /// Exact upper bound of copied RGBA image pixels in one direct cut.
 pub const maximum_output_image_bytes: usize = 64 * 1024 * 1024;
 /// Complete terminal-frame command envelope shared by maintained hosts.

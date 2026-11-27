@@ -15,7 +15,7 @@ const drawing = @import("pixels.zig");
 pub const CursorDisplay = enum { shown, hidden, outline };
 
 // One alpha atlas, one optional colour atlas, and VT's bounded image resources.
-const resource_limit = output_limits.maximum_output_images + 2;
+const resource_limit = output_limits.maximum_output_resources;
 // SDL3.4.18 merges queued geometry. Historical NVIDIA client-array uploads
 // above 4 MiB retained growing storage. Bound the whole content queue, including
 // colour-only copies: 2048 quads need at most 393216 bytes of GL vertex data.
@@ -108,8 +108,10 @@ pub const Canvas = struct {
     lease: ?terminal.Frame = null,
     owner: ?*terminal.Terminal = null,
     selection_paint: selection.Paint = .{},
-    textures: [resource_limit]Texture = undefined,
-    count: usize = 0,
+    // Text-only panes keep their two atlas slots without an allocation.
+    // Dense image identities index only the on-demand image slots.
+    atlas_textures: [output_limits.first_image_resource - 1]?Texture = @splat(null),
+    image_textures: []?Texture = &.{},
     converted: std.ArrayList(u8) = .empty,
     generation: u64 = 0,
     content: ?*c.SDL_Texture = null,
@@ -165,6 +167,15 @@ pub const Canvas = struct {
         residency: output_commands.Residency,
         source: []const u8,
     ) !void {
+        const id = try residency.resource.resource.identity();
+        if (id > resource_limit) return error.ResourceLimit;
+        const slot = if (id < output_limits.first_image_resource)
+            &self.atlas_textures[@intCast(id - 1)]
+        else blk: {
+            const index: usize = @intCast(id - output_limits.first_image_resource);
+            try self.ensureImageSlots(index + 1);
+            break :blk &self.image_textures[index];
+        };
         const width: usize = residency.size.width;
         const height: usize = residency.size.height;
         // Every VT snapshot atlas and image plane is a tightly packed slice.
@@ -192,10 +203,8 @@ pub const Canvas = struct {
         if (!c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_NEAREST) or
             !c.SDL_SetTextureBlendMode(texture, c.SDL_BLENDMODE_BLEND) or
             !c.SDL_UpdateTexture(texture, null, upload_pixels.ptr, @intCast(stride))) return error.SDLTexture;
-        self.remove(residency.resource, false);
-        if (self.count == resource_limit) return error.ResourceLimit;
-        self.textures[self.count] = .{ .texture = texture, .residency = residency };
-        self.count += 1;
+        if (slot.*) |prior| c.SDL_DestroyTexture(prior.texture);
+        slot.* = .{ .texture = texture, .residency = residency };
         owned = false;
     }
 
@@ -207,28 +216,39 @@ pub const Canvas = struct {
         presentation_generation: u64,
         snapshot: *const @import("howl_vt_output").Snapshot,
     ) !void {
+        if (snapshot.graphics.images.len > output_limits.maximum_output_images) return error.ResourceLimit;
+        if (@backingInt(snapshot.resource.resource) != 1) return error.InvalidResidency;
+        if (snapshot.color_resource) |resource|
+            if (@backingInt(resource.resource) != 2) return error.InvalidResidency;
+        for (snapshot.graphics.images, 0..) |image, index|
+            if (@backingInt(image.resource.resource) != output_limits.first_image_resource + index)
+                return error.InvalidResidency;
         if (self.generation != presentation_generation) {
             self.clearTextures();
             self.generation = presentation_generation;
         }
-        // Retire image/color occurrences no longer present in this exact cut.
-        // RGBA alone does not identify the font plane: external images share
-        // that format, but keep independent identities 3..9.
-        var resident: usize = 0;
-        while (resident < self.count) {
-            const existing = self.textures[resident].residency.resource;
-            const id = @backingInt(existing.resource);
-            const needed = if (id == 2)
-                (snapshot.color_resource != null and std.meta.eql(existing, snapshot.color_resource.?))
-            else if (id >= 3 and id <= 9) blk: {
-                for (snapshot.graphics.images) |item| {
-                    if (std.meta.eql(existing, item.resource)) break :blk true;
-                }
-                break :blk false;
-            } else true;
-            if (!needed) {
-                self.remove(existing, true);
-            } else resident += 1;
+        // Grow the image slots before retiring any accepted resource.
+        // Keep the prior alpha atlas until its replacement upload succeeds.
+        try self.ensureImageSlots(snapshot.graphics.images.len);
+        if (self.atlas_textures[1]) |existing| {
+            if (snapshot.color_resource == null or !std.meta.eql(existing.residency.resource, snapshot.color_resource.?)) {
+                c.SDL_DestroyTexture(existing.texture);
+                self.atlas_textures[1] = null;
+            }
+        }
+        for (self.image_textures, 0..) |*slot, index| {
+            const existing = slot.* orelse continue;
+            if (index >= snapshot.graphics.images.len or
+                !std.meta.eql(existing.residency.resource, snapshot.graphics.images[index].resource))
+            {
+                c.SDL_DestroyTexture(existing.texture);
+                slot.* = null;
+            }
+        }
+        // A text-only cut has no reason to retain image descriptors.
+        if (snapshot.graphics.images.len == 0) {
+            self.allocator.free(self.image_textures);
+            self.image_textures = &.{};
         }
         if (self.find(snapshot.resource) == null) {
             try self.uploadResource(renderer, .{
@@ -743,29 +763,42 @@ pub const Canvas = struct {
         }
     }
 
-    fn find(self: *const Canvas, resource: output_commands.ResourceRef) ?*c.SDL_Texture {
-        for (self.textures[0..self.count]) |texture| {
-            if (texture.residency.resource.resource == resource.resource and
-                texture.residency.resource.generation == resource.generation) return texture.texture;
-        }
-        return null;
+    fn ensureImageSlots(self: *Canvas, needed: usize) !void {
+        std.debug.assert(needed <= output_limits.maximum_output_images);
+        if (needed <= self.image_textures.len) return;
+        const prior = self.image_textures.len;
+        self.image_textures = try self.allocator.realloc(self.image_textures, needed);
+        @memset(self.image_textures[prior..], null);
     }
 
-    fn remove(self: *Canvas, resource: output_commands.ResourceRef, exact: bool) void {
-        for (self.textures[0..self.count], 0..) |texture, index| {
-            if (texture.residency.resource.resource != resource.resource or
-                (exact and texture.residency.resource.generation != resource.generation)) continue;
-            c.SDL_DestroyTexture(texture.texture);
-            self.count -= 1;
-            self.textures[index] = self.textures[self.count];
-            return;
-        }
+    fn find(self: *const Canvas, resource: output_commands.ResourceRef) ?*c.SDL_Texture {
+        const id = @backingInt(resource.resource);
+        if (id == 0) return null;
+        const texture = if (id < output_limits.first_image_resource)
+            self.atlas_textures[@intCast(id - 1)]
+        else blk: {
+            const index = id - output_limits.first_image_resource;
+            if (index >= self.image_textures.len) return null;
+            break :blk self.image_textures[@intCast(index)];
+        };
+        const resident = texture orelse return null;
+        return if (resident.residency.resource.generation == resource.generation) resident.texture else null;
+    }
+
+    fn textureCount(self: *const Canvas) usize {
+        var count: usize = 0;
+        for (self.atlas_textures) |slot| count += @intFromBool(slot != null);
+        for (self.image_textures) |slot| count += @intFromBool(slot != null);
+        return count;
     }
 
     fn clearTextures(self: *Canvas) void {
         self.invalidateContent();
-        for (self.textures[0..self.count]) |texture| c.SDL_DestroyTexture(texture.texture);
-        self.count = 0;
+        for (self.atlas_textures) |slot| if (slot) |texture| c.SDL_DestroyTexture(texture.texture);
+        self.atlas_textures = @splat(null);
+        for (self.image_textures) |slot| if (slot) |texture| c.SDL_DestroyTexture(texture.texture);
+        self.allocator.free(self.image_textures);
+        self.image_textures = &.{};
     }
 };
 
@@ -1039,10 +1072,10 @@ test "repeated alternate-screen blank and text cuts retain exact backend residen
         const value = backend.lease.?.snapshot;
         previous_revision = value.terminal_revision;
         try std.testing.expectEqual(step >= 2 and (step - 2) % 4 != 3, value.alternate);
-        errdefer std.debug.print("alternate texture failure at step {d}, title {s}, textures {d}\n", .{ step, title, backend.count });
+        errdefer std.debug.print("alternate texture failure at step {d}, title {s}, textures {d}\n", .{ step, title, backend.textureCount() });
         try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown, 1, null);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
-        try std.testing.expectEqual(@as(usize, 1) + @intFromBool(value.color_resource != null), backend.count);
+        try std.testing.expectEqual(@as(usize, 1) + @intFromBool(value.color_resource != null), backend.textureCount());
         var retained: [250 * 100][3]u8 = undefined;
         const visible_width = @min(value.surface.width, 250);
         const visible_height = @min(value.surface.height, 100);
@@ -1738,12 +1771,12 @@ test "single-resource upload leaves accepted pixels intact on allocation failure
     const accepted = backend.find(resource) orelse return error.MissingTexture;
     try std.testing.expectError(error.OutOfMemory, backend.uploadResource(renderer, replacement, &.{ 255, 255, 255, 255 }));
     try std.testing.expectEqual(accepted, backend.find(resource).?);
-    try std.testing.expectEqual(@as(usize, 1), backend.count);
-    try std.testing.expectEqual(output_commands.ResourceFormat.rgba8, backend.textures[0].residency.format);
+    try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
+    try std.testing.expectEqual(output_commands.ResourceFormat.rgba8, backend.atlas_textures[0].?.residency.format);
     failing.fail_index = std.math.maxInt(usize);
     try backend.uploadResource(renderer, replacement, &.{ 255, 255, 255, 255 });
-    try std.testing.expectEqual(@as(usize, 1), backend.count);
-    try std.testing.expectEqual(replacement, backend.textures[0].residency);
+    try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
+    try std.testing.expectEqual(replacement, backend.atlas_textures[0].?.residency);
     try std.testing.expect(backend.find(resource) != null);
 }
 
@@ -2066,11 +2099,11 @@ fn expectDirectCanvasPixelParity(input: []const u8) !void {
     var without_color = snap;
     without_color.color_resource = null;
     try first.applySnapshotResources(first_renderer, 1, &without_color);
-    try std.testing.expectEqual(@as(usize, 1), first.count);
+    try std.testing.expectEqual(@as(usize, 1), first.textureCount());
     try first.applySnapshotResources(first_renderer, 1, &snap);
-    try std.testing.expectEqual(@as(usize, 2), first.count);
+    try std.testing.expectEqual(@as(usize, 2), first.textureCount());
     try first.applySnapshotResources(first_renderer, 2, &snap);
-    try std.testing.expectEqual(@as(usize, 2), first.count);
+    try std.testing.expectEqual(@as(usize, 2), first.textureCount());
     try std.testing.expectEqual(@as(u64, 2), first.generation);
 }
 
@@ -2482,7 +2515,7 @@ test "direct graphics depth bands and removal repaint exact pixels" {
     snapshot.content_revision = 2;
     snapshot.visual_context = 2;
     try backend.applySnapshotResources(renderer, 1, &snapshot);
-    try std.testing.expectEqual(@as(usize, 1), backend.count);
+    try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
     try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, &snapshot);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     var removed: [4]u8 = undefined;
@@ -2546,7 +2579,7 @@ test "native VT image-only removal invalidates Canvas without synthetic revision
         try std.testing.expect(snapshot.content_revision > first_content);
         try std.testing.expect(snapshot.visual_context > first_context);
         try backend.applySnapshotResources(renderer, 1, snapshot);
-        try std.testing.expectEqual(@as(usize, 1), backend.count);
+        try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
         const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snapshot.surface.width), .h = @floatFromInt(snapshot.surface.height) };
         try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, snapshot);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
@@ -2857,4 +2890,124 @@ test "ECMA enclosures and Mintty script ink have distinct bounded SDL pixels" {
         try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(col * w + x), @intCast(h + y), &actual[0], &actual[1], &actual[2], &actual[3]));
         try std.testing.expectEqualDeep([4]u8{ value, value, value, 255 }, actual);
     };
+}
+
+test "Canvas draws all canonical image slots and retires high identities across cuts" {
+    const allocator = std.testing.allocator;
+    const output = @import("howl_vt_output");
+    const font = try @import("howl_text").FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    const owner = try output.Terminal.init(allocator, font);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: All scoped test leases release before owner teardown.
+    defer owner.deinit() catch unreachable;
+    try owner.resize(16, 16);
+    try owner.feed("\x1b[?25l");
+    try owner.flush();
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const metrics = owner.acceptedMetrics().?;
+    const surface = c.SDL_CreateSurface(16 * @as(c_int, metrics.cell_width), 16 * @as(c_int, metrics.cell_height), c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var backend = Canvas.init(failing.allocator());
+    defer backend.deinit();
+    const geometry = try allocator.create(Geometry);
+    defer allocator.destroy(geometry);
+    geometry.* = .{};
+    try std.testing.expectEqual(@as(usize, 0), backend.image_textures.len);
+    var atlas: output_commands.ResourceRef = undefined;
+    {
+        const held = try owner.hold();
+        // zig-audit: acknowledge catch_unreachable
+        // reason: Scope owns the initial cut.
+        defer owner.release(held) catch unreachable;
+        try backend.applySnapshotResources(renderer, 1, &held.snapshot);
+        atlas = held.snapshot.resource;
+        try std.testing.expectEqual(@as(usize, 0), backend.image_textures.len);
+        try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
+    }
+    const alpha_texture = backend.find(atlas).?;
+    const count = @import("howl_vt").Terminal.maximum_images;
+    for (0..count) |index| {
+        const pixels = [4]u8{ @intCast(index), 255 - @as(u8, @intCast(index)), 71, 255 };
+        var encoded: [8]u8 = undefined;
+        const payload = std.base64.standard.Encoder.encode(&encoded, &pixels);
+        var packet: [128]u8 = undefined;
+        try owner.feed(try std.fmt.bufPrint(&packet, "\x1b[{d};{d}H\x1b_Ga=T,i={d},C=1,q=2,s=1,v=1;{s}\x1b\\", .{ index / 16 + 1, index % 16 + 1, index + 1, payload }));
+    }
+    try owner.flush();
+    var last: output_commands.ResourceRef = undefined;
+    {
+        const held = try owner.hold();
+        // zig-audit: acknowledge catch_unreachable
+        // reason: This scope holds exactly the accepted direct cut.
+        defer owner.release(held) catch unreachable;
+        const snap = &held.snapshot;
+        try std.testing.expectEqual(count, snap.graphics.images.len);
+        last = snap.graphics.images[count - 1].resource;
+        failing.fail_index = failing.alloc_index;
+        failing.resize_fail_index = failing.resize_index;
+        try std.testing.expectError(error.OutOfMemory, backend.applySnapshotResources(renderer, 1, snap));
+        try std.testing.expectEqual(alpha_texture, backend.find(atlas).?);
+        try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
+        failing.fail_index = std.math.maxInt(usize);
+        failing.resize_fail_index = std.math.maxInt(usize);
+        try backend.applySnapshotResources(renderer, 1, snap);
+        try std.testing.expectEqual(count + 1, backend.textureCount());
+        try std.testing.expectEqual(count, backend.image_textures.len);
+        const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snap.surface.width), .h = @floatFromInt(snap.surface.height) };
+        try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, snap);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        for (0..count) |index| {
+            var pixel: [4]u8 = undefined;
+            try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(index % 16 * snap.cell_width), @intCast(index / 16 * snap.cell_height), &pixel[0], &pixel[1], &pixel[2], &pixel[3]));
+            try std.testing.expectEqualDeep([4]u8{ @intCast(index), 255 - @as(u8, @intCast(index)), 71, 255 }, pixel);
+        }
+        const last_texture = backend.find(last).?;
+        try backend.applySnapshotResources(renderer, 1, snap);
+        try std.testing.expectEqual(last_texture, backend.find(last).?);
+        // Malformed/sparse identity layouts are not an alternate slot policy.
+        var invalid = held.snapshot;
+        invalid.graphics.images = snap.graphics.images[1..];
+        try std.testing.expectError(error.InvalidResidency, backend.applySnapshotResources(renderer, 1, &invalid));
+        try std.testing.expectEqual(last_texture, backend.find(last).?);
+    }
+    // New cut shrinks to nine images (including IDs above the old 3..9
+    // retirement range), then to no images. Old generations must not bind.
+    for (10..count + 1) |index| {
+        var packet: [64]u8 = undefined;
+        try owner.feed(try std.fmt.bufPrint(&packet, "\x1b_Ga=d,d=I,i={d},q=2\x1b\\", .{index}));
+    }
+    try owner.flush();
+    {
+        const held = try owner.hold();
+        // zig-audit: acknowledge catch_unreachable
+        // reason: Scope owns the current cut.
+        defer owner.release(held) catch unreachable;
+        try std.testing.expectEqual(@as(usize, 9), held.snapshot.graphics.images.len);
+        try backend.applySnapshotResources(renderer, 1, &held.snapshot);
+        try std.testing.expectEqual(@as(usize, 10), backend.textureCount());
+        try std.testing.expect(backend.find(last) == null);
+        try std.testing.expect(backend.find(held.snapshot.graphics.images[8].resource) != null);
+    }
+    try owner.feed("\x1b_Ga=d,d=A,q=2\x1b\\");
+    try owner.flush();
+    const cleared = try owner.hold();
+    // zig-audit: acknowledge catch_unreachable
+    // reason: Scope owns the final empty cut.
+    defer owner.release(cleared) catch unreachable;
+    try backend.applySnapshotResources(renderer, 1, &cleared.snapshot);
+    try std.testing.expectEqual(@as(usize, 0), backend.image_textures.len);
+    try std.testing.expectEqual(@as(usize, 1), backend.textureCount());
+    try std.testing.expect(backend.find(last) == null);
+    const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(cleared.snapshot.surface.width), .h = @floatFromInt(cleared.snapshot.surface.height) };
+    try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, &cleared.snapshot);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    var pixel: [4]u8 = undefined;
+    try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 15 * @as(c_int, metrics.cell_width), 15 * @as(c_int, metrics.cell_height), &pixel[0], &pixel[1], &pixel[2], &pixel[3]));
+    const background = cleared.snapshot.background.solid.color;
+    try std.testing.expectEqualDeep([4]u8{ background.r, background.g, background.b, background.a }, pixel);
 }
