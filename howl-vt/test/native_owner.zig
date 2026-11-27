@@ -604,3 +604,19 @@ test "native service reports pending scalar and exact unconsumed suffix" {
     try std.testing.expectEqual(@as(usize, 1), after_reset.consumed);
     try std.testing.expectEqual(@as(u21, 'X'), owner.observation(reset_owner).semanticView(0).cellAt(0, 0));
 }
+
+test "native graphics manifest retains centered pixel offsets spanning multiple cells" {
+    const value = try create(std.testing.allocator);
+    defer owner.destroy(value);
+    try feedAll(value, "\x1b_Ga=T,i=7,s=1,v=1,c=6,r=1,C=1,q=2;AQIDBA==\x1b\\");
+    var images: [1]c.hvt_image = undefined;
+    var placements: [1]c.hvt_image_placement = undefined;
+    const manifest = try graphicsEquivalent(value, 0, &images, &placements);
+    try std.testing.expectEqual(@as(u32, 1), manifest.placement_count);
+    try std.testing.expectEqual(@as(u16, 0), placements[0].row);
+    try std.testing.expectEqual(@as(u16, 0), placements[0].column);
+    try std.testing.expectEqual(@as(u32, 16), placements[0].cell_x);
+    try std.testing.expectEqual(@as(u32, 0), placements[0].cell_y);
+    try std.testing.expectEqual(@as(u32, 16), placements[0].pixel_width);
+    try std.testing.expectEqual(@as(u32, 16), placements[0].pixel_height);
+}

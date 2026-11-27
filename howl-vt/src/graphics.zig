@@ -93,9 +93,9 @@ const Placement = struct {
     source_width: u32,
     /// Counts selected decoded source rows.
     source_height: u32,
-    /// Offsets the destination within its anchor cell horizontally.
+    /// Offsets drawn pixels from the placement anchor, including fit padding.
     cell_x: u32,
-    /// Offsets the destination within its anchor cell vertically.
+    /// Offsets drawn pixels from the placement anchor, including fit padding.
     cell_y: u32,
     /// Cell height at placement admission, needed for exact scroll clipping.
     cell_height: u32,
@@ -105,9 +105,9 @@ const Placement = struct {
     pixel_height: u32,
     /// Signed Kitty layer relative to terminal text.
     z: i32,
-    /// Counts occupied terminal rows at placement time.
+    /// Counts placement-box rows, including any remaining fit padding.
     rows: u16,
-    /// Counts occupied physical terminal columns at placement time.
+    /// Counts placement-box columns, including any fit padding.
     cols: u16,
     /// Retains an invisible Kitty Unicode-placeholder prototype.
     virtual: bool = false,
@@ -1916,31 +1916,29 @@ pub const Plane = struct {
     // allocations and their content generation alone. This remains bounded
     // even for scaled/cropped placements and large cell pixel sizes.
     fn trimScrolledPlacement(target: *Placement, clipped_rows: u64, from_top: bool) bool {
-        std.debug.assert(clipped_rows > 0 and target.cell_height > 0);
-        const requested_pixels = clipped_rows * target.cell_height;
+        std.debug.assert(clipped_rows > 0 and clipped_rows < target.rows and target.cell_height > 0);
+        const available_rows = @as(u64, target.rows) - clipped_rows;
+        const removed_pixels = clipped_rows * target.cell_height;
         const trim_pixels = if (from_top)
-            requested_pixels - target.cell_y
+            removed_pixels -| target.cell_y
         else blk: {
-            const available_rows = @as(u64, target.rows) - clipped_rows;
-            const allowed_pixels = available_rows * target.cell_height - target.cell_y;
+            const allowed_pixels = available_rows * target.cell_height -| target.cell_y;
             break :blk @as(u64, target.pixel_height) -| allowed_pixels;
         };
         if (trim_pixels >= target.pixel_height) return false;
-        if (trim_pixels == 0) return true;
-        const old_height = target.pixel_height;
-        const source_trim = @min(
-            @as(u64, target.source_height - 1),
-            @as(u64, target.source_height) * trim_pixels / old_height,
-        );
-        if (from_top) {
-            target.source_y += @intCast(source_trim);
-            target.cell_y = 0;
+        // A fitted placement may have whole blank rows at either edge.
+        // Retire that padding before cropping any actual source pixels.
+        if (from_top) target.cell_y = @intCast(@as(u64, target.cell_y) -| removed_pixels);
+        target.rows = @intCast(available_rows);
+        if (trim_pixels != 0) {
+            const source_trim = @min(
+                @as(u64, target.source_height - 1),
+                @as(u64, target.source_height) * trim_pixels / target.pixel_height,
+            );
+            if (from_top) target.source_y += @intCast(source_trim);
+            target.source_height -= @intCast(source_trim);
+            target.pixel_height -= @intCast(trim_pixels);
         }
-        target.source_height -= @intCast(source_trim);
-        target.pixel_height -= @intCast(trim_pixels);
-        const revised_rows = (@as(u64, target.cell_y) + target.pixel_height + target.cell_height - 1) / target.cell_height;
-        std.debug.assert(revised_rows >= 1 and revised_rows <= target.rows);
-        target.rows = @intCast(revised_rows);
         return true;
     }
 
@@ -2454,6 +2452,24 @@ pub const Plane = struct {
             std.math.add(u32, destination_height, cell_y) catch return null,
             cell_height,
         ) orelse return null;
+        // Keep the requested cell box for cursor motion, margin membership,
+        // deletion selectors and parent anchors. Fit the pixels into the
+        // remaining box after the client offset, not into a new cell box.
+        var offset_x = cell_x;
+        var offset_y = cell_y;
+        if (requested_cols != 0 and requested_rows != 0) {
+            const scaled_width = @as(u64, destination_height) * source_width;
+            const scaled_height = @as(u64, destination_width) * source_height;
+            if (scaled_height <= scaled_width) {
+                const fitted: u32 = @intCast(@max(1, scaled_height / source_width));
+                offset_y += (destination_height - fitted) / 2;
+                destination_height = fitted;
+            } else {
+                const fitted: u32 = @intCast(@max(1, scaled_width / source_height));
+                offset_x += (destination_width - fitted) / 2;
+                destination_width = fitted;
+            }
+        }
         return .{
             .image_id = image_id,
             .kitty_id = kitty_id,
@@ -2465,8 +2481,8 @@ pub const Plane = struct {
             .source_y = source_y,
             .source_width = source_width,
             .source_height = source_height,
-            .cell_x = cell_x,
-            .cell_y = cell_y,
+            .cell_x = offset_x,
+            .cell_y = offset_y,
             .cell_height = cell_height,
             .pixel_width = destination_width,
             .pixel_height = destination_height,
@@ -4738,7 +4754,11 @@ test "Kitty crop destination offsets and layer preflight before placement mutati
     try std.testing.expectEqual(@as(u32, 1), placed.source_x);
     try std.testing.expectEqual(@as(u32, 1), placed.source_width);
     try std.testing.expectEqual(@as(u32, 14), placed.pixel_width);
-    try std.testing.expectEqual(@as(u32, 44), placed.pixel_height);
+    try std.testing.expectEqual(@as(u32, 28), placed.pixel_height);
+    try std.testing.expectEqual(@as(u32, 2), placed.cell_x);
+    try std.testing.expectEqual(@as(u32, 12), placed.cell_y);
+    try std.testing.expectEqual(@as(u16, 2), placed.cols);
+    try std.testing.expectEqual(@as(u16, 3), placed.rows);
     try std.testing.expectEqual(@as(i32, -7), placed.z);
     const generation = plane.next_generation;
     const unchanged = plane.placement(0).?;
@@ -6482,4 +6502,75 @@ test "Kitty anonymous leaf retirement does not reclaim a surviving virtual proto
     const generation = plane.generation();
     try std.testing.expect(!(try plane.command("a=d,d=p,x=1,y=1", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(generation, plane.generation());
+}
+
+test "Kitty two-axis placement fits centered pixels and retains requested cursor extent" {
+    const cases = [_]struct {
+        fields: []const u8,
+        pixels: []const u8,
+        cols: u16,
+        rows: u16,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    }{
+        .{ .fields = "s=2,v=1,c=3,r=3,X=3,Y=1", .pixels = "AQIDBAUGBwg=", .cols = 3, .rows = 3, .x = 3, .y = 19, .width = 21, .height = 10 },
+        .{ .fields = "s=1,v=2,c=4,r=1,X=2,Y=3", .pixels = "AQIDBAUGBwg=", .cols = 4, .rows = 1, .x = 14, .y = 3, .width = 6, .height = 13 },
+        .{ .fields = "s=1,v=2,c=1,r=1", .pixels = "AQIDBAUGBwg=", .cols = 1, .rows = 1, .x = 0, .y = 0, .width = 8, .height = 16 },
+        .{ .fields = "s=2,v=2,x=1,c=2,r=3,X=2,Y=4", .pixels = "AQIDBAUGBwgJCgsMDQ4PEA==", .cols = 2, .rows = 3, .x = 2, .y = 12, .width = 14, .height = 28 },
+        .{ .fields = "s=2,v=1,c=1,r=1,X=7,Y=15", .pixels = "AQIDBAUGBwg=", .cols = 1, .rows = 1, .x = 7, .y = 15, .width = 1, .height = 1 },
+    };
+    for (cases) |case| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        var packet: [160]u8 = undefined;
+        const transmit = try std.fmt.bufPrint(&packet, "a=T,i=7,p=1,{s};{s}", .{ case.fields, case.pixels });
+        const result = try plane.command(transmit, .primary, 0, 3, 4, 8, 16);
+        try std.testing.expect(result.changed and result.failure == null);
+        try std.testing.expectEqualDeep(CursorAdvance{ .cols = case.cols, .rows = case.rows }, result.cursor_advance.?);
+        const placement_value = plane.placement(0).?;
+        try std.testing.expectEqual(@as(u64, 3), placement_value.row);
+        try std.testing.expectEqual(@as(u16, 4), placement_value.col);
+        try std.testing.expectEqual(case.cols, placement_value.cols);
+        try std.testing.expectEqual(case.rows, placement_value.rows);
+        try std.testing.expectEqual(case.x, placement_value.cell_x);
+        try std.testing.expectEqual(case.y, placement_value.cell_y);
+        try std.testing.expectEqual(case.width, placement_value.pixel_width);
+        try std.testing.expectEqual(case.height, placement_value.pixel_height);
+        const generation = plane.generation();
+        const invalid = try plane.command("a=p,i=7,p=1,c=4294967295,r=2,C=1", .primary, 0, 0, 0, 8, 16);
+        try std.testing.expectEqual(@as(?Failure, .invalid), invalid.failure);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqualDeep(placement_value, plane.placement(0).?);
+    }
+}
+
+test "Kitty fitted placement margin clipping consumes padding before source pixels" {
+    for ([_]bool{ true, false }) |upward| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        const admitted = try plane.command("a=T,i=7,p=1,C=1,s=2,v=2,c=2,r=6;AQIDBAUGBwgJCgsMDQ4PEA==", .primary, 0, 2, 0, 8, 8);
+        try std.testing.expect(admitted.changed and admitted.failure == null);
+        const original = plane.placement(0).?;
+        try std.testing.expectEqual(@as(u32, 16), original.cell_y);
+        try std.testing.expectEqual(@as(u32, 16), original.pixel_height);
+        const content = plane.content_generation;
+        for (0..3) |step| {
+            try std.testing.expect(plane.scrollWithinMargins(.primary, 2, 7, 1, upward));
+            const placement_value = plane.placement(0).?;
+            try std.testing.expectEqual(original.identity, placement_value.identity);
+            try std.testing.expectEqual(@as(u16, @intCast(5 - step)), placement_value.rows);
+            try std.testing.expectEqual(@as(u64, if (upward) 2 else 3 + step), placement_value.row);
+            try std.testing.expectEqual(@as(u32, if (upward) 16 -| @as(u32, @intCast((step + 1) * 8)) else 16), placement_value.cell_y);
+            try std.testing.expectEqual(@as(u32, if (step < 2) 16 else 8), placement_value.pixel_height);
+            try std.testing.expectEqual(@as(u32, if (step < 2) 2 else 1), placement_value.source_height);
+            try std.testing.expectEqual(@as(u32, if (upward and step == 2) 1 else 0), placement_value.source_y);
+            try std.testing.expectEqual(content, plane.content_generation);
+        }
+        try std.testing.expect(plane.scrollWithinMargins(.primary, 2, 7, 1, upward));
+        try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+        try std.testing.expectEqual(content, plane.content_generation);
+    }
 }

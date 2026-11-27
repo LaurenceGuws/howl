@@ -273,6 +273,7 @@ typedef struct hvt_image {
 typedef struct hvt_image_placement {
     uint64_t generation;
     uint32_t image_id, source_x, source_y, source_width, source_height;
+    /* Drawn pixel offset from row/column anchor, including fit padding. */
     uint32_t cell_x, cell_y, pixel_width, pixel_height;
     int32_t z;
     uint16_t row, column;

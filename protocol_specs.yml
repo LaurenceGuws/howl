@@ -10493,6 +10493,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty interrupted upload remains pending until the new command is admitted
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty two-axis placement fits centered pixels and retains requested cursor extent
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty centered fit reaches direct output and preserves a held cut across re-put
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Ordinary placement ACK retains p, including max-u32, and missing-image error includes requested identity
@@ -10533,6 +10539,16 @@ specifications:
             rollback, capacity and held-cut identity evidence.
           residual: Aspect-preserving two-axis layout and complete viewport/relative geometry remain incomplete. Presentation
             resource limit is distinct from VT admission.
+        howl_qualification_20261127_kitty_layout_fit:
+          scope: Selected transmit-and-display and re-put use the same fitted geometry owner. Held output stays immutable; image
+            identity/content generation and requested box remain independent of the fitted pixel rectangle. Invalid oversized
+            replacement preserves old placement. No broader put/relative parity claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb,
+            lines667-688,700-707; graphics.c1192-1219,1319-1332,1511-1545,1659-1677,2521-2580; Ghostty5813c9461d5af78b6307a1254d00b1bc190eaccd
+            graphics_storage.zig2097-2185. Originating documentation selected despite both pinned ordinary render implementations
+            stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
+            proofs.
+          baseline: 333a723dfd26456138d3bed88dea9f75601ef452
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -11839,6 +11855,18 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: direct output preserves Kitty source crop and destination pixel offsets
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty two-axis placement fits centered pixels and retains requested cursor extent
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty fitted placement margin clipping consumes padding before source pixels
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty centered fit reaches direct output and preserves a held cut across re-put
+        relation: protocol-family
+      - file: howl-vt/test/native_owner.zig
+        test: native graphics manifest retains centered pixel offsets spanning multiple cells
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_04:
           scope: 'Positive source intersections clamp requested extents to the remaining image before aspect-ratio geometry, including
@@ -11857,6 +11885,20 @@ specifications:
           residual: 'Concrete implementation gap: makePlacement uses both requested destination axes directly and subtracts offsets;
             no required aspect-preserving letterbox/pillarbox when both c and r are specified. Full clipped viewport and rounding/resize
             matrix remains open.'
+        howl_qualification_20261127_kitty_layout_fit:
+          scope: 'Supersedes the closing review two-axis stretch finding: ordinary physical c/r placements now fit the intersected
+            source rectangle within the remaining requested cell box after valid X/Y offsets, using integer cross products, floor
+            of the nonlimiting dimension (minimum one pixel), centered unused space with odd remainder trailing. Existing requested
+            cell extent and anchor stay intact. Pixel offsets include multi-cell padding. Cropped, portrait/landscape, equal-aspect,
+            minimum pixel and invalid overflow cases, native copy and held output after re-put proved. Existing single-axis, virtual-prototype
+            projection and admission bounds unchanged. Top/bottom margin clipping consumes padding before pixels without reallocating
+            source data. Exact resize/refit, broader viewport/rounding and physical rendering remain open.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb,
+            lines667-688,700-707; graphics.c1192-1219,1319-1332,1511-1545,1659-1677,2521-2580; Ghostty5813c9461d5af78b6307a1254d00b1bc190eaccd
+            graphics_storage.zig2097-2185. Originating documentation selected despite both pinned ordinary render implementations
+            stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
+            proofs.
+          baseline: 333a723dfd26456138d3bed88dea9f75601ef452
     - id: placement-z-order
       section: docs/graphics-protocol.rst:690-698
       level: defined
@@ -11909,6 +11951,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty physical P Q placement admits signed offsets without moving the cursor and cascades deletion
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty two-axis placement fits centered pixels and retains requested cursor extent
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_04:
           scope: Existing tests cover suppressed movement, physical display and re-put default movement, and history scroll retaining
@@ -11924,6 +11969,16 @@ specifications:
             placements do not move the cursor in selected cases.
           residual: All dimensions, overflow/wrap, active margin and resize interactions not mechanically complete; author permits
             implementation-defined offscreen placement result.
+        howl_qualification_20261127_kitty_layout_fit:
+          scope: Two-axis fitting does not shrink the requested cell extent returned for cursor advancement; fitted pixels and
+            anchor offsets may occupy fewer cells than the reserved box. Existing C=1 and relative/virtual cursor suppression
+            unchanged. Existing terminal cursor and history proofs remain green.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb,
+            lines667-688,700-707; graphics.c1192-1219,1319-1332,1511-1545,1659-1677,2521-2580; Ghostty5813c9461d5af78b6307a1254d00b1bc190eaccd
+            graphics_storage.zig2097-2185. Originating documentation selected despite both pinned ordinary render implementations
+            stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
+            proofs.
+          baseline: 333a723dfd26456138d3bed88dea9f75601ef452
     - id: delete-selectors
       section: docs/graphics-protocol.rst:907-952
       level: defined
@@ -12101,6 +12156,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty margin scroll clips image geometry before row deletion
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty fitted placement margin clipping consumes padding before source pixels
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Six screen retirement routes (erase, bounds, history eviction, scroll, column shift, clear bank) select
@@ -12205,6 +12263,17 @@ specifications:
           residual: Top-anchored partial scroll with advancing history origin and vertical straddlers, exact ED2 row-only selection,
             relative child expiry, alternate 1047/virtual-ref lifetime, horizontal column edit policy, full history/reflow and
             physical integration remain explicit; prior selected ED3/RIS policies unchanged.
+        howl_qualification_20261127_kitty_layout_fit:
+          scope: Selected in-place top and bottom margin clipping of a fitted physical image consumes blank padding first, then
+            crops source/destination pixels and retires placement when all pixels expire. Requested remaining box rows are retained
+            while pixels survive; decoded named data, content generation and placement identity remain. No claim of complete history-advancing
+            margins, geometry-resize or other-bank behavior.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb,
+            lines667-688,700-707; graphics.c1192-1219,1319-1332,1511-1545,1659-1677,2521-2580; Ghostty5813c9461d5af78b6307a1254d00b1bc190eaccd
+            graphics_storage.zig2097-2185. Originating documentation selected despite both pinned ordinary render implementations
+            stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
+            proofs.
+          baseline: 333a723dfd26456138d3bed88dea9f75601ef452
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
@@ -39914,10 +39983,11 @@ reconciliation:
     verified_subset: Bank-local placement and number identity, ancestry, virtual projection, retirement, quota, crop,
       cursor and layer behavior have named proofs. The per-clause closing review records remaining geometry and integration
       differences.
-    boundary: Canonical VT and optional native output. Layout both-axis stretch, seven-resource visible output cap, history-advancing
-      margins, remaining geometry/selector/lifetime cases and physical presentation prevent FULL.
-    not_full_because: Canonical VT and optional native output. Layout both-axis stretch, seven-resource visible output
-      cap, history-advancing margins, remaining geometry/selector/lifetime cases and physical presentation prevent FULL.
+    boundary: Canonical VT and optional native output. Two-axis fitting is qualified separately by kitty-physical-two-axis-aspect-fit;
+      seven-resource visible output cap, history-advancing margins, remaining geometry/selector/lifetime cases and physical
+      presentation prevent FULL.
+    not_full_because: Canonical VT and optional native output. Seven-resource visible output cap, history-advancing margins,
+      remaining geometry/selector/lifetime cases and physical presentation prevent FULL.
   applies_to:
     clauses:
     - kitty_graphics.put
@@ -40132,4 +40202,71 @@ reconciliation:
     scope: Direct t=d/default is the selected graphics transport. Retain existing refusal of unselected t=f/t/s media;
       do not grant filesystem access, unlink or shared-memory mapping from VT. Non-direct host transport and its mandatory
       privacy contract are deferred pending separate host-owner design and explicit permission decision.
+- id: kitty-physical-two-axis-aspect-fit
+  status: resolved-by-originating-documented-rule
+  decision_rule: explicit-source-semantics-over-incidental-reference-stretch
+  operator_alignment: '2026-11-27: operator agreed to the separately proposed aspect-ratio residual correction after closing
+    Kitty graphics; use the written rule rather than preserve the pinned implementations stretching ordinary two-axis
+    placements.'
+  accepted_interpretation:
+    effect: For an ordinary physical Kitty placement with both c/r nonzero, fit the intersected source into the requested
+      cell box remaining after X/Y offsets, preserving aspect ratio to integer-pixel precision. Floor the nonlimiting
+      dimension with a one-pixel minimum, center unused pixels with an odd remainder on the trailing edge. Keep the requested
+      cell box and anchor for cursor, relative placement and region ownership. Clipping consumes blank padding before
+      source pixels. Existing one-axis and virtual-prototype policy unchanged.
+  selects:
+    kitty.graphics.physical-two-axis-fit: effect
+  reason: The pinned originating docs667-688 explicitly require letterbox/pillarbox and700-707 define cursor advance by
+    placement rectangle. Pinned author ordinary-render geometry and Ghostty actually stretch both requested axes. Adopt
+    the documented contract in the approved residual scope; not a majority-implementation parity claim. Existing pixel
+    offsets can represent centering without new persistent state or ABI layout.
+  reference_evidence:
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: docs/graphics-protocol.rst:667-688,700-707; kitty/graphics.c:1192-1219,1319-1332,1511-1545,1659-1677,2521-2580
+    observation: Documentation requires aspect fit; ordinary code derives requested rectangle directly, while virtual
+      cell images use centered aspect fitting.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/kitty/graphics_storage.zig:2097-2185
+    observation: Ordinary pixelSize returns both explicit dimensions directly minus cell offset; only one-axis derives
+      aspect.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected centered physical two-axis fit and bounded padding-aware clipping
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:makePlacement
+    - howl-vt/src/graphics.zig:trimScrolledPlacement
+    - howl-vt/src/terminal.zig:Images
+    - howl-vt/src/output/graphics.zig
+    - howl-vt/src/native_graphics.zig
+    tests:
+    - file: howl-vt/src/graphics.zig
+      test: Kitty two-axis placement fits centered pixels and retains requested cursor extent
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty fitted placement margin clipping consumes padding before source pixels
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: Kitty centered fit reaches direct output and preserves a held cut across re-put
+      relation: protocol-family
+    - file: howl-vt/test/native_owner.zig
+      test: native graphics manifest retains centered pixel offsets spanning multiple cells
+      relation: protocol-family
+    verified_subset: Exact selected centered fit, requested cursor box, invalid overflow rollback, padding-first top/bottom
+      clipping, copied native offsets and immutable held output. No new retained fields.
+    boundary: Canonical admission-time geometry and selected in-place scroll/output cases. Existing resize/refit policy,
+      complete viewport/relative/margin interactions and physical renderer behavior remain open.
+    not_full_because: Full parameter/geometry, resize/refit and clipping state matrix and physical rendering not exhausted.
+  applies_to:
+    clauses:
+    - kitty_graphics.placement-layout
+    - kitty_graphics.put
+    - kitty_graphics.placement-cursor-policy
+    - kitty_graphics.terminal-interaction
+    scope: Selected ordinary physical two-axis fit only; no changes to source wording, virtual projection, non-Kitty admission,
+      quota or other selected terminal policy.
 pending_reconciliation: []

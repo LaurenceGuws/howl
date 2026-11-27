@@ -1296,10 +1296,15 @@ test "direct output preserves Kitty source crop and destination pixel offsets" {
     try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.negative.len);
     const command = held.snapshot.graphics.negative[0].rgba;
     const metrics = owner.acceptedMetrics().?;
-    try std.testing.expectEqual(@as(i32, 2), command.destination.x);
-    try std.testing.expectEqual(@as(i32, 4), command.destination.y);
-    try std.testing.expectEqual(metrics.cell_width * 2 - 2, command.destination.width);
-    try std.testing.expectEqual(metrics.cell_height * 3 - 4, command.destination.height);
+    // Source crop is 1:2. Center its fit in the box remaining after X/Y.
+    const box_width = metrics.cell_width * 2 - 2;
+    const box_height = metrics.cell_height * 3 - 4;
+    const fitted_width = @min(box_width, @max(1, box_height / 2));
+    const fitted_height = @min(box_height, box_width * 2);
+    try std.testing.expectEqual(@as(i32, 2 + (box_width - fitted_width) / 2), command.destination.x);
+    try std.testing.expectEqual(@as(i32, 4 + (box_height - fitted_height) / 2), command.destination.y);
+    try std.testing.expectEqual(fitted_width, command.destination.width);
+    try std.testing.expectEqual(fitted_height, command.destination.height);
     try std.testing.expectEqualDeep(output.commands.SourceRect{
         .x = 1,
         .y = 0,
@@ -1314,7 +1319,7 @@ test "tall physical image survives scrolling when its anchor is above the viewpo
     const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
     defer destroy(owner);
     try owner.resize(4, 4);
-    try owner.feed("\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i=56,c=1,r=3,C=1,q=2;/wAA/w==\x1b\\");
+    try owner.feed("\x1b[H\x1b_Ga=T,f=32,s=1,v=4,i=56,r=3,C=1,q=2;/wAA//8AAP//AAD//wAA/w==\x1b\\");
     try owner.flush();
     const first = try owner.hold();
     try std.testing.expectEqual(@as(usize, 1), first.snapshot.graphics.positive.len);
@@ -2867,4 +2872,45 @@ test "Kitty same client ID in another bank preserves held output and clears only
     var expected = command;
     expected.rgba.resource.resource = returned.snapshot.graphics.images[0].resource;
     try std.testing.expectEqualDeep(expected, returned.snapshot.graphics.positive[0]);
+}
+
+test "Kitty centered fit reaches direct output and preserves a held cut across re-put" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.resize(8, 8);
+    try owner.feed("\x1b[H\x1b_Ga=T,i=7,p=1,s=1,v=1,c=4,r=1,C=1,q=2;/wAA/w==\x1b\\");
+    try owner.flush();
+    const held = try owner.hold();
+    var holding = true;
+    defer if (holding) release(owner, held);
+    const metrics = owner.acceptedMetrics().?;
+    const first = held.snapshot.graphics.positive[0].rgba;
+    const wide_side = @min(metrics.cell_width * 4, metrics.cell_height);
+    try std.testing.expectEqualDeep(output.commands.Rect{
+        .x = @intCast((metrics.cell_width * 4 - wide_side) / 2),
+        .y = @intCast((metrics.cell_height - wide_side) / 2),
+        .width = wide_side,
+        .height = wide_side,
+    }, first.destination);
+    const image_generation = owner.observation().images(0).image(0).?.generation;
+    try owner.feed("\x1b[H\x1b_Ga=p,i=7,p=1,c=1,r=4,C=1,q=2\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualDeep(first, held.snapshot.graphics.positive[0].rgba);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, held.snapshot.graphics.images[0].pixels);
+    release(owner, held);
+    holding = false;
+    const fitted = try owner.hold();
+    defer release(owner, fitted);
+    const tall_side = @min(metrics.cell_width, metrics.cell_height * 4);
+    try std.testing.expectEqual(@as(usize, 1), fitted.snapshot.graphics.positive.len);
+    try std.testing.expectEqualDeep(output.commands.Rect{
+        .x = @intCast((metrics.cell_width - tall_side) / 2),
+        .y = @intCast((metrics.cell_height * 4 - tall_side) / 2),
+        .width = tall_side,
+        .height = tall_side,
+    }, fitted.snapshot.graphics.positive[0].rgba.destination);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, fitted.snapshot.graphics.images[0].pixels);
+    try std.testing.expectEqual(image_generation, owner.observation().images(0).image(0).?.generation);
 }

@@ -6328,9 +6328,9 @@ pub const Terminal = struct {
         source_width: u32,
         /// Counts selected decoded source rows.
         source_height: u32,
-        /// Offsets the destination within its anchor cell horizontally.
+        /// Horizontal pixel offset from the placement anchor, including fit padding.
         cell_x: u32,
-        /// Offsets the destination within its anchor cell vertically.
+        /// Vertical pixel offset from the placement anchor, including fit padding.
         cell_y: u32,
         /// Counts destination pixels horizontally.
         pixel_width: u32,
