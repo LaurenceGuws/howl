@@ -2326,8 +2326,14 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
             return true;
         },
         .kitty_clipboard_packet => |payload| try vt.consequences.retainKittyClipboard(payload),
-        .file_transfer_packet => |packet| try vt.consequences.retainFileTransfer(packet.protocol, packet.payload),
-        .iterm_inline_png => |payload| return applyItermInlinePng(vt, payload),
+        .file_transfer_packet => |packet| {
+            if (packet.protocol == .iterm2_1337) return applyItermFileTransfer(vt, packet.payload);
+            try vt.consequences.retainFileTransfer(packet.protocol, packet.payload);
+        },
+        .iterm_inline_png => |payload| {
+            vt.stream_state.abortMultipart(vt.allocator);
+            return applyItermInlinePng(vt, payload);
+        },
         .drag_drop => |command| try vt.consequences.retainDragDrop(.{
             .kind = command.kind,
             .command = command.command,
@@ -3783,6 +3789,10 @@ fn applyParserEvent(
         .icon_set => |value| !optionalBytesEqual(vt.properties.current_icon, value),
         else => false,
     };
+    const file_graphics_before = if (semantic == .file_transfer_packet)
+        vt.graphics.generation()
+    else
+        null;
     const changed = try applySemanticWithPressure(
         vt,
         semantic,
@@ -3795,6 +3805,12 @@ fn applyParserEvent(
         title_changed,
         icon_changed,
     );
+    if (file_graphics_before) |generation| {
+        // Selected multipart publication is image admission, not an opaque
+        // file consequence. Its cursor/viewport and image observations
+        // follow the same canonical owner as a single inline image.
+        if (vt.graphics.generation() != generation) mutations.text = false;
+    }
     if (changed and (semantic == .line_feed or semantic == .index or semantic == .next_line)) {
         const active = vt.screen_state.activeConst();
         if (active.cursor.row == active.scrollBottom()) mutations.text = true;
@@ -4701,6 +4717,7 @@ const TerminalStream = struct {
         const state = &self.terminal.stream_state;
 
         errdefer {
+            state.abortMultipart(self.terminal.allocator);
             state.parser.reset();
             state.dcs.reset();
             state.string.reset();
@@ -4769,6 +4786,7 @@ const TerminalStream = struct {
         if (param_bytes != 0) return param_bytes;
         const count = state.parser.plainApcPayloadPrefix(bytes);
         errdefer {
+            state.abortMultipart(self.terminal.allocator);
             state.parser.reset();
             state.dcs.reset();
             state.string.reset();
@@ -4993,6 +5011,10 @@ const TerminalStream = struct {
                 .omitted = csi.omitted,
             } }),
             .osc_dispatch => |osc| try self.applyEvent(.{ .osc = osc }),
+            .iterm_multipart_cancel => cancel: {
+                self.terminal.stream_state.discardMultipart(self.terminal.allocator);
+                break :cancel discardedStringControl();
+            },
             .screen_title => |title| try self.applyEvent(.{ .screen_title = title }),
             .apc_start => self.startString(.apc),
             .apc_put => |byte| self.putString(byte),
@@ -5434,6 +5456,43 @@ fn resolveGraphicsVirtualAnchor(context: graphics_mod.Plane.AnchorContext, index
     // reason: The local Images variable is correctly aligned and remains live for the synchronous graphics command.
     const projection: *GraphicsAnchorContext = @ptrCast(@alignCast(context));
     return projection.cache.get(&projection.images, index);
+}
+
+// Select inline multipart before the opaque caller-consequence lane. No
+// partial image, reply or consequence is published by staging operations.
+fn applyItermFileTransfer(vt: *Terminal, payload: []const u8) SemanticEventError!bool {
+    const state = &vt.stream_state;
+    if (std.mem.startsWith(u8, payload, "MultipartFile=")) {
+        switch (iterm_control.inlineFileHeader(payload)) {
+            .selected => |options| {
+                state.beginMultipart(vt.allocator, options);
+                return false;
+            },
+            .unsupported => {
+                state.discardMultipart(vt.allocator);
+                return false;
+            },
+            .other => state.openOpaqueMultipart(vt.allocator),
+        }
+    } else if (std.mem.startsWith(u8, payload, "File=")) {
+        state.abortMultipart(vt.allocator);
+    } else if (state.multipart != .legacy) {
+        if (std.mem.startsWith(u8, payload, "FilePart=")) {
+            try state.appendMultipart(vt.allocator, payload["FilePart=".len..]);
+            return false;
+        }
+        if (std.mem.eql(u8, payload, "FileEnd")) {
+            if (state.multipart != .selected) return false;
+            const transfer = &state.multipart.selected;
+            defer state.discardMultipart(vt.allocator);
+            return applyItermInlinePng(vt, .{ .options = transfer.options, .encoded = transfer.encoded.items });
+        }
+        // Only the exact bare FileEnd completes the selected lane.
+        state.discardMultipart(vt.allocator);
+        return false;
+    }
+    try vt.consequences.retainFileTransfer(.iterm2_1337, payload);
+    return true;
 }
 
 // A selected iTerm inline file owns decoded PNG pixels directly in VT.
@@ -7700,6 +7759,7 @@ pub const Terminal = struct {
         self.primary_savepoint.clear();
         self.alternate_savepoint.clear();
         self.charset = .{};
+        self.stream_state.abortMultipart(self.allocator);
         self.stream_state.parser.resetTextEncoding();
         if (self.stream_state.pending_input) |pending| {
             if (pending.work == .kitty_packet) self.stream_state.string.reset();
@@ -7954,6 +8014,7 @@ pub const Terminal = struct {
         save_restore_cursor: bool,
     ) bool {
         if (self.screen_state.alt_active == enable_alt) return false;
+        self.stream_state.abortMultipart(self.allocator);
         if (enable_alt and save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint(true);
         if ((enable_alt and clear_alt == .entry) or (!enable_alt and clear_alt == .exit)) {
             self.screen_state.alternate.clearVisibleCells();

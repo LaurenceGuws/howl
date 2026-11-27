@@ -3028,3 +3028,37 @@ test "iTerm2 sized inline output preserves source pixels and top-left fit across
     try std.testing.expectEqualSlices(u8, next.snapshot.graphics.images[0].pixels, next.snapshot.graphics.images[1].pixels);
     try std.testing.expect(next.snapshot.graphics.images[0].resource.resource != next.snapshot.graphics.images[1].resource.resource);
 }
+
+test "iTerm2 multipart publishes one immutable image cut only after FileEnd" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const start = "\x1b]1337;MultipartFile=inline=1;width=6px;height=15px\x07";
+    try owner.feed("\x1b[H" ++ start ++ "\x1b]1337;FilePart=" ++ sample[0..47] ++ "\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    var pinned = true;
+    defer if (pinned) release(owner, held);
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
+    try owner.feed("\x1b]1337;FilePart=" ++ sample[47..] ++ "\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 0), owner.observation().images(0).imageCount());
+    try owner.feed("\x1b]1337;FileEnd\x07");
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 0), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).imageCount());
+    release(owner, held);
+    pinned = false;
+    const complete = try owner.hold();
+    defer release(owner, complete);
+    try std.testing.expectEqual(@as(usize, 1), complete.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), complete.snapshot.graphics.positive.len);
+    try std.testing.expectEqualDeep(output.commands.Rect{ .x = 0, .y = 0, .width = 6, .height = 3 }, complete.snapshot.graphics.positive[0].rgba.destination);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, complete.snapshot.graphics.images[0].pixels);
+    try owner.feed("\x1b]1337;FileEnd\x07\x1b[2J");
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 1), complete.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 0), owner.observation().images(0).placementCount());
+}

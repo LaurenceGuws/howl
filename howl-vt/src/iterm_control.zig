@@ -98,25 +98,32 @@ fn parseDimension(value: []const u8) ?Dimension {
     };
 }
 
-/// Classifies one complete File= header (without its colon or image data).
+/// Classifies a complete File= or MultipartFile= header without image data.
 /// An explicit inline request never falls back to the download lane.
 /// The selected PNG profile accepts bounded auto, cell, pixel and percentage dimensions.
 pub fn inlineFileHeader(header: []const u8) InlineFileKind {
-    if (!std.mem.startsWith(u8, header, "File=")) return .other;
-    var fields = std.mem.splitScalar(u8, header["File=".len..], ';');
+    const prefix_len = if (std.mem.startsWith(u8, header, "File="))
+        "File=".len
+    else if (std.mem.startsWith(u8, header, "MultipartFile="))
+        "MultipartFile=".len
+    else
+        return .other;
+    var fields = std.mem.splitScalar(u8, header[prefix_len..], ';');
     var seen: u8 = 0;
     var inline_intent = false;
     var valid = true;
     var options: InlineOptions = .{};
     while (fields.next()) |field| {
         const separator = std.mem.indexOfScalar(u8, field, '=') orelse {
+            if (std.mem.eql(u8, field, "inline")) inline_intent = true;
             valid = false;
             continue;
         };
         const key = field[0..separator];
         const value = field[separator + 1 ..];
         const slot: u3 = if (std.mem.eql(u8, key, "inline")) blk: {
-            if (std.mem.eql(u8, value, "1")) inline_intent = true else valid = false;
+            if (!std.mem.eql(u8, value, "0")) inline_intent = true;
+            if (!std.mem.eql(u8, value, "1")) valid = false;
             break :blk 0;
         } else if (std.mem.eql(u8, key, "width")) blk: {
             if (parseDimension(value)) |dimension| options.width = dimension else valid = false;

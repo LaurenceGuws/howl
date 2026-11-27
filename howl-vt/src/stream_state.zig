@@ -6,6 +6,8 @@
 const std = @import("std");
 const consequences = @import("consequences.zig");
 const graphics = @import("graphics.zig");
+const iterm_control = @import("iterm_control.zig");
+const png = @import("png.zig");
 const parser = @import("parser.zig");
 const sixel = @import("sixel.zig");
 
@@ -268,7 +270,22 @@ pub const PendingInput = struct {
     failure: InputBlock,
 };
 
-/// Owns parser allocation and both fragmented-control captures for one terminal lifetime.
+/// Bounds concatenated Base64 by the shared PNG decoder's encoded file limit.
+pub const max_multipart_encoded_bytes = std.base64.standard.Encoder.calcSize(png.max_encoded_bytes);
+
+/// Owns only transient inline-file metadata and concatenated wire bytes.
+/// Opaque legacy packets remain caller-owned until an inline start selects
+/// this lane; a failed or completed selected transaction never falls back.
+pub const Multipart = union(enum) {
+    legacy,
+    discard,
+    selected: struct {
+        options: iterm_control.InlineOptions,
+        encoded: std.ArrayList(u8) = .empty,
+    },
+};
+
+/// Owns parser allocation and fragmented-control captures for one terminal lifetime.
 pub const State = struct {
     /// Reports parser-storage allocation failure during terminal construction.
     pub const InitError = error{OutOfMemory};
@@ -276,6 +293,7 @@ pub const State = struct {
     parser: parser.Parser,
     dcs: DcsCapture,
     string: StringCapture,
+    multipart: Multipart = .legacy,
     pending_input: ?PendingInput = null,
 
     /// Initializes parser storage and inactive fragmented-control captures.
@@ -287,8 +305,75 @@ pub const State = struct {
         };
     }
 
+    /// Starts an inline transaction with no eagerly allocated byte buffer.
+    pub fn beginMultipart(self: *State, allocator: std.mem.Allocator, options: iterm_control.InlineOptions) void {
+        self.discardMultipart(allocator);
+        self.multipart = .{ .selected = .{ .options = options } };
+        self.parser.setInlineMultipartCapture(true);
+    }
+
+    /// Releases selected transfer bytes and suppresses subsequent stale parts.
+    pub fn discardMultipart(self: *State, allocator: std.mem.Allocator) void {
+        if (self.multipart == .selected) self.multipart.selected.encoded.deinit(allocator);
+        self.multipart = .discard;
+        self.parser.setInlineMultipartCapture(false);
+    }
+
+    /// Cancels an existing inline lane without changing the legacy idle lane.
+    pub fn abortMultipart(self: *State, allocator: std.mem.Allocator) void {
+        if (self.multipart == .selected) self.discardMultipart(allocator);
+    }
+
+    /// An explicit non-inline multipart start restores opaque caller ownership.
+    pub fn openOpaqueMultipart(self: *State, allocator: std.mem.Allocator) void {
+        self.discardMultipart(allocator);
+        self.multipart = .legacy;
+    }
+
+    /// Appends a nonempty Base64 fragment; padding is validated across all
+    /// parts, with complete quartet validation left to the final decoder.
+    /// Invalid data or allocation failure releases the complete transaction.
+    pub fn appendMultipart(self: *State, allocator: std.mem.Allocator, part: []const u8) error{OutOfMemory}!void {
+        if (self.multipart != .selected) return;
+        errdefer self.discardMultipart(allocator);
+        const encoded = &self.multipart.selected.encoded;
+        if (part.len == 0 or part.len > max_multipart_encoded_bytes - encoded.items.len) {
+            self.discardMultipart(allocator);
+            return;
+        }
+        var padding: u2 = if (std.mem.endsWith(u8, encoded.items, "=="))
+            2
+        else if (std.mem.endsWith(u8, encoded.items, "="))
+            1
+        else
+            0;
+        for (part) |byte| {
+            switch (byte) {
+                'A'...'Z', 'a'...'z', '0'...'9', '+', '/' => {
+                    if (padding == 0) continue;
+                },
+                '=' => {
+                    if (padding < 2) {
+                        padding += 1;
+                        continue;
+                    }
+                },
+                else => {},
+            }
+            self.discardMultipart(allocator);
+            return;
+        }
+        const required = encoded.items.len + part.len;
+        if (required > encoded.capacity) {
+            const capacity = @min(max_multipart_encoded_bytes, @max(required, encoded.capacity * 2));
+            try encoded.ensureTotalCapacityPrecise(allocator, capacity);
+        }
+        encoded.appendSliceAssumeCapacity(part);
+    }
+
     /// Releases parser and capture allocations in reverse ownership order.
     pub fn deinit(self: *State) void {
+        self.abortMultipart(self.string.allocator);
         self.dcs.deinit();
         self.string.deinit();
         self.parser.deinit();
@@ -471,4 +556,35 @@ test "discarded reserved DCS payload consumes no allocation and leaves ordinary 
     }, .retain);
     try capture.put('A');
     try std.testing.expectEqualStrings("A", capture.payload());
+}
+
+test "inline multipart capture owns the exact decoder-derived aggregate bound and frees failed transactions" {
+    const allocator = std.testing.allocator;
+    var state = try State.init(allocator);
+    defer state.deinit();
+    const chunk = try allocator.alloc(u8, 1024 * 1024);
+    defer allocator.free(chunk);
+    @memset(chunk, 'A');
+    state.beginMultipart(allocator, .{});
+    var remaining: usize = max_multipart_encoded_bytes;
+    while (remaining != 0) {
+        const count = @min(chunk.len, remaining);
+        try state.appendMultipart(allocator, chunk[0..count]);
+        remaining -= count;
+        try std.testing.expect(state.multipart == .selected);
+        try std.testing.expect(state.multipart.selected.encoded.capacity <= max_multipart_encoded_bytes);
+    }
+    try std.testing.expectEqual(max_multipart_encoded_bytes, state.multipart.selected.encoded.items.len);
+    try std.testing.expectEqual(max_multipart_encoded_bytes, state.multipart.selected.encoded.capacity);
+    try state.appendMultipart(allocator, "A");
+    try std.testing.expect(state.multipart == .discard);
+    state.beginMultipart(allocator, .{});
+    try state.appendMultipart(allocator, "QQ=");
+    try state.appendMultipart(allocator, "=");
+    try std.testing.expectEqualStrings("QQ==", state.multipart.selected.encoded.items);
+    try state.appendMultipart(allocator, "A");
+    try std.testing.expect(state.multipart == .discard);
+    state.beginMultipart(allocator, .{});
+    try state.appendMultipart(allocator, "QQ==");
+    // Teardown must release a still-open transaction too.
 }

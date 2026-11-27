@@ -71,6 +71,9 @@ pub const max_chunk_control_bytes = chunk_control_max_bytes;
 /// Local complete OSC payload bound for selected inline images.
 /// Ordinary iTerm metadata and unselected file packets keep their old bound.
 pub const max_inline_image_control_bytes: u32 = 1024 * 1024;
+/// Complete FilePart payload bound, reserving the longest ordinary 7-bit
+/// OSC 1337 envelope and ST inside the author's 1 MiB sequence limit.
+pub const max_inline_part_control_bytes: u32 = 1024 * 1024 - "\x1b]1337;\x1b\\".len;
 
 // Borrowed parser event vocabulary.
 
@@ -235,6 +238,7 @@ pub const Action = union(enum) {
     invalid,
     csi_dispatch: CsiAction,
     osc_dispatch: OscAction,
+    iterm_multipart_cancel,
     screen_title: []const u8,
     apc_start,
     apc_put: u8,
@@ -359,6 +363,12 @@ pub const Parser = struct {
     pub fn resetTextEncoding(self: *Parser) void {
         self.utf8.reset();
         self.latin1 = false;
+    }
+
+    /// Selects the capture bound for parts of an already admitted inline
+    /// transaction. The stream owner, not the parser, owns that transaction.
+    pub fn setInlineMultipartCapture(self: *Parser, enabled: bool) void {
+        self.osc.multipart_capture = enabled;
     }
 
     /// Returns and clears a pending buffered string-control allocation failure.
@@ -536,7 +546,7 @@ pub const Parser = struct {
                 self.osc.prefix_filtered = true;
             // The inline image decoder must not see normalized Base64 after
             // an ignored wire control disappeared from its encoded body.
-            if (self.osc.isInlineImage()) self.osc.overflowed = true;
+            if (self.osc.strictImagePacket()) self.osc.overflowed = true;
         }
         const sos_kind = if (current_state == .sos_pm_apc_string) self.sosPmApcKind() else null;
         const finishing_escape = byte == '\\' and switch (current_state) {
@@ -681,13 +691,15 @@ pub const Parser = struct {
                     0x07 => OscTerminator.bel,
                     '\\', 0x9C => OscTerminator.st,
                     else => {
+                        const cancel = self.osc.cancelMultipartOnDiscard();
                         self.osc.reset();
-                        break :exit null;
+                        break :exit if (cancel) .iterm_multipart_cancel else null;
                     },
                 };
-                if (self.osc.didOverflow()) {
+                if (self.osc.didOverflow() or self.osc.malformedMultipart()) {
+                    const cancel = self.osc.cancelMultipartOnDiscard();
                     self.osc.reset();
-                    break :exit null;
+                    break :exit if (cancel) .iterm_multipart_cancel else null;
                 }
                 break :exit .{ .osc_dispatch = self.osc.snapshot(term) };
             },
@@ -1917,6 +1929,12 @@ pub const OscControl = struct {
     policy: CommandPolicy,
     alloc_failed: bool = false,
     overflowed: bool = false,
+    // Capture policy is supplied by the stream owner. Packet recognition is
+    // parser-local and survives discarded payload bytes until the terminator.
+    multipart_capture: bool = false,
+    multipart_packet: MultipartPacket = .none,
+
+    const MultipartPacket = enum { none, start, part, end };
 
     const OscState = enum {
         idle,
@@ -2029,7 +2047,7 @@ pub const OscControl = struct {
     /// Returns OSC state to idle while retaining reusable capacity.
     pub fn reset(self: *OscControl) void {
         // Large image packets are temporary input, not a metadata cache.
-        if (self.isInlineImage() and self.buffer.capacity > self.metadata_max_len) {
+        if (self.largeImageCapture() and self.buffer.capacity > self.metadata_max_len) {
             self.buffer.deinit(self.allocator);
             self.buffer = .empty;
         }
@@ -2038,6 +2056,7 @@ pub const OscControl = struct {
         self.prefix_filtered = false;
         self.alloc_failed = false;
         self.overflowed = false;
+        self.multipart_packet = .none;
         self.policy = .{ .command = null, .class = .raw_title, .max_len = self.metadata_max_len };
         self.buffer.clearRetainingCapacity();
     }
@@ -2301,9 +2320,9 @@ pub const OscControl = struct {
                 }
                 if (self.policy.command == 1337) {
                     self.prefix_filtered = true;
-                    if (self.isInlineImage()) self.overflowed = true;
+                    if (self.strictImagePacket()) self.overflowed = true;
                 }
-                if (self.policy.class == .program_status or self.isInlineImage()) {
+                if (self.policy.class == .program_status or self.strictImagePacket()) {
                     // A stray ESC is a malformed value byte, not an escape
                     // that quotes BEL or the next ESC in a real ST.
                     self.append(0x1B);
@@ -2373,23 +2392,70 @@ pub const OscControl = struct {
         return true;
     }
 
-    fn isInlineImage(self: *const OscControl) bool {
-        return self.policy.command == 1337 and self.policy.max_len == max_inline_image_control_bytes;
+    fn largeImageCapture(self: *const OscControl) bool {
+        return self.policy.command == 1337 and self.policy.max_len > self.metadata_max_len;
+    }
+
+    // Match exact keys, never an unknown OSC 1337 command sharing a
+    // prefix. A key followed by '=' survives overflow as a captured kind.
+    fn multipartKind(self: *const OscControl) MultipartPacket {
+        if (self.policy.command != 1337) return .none;
+        if (self.multipart_packet != .none) return self.multipart_packet;
+        const name = self.buffer.items;
+        if (std.mem.eql(u8, name, "MultipartFile")) return .start;
+        if (std.mem.eql(u8, name, "FilePart")) return .part;
+        if (std.mem.eql(u8, name, "FileEnd")) return .end;
+        return .none;
+    }
+
+    fn strictImagePacket(self: *const OscControl) bool {
+        const kind = self.multipartKind();
+        return self.largeImageCapture() or kind == .start or
+            (self.multipart_capture and kind != .none);
+    }
+
+    fn cancelMultipartOnDiscard(self: *const OscControl) bool {
+        return self.multipartKind() == .start or
+            (self.multipart_capture and self.policy.command == 1337);
+    }
+
+    fn malformedMultipart(self: *const OscControl) bool {
+        const kind = self.multipartKind();
+        if (kind == .none or !self.strictImagePacket()) return false;
+        if (self.prefix_filtered) return true;
+        return switch (kind) {
+            .none => false,
+            .start => !std.mem.startsWith(u8, self.buffer.items, "MultipartFile="),
+            .part => !std.mem.startsWith(u8, self.buffer.items, "FilePart="),
+            .end => !std.mem.eql(u8, self.buffer.items, "FileEnd"),
+        };
     }
 
     fn append(self: *OscControl, byte: u8) void {
         if (self.overflowed) return;
-        // The metadata header must fit its original bound. Widen only
-        // after the exact File= header selects the supported inline profile.
-        if (byte == ':' and self.policy.command == 1337 and !self.isInlineImage() and
-            self.buffer.items.len < self.policy.max_len and
-            iterm_control.inlineFileHeader(self.buffer.items) == .selected)
+        // Widen only a selected single-file header or a part of an already
+        // admitted inline transaction. Unselected opaque packets keep 2 KiB.
+        if (self.policy.command == 1337 and !self.largeImageCapture() and
+            self.buffer.items.len < self.policy.max_len)
         {
-            if (self.prefix_filtered) {
-                self.overflowed = true;
-                return;
+            if (byte == '=' and self.multipart_packet == .none) {
+                self.multipart_packet = self.multipartKind();
+                if (self.multipart_capture and self.multipart_packet == .part) {
+                    if (self.prefix_filtered) {
+                        self.overflowed = true;
+                        return;
+                    }
+                    self.policy.max_len = max_inline_part_control_bytes;
+                }
+            } else if (byte == ':' and self.multipart_packet == .none and
+                iterm_control.inlineFileHeader(self.buffer.items) == .selected)
+            {
+                if (self.prefix_filtered) {
+                    self.overflowed = true;
+                    return;
+                }
+                self.policy.max_len = max_inline_image_control_bytes;
             }
-            self.policy.max_len = max_inline_image_control_bytes;
         }
         std.debug.assert(self.buffer.items.len <= std.math.maxInt(u32));
         const buffer_len: u32 = @intCast(self.buffer.items.len);
@@ -2400,6 +2466,7 @@ pub const OscControl = struct {
         }
         self.buffer.append(self.allocator, byte) catch {
             self.alloc_failed = true;
+            return;
         };
     }
 

@@ -3957,8 +3957,7 @@ test "iTerm2 inline refusal never becomes a download consequence and bare FileEn
     try terminal.consumeConsequence(end.id());
 }
 
-test "iTerm2 selected inline capture exceeds metadata bound and recovers from overflow" {
-    const allocator = std.testing.allocator;
+fn inlinePngWithAncillaryText(allocator: std.mem.Allocator, text_bytes: u32) ![]u8 {
     const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
     const decoder = std.base64.standard.Decoder;
     const source = try allocator.alloc(u8, try decoder.calcSizeForSlice(sample));
@@ -3966,7 +3965,6 @@ test "iTerm2 selected inline capture exceeds metadata bound and recovers from ov
     try decoder.decode(source, sample);
     // A real PNG with a valid ancillary text chunk, not a synthetic length
     // or decoder bypass. The small decoded image remains exactly the same.
-    const text_bytes = 4096;
     const file = try allocator.alloc(u8, source.len + text_bytes + 12);
     defer allocator.free(file);
     const iend = source.len - 12;
@@ -3980,8 +3978,15 @@ test "iTerm2 selected inline capture exceeds metadata bound and recovers from ov
     @memcpy(file[iend + text_bytes + 12 ..], source[iend..]);
     const encoder = std.base64.standard.Encoder;
     const encoded = try allocator.alloc(u8, encoder.calcSize(file.len));
-    defer allocator.free(encoded);
     const payload = encoder.encode(encoded, file);
+    std.debug.assert(encoded.len == payload.len);
+    return encoded;
+}
+
+test "iTerm2 selected inline capture exceeds metadata bound and recovers from overflow" {
+    const allocator = std.testing.allocator;
+    const payload = try inlinePngWithAncillaryText(allocator, 4096);
+    defer allocator.free(payload);
     try std.testing.expect(payload.len > parser_mod.max_metadata_control_bytes);
 
     var terminal = try Terminal.init(allocator, 3, 8);
@@ -4113,5 +4118,155 @@ test "iTerm2 automatic oversized natural image shrinks and invalid explicit dime
         try std.testing.expectEqual(@as(usize, 1), after.imageCount());
         try std.testing.expectEqualDeep(placement, after.placement(0).?);
         try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+}
+
+test "iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    for (1..sample.len) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(3, 5);
+        try std.testing.expect(!(try terminal.feed("\x1b]1337;MultipartFile=inline=1;width=6px;height=10px;size=1\x07")).stateChanged());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        var packet: [192]u8 = undefined;
+        const first = try std.fmt.bufPrint(&packet, "\x1b]1337;FilePart={s}\x1b\\", .{sample[0..split]});
+        for (first) |byte| try std.testing.expect(!(try terminal.feed(&.{byte})).stateChanged());
+        try feed(&terminal, "A\x1b[2;2H");
+        try std.testing.expect(!(try terminal.feed("\x1b]1337;MultipartFileUnknown=value\x07")).stateChanged());
+        const second = try std.fmt.bufPrint(&packet, "\x1b]1337;FilePart={s}\x07", .{sample[split..]});
+        try std.testing.expect(!(try terminal.feed(second)).stateChanged());
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        const before = terminal.images(0).generation;
+        try std.testing.expect(!(try terminal.feed("\x1b]1337;FileEnd\x1b")).stateChanged());
+        try std.testing.expect((try terminal.feed("\\")).mutations.images);
+        const images = terminal.images(0);
+        try std.testing.expectEqual(before + 1, images.generation);
+        try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, images.image(0).?.pixels);
+        const placed = images.placement(0).?;
+        try std.testing.expectEqual(@as(u16, 1), placed.row);
+        try std.testing.expectEqual(@as(u16, 1), placed.col);
+        try std.testing.expectEqual(@as(u32, 6), placed.pixel_width);
+        try std.testing.expectEqual(@as(u32, 3), placed.pixel_height);
+        try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expect(!(try terminal.feed("\x1b]1337;FileEnd\x07\x1b]1337;FilePart=AAAA\x07")).stateChanged());
+        try std.testing.expectEqual(images.generation, terminal.images(0).generation);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
+test "iTerm2 failed inline multipart suppresses stale parts until a fresh start" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const start = "\x1b]1337;MultipartFile=inline=1\x07";
+    const part = "\x1b]1337;FilePart=" ++ sample ++ "\x07";
+    const end = "\x1b]1337;FileEnd\x07";
+    for ([_][]const u8{
+        "\x1b]1337;FilePart=!!!!\x07",
+        "\x1b]1337;FilePart=AA==\x07\x1b]1337;FilePart=AAAA\x07",
+        "\x1b]1337;FilePart=AA\x01AA\x07",
+        "\x1b]1337;FilePart=AAAA\x18",
+        "\x1b]1337;FilePart=AAAA\x1a",
+        "\x1b]1337;FilePart=AAAA\x1bX\x07",
+        "\x1b]1337;FileEnd=legacy\x07",
+        "\x1b]1337;FileEnd\x01\x07",
+        "\x1b]1337;FilePart\x07",
+        "\x1b]1337;FilePart=\x07",
+        "\x1b]1337;MultipartFile=inline=invalid\x07",
+        "\x1b]1337;MultipartFile=inline=1;width=0\x07",
+        "\x1b]1337;MultipartFile=inline=1;in\x01line=1\x07",
+        "\x1b[?47h\x1b[?47l",
+        "\x1bc",
+    }) |bad| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(3, 5);
+        try feed(&terminal, start ++ "\x1b]1337;FilePart=iVBO\x07");
+        try feed(&terminal, bad);
+        const before = terminal.images(0).generation;
+        try std.testing.expect(!(try terminal.feed(part ++ end)).stateChanged());
+        try std.testing.expectEqual(before, terminal.images(0).generation);
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        try feed(&terminal, start ++ part ++ end);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        // An explicit non-inline multipart start reopens the legacy opaque lane.
+        try feed(&terminal, "\x1b]1337;MultipartFile=inline=0\x07\x1b]1337;FilePart=QQ==\x07" ++ end);
+        try std.testing.expectEqual(@as(u8, 3), terminal.consequenceCount());
+    }
+}
+
+test "iTerm2 multipart admits a real PNG across the conservative one MiB wire bound" {
+    const allocator = std.testing.allocator;
+    const encoded = try inlinePngWithAncillaryText(allocator, 800 * 1024);
+    defer allocator.free(encoded);
+    const max_part = parser_mod.max_inline_part_control_bytes - "FilePart=".len;
+    try std.testing.expect(encoded.len > max_part);
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(3, 5);
+    const start = "\x1b]1337;MultipartFile=inline=1\x07";
+    const part = "\x1b]1337;FilePart=";
+    const end = "\x1b]1337;FileEnd\x07";
+    try std.testing.expect(!(try terminal.feed(start ++ part)).stateChanged());
+    try std.testing.expect(!(try terminal.feed(encoded[0..max_part])).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b\\")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(part)).stateChanged());
+    try std.testing.expect(!(try terminal.feed(encoded[max_part..])).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x07")).stateChanged());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expect((try terminal.feed(end)).mutations.images);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, terminal.images(0).image(0).?.pixels);
+    const generation = terminal.images(0).generation;
+    try std.testing.expect(!(try terminal.feed(start ++ part)).stateChanged());
+    try std.testing.expect(!(try terminal.feed(encoded[0 .. max_part + 1])).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b\\" ++ end)).stateChanged());
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    // Fresh alternate-bank transaction is independent of the primary image.
+    const primary_id = terminal.images(0).image(0).?.id;
+    try feed(&terminal, "\x1b[?47h" ++ start ++ part ++ "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=\x07" ++ end);
+    const alternate = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), alternate.imageCount());
+    var it = alternate.placementIterator();
+    const alternate_id = (it.next() orelse return error.TestUnexpectedResult).placement.image_id;
+    try std.testing.expect(alternate_id != primary_id);
+    try std.testing.expect(it.next() == null);
+    try feed(&terminal, "\x1b[?47l");
+    const primary = terminal.images(0);
+    it = primary.placementIterator();
+    try std.testing.expectEqual(primary_id, (it.next() orelse return error.TestUnexpectedResult).placement.image_id);
+    try std.testing.expect(it.next() == null);
+}
+
+test "iTerm2 multipart allocation failures abort staging and final decode without image mutation" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const start = "\x1b]1337;MultipartFile=inline=1\x07";
+    const part = "\x1b]1337;FilePart=" ++ sample;
+    const end = "\x1b]1337;FileEnd";
+    for ([_]bool{ false, true }) |fail_finish| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var terminal = try Terminal.init(failing.allocator(), 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(3, 5);
+        try feed(&terminal, "\x1b]1337;File=inline=1:" ++ sample ++ "\x07");
+        const before = terminal.images(0);
+        try std.testing.expect(!(try terminal.feed(start ++ part)).stateChanged());
+        if (fail_finish) try std.testing.expect(!(try terminal.feed("\x07" ++ end)).stateChanged());
+        failing.fail_index = failing.alloc_index;
+        try std.testing.expectError(error.OutOfMemory, terminal.feed("\x07"));
+        failing.fail_index = std.math.maxInt(usize);
+        try std.testing.expect(!(try terminal.feed(part ++ "\x07" ++ end ++ "\x07")).stateChanged());
+        try std.testing.expectEqual(before.generation, terminal.images(0).generation);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        try feed(&terminal, start ++ part ++ "\x07" ++ end ++ "\x07");
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
     }
 }

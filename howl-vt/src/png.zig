@@ -16,7 +16,8 @@ pub const Image = struct {
 const signature = "\x89PNG\r\n\x1a\n";
 const max_dimension: u32 = 4096;
 const max_pixels_bytes: usize = 16 * 1024 * 1024;
-const max_encoded_bytes: usize = max_pixels_bytes + 128 * 1024;
+/// Maximum encoded PNG bytes accepted by the shared decoder.
+pub const max_encoded_bytes: usize = max_pixels_bytes + 128 * 1024;
 
 const Header = struct {
     width: u32,

@@ -70,6 +70,7 @@ const Event = union(enum) {
         intermediates_len: u8,
     },
     osc: parser_mod.OscAction,
+    iterm_multipart_cancel,
     screen_title: []u8,
     apc_start,
     apc_put: u8,
@@ -137,6 +138,7 @@ const Harness = struct {
                 errdefer self.allocator.free(owned);
                 try self.events.append(self.allocator, Event{ .osc = cloneOscAction(osc, owned) });
             },
+            .iterm_multipart_cancel => try self.events.append(self.allocator, .iterm_multipart_cancel),
             .screen_title => |title| {
                 const owned = try self.allocator.dupe(u8, title);
                 errdefer self.allocator.free(owned);

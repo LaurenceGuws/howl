@@ -5120,6 +5120,21 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart admits a real PNG across the conservative one MiB wire bound
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 multipart publishes one immutable image cut only after FileEnd
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_images.single
@@ -5158,6 +5173,14 @@ specifications:
             and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
             existing Kitty fit controls.
           baseline: 70819ae722035a1f2edc8803e10be42b830a3743
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Selected inline multipart now joins the existing single PNG decode, geometry and Plane owner through bounded
+            transient stream capture. Bare FileEnd publishes once, other controls/text remain live; no host download authorization.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -24579,6 +24602,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm and Kitty file transfers retain one opaque ordered stream
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Existing bounded opaque MultipartFile packet retention only; no inline multipart transaction or decoded image
@@ -24588,6 +24620,16 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Explicit inline MultipartFile= selects the same PNG metadata as single File=; replacement start frees prior staging.
+            Non-inline start retains existing opaque caller policy. Invalid selected start enters discard without image or download
+            consequences. Ordinary intervening terminal output stays live; completion uses current cursor and geometry within
+            the same bank.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: multipart-part
       section: Protocol
       level: defined
@@ -24615,6 +24657,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 selected inline capture exceeds metadata bound and recovers from overflow
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart admits a real PNG across the conservative one MiB wire bound
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
+        relation: protocol-family
+      - file: howl-vt/src/stream_state.zig
+        test: inline multipart capture owns the exact decoder-derived aggregate bound and frees failed transactions
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Existing opaque FilePart retains old 2KiB metadata packet limit; selected single inline widening does not enlarge
@@ -24625,6 +24682,18 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Selected FilePart accepts sequential Base64 fragments including split quartets and padding; reject invalid alphabet,
+            empty fragments, excess padding, post-padding data and filtered control bytes. Aggregate encoded capacity bounded
+            by shared PNG decoder input ceiling (22544384 bytes); capacity growth clamped and freed on discard/finish/reset/teardown.
+            Selected packet cap reserves seven-bit OSC prefix and two-byte ST inside 1048576-byte wire bound, conservatively one
+            byte below maximum for BEL. Valid PNG spanning the exact ST packet bound qualified; plus-one overflow cancels. Opaque
+            unselected packets retain old 2KiB bound. No claim of exhaustive multipart format or error matrix.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: multipart-end
       section: Protocol
       level: defined
@@ -24643,6 +24712,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart admits a real PNG across the conservative one MiB wire bound
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 multipart publishes one immutable image cut only after FileEnd
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Author bare FileEnd now reaches existing ordered file-transfer consequence lane; legacy valued FileEnd retained.
@@ -24652,6 +24736,15 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Only exact bare FileEnd completes selected inline transaction. Final shared Base64/PNG and destination admission
+            publishes once; failed or completed transaction suppresses stale parts/end until fresh multipart start. Existing legacy
+            opaque FileEnd and valued FileEnd retained when unselected. No partial image publication or host consequence.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: metadata
       section: Protocol / optional arguments
       level: defined
@@ -24680,6 +24773,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 automatic oversized natural image shrinks and invalid explicit dimensions are inert
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Known unique metadata selects natural-size inline PNG only. Name inert (not decoded or used as a path); decimal
@@ -24702,6 +24801,14 @@ specifications:
             and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
             existing Kitty fit controls.
           baseline: 70819ae722035a1f2edc8803e10be42b830a3743
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Multipart start shares single-file header grammar and size hint; same dimension options, invalid inline selector
+            or malformed selected header refused. No decoded filename or download authority.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: dimensions
       section: Protocol / width and height
       level: defined
@@ -24730,6 +24837,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 multipart publishes one immutable image cut only after FileEnd
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Native-size subset preserves inherent decoded pixel extent and cursor placement. Explicit sized requests refused
@@ -24754,6 +24867,15 @@ specifications:
             and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
             existing Kitty fit controls.
           baseline: 70819ae722035a1f2edc8803e10be42b830a3743
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Multipart completion reuses selected single-image destination resolution and Plane admission; reserved cursor
+            box and fitted pixels remain distinct. Geometry is resolved at FileEnd, not frozen at start; actual screen-bank switch
+            cancels selected transfer.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: download
       section: More on File Transfers
       level: defined
@@ -24772,6 +24894,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: 'No download authorization: explicit inline selected requests decode PNG in VT or refuse, never become a download
@@ -24783,6 +24911,15 @@ specifications:
             sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
             VT red-green, actual PNG and native held-output proofs.
           baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
+        howl_qualification_20261127_iterm2_images_03:
+          scope: Selected inline multipart cannot fall through to opaque file consequences on malformed input, cancellation, allocation
+            failure or completion. Fresh explicit non-inline multipart start restores existing caller-owned opaque lane. No actual
+            host downloads or FILE capability claim.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+            multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+            VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+            bounds, allocation and held-output proofs.
+          baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
     - id: detection
       section: Detection
       level: defined
@@ -40716,4 +40853,81 @@ reconciliation:
     - iterm2_osc1337.inline-file
     scope: Single inline PNG destination geometry; extends initial natural-size profile without broad file transfer or
       host permission decision.
+- id: iterm2-inline-multipart-transaction
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-framing-and-bounded-stream-ownership
+  operator_alignment: '2026-11-27: operator approved multipart inline admission following the selected single PNG and
+    destination geometry slices. Concrete failure and lifetime policies selected locally within that scope.'
+  accepted_interpretation:
+    effect: Explicit inline MultipartFile= starts one bounded transaction, replacing any prior selected staging. FilePart
+      appends nonempty concatenated standard Base64, including incomplete quartets; validate alphabet and padding order,
+      decode only on exact bare FileEnd through existing single PNG geometry/admission owner. Selected part payload cap
+      reserves 7-bit OSC prefix and ST inside 1MiB; total encoded bytes bounded by shared decoder input ceiling. Invalid/overflowed/cancelled
+      selected packets, allocation failure, actual bank switch, RIS, or new single-file admission discard active staging;
+      completed or failed lane suppresses stale parts/end until a fresh multipart start. Intervening ordinary text/control
+      processing remains live. Resolve placement at completion using current cursor/geometry, not frozen start coordinates.
+      Explicit non-inline multipart start restores legacy opaque caller ownership; no download authorization.
+  selects:
+    iterm2.images.multipart-transaction: effect
+  reason: Author defines MultipartFile, FilePart and bare FileEnd with whole-sequence limit; pinned implementation concatenates
+    Base64 before decode and permits other processing during multipart reception. Use one transient stream owner, explicit
+    parser capture policy, and existing PNG/Plane admission. Conservative BEL bound, malformed recovery, screen-switch/RIS
+    cancellation and stale suppression are selected local policies, not claims of author parity.
+  evidence_basis: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d,
+    multipart framing and whole-sequence limit; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6 VT100Terminal.m1815-1855,4194-4203,4235-4241;
+    VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
+    bounds, allocation and held-output proofs.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected bounded multipart inline PNG transaction
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/parser.zig:OscControl
+    - howl-vt/src/stream_state.zig:State
+    - howl-vt/src/iterm_control.zig:inlineFileHeader
+    - howl-vt/src/terminal.zig:applyItermFileTransfer
+    - howl-vt/src/terminal.zig:applyItermInlinePng
+    - howl-vt/src/png.zig:decode
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 multipart PNG concatenates every base64 split and publishes only at bare FileEnd
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 multipart admits a real PNG across the conservative one MiB wire bound
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
+      relation: protocol-family
+    - file: howl-vt/src/stream_state.zig
+      test: inline multipart capture owns the exact decoder-derived aggregate bound and frees failed transactions
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: iTerm2 multipart publishes one immutable image cut only after FileEnd
+      relation: protocol-family
+    verified_subset: Every nonempty split of valid Base64 sample including intra-quartet/padding boundaries, bytewise
+      first part, intervening text and current cursor, exact bare end and stale suppression, malformed/cancelled input
+      and reset/bank-switch rejection, real PNG across full conservative ST packet bound, actual aggregate allocation
+      bound, staging/final decode allocation failures, new start recovery, alternate visibility, legacy opaque restoration,
+      immutable held cut.
+    boundary: Selected inline PNG only. No non-PNG/file download/FILE feature detection, complete parser/allocator/cursor/geometry
+      matrix, exact author remaining-width/height behavior, full physical rendering, or arbitrary tmux integration parity.
+      The 1MiB part cap is conservative for BEL/C1. No full multipart conformance claim.
+    not_full_because: Bounded selected PNG multipart transaction is qualified, but broader formats, complete interruption/metadata/geometry
+      and integration matrices remain open.
+  applies_to:
+    clauses:
+    - iterm2_images.multipart-start
+    - iterm2_images.multipart-part
+    - iterm2_images.multipart-end
+    - iterm2_images.metadata
+    - iterm2_images.dimensions
+    - iterm2_images.download
+    - iterm2_osc1337.inline-file
+    scope: Selected inline PNG multipart transaction; extends single-image geometry without changing decoder, retained
+      image quota, or granting host filesystem permissions.
 pending_reconciliation: []
