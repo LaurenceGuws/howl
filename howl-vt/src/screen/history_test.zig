@@ -67,16 +67,32 @@ test "screen history: capacity limits with wraparound" {
     try std.testing.expectEqual(@as(u21, '3'), s.historyRowAt(1, 1));
 }
 
-test "screen history: reset does not truncate history" {
+test "screen history: RIS clears retained rows without recycling their coordinates" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCellsAndHistory(gpa, 2, 5, 10);
     defer s.deinit(gpa);
     apply(&s, Action{ .write_text = "test1" });
     s.cursor.setRowByClient(1);
     apply(&s, Action.line_feed);
-    try std.testing.expectEqual(@as(u32, 1), s.historyCount());
+    const history_count = s.historyCount();
+    const history_base = s.historyRowBase();
+    const loss_generation = s.history_loss_generation;
+    try std.testing.expectEqual(@as(u32, 1), history_count);
     s.reset();
+    try std.testing.expectEqual(@as(u32, 0), s.historyCount());
+    try std.testing.expectEqual(history_base + history_count, s.historyRowBase());
+    try std.testing.expectEqual(@as(u16, 10), s.historyCapacity());
+    try std.testing.expectEqual(loss_generation, s.history_loss_generation);
+    try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 0));
+    const cleared_base = s.historyRowBase();
+    s.reset();
+    try std.testing.expectEqual(cleared_base, s.historyRowBase());
+    apply(&s, Action{ .write_text = "new" });
+    s.cursor.setRowByClient(1);
+    apply(&s, Action.line_feed);
     try std.testing.expectEqual(@as(u32, 1), s.historyCount());
+    try std.testing.expectEqual(cleared_base, s.historyRowBase());
+    try std.testing.expectEqual(@as(u21, 'n'), s.historyRowAt(0, 0));
 }
 
 test "screen history: ED 3 clears scrollback history" {

@@ -500,18 +500,27 @@ test "reflow rebuilds history with fresh identities and eviction exposes no reti
     try std.testing.expect(viewForStableRow(terminal.observation(), retired) == null);
 }
 
-test "hard reset has its own identity while retained history provenance survives" {
+test "hard reset has its own identity and invalidates retired history provenance" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 4, 2);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("AB\r\n")).stateChanged());
     const before = terminal.observation().resetSequence();
-    const history_generation = terminal.semanticView(1).rowGeneration(0).?;
+    const historical = terminal.semanticView(1);
+    const history_generation = historical.rowGeneration(0).?;
+    const coordinate = stableRow(&historical, 0).?;
     try std.testing.expect((try terminal.feed("C\x1b[!p")).stateChanged());
     try std.testing.expectEqual(before, terminal.observation().resetSequence());
+    try std.testing.expectEqual(history_generation, terminal.semanticView(1).rowGeneration(0).?);
     terminal.hardReset();
     try std.testing.expectEqual(before + 1, terminal.observation().resetSequence());
-    try std.testing.expectEqual(history_generation, terminal.semanticView(1).rowGeneration(0).?);
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+    try std.testing.expect(viewForStableRow(terminal.observation(), coordinate) == null);
+    try std.testing.expect((try terminal.feed("new\r\n")).stateChanged());
+    const fresh = terminal.semanticView(1);
+    try std.testing.expect(fresh.rowGeneration(0).? > history_generation);
+    try std.testing.expect(stableRow(&fresh, 0).? > coordinate);
     try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
     try std.testing.expectEqual(before + 2, terminal.observation().resetSequence());
     try std.testing.expectEqual(terminal.pointerShapeResetSequence(), terminal.observation().resetSequence());
 }

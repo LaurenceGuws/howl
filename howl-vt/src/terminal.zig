@@ -7595,7 +7595,7 @@ pub const Terminal = struct {
     // -------------------------------------------------------------------------
 
     /// Applies canonical RIS and advances semantic/content identity once.
-    /// History, pixels, queued replies and retained consequences remain owned.
+    /// Cell geometry, queued replies and retained consequences remain owned.
     pub fn hardReset(self: *Terminal) void {
         self.applyHardReset();
         advanceIdentity(&self.semantic_sequence);
@@ -9174,7 +9174,9 @@ test "direct and parsed RIS advance identity once while preserving retained work
         const view = terminal.semanticView(0);
         try std.testing.expect(!view.is_alternate_screen and view.rows == 2 and view.cols == 8);
         try std.testing.expect(view.cursor_row == 0 and view.cursor_col == 0);
-        try std.testing.expect(view.history_count == retained.history_count and view.history_row_base == retained.history_row_base);
+        try std.testing.expectEqual(@as(u32, 0), view.history_count);
+        try std.testing.expectEqual(retained.history_row_base + retained.history_count, view.history_row_base);
+        // The finalized-output ledger is independent of viewport scrollback.
         try std.testing.expectEqualDeep(logical, terminal.logicalOutputRange());
         try std.testing.expectEqualDeep(Terminal.CellPixelSize{ .width = 8, .height = 16 }, terminal.cellPixelSize().?);
         try std.testing.expectEqualSlices(u8, reply, terminal.replyBytes());
@@ -9882,16 +9884,17 @@ test "blink proof follows restored pens banks history and replacement grids" {
         try expectBlinkPresence(&terminal, case.present, @intCast(i));
     }
     try std.testing.expect(!terminal.screen_state.active().blink_presence.possible);
-    // RIS clears live ink but preserves retained history, which must reopen
-    // the proof when restored. The replacement grid must also revalidate it.
-    terminal.hardReset();
-    try expectBlinkPresence(&terminal, false, 20);
-    // zig-audit: acknowledge discard
-    // reason: This proof compares the committed cell plane and animation service.
-    _ = try terminal.feed("\x1b[1+T");
-    try expectBlinkPresence(&terminal, true, 21);
+    // Retained history can reopen the proof before RIS. A replacement
+    // grid must also revalidate it.
+    try std.testing.expect((try terminal.feed("\x1b[1+T")).stateChanged());
+    try expectBlinkPresence(&terminal, true, 20);
     try terminal.resize(4, 8);
-    try expectBlinkPresence(&terminal, true, 22);
+    try expectBlinkPresence(&terminal, true, 21);
+    try std.testing.expect((try terminal.feed("\x1b[4;1H\x1b[4S")).stateChanged());
+    try std.testing.expect(terminal.semanticView(0).history_count != 0);
+    terminal.hardReset();
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+    try expectBlinkPresence(&terminal, false, 22);
     // zig-audit: acknowledge discard
     // reason: This proof compares the committed cell plane and animation service.
     _ = try terminal.feed("\x1b[2J");
@@ -13352,12 +13355,14 @@ test "Kitty graphics reset distinguishes DECSTR and complete RIS ownership" {
         try std.testing.expectEqual(content, terminal.graphics.content_generation);
         try std.testing.expectEqual(bytes, terminal.graphics.storage_bytes);
         for (terminal.graphics.loading) |loading| try std.testing.expect(loading != null);
+        try std.testing.expectEqual(@as(u32, 1), terminal.screen_state.primary.historyCount());
         if (parsed) {
             try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
         } else terminal.hardReset();
         try std.testing.expect(!terminal.semanticView(0).is_alternate_screen);
-        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
-        try std.testing.expectEqual(@as(u21, 'h'), terminal.semanticView(1).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_row_base);
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(1).cellAt(0, 0));
         try std.testing.expectEqual(@as(u16, 0), terminal.graphics.image_count);
         try std.testing.expectEqual(@as(u16, 0), terminal.graphics.placement_count);
         try std.testing.expectEqual(@as(u16, 0), terminal.graphics.frame_count);

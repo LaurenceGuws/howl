@@ -1312,8 +1312,10 @@ pub const Screen = struct {
     // Reset and borrowed observation
     // -------------------------------------------------------------------------
 
-    /// Reset visible grid state to defaults.
+    /// Reset the grid and discard saved lines without recycling row identity.
     pub fn reset(self: *Screen) void {
+        if (self.history_store) |*store| store.dropOldest(store.count());
+        self.clearHistoryBoundary();
         self.cursor.reset();
         self.wrap_pending = false;
         self.auto_wrap = true;
@@ -10028,4 +10030,27 @@ test "write scan hints follow the post-placement physical row and DEC geometry" 
         try std.testing.expectEqual(geometry, screen.lineGeometry(1));
         try std.testing.expectEqual(@as(u32, 'Z'), screen.cells.?[line_cols - 1].codepoint);
     };
+}
+
+test "RIS drops the evicted wrapped prefix and retained history before new output" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 1, 2, 1);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeText("ABCDEF");
+    try std.testing.expect(screen.history_boundary_active);
+    try std.testing.expect(screen.historyCount() != 0);
+    const old_base = screen.historyRowBase();
+    const count = screen.historyCount();
+    const old_text = try copyOpenOutputLine(std.testing.allocator, &screen, 64);
+    defer std.testing.allocator.free(old_text);
+    try std.testing.expectEqualStrings("ABCDEF", old_text);
+    screen.reset();
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqual(old_base + count, screen.historyRowBase());
+    try std.testing.expect(!screen.history_boundary_active);
+    try std.testing.expectEqual(@as(usize, 0), screen.history_boundary_stored);
+    try std.testing.expectEqual(@as(usize, 0), screen.history_boundary_total);
+    screen.writeText("X");
+    const new_text = try copyOpenOutputLine(std.testing.allocator, &screen, 64);
+    defer std.testing.allocator.free(new_text);
+    try std.testing.expectEqualStrings("X", new_text);
 }

@@ -1288,6 +1288,18 @@ specifications:
           entry_id: esc-4b7f14d66e
           source_line: 408
           wire: ESC c
+        howl_qualification_20261127_ris_history:
+          scope: Direct and parsed RIS discard both grids, retained projected scrollback and evicted wrapped-line prefix, reset
+            terminal modes and release graphics/frames/pending uploads. History store base, row/content/reset identities and image
+            IDs remain monotonic; configured history capacity and cell geometry remain. Existing finalized-output ledger, queued
+            replies and retained host consequences are independent and preserved. DECSTR, ED3 and graphics clear selection unchanged.
+            No secure deletion or full reset-property parity claim.
+          method: 'Pinned reference-consensus inspection: xterm_snapshots 5afc76e089167da6d07c49334d0bf350377f6c0a charproc.c6142-6145,14314-14329;
+            Foot cb2771788998f6a6288e2de8273c55a8214551e0 terminal.c2100-2256 and vt.c481; Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            screen.c220-291, graphics.c2626-2645; Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd src/terminal/Terminal.zig5868-5908,
+            Screen.zig441-480, PageList.zig997-1047. Five intended baseline failures; direct Screen, selection and terminal proofs,
+            including finalized output and queued work preservation.'
+          baseline: bb659564c3b950c055f69a68ba46da79b4872922
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: terminal save reset and alternate lifecycle stays coherent across resize and bank changes
@@ -1296,6 +1308,21 @@ specifications:
         - libvterm.esc.ris
         - iterm2.esc.ris
         - kitty.esc.ris
+      - file: howl-vt/src/screen/history_test.zig
+        test: 'screen history: RIS clears retained rows without recycling their coordinates'
+        relation: wire-family
+      - file: howl-vt/src/screen.zig
+        test: RIS drops the evicted wrapped prefix and retained history before new output
+        relation: wire-family
+      - file: howl-vt/src/selection.zig
+        test: hard reset has its own identity and invalidates retired history provenance
+        relation: wire-family
+      - file: howl-vt/src/terminal.zig
+        test: direct and parsed RIS advance identity once while preserving retained work
+        relation: wire-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+        relation: wire-family
     - id: hts
       section: 8.3.62
       level: defined
@@ -11695,6 +11722,18 @@ specifications:
             Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
             promotion
           baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
+        howl_qualification_20261127_ris_history:
+          scope: 'Supersedes wave12 historical reset qualification only: RIS now discards retained text scrollback and its wrapped
+            prefix as well as both banks of graphics, frames and unfinished uploads. Preserves monotonic identities, finalized-output
+            ledger and queued work. DECSTR and ED3 unchanged. Kitty documented visible-image reset is satisfied for selected cases;
+            author implementation retains some historical/virtual graphics, unlike Howl complete plane reset. No other lifecycle
+            parity inferred.'
+          method: 'Pinned reference-consensus inspection: xterm_snapshots 5afc76e089167da6d07c49334d0bf350377f6c0a charproc.c6142-6145,14314-14329;
+            Foot cb2771788998f6a6288e2de8273c55a8214551e0 terminal.c2100-2256 and vt.c481; Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            screen.c220-291, graphics.c2626-2645; Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd src/terminal/Terminal.zig5868-5908,
+            Screen.zig441-480, PageList.zig997-1047. Five intended baseline failures; direct Screen, selection and terminal proofs,
+            including finalized output and queued work preservation.'
+          baseline: bb659564c3b950c055f69a68ba46da79b4872922
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
@@ -39149,4 +39188,71 @@ reconciliation:
       are not disabled or selected for implementation by this rule; any independent discovery remains its own qualified contract.
       Full feature-reporting baseline, actual capability qualification, conditional permission and host environment lifetime
       remain separate. No current support or runtime advertisement inferred.
+- id: ris-history-retirement
+  wire: ESC c
+  status: resolved-by-reference-consensus
+  decision_rule: reference-consensus
+  operator_alignment: '2026-11-27: assent to revisiting inherited reset policy using expanded reference index; interpreted
+    as agreement with the proposed RIS correction.'
+  accepted_interpretation:
+    effect: RIS clears both grids, saved-line scrollback including any evicted wrapped prefix, and all retained graphics/unfinished
+      transfers while restoring terminal state. Preserve configuration, monotonic identities and independent finalized-output/queued
+      work ownership.
+  selects:
+    ris.history-retirement: effect
+  reason: Original ECMA-48 RIS resets to initial state. All four inspected modern implementations discard text scrollback.
+    Ghostty also corroborates complete graphics reset; Kitty preserves some historical and virtual references despite
+    clearing text scrollback. Choose coherent reset lifetime rather than copy that implementation artifact. ED3 remains
+    the approved saved-lines-only parameter extension; DECSTR remains non-destructive to retained content.
+  reference_evidence:
+  - implementation: xterm_snapshots
+    revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
+    source: charproc.c:6142-6145,14314-14329
+    observation: RIS invokes VTReset(True,True); savedLines cleared.
+  - implementation: foot
+    revision: cb2771788998f6a6288e2de8273c55a8214551e0
+    source: vt.c:481; terminal.c:2100-2256
+    observation: Hard reset clears visible rows and frees historical rows.
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: kitty/screen.c:220-291; kitty/graphics.c:2626-2645
+    observation: Hard reset clears text history, graphics filters preserve virtual and selected history references.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/Terminal.zig:5868-5908; Screen.zig:441-480; PageList.zig:997-1047
+    observation: Full reset resets PageList (discarding scrollback), clears Kitty image storage and preserves dirty identity.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: RIS history and graphics retirement, direct/parsed ownership, monotonic identity and wrapped-prefix removal
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/screen.zig:reset
+    - howl-vt/src/terminal.zig:applyHardReset
+    - howl-vt/src/graphics.zig:reset
+    tests:
+    - file: howl-vt/src/screen/history_test.zig
+      test: 'screen history: RIS clears retained rows without recycling their coordinates'
+    - file: howl-vt/src/screen.zig
+      test: RIS drops the evicted wrapped prefix and retained history before new output
+    - file: howl-vt/src/selection.zig
+      test: hard reset has its own identity and invalidates retired history provenance
+    - file: howl-vt/src/terminal.zig
+      test: direct and parsed RIS advance identity once while preserving retained work
+    - file: howl-vt/src/terminal.zig
+      test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+    verified_subset: Direct and parsed RIS discard both grids, retained projected scrollback and evicted wrapped-line
+      prefix, reset terminal modes and release graphics/frames/pending uploads. History store base, row/content/reset
+      identities and image IDs remain monotonic; configured history capacity and cell geometry remain. Existing finalized-output
+      ledger, queued replies and retained host consequences are independent and preserved. DECSTR, ED3 and graphics clear
+      selection unchanged. No secure deletion or full reset-property parity claim.
+    not_full_because: Full terminal reset state matrix, broader reference divergences, physical presentation and external
+      consumer behavior not exhaustively qualified.
+    boundary: Canonical VT; independent finalized-output records and consumer-owned copies not erased.
+  applies_to:
+    clauses:
+    - ecma48.ris
+    - kitty_graphics.terminal-interaction
+    scope: RIS history and graphics lifetime only; do not redefine ED3 or DECSTR or other reset behavior.
 pending_reconciliation: []

@@ -604,7 +604,7 @@ int main(void) {
     CHECK(hvt_observe(value,0,&before)==HVT_OK && before.alternate_screen);
     CHECK(hvt_reset(value)==HVT_OK);
     CHECK(hvt_observe(value,0,&after)==HVT_OK && !after.alternate_screen && after.terminal_revision==before.terminal_revision+1 && after.content_revision==before.content_revision+1);
-    CHECK(after.history_count==state.history_count && after.history_row_base==state.history_row_base && after.cell_width==10 && after.cell_height==20);
+    CHECK(!after.history_count && after.history_row_base==state.history_row_base+state.history_count && after.cell_width==10 && after.cell_height==20);
     CHECK(hvt_request_head(value,&request)==HVT_OK && request.occurrence_id==reset_id);
     CHECK(hvt_copy_replies(value,bytes,sizeof bytes,&count)==HVT_OK && count==4);
     CHECK(hvt_reply_clipboard(value,reset_id,NULL,0)==HVT_OK && drain(value)==HVT_OK);
