@@ -10333,6 +10333,23 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.delete_point
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous virtual admission remains invisible with ignored placement id
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty virtual placements stay invisible and use image selectors for lifetime
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_06:
+          scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
+            the cursor. Existing admission retained and tested for omitted/zero i, distinct internal resources, invisible
+            prototypes, visible-placement delete exclusion and numbered positive virtual identity. Zero-ID placeholder resolution
+            after dense compaction and all other prototype geometry remain unqualified.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            Unicode placeholders and relative placements lines715-905, deletion lines907-952 and terminal interaction lines1320-1337;
+            graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
+            red-green plane and held-output proof; no blanket FULL promotion
+          baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
     - id: relative
       section: Relative placements
       level: defined
@@ -10353,6 +10370,21 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty retransmission retires placement groups only after complete validated replacement
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty parent retirement reclaims only orphan descendants and exact uppercase matches
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty screen retirement removes parent groups without skipping later roots
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty whole-image retirement resolves its owner again after descendant compaction
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: native image output resolves physical P Q ancestry without mutating held cuts
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty physical parent retires a wide child fanout with one bounded graph closure
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Replacement seeds all old placement roots in one existing bounded ancestry closure (16 rounds), compacts
@@ -10364,6 +10396,19 @@ specifications:
             lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
             Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
           baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
+        howl_qualification_20261127_kitty_graphics_06:
+          scope: Parent retirement now shares one bounded 16-round closure across explicit selectors, image replacement/eviction,
+            frame-image deletion and screen retirement. Stable placement selection precedes dense compaction and parent-slot
+            repair. Orphaned descendant image/frame data reclaimed only when no placement remains, while independently referenced
+            descendants survive. Direct lowercase child-only deletion retains data; selected roots without a doomed parent
+            retain data on lowercase removal. Whole-image owner is protected until re-resolved by stable id. Native immutable
+            held cut retains pixels and commands after canonical child removal. Pinned author performs lazy orphan cleanup
+            in grman_update_layers; local immediate semantic retirement follows documented lifetime without renderer dependency.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            Unicode placeholders and relative placements lines715-905, deletion lines907-952 and terminal interaction lines1320-1337;
+            graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
+            red-green plane and held-output proof; no blanket FULL promotion
+          baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
     - id: delete
       section: Deleting images
       level: defined
@@ -10399,6 +10444,23 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.delete_frame
+      - file: howl-vt/src/graphics.zig
+        test: Kitty parent retirement reclaims only orphan descendants and exact uppercase matches
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty whole-image retirement resolves its owner again after descendant compaction
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_06:
+          scope: Uppercase directly matched images and orphan descendants share a post-closure reclaim set; stable image-slot
+            swap tracking prevents deletion of unrelated unplaced images. Lowercase direct data retention remains except
+            orphan descendants whose parent is removed. Explicit whole-image deletion after descendant compaction resolves
+            the stable owner again. Existing shared screen-bank namespace and unrelated-command interruption remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            Unicode placeholders and relative placements lines715-905, deletion lines907-952 and terminal interaction lines1320-1337;
+            graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
+            red-green plane and held-output proof; no blanket FULL promotion
+          baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
     - id: replies
       section: Suppressing responses from the terminal
       level: defined
@@ -10937,6 +10999,24 @@ specifications:
       rule: Selectors distinguish visible placements, image id/latest number and optional placement, cursor, animation frame,
         cell, cell+z, inclusive id range, column,row,z. Cells one-based; uppercase permits reclamation if unreferenced; any
         delete aborts unfinished upload.
+      test_locations:
+      - file: howl-vt/src/graphics.zig
+        test: Kitty parent retirement reclaims only orphan descendants and exact uppercase matches
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty whole-image retirement resolves its owner again after descendant compaction
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_06:
+          scope: Geometric matches resolved against one unchanged placement topology before retirement; selected roots,
+            dependent descendants and unplaced identity/range data distinguished. Selected lowercase and uppercase point
+            matches, final F whole-image deletion, and exact surviving placement identities qualified. No blanket selector
+            equivalence.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            Unicode placeholders and relative placements lines715-905, deletion lines907-952 and terminal interaction lines1320-1337;
+            graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
+            red-green plane and held-output proof; no blanket FULL promotion
+          baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
     - id: file-read-privacy
       section: docs/graphics-protocol.rst:388-443
       level: defined
@@ -10959,6 +11039,25 @@ specifications:
       wire: RIS / ED 2 / DECSET 1049 / scrolling
       rule: Reset clears visible images; 1049 entry clears alternate images. ED2 should clear images; other text erases must
         not. Scroll images with text; margin index scroll only images wholly inside region, clipping boundary.
+      test_locations:
+      - file: howl-vt/src/graphics.zig
+        test: Kitty screen retirement removes parent groups without skipping later roots
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: native image output resolves physical P Q ancestry without mutating held cuts
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_06:
+          scope: Six screen retirement routes (erase, bounds, history eviction, scroll, column shift, clear bank) select
+            original slots before compaction, preventing skipped later roots and repeated transforms. Cascaded child data
+            removal advances content generation once; direct root data and other-bank placements survive according to existing
+            policy. This qualifies retirement ownership, not the full Kitty ED/reset/alternate namespace contract. Pinned
+            screen.c uses distinct main_grman and alt_grman; shared bank identity model is unchanged pending separate reconciliation.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            Unicode placeholders and relative placements lines715-905, deletion lines907-952 and terminal interaction lines1320-1337;
+            graphics.c handle_put_command, filter_refs, modify_refs, resolve_parent_offset and grman_update_layers; deterministic
+            red-green plane and held-output proof; no blanket FULL promotion
+          baseline: 08355567d1c31e237527eb29b5c17cb8c1e0049e
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty

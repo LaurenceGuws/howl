@@ -192,11 +192,13 @@ test "native image output resolves physical P Q ancestry without mutating held c
     const negative = clipped.snapshot.graphics.positive[1].rgba.destination;
     try std.testing.expectEqual(-cell_width, negative.x);
     try std.testing.expectEqual(@as(i32, 5) * cell_height, negative.y);
-    release(owner, clipped);
-
-    // Parent deletion also retires all child draw commands.
+    // Parent deletion retires the child resource, not a pinned cut.
     try owner.feed("\x1b_Ga=d,d=i,i=91,p=3\x1b\\");
     try owner.flush();
+    try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).imageCount());
+    try std.testing.expectEqualDeep(negative, clipped.snapshot.graphics.positive[1].rgba.destination);
+    try std.testing.expectEqualSlices(u8, image_bytes, clipped.snapshot.graphics.images[1].pixels);
+    release(owner, clipped);
     const deleted = try owner.hold();
     defer release(owner, deleted);
     try std.testing.expectEqual(@as(usize, 0), deleted.snapshot.graphics.positive.len);

@@ -26,6 +26,7 @@ pub const max_images: usize = 256;
 // parent graph does not extend the published manifest or renderer ABI.
 /// Bounds distinct retained image placements without merging client identities.
 pub const max_placements: usize = 16 * 1024;
+const PlacementSet = std.StaticBitSet(max_placements);
 /// Physical placement ancestry is bounded independently of the image quota.
 const max_parent_depth: u8 = 16;
 /// Bounds retained animation frames across one terminal.
@@ -1242,7 +1243,7 @@ pub const Plane = struct {
         // Every fallible allocation and geometry check has completed.
         // Commit the placement retirement before reclaiming quota so
         // newly orphaned relative data can satisfy storage pressure.
-        if (protected_image_id) |id| self.retireReplacementPlacements(id);
+        if (protected_image_id) |id| self.removePlacements(id);
         self.reclaimForKittyAdmission(retained_bytes, protected_image_id);
         const admitted_prior_index = if (protected_image_id) |image_id|
             // zig-audit: acknowledge orelse_unreachable
@@ -1443,26 +1444,20 @@ pub const Plane = struct {
         else
             null;
 
-        // Uppercase deletion may reclaim only images whose matching
-        // placements this command actually removed. An unplaced retained
-        // image is not a match for a geometric or global placement selector.
-        var matched_images: [max_images]bool = @splat(false);
-        var changed = false;
-        var placement_index: usize = 0;
-        while (placement_index < self.placement_count) {
-            const placement_value = self.placements[placement_index];
+        // Resolve all matches against one unchanged placement graph. A
+        // descendant can precede its parent in dense slot order.
+        var doomed = PlacementSet.empty;
+        var reclaim: [max_images]bool = @splat(false);
+        for (self.placements[0..self.placement_count], 0..) |placement_value, placement_index| {
             if (placement_value.virtual and normalized != 'i' and normalized != 'n' and normalized != 'r') {
-                placement_index += 1;
                 continue;
             }
             if (normalized == 'n' and placement_value.image_id != numbered_image_id) {
-                placement_index += 1;
                 continue;
             }
             const kitty_id = self.kittyIdForImage(placement_value.image_id);
             const kitty_number = self.kittyNumberForImage(placement_value.image_id);
             if (kitty_id == null or placement_value.bank != bank) {
-                placement_index += 1;
                 continue;
             }
             // Identity and range deletion also apply to invisible virtual
@@ -1472,16 +1467,13 @@ pub const Plane = struct {
                 .{ .row = 0, .col = 0 }
             else blk: {
                 const root = self.placementRoot(placement_index) orelse {
-                    placement_index += 1;
                     continue;
                 };
                 if (root.virtual_index) |virtual_index| {
                     const source = anchors orelse {
-                        placement_index += 1;
                         continue;
                     };
                     const base = source.resolve(source.context, virtual_index) orelse {
-                        placement_index += 1;
                         continue;
                     };
                     break :blk .{ .row = base.row + root.offset.row, .col = base.col + root.offset.col };
@@ -1499,43 +1491,36 @@ pub const Plane = struct {
                 cursor_row,
                 cursor_col,
             )) {
-                placement_index += 1;
                 continue;
             }
-            if (self.imageIndex(placement_value.image_id)) |image_index|
-                matched_images[image_index] = true;
-            self.removePlacement(placement_index);
-            changed = true;
-        }
-
-        var content_changed = false;
-        if (remove_data) {
-            var image_index: usize = 0;
-            while (image_index < self.image_count) {
-                const image_id = self.images[image_index].id;
-                const kitty_id = self.images[image_index].kitty_id;
-                // Kitty explicitly permits uppercase identity/range
-                // deletion of already-unreferenced data without a
-                // placement restriction. Other selectors require a match.
-                const unplaced_identity = self.images[image_index].bank == bank and
-                    command_value.placement_id == 0 and switch (normalized) {
-                    'i' => kitty_id == command_value.id,
-                    'n' => image_id == numbered_image_id,
-                    'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
-                    else => false,
-                };
-                if ((!matched_images[image_index] and !unplaced_identity) or self.hasPlacement(image_id)) {
-                    image_index += 1;
-                    continue;
-                }
-                self.removeImage(image_index);
-                // removeImage compacts storage by moving the last image
-                // into this slot. Keep match identities aligned with it.
-                matched_images[image_index] = matched_images[self.image_count];
-                content_changed = true;
-                changed = true;
+            doomed.set(placement_index);
+            if (remove_data) {
+                if (self.imageIndex(placement_value.image_id)) |image_index|
+                    reclaim[image_index] = true;
             }
         }
+        if (remove_data and command_value.placement_id == 0) {
+            // Explicit identity/range deletion may reclaim already unplaced
+            // data in this bank. Geometric selectors require a placement hit.
+            for (self.images[0..self.image_count], 0..) |image_value, index| {
+                if (image_value.bank != bank) continue;
+                const matched = switch (normalized) {
+                    'i' => image_value.kitty_id == command_value.id,
+                    'n' => image_value.id == numbered_image_id,
+                    'r' => if (image_value.kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
+                    else => false,
+                };
+                reclaim[index] = reclaim[index] or matched;
+            }
+        }
+        const removed_placements = doomed.count() != 0;
+        const prior_images = self.image_count;
+        if (removed_placements)
+            self.retirePlacementSet(&doomed, &reclaim, null)
+        else if (remove_data)
+            self.reclaimUnplaced(&reclaim);
+        const content_changed = self.image_count != prior_images;
+        const changed = removed_placements or content_changed;
         if (changed) {
             self.advance();
             if (content_changed) self.content_generation = self.next_generation;
@@ -1555,7 +1540,7 @@ pub const Plane = struct {
         if (frame_count == 0) {
             if (!remove_image) return .{ .quiet = 2 };
             self.removePlacements(image_id);
-            self.removeImage(image_index);
+            self.removeImage(self.imageIndex(image_id).?);
             self.advance();
             self.content_generation = self.next_generation;
             return .{ .changed = true, .quiet = 2 };
@@ -1684,20 +1669,19 @@ pub const Plane = struct {
         std.debug.assert(added != null);
     }
 
-    /// Removes all placements owned by one bank while retaining image data.
+    /// Removes all placements owned by one bank, including orphan child data.
     pub fn clearBank(self: *Plane, bank: Bank) bool {
+        if (self.placement_count == 0) return false;
+        var doomed = PlacementSet.empty;
         var changed = false;
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            if (self.placements[index].bank != bank) {
-                index += 1;
+        for (self.placements[0..self.placement_count], 0..) |retained, index| {
+            if (retained.bank != bank) {
                 continue;
             }
-            self.removePlacement(index);
+            doomed.set(index);
             changed = true;
         }
-        if (changed) self.advance();
-        return changed;
+        return self.commitPlacementChanges(&doomed, changed);
     }
 
     /// Retains only placement anchors representable by one resized screen bank.
@@ -1717,42 +1701,36 @@ pub const Plane = struct {
             // zig-audit: acknowledge panic
             // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             @panic("terminal graphics retained-row interval overflow");
+        if (self.placement_count == 0) return false;
+        var doomed = PlacementSet.empty;
         var changed = false;
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            const retained = self.placements[index];
+        for (self.placements[0..self.placement_count], 0..) |retained, index| {
             if (retained.bank != bank or retained.virtual) {
-                index += 1;
                 continue;
             }
             if (retained.parent_identity == 0 and (retained.row < row_start or retained.row >= row_end or
                 retained.col >= columns))
             {
-                self.removePlacement(index);
+                doomed.set(index);
                 changed = true;
-                continue;
             }
-            index += 1;
         }
-        if (changed) self.advance();
-        return changed;
+        return self.commitPlacementChanges(&doomed, changed);
     }
 
     /// Drops primary placements whose complete anchor row was evicted.
     pub fn evictBefore(self: *Plane, absolute_row: u64) bool {
+        if (absolute_row == 0 or self.placement_count == 0) return false;
+        var doomed = PlacementSet.empty;
         var changed = false;
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            const retained = self.placements[index];
+        for (self.placements[0..self.placement_count], 0..) |retained, index| {
             if (retained.bank != .primary or retained.virtual or retained.parent_identity != 0 or retained.row >= absolute_row) {
-                index += 1;
                 continue;
             }
-            self.removePlacement(index);
+            doomed.set(index);
             changed = true;
         }
-        if (changed) self.advance();
-        return changed;
+        return self.commitPlacementChanges(&doomed, changed);
     }
 
     /// Removes placements intersecting one cell rectangle.
@@ -1764,23 +1742,21 @@ pub const Plane = struct {
         left: u16,
         right: u16,
     ) bool {
+        if (self.placement_count == 0) return false;
+        var doomed = PlacementSet.empty;
         var changed = false;
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            const retained = self.placements[index];
+        for (self.placements[0..self.placement_count], 0..) |retained, index| {
             const retained_bottom = retained.row + retained.rows - 1;
             const retained_right = @as(u32, retained.col) + retained.cols - 1;
             if (retained.virtual or retained.parent_identity != 0 or retained.bank != bank or retained.row > bottom or retained_bottom < top or
                 retained.col > right or retained_right < left)
             {
-                index += 1;
                 continue;
             }
-            self.removePlacement(index);
+            doomed.set(index);
             changed = true;
         }
-        if (changed) self.advance();
-        return changed;
+        return self.commitPlacementChanges(&doomed, changed);
     }
 
     /// Moves full-screen placements while maintaining existing scrollback
@@ -1811,7 +1787,7 @@ pub const Plane = struct {
 
     /// Scrolls the accepted horizontal region with vertical-margin clipping.
     /// A placement straddling a horizontal boundary cannot move atomically;
-    /// its decoded image bytes remain independently retained.
+    /// retire it and its descendants while preserving directly owned data.
     pub fn scrollColumns(
         self: *Plane,
         bank: Bank,
@@ -1837,28 +1813,25 @@ pub const Plane = struct {
         clip_margins: bool,
     ) bool {
         if (count == 0 or top > bottom) return false;
+        if (self.placement_count == 0) return false;
+        var doomed = PlacementSet.empty;
         var changed = false;
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            const retained = &self.placements[index];
+        for (self.placements[0..self.placement_count], 0..) |*retained, index| {
             if (retained.virtual or retained.parent_identity != 0 or retained.bank != bank or retained.row < top or retained.row > bottom) {
-                index += 1;
                 continue;
             }
             const placement_right: u32 = @as(u32, retained.col) + retained.cols - 1;
             if (retained.col > right or placement_right < left) {
-                index += 1;
                 continue;
             }
             if (retained.col < left or placement_right > right) {
-                self.removePlacement(index);
+                doomed.set(index);
                 changed = true;
                 continue;
             }
             // Pinned Kitty's margin filter moves only references wholly
             // inside the original region. A crossing placement is stationary.
             if (clip_margins and retained.rows - 1 > bottom - retained.row) {
-                index += 1;
                 continue;
             }
             if (upward) {
@@ -1866,7 +1839,7 @@ pub const Plane = struct {
                 if (prior_offset < count) {
                     const clipped = @as(u64, count) - prior_offset;
                     if (clipped >= retained.rows or !trimScrolledPlacement(retained, clipped, true)) {
-                        self.removePlacement(index);
+                        doomed.set(index);
                         changed = true;
                         continue;
                     }
@@ -1876,7 +1849,7 @@ pub const Plane = struct {
                 }
             } else {
                 if (count > bottom - retained.row) {
-                    self.removePlacement(index);
+                    doomed.set(index);
                     changed = true;
                     continue;
                 }
@@ -1886,17 +1859,15 @@ pub const Plane = struct {
                     if (available_rows < retained.rows and
                         !trimScrolledPlacement(retained, retained.rows - available_rows, false))
                     {
-                        self.removePlacement(index);
+                        doomed.set(index);
                         changed = true;
                         continue;
                     }
                 }
             }
             changed = true;
-            index += 1;
         }
-        if (changed) self.advance();
-        return changed;
+        return self.commitPlacementChanges(&doomed, changed);
     }
 
     // Clip the destination pixel rectangle first, then project the same
@@ -1945,8 +1916,8 @@ pub const Plane = struct {
         return self.shiftColumnRows(bank, row, row, left, right, count, toward_left);
     }
 
-    /// Applies one bounded column shift across a row range in a single
-    /// placement scan; the decoded image allocations remain unchanged.
+    /// Applies one bounded column shift across a row range, then retires
+    /// the selected placements and orphaned descendants.
     pub fn shiftColumnRows(
         self: *Plane,
         bank: Bank,
@@ -1958,48 +1929,44 @@ pub const Plane = struct {
         toward_left: bool,
     ) bool {
         if (count == 0 or top > bottom or left > right) return false;
+        if (self.placement_count == 0) return false;
+        var doomed = PlacementSet.empty;
         var changed = false;
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            const retained = &self.placements[index];
+        for (self.placements[0..self.placement_count], 0..) |*retained, index| {
             if (retained.virtual or retained.parent_identity != 0 or retained.bank != bank or retained.row < top or retained.row > bottom or
                 retained.col > right)
             {
-                index += 1;
                 continue;
             }
             const placement_right = @as(u32, retained.col) + retained.cols - 1;
             if (placement_right < left) {
-                index += 1;
                 continue;
             }
             // A placement overlapping the boundary cannot be translated as
             // one anchor without changing pixels in unshifted columns.
             if (retained.col < left or placement_right > right) {
-                self.removePlacement(index);
+                doomed.set(index);
                 changed = true;
                 continue;
             }
             if (toward_left) {
                 if (@as(u32, retained.col) < @as(u32, left) + count) {
-                    self.removePlacement(index);
+                    doomed.set(index);
                     changed = true;
                     continue;
                 }
                 retained.col -= count;
             } else {
                 if (placement_right + count > right) {
-                    self.removePlacement(index);
+                    doomed.set(index);
                     changed = true;
                     continue;
                 }
                 retained.col += count;
             }
             changed = true;
-            index += 1;
         }
-        if (changed) self.advance();
-        return changed;
+        return self.commitPlacementChanges(&doomed, changed);
     }
 
     // -------------------------------------------------------------------------
@@ -2515,7 +2482,7 @@ pub const Plane = struct {
                 self.oldestEvictionCandidate(protected_image_id, false) orelse unreachable;
             const image_id = self.images[candidate].id;
             self.removePlacements(image_id);
-            self.removeImage(candidate);
+            self.removeImage(self.imageIndex(image_id).?);
         }
     }
 
@@ -2534,91 +2501,62 @@ pub const Plane = struct {
         return oldest;
     }
 
+    // Screen edits defer compaction until every original placement has
+    // been considered exactly once, including roots after removed children.
+    fn commitPlacementChanges(self: *Plane, doomed: *PlacementSet, changed: bool) bool {
+        if (!changed) return false;
+        const prior_images = self.image_count;
+        if (doomed.count() != 0) {
+            var reclaim: [max_images]bool = @splat(false);
+            self.retirePlacementSet(doomed, &reclaim, null);
+        }
+        self.advance();
+        if (self.image_count != prior_images) self.content_generation = self.next_generation;
+        return true;
+    }
+
+    // Whole-image replacement, deletion and eviction preserve the named
+    // resource until their caller finishes the image transaction.
     fn removePlacements(self: *Plane, image_id: u32) void {
-        var index: usize = 0;
-        while (index < self.placement_count) {
-            if (self.placements[index].image_id != image_id) {
-                index += 1;
-                continue;
-            }
-            self.removePlacement(index);
-        }
-    }
-
-    fn removePlacement(self: *Plane, index: usize) void {
-        std.debug.assert(index < self.placement_count);
-        const removed = self.placements[index];
-        if (!self.hasChildren(removed.identity)) {
-            // Ordinary leaf deletion must not allocate or run a full graph
-            // compaction. Only a moved parent's direct children need their
-            // validated dense slot updated after the swap.
-            self.placement_count -= 1;
-            if (index != self.placement_count) {
-                const moved = self.placements[self.placement_count];
-                self.placements[index] = moved;
-                if (self.hasChildren(moved.identity)) {
-                    for (self.placements[0..self.placement_count]) |*placement_value| {
-                        if (placement_value.parent_identity == moved.identity)
-                            placement_value.parent_slot = @intCast(index);
-                    }
-                }
-            }
-            if (!self.hasPlacement(removed.image_id)) {
-                for (self.images[0..self.image_count]) |*image_value| {
-                    if (image_value.id == removed.image_id) {
-                        image_value.frame_started_ms = null;
-                        break;
-                    }
-                }
-            }
-            return;
-        }
-        var doomed: [max_placements]bool = @splat(false);
-        doomed[index] = true;
-        self.retirePlacementSet(&doomed, null);
-    }
-
-    // A retransmission owns the entire old placement group, not a re-put
-    // of one placement. Seed all roots at once, then reuse the closure.
-    fn retireReplacementPlacements(self: *Plane, image_id: u32) void {
-        var doomed: [max_placements]bool = @splat(false);
-        var found = false;
+        var doomed = PlacementSet.empty;
         for (self.placements[0..self.placement_count], 0..) |placement_value, index| {
-            if (placement_value.image_id != image_id) continue;
-            doomed[index] = true;
-            found = true;
+            if (placement_value.image_id == image_id) doomed.set(index);
         }
-        if (found) self.retirePlacementSet(&doomed, image_id);
+        if (doomed.count() == 0) return;
+        var reclaim: [max_images]bool = @splat(false);
+        self.retirePlacementSet(&doomed, &reclaim, image_id);
     }
 
-    // One bounded closure over parent links, not recursive per-child
-    // scans. At most 16 ancestry rounds over the declared 16K placement
-    // bound, regardless of a group's fan-out or dense slot ordering.
-    // Only retransmission requests orphan reclamation: ordinary lowercase
-    // deletion retains its established image-data lifetime.
-    fn retirePlacementSet(self: *Plane, doomed: *[max_placements]bool, replacement_id: ?u32) void {
+    // One bounded closure over parent links. Retiring an ancestor also
+    // retires its descendants, whose unreferenced image data is reclaimed.
+    // A direct lowercase deletion of a child alone retains its data.
+    fn retirePlacementSet(
+        self: *Plane,
+        doomed: *PlacementSet,
+        reclaim: *[max_images]bool,
+        protected_image_id: ?u32,
+    ) void {
         for (0..max_parent_depth) |_| {
             var extended = false;
             for (self.placements[0..self.placement_count], 0..) |placement_value, i| {
-                if (doomed[i]) continue;
+                if (doomed.isSet(i)) continue;
                 if (placement_value.parent_slot) |parent_slot| {
                     std.debug.assert(parent_slot < self.placement_count);
-                    if (doomed[parent_slot]) {
-                        doomed[i] = true;
+                    if (doomed.isSet(parent_slot)) {
+                        doomed.set(i);
                         extended = true;
                     }
                 }
             }
             if (!extended) break;
         }
-        var orphan_candidates: [max_images]bool = @splat(false);
         var map: [max_placements]u16 = undefined;
         var retained: usize = 0;
         for (self.placements[0..self.placement_count], 0..) |placement_value, prior| {
-            if (doomed[prior]) {
-                if (replacement_id) |id| {
-                    if (placement_value.image_id != id and placement_value.parent_identity != 0) {
-                        if (self.imageIndex(placement_value.image_id)) |index| orphan_candidates[index] = true;
+            if (doomed.isSet(prior)) {
+                if (placement_value.parent_slot) |parent_slot| {
+                    if (doomed.isSet(parent_slot) and placement_value.image_id != protected_image_id) {
+                        if (self.imageIndex(placement_value.image_id)) |index| reclaim[index] = true;
                     }
                 }
                 continue;
@@ -2630,24 +2568,29 @@ pub const Plane = struct {
         self.placement_count = @intCast(retained);
         for (self.placements[0..retained]) |*placement_value| {
             if (placement_value.parent_slot) |parent_slot| {
-                // The pre-commit link graph was cycle-free and bounded;
-                // every surviving child must still own a surviving parent.
-                std.debug.assert(!doomed[parent_slot]);
+                // Every surviving child still owns a surviving parent.
+                std.debug.assert(!doomed.isSet(parent_slot));
                 placement_value.parent_slot = map[parent_slot];
             }
         }
-        var image_index: usize = 0;
-        while (image_index < self.image_count) {
-            const image_value = &self.images[image_index];
+        self.reclaimUnplaced(reclaim);
+    }
+
+    // Selection and ancestor closure are complete before any image slots
+    // move. Keep candidates aligned with each swap and stop unplaced clocks.
+    fn reclaimUnplaced(self: *Plane, reclaim: *[max_images]bool) void {
+        var index: usize = 0;
+        while (index < self.image_count) {
+            const image_value = &self.images[index];
             if (!self.hasPlacement(image_value.id)) {
-                if (orphan_candidates[image_index]) {
-                    self.removeImage(image_index);
-                    orphan_candidates[image_index] = orphan_candidates[self.image_count];
+                if (reclaim[index]) {
+                    self.removeImage(index);
+                    reclaim[index] = reclaim[self.image_count];
                     continue;
                 }
                 image_value.frame_started_ms = null;
             }
-            image_index += 1;
+            index += 1;
         }
     }
 
@@ -4585,10 +4528,11 @@ test "Kitty physical parent retires a wide child fanout with one bounded graph c
     const storage = plane.storage_bytes;
     try std.testing.expect((try plane.command("a=d,d=i,i=41,p=1", .primary, 0, 1, 1, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
-    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
-    // Lowercase deletion retains image bytes; the graph closes without
-    // deleting unrelated decoded resources or leaking live placements.
-    try std.testing.expectEqual(storage, plane.storage_bytes);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expect(plane.kittyImageIndex(41) != null and plane.kittyImageIndex(42) == null);
+    // Lowercase deletion retains the directly selected root's data, not
+    // orphaned relative descendants.
+    try std.testing.expectEqual(storage - 4, plane.storage_bytes);
 }
 
 test "Kitty physical relative placements participate in all six geometry deletion selectors" {
@@ -6036,5 +5980,152 @@ test "Kitty source crop intersects image bounds before placement geometry" {
         try std.testing.expectEqual(@as(?Failure, .invalid), (try plane.command(invalid, .primary, 0, 0, 0, 8, 16)).failure);
         try std.testing.expectEqualDeep(second, plane.placement(0).?);
         try std.testing.expectEqual(generation, plane.generation());
+    }
+}
+
+test "Kitty parent retirement reclaims only orphan descendants and exact uppercase matches" {
+    for ([_]bool{ false, true }) |uppercase| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        // The child precedes its parent in dense placement order. The
+        // independent grandchild and an unrelated unplaced image survive.
+        for ([_][]const u8{
+            "a=T,i=81,p=2,C=1,s=1,v=1;AQIDBA==",
+            "a=T,i=80,p=1,C=1,s=1,v=1;BQYHCA==",
+            "a=p,i=81,p=2,P=80,Q=1,H=2",
+            "a=f,i=81,r=2;CQoLDA==",
+            "a=t,i=82,s=1,v=1;DQ4PEA==",
+            "a=p,i=82,p=3,P=81,Q=2,H=2",
+            "a=p,i=82,p=4,C=1",
+            "a=t,i=83,s=1,v=1;ERITFA==",
+            "a=T,i=84,p=5,C=1,s=1,v=1;FRYXGA==",
+        }) |packet| {
+            const result = try plane.command(packet, .primary, 0, 1, 1, 8, 16);
+            try std.testing.expect(result.changed and result.failure == null);
+        }
+        const survivor = plane.placements[plane.placementIndex(plane.images[plane.kittyImageIndex(82).?].id, 4).?];
+        // Relocate the survivor away from the two directly selected roots.
+        try std.testing.expect((try plane.command("a=p,i=82,p=4,C=1", .primary, 0, 3, 5, 8, 16)).changed);
+        const before = plane.generation();
+        const result = try plane.command(if (uppercase) "a=d,d=P,x=2,y=2" else "a=d,d=p,x=2,y=2", .primary, 0, 0, 0, 8, 16);
+        try std.testing.expect(result.changed and result.failure == null);
+        try std.testing.expectEqual(before + 1, plane.generation());
+        try std.testing.expectEqual(plane.generation(), plane.content_generation);
+        try std.testing.expect(plane.kittyImageIndex(81) == null);
+        try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqual(survivor.identity, plane.placement(0).?.identity);
+        try std.testing.expectEqualDeep(Plane.Anchor{ .row = 3, .col = 5 }, plane.placementAnchor(0).?);
+        try std.testing.expect(plane.kittyImageIndex(82) != null and plane.kittyImageIndex(83) != null);
+        try std.testing.expectEqual(!uppercase, plane.kittyImageIndex(80) != null);
+        try std.testing.expectEqual(!uppercase, plane.kittyImageIndex(84) != null);
+        try std.testing.expectEqual(@as(usize, if (uppercase) 8 else 16), plane.storage_bytes);
+    }
+}
+
+test "Kitty screen retirement removes parent groups without skipping later roots" {
+    const Operation = enum { erase, bounds, evict, scroll, shift, clear_bank };
+    for ([_]Operation{ .erase, .bounds, .evict, .scroll, .shift, .clear_bank }) |operation| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        for ([_][]const u8{
+            "a=T,i=91,p=2,C=1,s=1,v=1;AQIDBA==",
+            "a=T,i=90,p=1,C=1,s=1,v=1;BQYHCA==",
+            "a=p,i=91,p=2,P=90,Q=1,H=2",
+            "a=T,i=92,p=3,C=1,s=1,v=1;CQoLDA==",
+        }) |packet| {
+            const result = try plane.command(packet, .primary, 0, 0, 0, 8, 16);
+            try std.testing.expect(result.changed and result.failure == null);
+        }
+        try std.testing.expect((try plane.command("a=T,i=93,p=4,C=1,s=1,v=1;DQ4PEA==", .primary, 0, 3, 3, 8, 16)).changed);
+        try std.testing.expect((try plane.command("a=T,i=94,p=5,C=1,s=1,v=1;ERITFA==", .alternate, 0, 0, 0, 8, 16)).changed);
+        const before = plane.generation();
+        const changed = switch (operation) {
+            .erase => plane.erase(.primary, 0, 0, 0, 0),
+            .bounds => plane.retainBankBounds(.primary, 1, 8, 8),
+            .evict => plane.evictBefore(1),
+            .scroll => plane.scroll(.primary, 0, 7, 1, true),
+            .shift => plane.shiftColumnRows(.primary, 0, 7, 0, 7, 1, true),
+            .clear_bank => plane.clearBank(.primary),
+        };
+        try std.testing.expect(changed);
+        try std.testing.expectEqual(before + 1, plane.generation());
+        try std.testing.expectEqual(plane.generation(), plane.content_generation);
+        try std.testing.expect(plane.kittyImageIndex(91) == null);
+        try std.testing.expectEqual(@as(u16, 4), plane.image_count);
+        try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+        try std.testing.expectEqual(@as(u16, if (operation == .clear_bank) 1 else 2), plane.placement_count);
+        const alt = plane.placements[plane.placementIndex(plane.images[plane.kittyImageIndex(94).?].id, 5).?];
+        try std.testing.expectEqual(.alternate, alt.bank);
+        if (operation != .clear_bank) {
+            const root = plane.placementIndex(plane.images[plane.kittyImageIndex(93).?].id, 4).?;
+            try std.testing.expectEqualDeep(Plane.Anchor{
+                .row = if (operation == .scroll) 2 else 3,
+                .col = if (operation == .shift) 2 else 3,
+            }, plane.placementAnchor(root).?);
+        }
+    }
+}
+
+test "Kitty anonymous virtual admission remains invisible with ignored placement id" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    for ([_][]const u8{
+        "a=T,U=1,p=7,s=1,v=1;AQIDBA==",
+        "a=T,i=0,U=1,p=8,s=1,v=1;BQYHCA==",
+    }) |packet| {
+        const result = try plane.command(packet, .primary, 0, 2, 3, 8, 16);
+        try std.testing.expect(result.changed and result.failure == null);
+        try std.testing.expect(result.response_id == null and result.response_placement == null);
+        try std.testing.expect(result.cursor_advance == null);
+    }
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expect(plane.images[0].id != plane.images[1].id);
+    for (plane.placements[0..plane.placement_count]) |placement_value| {
+        try std.testing.expect(placement_value.virtual);
+        try std.testing.expectEqual(@as(u32, 0), placement_value.kitty_id);
+        try std.testing.expectEqual(@as(u64, 0), placement_value.row);
+        try std.testing.expectEqual(@as(u16, 0), placement_value.col);
+    }
+    try std.testing.expect(!(try plane.command("a=d,d=a", .primary, 0, 0, 0, 8, 16)).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expect((try plane.command("a=T,I=77,U=1,p=9,s=1,v=1;CQoLDA==", .primary, 0, 0, 0, 8, 16)).changed);
+    const numbered = plane.images[plane.kittyImageNumberIndex(77).?];
+    try std.testing.expect(numbered.kitty_id.? != 0);
+    try std.testing.expect(plane.virtualPrototype(.primary, numbered.kitty_id.?, 9) != null);
+}
+
+test "Kitty whole-image retirement resolves its owner again after descendant compaction" {
+    for ([_]bool{ false, true }) |quota| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        try std.testing.expect((try plane.command("a=T,i=82,p=2,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expect((try plane.command("a=T,i=81,p=1,C=1,s=1,v=1;BQYHCA==", .primary, 0, 0, 0, 1, 1)).changed);
+        // Make the parent the oldest retained resource even though its dense
+        // image slot follows the child. Re-put the freshly replaced child.
+        try std.testing.expect((try plane.command("a=t,i=82,s=1,v=1;CQoLDA==", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expect((try plane.command("a=p,i=82,p=2,P=81,Q=1", .primary, 0, 0, 0, 1, 1)).changed);
+        const before = plane.generation();
+        if (quota) {
+            var packet: [96]u8 = undefined;
+            for (0..max_images - 2) |index| {
+                const command_bytes = try std.fmt.bufPrint(&packet, "a=T,i={d},C=1,s=1,v=1;DQ4PEA==", .{100 + index});
+                try std.testing.expect((try plane.command(command_bytes, .primary, 0, 0, 0, 1, 1)).changed);
+            }
+            try std.testing.expectEqual(max_images, plane.image_count);
+            try std.testing.expect((try plane.command("a=T,i=999,C=1,s=1,v=1;ERITFA==", .primary, 0, 0, 0, 1, 1)).changed);
+            try std.testing.expectEqual(max_images - 1, plane.image_count);
+            try std.testing.expectEqual(max_images - 1, plane.placement_count);
+            try std.testing.expect(plane.kittyImageIndex(999) != null and plane.kittyImageIndex(100) != null);
+        } else {
+            try std.testing.expect((try plane.command("a=d,d=F,i=81", .primary, 0, 0, 0, 1, 1)).changed);
+            try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+            try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+            try std.testing.expectEqual(before + 1, plane.generation());
+        }
+        try std.testing.expect(plane.kittyImageIndex(81) == null and plane.kittyImageIndex(82) == null);
+        try std.testing.expectEqual(@as(usize, plane.image_count) * 4, plane.storage_bytes);
+        try std.testing.expectEqual(plane.generation(), plane.content_generation);
     }
 }
