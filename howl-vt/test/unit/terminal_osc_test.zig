@@ -4270,3 +4270,158 @@ test "iTerm2 multipart allocation failures abort staging and final decode withou
         try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
     }
 }
+
+test "iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(3, 5);
+    try feed(&terminal, "\x1b[?1004h");
+    try consumeReplies(&terminal);
+    for (0..expected_file_transfer_capacity) |index| {
+        var bytes: [96]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&bytes, "\x1b]5113;opaque-{d}\x1b\\", .{index});
+        try std.testing.expect((try terminal.feed(wire)).stateChanged());
+    }
+    try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
+    const sequence = terminal.semanticSequence();
+    // Do not advertise even with focus enabled. The author F code collides
+    // with FILE, and the complete feature-reporting profile is not selected.
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;Capabilities\x1b\\")).stateChanged());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    const single = "\x1b]1337;File=inline=1:" ++ sample ++ "\x07";
+    try std.testing.expect((try terminal.feed(single)).mutations.images);
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;MultipartFile=inline=1\x07\x1b]1337;FilePart=" ++ sample ++ "\x1b\\")).stateChanged());
+    const prior = terminal.semanticSequence();
+    const generation = terminal.images(0).generation;
+    for ([_][]const u8{
+        "\x1b]1337;Capabilities\x07",
+        "\x1b]1337;Capabilities\x1b\\",
+        "\x9d1337;Capabilities\x9c",
+        "\x1b]1337;Capabilities=F\x1b\\",
+    }) |query| {
+        for (0..query.len + 1) |split| {
+            try std.testing.expect(!(try terminal.feed(query[0..split])).stateChanged());
+            try std.testing.expect(!(try terminal.feed(query[split..])).stateChanged());
+            try std.testing.expectEqual(prior, terminal.semanticSequence());
+            try std.testing.expectEqual(generation, terminal.images(0).generation);
+            try std.testing.expectEqualStrings("", terminal.replyBytes());
+            try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
+        }
+    }
+    try std.testing.expect((try terminal.feed("\x1b]1337;FileEnd\x1b\\")).mutations.images);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;Capabilities\x07")).stateChanged());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
+    for (0..expected_file_transfer_capacity) |index| {
+        const packet = terminal.consequenceHead().?.file_transfer;
+        var text: [32]u8 = undefined;
+        try std.testing.expectEqualStrings(try std.fmt.bufPrint(&text, "opaque-{d}", .{index}), packet.payload);
+        try std.testing.expectEqual(Terminal.FileTransferProtocol.kitty_5113, packet.protocol);
+        try std.testing.expectEqual(@as(u64, index + 1), packet.generation);
+        try terminal.consumeConsequence(packet.generation);
+    }
+    try std.testing.expect(terminal.consequenceHead() == null);
+}
+
+test "iTerm2 multipart final validation and replacement leave no partial image" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const start = "\x1b]1337;MultipartFile=inline=1\x07";
+    const part = "\x1b]1337;FilePart=";
+    const end = "\x1b]1337;FileEnd\x1b\\";
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(3, 5);
+    try feed(&terminal, "\x1b]1337;File=inline=1:" ++ sample ++ "\x07");
+    const before = terminal.images(0);
+    const original = before.placement(0).?;
+    const original_id = before.image(0).?.id;
+    const cursor_row = terminal.semanticView(0).cursor_row;
+    const cursor_col = terminal.semanticView(0).cursor_col;
+    for ([_][]const u8{
+        "", // no parts
+        "Q", // incomplete quartet
+        "QR==", // nonzero unused Base64 bits
+        "QQ==", // valid Base64, not PNG
+        sample[0 .. sample.len - 8], // truncated PNG with complete quartets
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYIA=", // wrong IEND CRC
+    }) |encoded| {
+        try std.testing.expect(!(try terminal.feed(start)).stateChanged());
+        if (encoded.len != 0) {
+            var bytes: [192]u8 = undefined;
+            const wire = try std.fmt.bufPrint(&bytes, "{s}{s}\x07", .{ part, encoded });
+            try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        }
+        try std.testing.expect(!(try terminal.feed(end)).stateChanged());
+        try std.testing.expect(!(try terminal.feed(part ++ sample ++ "\x07" ++ end)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(before.generation, after.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+        try std.testing.expectEqual(original_id, after.image(0).?.id);
+        try std.testing.expectEqualDeep(original, after.placement(0).?);
+        try std.testing.expectEqual(cursor_row, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(cursor_col, terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+    // A new start replaces the old bytes, rather than appending to them.
+    try std.testing.expect(!(try terminal.feed(start ++ part ++ "AAAA\x07" ++
+        "\x1b]1337;MultipartFile=inline=1;width=50%;height=5px\x07" ++
+        part ++ sample ++ "\x07")).stateChanged());
+    try terminal.resize(4, 12);
+    // Resolve the percentage against the new geometry at completion.
+    try std.testing.expect((try terminal.feed(end)).mutations.images);
+    const after = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), after.imageCount());
+    const fitted = after.placement(1).?;
+    try std.testing.expectEqual(@as(u32, 10), fitted.pixel_width);
+    try std.testing.expectEqual(@as(u32, 5), fitted.pixel_height);
+    try std.testing.expectEqualDeep(original, after.placement(0).?);
+    // A completed single image also supersedes any staged multipart.
+    try std.testing.expect(!(try terminal.feed(start ++ part ++ sample ++ "\x07")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b]1337;File=inline=1:" ++ sample ++ "\x07")).mutations.images);
+    try std.testing.expect(!(try terminal.feed(end)).stateChanged());
+    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "iTerm2 single and multipart admission respect full canonical image quota and recover after RIS" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const single = "\x1b]1337;File=inline=1:" ++ sample ++ "\x07";
+    const multipart = "\x1b]1337;MultipartFile=inline=1\x07\x1b]1337;FilePart=" ++ sample ++ "\x07\x1b]1337;FileEnd\x07";
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(3, 5);
+    for (0..Terminal.maximum_images) |_| {
+        try feed(&terminal, "\x1b[H");
+        try std.testing.expect((try terminal.feed(single)).mutations.images);
+    }
+    try feed(&terminal, "\x1b[H");
+    const before = terminal.images(0);
+    try std.testing.expectEqual(Terminal.maximum_images, before.imageCount());
+    try std.testing.expectEqual(Terminal.maximum_images, before.placementCount());
+    const first = before.placement(0).?;
+    const last = before.placement(Terminal.maximum_images - 1).?;
+    for ([_][]const u8{ single, multipart }) |packet| {
+        try std.testing.expect(!(try terminal.feed(packet)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(before.generation, after.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(Terminal.maximum_images, after.imageCount());
+        try std.testing.expectEqual(Terminal.maximum_images, after.placementCount());
+        try std.testing.expectEqualDeep(first, after.placement(0).?);
+        try std.testing.expectEqualDeep(last, after.placement(Terminal.maximum_images - 1).?);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+    terminal.hardReset();
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expect((try terminal.feed(multipart)).mutations.images);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).image(0).?.id > last.image_id);
+}

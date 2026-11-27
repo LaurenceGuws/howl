@@ -5135,6 +5135,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 multipart publishes one immutable image cut only after FileEnd
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart final validation and replacement leave no partial image
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_images.single
@@ -5181,6 +5190,12 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-single-natural-inline-png-profile
+          verified_subset: Closing selected PNG profile now includes single and multipart admission, sized fit/stretch, final
+            validation, capacity refusal and opaque FIFO independence.
+          residual: Native nonimage rendering, full image formats, host downloads and physical integration remain outside qualified
+            scope. Non-Kitty orphan retention remains an explicit resource-lifetime residual.
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -24566,6 +24581,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 sized inline output preserves source pixels and top-left fit across held publication
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Selected single OSC1337 File=inline=1 PNG with absent/auto dimensions enters canonical graphics Plane at the
@@ -24588,6 +24609,15 @@ specifications:
             and term/src/terminalstate/iterm.rs47-101. Deterministic VT red-green, decoded geometry preflight, native output proof,
             existing Kitty fit controls.
           baseline: 70819ae722035a1f2edc8803e10be42b830a3743
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-single-natural-inline-png-profile
+          verified_subset: Selected single inline PNG over standard Base64, BEL/ST split framing, bounded capture, actual PNG
+            decode, explicit/auto dimensions, failure rollback and held output have executable proofs. New full canonical count
+            and independent opaque FIFO proofs.
+          residual: Non-PNG formats, exact filename/default metadata semantics, full numeric/framing/allocation matrix, original
+            oversized explicit geometry and physical presentation remain open. Source inspection confirms erased non-Kitty bytes
+            can retain quota without any remaining placement; full count refusal and RIS recovery proven, repeated erase/refill
+            lifetime not corrected.
     - id: multipart-start
       section: Protocol
       level: defined
@@ -24611,6 +24641,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart final validation and replacement leave no partial image
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Existing bounded opaque MultipartFile packet retention only; no inline multipart transaction or decoded image
@@ -24630,6 +24663,12 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-inline-multipart-transaction
+          verified_subset: Selected inline MultipartFile starts bounded transient accumulation; new start replaces previous bytes
+            and metadata; ordinary text/control processing continues. Final-validation test also verifies replacement before resize/completion.
+          residual: Legacy non-inline start is only an opaque caller consequence, not host download. All malformed start, metadata,
+            interruption, bank and resize combinations not exhausted.
     - id: multipart-part
       section: Protocol
       level: defined
@@ -24672,6 +24711,9 @@ specifications:
       - file: howl-vt/src/stream_state.zig
         test: inline multipart capture owns the exact decoder-derived aggregate bound and frees failed transactions
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart final validation and replacement leave no partial image
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Existing opaque FilePart retains old 2KiB metadata packet limit; selected single inline widening does not enlarge
@@ -24694,6 +24736,14 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-inline-multipart-transaction
+          verified_subset: Base64 fragments concatenate across quartet boundaries, validate alphabet/padding order, own bounded
+            lazy capacity; actual exact conservative ST packet limit, plus-one overflow, aggregate capacity and allocation-failure
+            release proven. New final validation covers incomplete quartet, noncanonical pad bits and invalid file bytes.
+          residual: Conservative whole-ST packet bound is one byte below possible BEL maximum and conservative for C1. Unselected
+            opaque packets retain 2KiB limit. Full chunk framing, every hostile allocation/overflow combination and tmux integration
+            not proved.
     - id: multipart-end
       section: Protocol
       level: defined
@@ -24727,6 +24777,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 multipart publishes one immutable image cut only after FileEnd
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart final validation and replacement leave no partial image
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Author bare FileEnd now reaches existing ordered file-transfer consequence lane; legacy valued FileEnd retained.
@@ -24745,6 +24801,13 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-inline-multipart-transaction
+          verified_subset: Only exact bare FileEnd completes selected inline transfer. Shared decoder/geometry/Plane publish once;
+            stale parts/end suppressed, cancellation and failure cleanup qualified. New final validation rejects missing data,
+            incomplete or invalid Base64, non-PNG, truncated PNG and bad CRC; replacement and single-file supersession proven.
+          residual: No general multipart file or other-format completion implementation; complete malformed/framing/host geometry
+            and allocation matrix remains open.
     - id: metadata
       section: Protocol / optional arguments
       level: defined
@@ -24779,6 +24842,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 failed inline multipart suppresses stale parts until a fresh start
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart final validation and replacement leave no partial image
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Known unique metadata selects natural-size inline PNG only. Name inert (not decoded or used as a path); decimal
@@ -24809,6 +24875,13 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-inline-destination-geometry
+          verified_subset: Known unique options, positive decimal cell/px/percent/auto dimensions, default fit or explicit stretch,
+            inert name/progress size, selected inline validation and refusal without download fallback. New replacement test preserves
+            selected options until completion.
+          residual: Filename Base64/default Unnamed file and host download metadata semantics unimplemented; no filename use or
+            filesystem authority. Full author metadata compatibility not claimed.
     - id: dimensions
       section: Protocol / width and height
       level: defined
@@ -24843,6 +24916,9 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: iTerm2 multipart publishes one immutable image cut only after FileEnd
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 multipart final validation and replacement leave no partial image
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Native-size subset preserves inherent decoded pixel extent and cursor placement. Explicit sized requests refused
@@ -24876,6 +24952,13 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-inline-destination-geometry
+          verified_subset: Selected cell/px/percent/auto resolution, full-session pixel extent, percent clamp/floor, one-auto
+            aspect, automatic shrink, reserved cursor box and top-left fit or explicit stretch; exact source/direct output and
+            decoded preflight proven. Multipart resolves dimensions at final geometry after resize.
+          residual: Explicit oversized boxes reject rather than clone author remaining-width/255-row scaling; existing margin,
+            scroll and resize/refit/viewport policy and physical presentation remain incomplete.
     - id: download
       section: More on File Transfers
       level: defined
@@ -24900,6 +24983,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 multipart allocation failures abort staging and final decode without image mutation
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: 'No download authorization: explicit inline selected requests decode PNG in VT or refuse, never become a download
@@ -24920,6 +25006,14 @@ specifications:
             VT100InlineImageHelper.m164-172,205-238,305-315 (concatenate then decode). Deterministic VT red-green, real packet/aggregate
             bounds, allocation and held-output proofs.
           baseline: cc324d59994ccb6dafe0e916fbe6932b3a83b371
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm2-single-natural-inline-png-profile
+          verified_subset: Inline PNG and opaque non-inline/file-transfer consequence lanes are distinct. Both single and multipart
+            inline publication work with a full opaque FIFO, without consuming or adding file consequences; legacy lane remains
+            caller-neutral.
+          residual: Actual filesystem download authorization and execution, non-PNG including lossy/video/PDF/PICT/native document
+            rendering, filename handling and host transfer lifetime are not selected. Existing app consumes unhandled file consequences
+            without download effects. Deferred host access is not a FULL privacy or transfer claim.
     - id: detection
       section: Detection
       level: defined
@@ -24930,6 +25024,19 @@ specifications:
       - kind: related
         clause: iterm2_feature_reporting.file
         role: detection
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm-feature-registry-f-collision
+          verified_subset: No OSC1337 Capabilities reply is implemented. New exact query silence proof covers BEL/ST/C1, every
+            split, with focus enabled and before/during/after inline publication. Source inspection finds no authored TERM_FEATURES
+            publication. Existing conservative F conjunction remains the selected rule.
+          residual: MISSING reporting implementation, not a defective negative reply. FILE requires broader file transfer and
+            lossy media; F collides with FOCUS_REPORTING. Do not advertise F merely because PNG or focus works. Full feature-reporting
+            baseline, environment ownership, registry selection and qualified advertised capabilities need a separate campaign.
   iterm2_badges:
     title: iTerm2 Badges
     author: iTerm2 project
@@ -25007,11 +25114,21 @@ specifications:
       details:
         environment: TERM_FEATURES
         reply: OSC 1337 ; Capabilities=FeatureString ST
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+        relation: protocol-family
       evidence:
         pinned_source_observation:
           revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
           location: sources/VT100/VT100Output.m:1545-1548
           meaning: Produces reply terminated by BEL.
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm-feature-registry-f-collision
+          verified_subset: OSC1337 Capabilities is currently ignored, including valid BEL/ST/C1 query and a valued response-shaped
+            input, at every selected split.
+          residual: MISSING query/FeatureString reporting and authored TERM_FEATURES publication. No complete feature-reporting
+            baseline or positive discovery claim.
     - id: encoding
       section: Types; Publication / Encoding
       level: defined
@@ -25454,6 +25571,17 @@ specifications:
           code: F
           type: Boolean
           default: false
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_iterm2_images_04:
+          assessment_ref: iterm-feature-registry-f-collision
+          verified_subset: Current PNG subset and focus availability do not trigger a positive FILE/F advertisement; exact query
+            silence demonstrated. Existing conservative F conjunction decision remains intact.
+          residual: FILE advertised contract includes actual file transfer and lossy formats/media, not merely PNG. Keep F absent
+            until both conflicting features and the reporting profile qualify.
     - id: progress
       section: Features / PROGRESS
       level: defined
@@ -40158,6 +40286,28 @@ reconciliation:
       - iterm2_feature_reporting.file
       - iterm2_feature_reporting.focus
       scope: OSC 1337 ; Capabilities=FeatureString ST (feature F)
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: iTerm2 feature publication required for FILE detection under conservative F collision rule
+    intent: target
+    status: MISSING
+    owners:
+    - howl-vt/src/iterm_control.zig:parse1337
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+      relation: protocol-family
+    verified_subset: 'Negative boundary only: valid Capabilities query remains silent before/during/after selected PNG admission
+      even with focus enabled. Source inspection finds no authored TERM_FEATURES publication.'
+    boundary: No feature report serializer or environment publication is implemented. Existing conjunctive F selection is
+      unchanged and must govern future reporting; no positive FILE claim or host permission.
+    not_full_because: The report and environment surfaces are absent. FILE also requires broader file-transfer and lossy
+      media capability; full registry and base profile qualification remain separate.
+    closing_evidence_basis: Closing review at b7d49d15b2e81e5c1f6de02b23ffeede3970a1ff against preserved iTerm2 Inline Images
+      Protocol SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d and Terminal Feature Reporting SHA256
+      cdc18081654a97cfa7c34111feb7aaf93031c3b09a2d1a83c179a0c68c8cfae9; pinned author 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      VT100Output.m1545-1579; source owner inspection and existing wave01-03 proofs plus closing wire tests. No production
+      change.
   applies_to:
     clauses:
     - iterm2_feature_reporting.encoding
@@ -40766,15 +40916,26 @@ reconciliation:
     - file: howl-vt/test/output_owner.zig
       test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
       relation: protocol-family
-    verified_subset: Every split of selected BEL/ST PNG, exact native pixels and cursor, real PNG beyond old metadata
-      cap, overflow and allocation-failure recovery, caller-neutral download separation and bare FileEnd, direct held
-      output and cross-protocol ownership isolation.
-    boundary: No full source family conformance. This assessment covers the original single natural PNG subset; explicit dimensions
-      and oversized automatic fit are separately assessed by iterm2-inline-destination-geometry. Multipart state, non-PNG
-      formats, actual host downloads, FILE detection, full allocation/geometry/framing matrix and physical presentation remain
-      open.
-    not_full_because: Original natural-size subset is bounded and separately qualified; broader source-defined image/file
-      behavior and complete geometry matrix remain open.
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
+      relation: protocol-family
+    verified_subset: Original natural-size split PNG, actual large capture and decode-allocation rollback, caller-neutral
+      download separation, held output and cross-protocol ownership. Closing proofs show full canonical 256-image refusal
+      with exact resource/cursor preservation and RIS recovery, and inline publication independent of full opaque file FIFO.
+    boundary: Original single PNG subset; explicit dimensions/automatic shrink separately assessed by iterm2-inline-destination-geometry,
+      multipart by iterm2-inline-multipart-transaction. Non-PNG, actual host downloads, FILE detection, full allocation/geometry/framing
+      matrix and physical presentation remain open. Source-confirmed unreachable non-Kitty retention after final placement
+      retirement is a residual.
+    not_full_because: Selected single PNG admission is bounded and qualified, not all source formats, host-file behavior
+      or complete geometry and image lifetime.
+    closing_evidence_basis: Closing review at b7d49d15b2e81e5c1f6de02b23ffeede3970a1ff against preserved iTerm2 Inline Images
+      Protocol SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d and Terminal Feature Reporting SHA256
+      cdc18081654a97cfa7c34111feb7aaf93031c3b09a2d1a83c179a0c68c8cfae9; pinned author 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      VT100Output.m1545-1579; source owner inspection and existing wave01-03 proofs plus closing wire tests. No production
+      change.
   applies_to:
     clauses:
     - iterm2_images.single
@@ -40837,14 +40998,22 @@ reconciliation:
     - file: howl-vt/src/graphics.zig
       test: Kitty two-axis placement fits centered pixels and retains requested cursor extent
       relation: protocol-family
-    verified_subset: Nine explicit/auto sizing cases under BEL/ST, natural shrink and malformed/oversized refusal, decoded-plane
-      preflight/unchanged ownership, exact fitted and stretched draw geometry and immutable held source bytes, prior Kitty
-      centered fit unchanged.
-    boundary: Selected canonical single PNG admission-time geometry. Explicit out-of-screen boxes refused; no full author
-      margin/remaining-width/255-row behavior, resize/refit, all clipping/scroll/geometry extremes, multipart, non-PNG,
-      host download or physical presentation qualification.
-    not_full_because: Selected dimension grammar and geometry subcases proven; broader image family, cursor/margin/resize
-      and full numeric/wire/allocator matrix remain open.
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 multipart final validation and replacement leave no partial image
+      relation: protocol-family
+    verified_subset: Selected dimension unit/aspect matrix, native oversized shrink, invalid explicit rejection, checked
+      decoded geometry before ownership, fitted/stretched direct output and existing Kitty centered fit. Closing multipart
+      replacement resolves percentage geometry at FileEnd after resize.
+    boundary: Selected PNG admission-time geometry; multipart uses the same owner under iterm2-inline-multipart-transaction.
+      Explicit out-of-screen boxes refused. Full author margin/remaining-width/255-row behavior, resize/refit of retained
+      images, clipping/scroll/extreme geometry and physical presentation remain open.
+    not_full_because: Selected sizing subcases qualified, not complete source geometry, all wire/numeric/allocator combinations
+      or retained layout on resize.
+    closing_evidence_basis: Closing review at b7d49d15b2e81e5c1f6de02b23ffeede3970a1ff against preserved iTerm2 Inline Images
+      Protocol SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d and Terminal Feature Reporting SHA256
+      cdc18081654a97cfa7c34111feb7aaf93031c3b09a2d1a83c179a0c68c8cfae9; pinned author 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      VT100Output.m1545-1579; source owner inspection and existing wave01-03 proofs plus closing wire tests. No production
+      change.
   applies_to:
     clauses:
     - iterm2_images.single
@@ -40909,16 +41078,30 @@ reconciliation:
     - file: howl-vt/test/output_owner.zig
       test: iTerm2 multipart publishes one immutable image cut only after FileEnd
       relation: protocol-family
-    verified_subset: Every nonempty split of valid Base64 sample including intra-quartet/padding boundaries, bytewise
-      first part, intervening text and current cursor, exact bare end and stale suppression, malformed/cancelled input
-      and reset/bank-switch rejection, real PNG across full conservative ST packet bound, actual aggregate allocation
-      bound, staging/final decode allocation failures, new start recovery, alternate visibility, legacy opaque restoration,
-      immutable held cut.
-    boundary: Selected inline PNG only. No non-PNG/file download/FILE feature detection, complete parser/allocator/cursor/geometry
-      matrix, exact author remaining-width/height behavior, full physical rendering, or arbitrary tmux integration parity.
-      The 1MiB part cap is conservative for BEL/C1. No full multipart conformance claim.
-    not_full_because: Bounded selected PNG multipart transaction is qualified, but broader formats, complete interruption/metadata/geometry
-      and integration matrices remain open.
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 inline images do not acquire opaque file FIFO capacity or advertise FILE
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 multipart final validation and replacement leave no partial image
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
+      relation: protocol-family
+    verified_subset: Previous bounded multipart split, exact packet and aggregate allocation, cancel/reset/bank-switch,
+      staging/final allocation failure and held-cut proofs. Closing final validation rejects empty/incomplete/noncanonical
+      Base64, non-PNG/truncated/CRC-invalid data; new start replaces old staging, current geometry used after resize, completed
+      single supersedes multipart. Full opaque FIFO does not impede admission; full canonical image quota rejects without
+      retained mutation.
+    boundary: Selected inline PNG transaction only. Conservative ST packet bound; broader non-PNG/file download/FILE detection,
+      all parser/allocator/cursor/geometry cases, exact author remaining-width/height, physical presentation and arbitrary
+      tmux integration remain open. Shared non-Kitty orphan retention is not corrected.
+    not_full_because: Bounded selected PNG multipart transaction demonstrated, not broader file formats, complete interruption/metadata/geometry
+      matrix or integration parity.
+    closing_evidence_basis: Closing review at b7d49d15b2e81e5c1f6de02b23ffeede3970a1ff against preserved iTerm2 Inline Images
+      Protocol SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d and Terminal Feature Reporting SHA256
+      cdc18081654a97cfa7c34111feb7aaf93031c3b09a2d1a83c179a0c68c8cfae9; pinned author 1d6e758a390f7141f6e21b06e2663a53a02409c6
+      VT100Output.m1545-1579; source owner inspection and existing wave01-03 proofs plus closing wire tests. No production
+      change.
   applies_to:
     clauses:
     - iterm2_images.multipart-start
