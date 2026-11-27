@@ -2468,8 +2468,7 @@ pub const Plane = struct {
     // -------------------------------------------------------------------------
 
     /// Reclaims the oldest retained images needed for one successful Kitty
-    /// image admission. Images without placements are always preferred, as
-    /// required by the Kitty graphics storage-quota contract. A same-id
+    /// image admission. Images without placements are preferred. A same-id
     /// replacement protects its existing internal image until the replacement
     /// bytes are ready to take ownership.
     fn reclaimForKittyAdmission(
@@ -2556,6 +2555,7 @@ pub const Plane = struct {
         protected_image_id: ?u32,
     ) void {
         std.debug.assert(count != 0 and count == doomed.count());
+        var last_marked: u32 = 0;
         // A lone leaf does not need ancestry closure or a dense remap.
         // Swapping the last slot preserves stable identities; repair its
         // direct children before exposing the new topology.
@@ -2572,6 +2572,7 @@ pub const Plane = struct {
                             value.parent_slot = @intCast(index);
                     }
                 }
+                self.markRetiredImage(removed.image_id, false, reclaim, protected_image_id, &last_marked);
                 self.reclaimUnplaced(reclaim);
                 return;
             }
@@ -2592,17 +2593,13 @@ pub const Plane = struct {
         }
         var map: [max_placements]u16 = undefined;
         var retained: usize = 0;
-        var last_reclaimed_id: u32 = 0;
         for (self.placements[0..self.placement_count], 0..) |placement_value, prior| {
             if (doomed.isSet(prior)) {
-                if (placement_value.parent_slot) |parent_slot| {
-                    if (doomed.isSet(parent_slot) and placement_value.image_id != protected_image_id and
-                        placement_value.image_id != last_reclaimed_id)
-                    {
-                        if (self.imageIndex(placement_value.image_id)) |index| reclaim[index] = true;
-                        last_reclaimed_id = placement_value.image_id;
-                    }
-                }
+                const parent_retired = if (placement_value.parent_slot) |parent_slot|
+                    doomed.isSet(parent_slot)
+                else
+                    false;
+                self.markRetiredImage(placement_value.image_id, parent_retired, reclaim, protected_image_id, &last_marked);
                 continue;
             }
             map[prior] = @intCast(retained);
@@ -2618,6 +2615,27 @@ pub const Plane = struct {
             }
         }
         self.reclaimUnplaced(reclaim);
+    }
+
+    // A selected anonymous image has no client identity for a later put.
+    // Reclaim it only after its final reference retires, just like orphaned
+    // descendants. Never sweep unrelated unplaced images or a protected
+    // resource in the middle of replacement/whole-image retirement.
+    fn markRetiredImage(
+        self: *const Plane,
+        image_id: u32,
+        parent_retired: bool,
+        reclaim: *[max_images]bool,
+        protected_image_id: ?u32,
+        last_marked: *u32,
+    ) void {
+        if (image_id == protected_image_id or image_id == last_marked.*) return;
+        const index = self.imageIndex(image_id) orelse return;
+        const image_value = self.images[index];
+        if (parent_retired or (image_value.kitty_id == 0 and image_value.kitty_number == null)) {
+            reclaim[index] = true;
+            last_marked.* = image_id;
+        }
     }
 
     // Selection and ancestor closure are complete before any image slots
@@ -3562,80 +3580,89 @@ test "RGB conversion quota cancellation and bank cleanup preserve exact ownershi
     try std.testing.expectEqual(before, plane.generation());
 }
 
-test "Kitty quota admission evicts oldest unplaced image before visible data" {
-    var plane = Plane.init(std.testing.allocator);
-    defer plane.deinit();
-
-    try std.testing.expect((try plane.command(
-        "a=T,f=32,s=1,v=1,i=1;AQIDBA==",
-        .primary,
-        0,
-        1,
-        1,
-        1,
-        1,
-    )).changed);
-    try std.testing.expect((try plane.command(
-        "a=t,f=32,s=1,v=1,i=2;BQYHCA==",
-        .primary,
-        0,
-        0,
-        0,
-        1,
-        1,
-    )).changed);
-    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
-    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
-
-    // Synthesize storage pressure without allocating a 64 MiB test fixture.
-    plane.storage_bytes = max_storage_bytes;
-    const admitted = try plane.command(
-        "a=t,f=32,s=1,v=1,i=3;CQoLDA==",
-        .primary,
-        0,
-        0,
-        0,
-        1,
-        1,
-    );
-    try std.testing.expect(admitted.changed);
-    try std.testing.expect(plane.kittyImageIndex(1, .primary) != null);
-    try std.testing.expect(plane.kittyImageIndex(2, .primary) == null);
-    try std.testing.expect(plane.kittyImageIndex(3, .primary) != null);
-    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
-    try std.testing.expectEqual(max_storage_bytes, plane.storage_bytes);
+// Fill the actual bounded raw staging allocation in place. Chunk framing
+// is independently qualified; this fixture tests real quota accounting,
+// allocation, final admission, and eviction without thousands of APCs.
+fn quotaFixtureImage(plane: *Plane, bank: Bank, header: []const u8, byte: u8) !void {
+    const staged = try plane.command(header, bank, 0, 0, 0, 1, 1);
+    try std.testing.expect(!staged.changed and staged.failure == null);
+    const loading = &plane.loading[@backingInt(bank)].?;
+    try std.testing.expectEqual(@as(usize, max_image_bytes), loading.expected_bytes);
+    try std.testing.expectEqual(loading.expected_bytes, loading.bytes.len);
+    try std.testing.expectEqual(@as(usize, 0), loading.used);
+    @memset(loading.bytes, byte);
+    loading.used = loading.bytes.len;
+    const admitted = try plane.command("m=0;", bank, 0, 0, 0, 1, 1);
+    try std.testing.expect(admitted.changed and admitted.failure == null);
 }
 
-test "Kitty quota admission reclaims oldest placed image as fallback" {
+test "Kitty actual byte quota prefers unplaced data and retires oldest placed frames under pressure" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
-
-    try std.testing.expect((try plane.command(
-        "a=T,f=32,s=1,v=1,i=1;AQIDBA==",
-        .primary,
-        0,
-        1,
-        1,
-        1,
-        1,
-    )).changed);
-    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
-
-    plane.storage_bytes = max_storage_bytes;
-    const admitted = try plane.command(
-        "a=t,f=32,s=1,v=1,i=2;BQYHCA==",
-        .primary,
-        0,
-        0,
-        0,
-        1,
-        1,
-    );
-    try std.testing.expect(admitted.changed);
-    try std.testing.expect(plane.kittyImageIndex(1, .primary) == null);
-    try std.testing.expect(plane.kittyImageIndex(2, .primary) != null);
-    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try quotaFixtureImage(&plane, .primary, "a=T,i=1,C=1,s=2048,v=2048,m=1;", 1);
+    try quotaFixtureImage(&plane, .primary, "a=f,i=1,r=2,C=1,s=2048,v=2048,m=1;", 2);
+    try quotaFixtureImage(&plane, .alternate, "a=t,i=2,s=2048,v=2048,m=1;", 3);
+    try quotaFixtureImage(&plane, .alternate, "a=T,i=3,C=1,s=2048,v=2048,m=1;", 4);
     try std.testing.expectEqual(max_storage_bytes, plane.storage_bytes);
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    const primary = plane.image(0).?;
+    const alternate = plane.image(2).?;
+    const primary_placement = plane.placement(0).?;
+    const alternate_placement = plane.placement(1).?;
+    const before = plane.generation();
+    const content = plane.content_generation;
+    // New frame admission is deliberately non-evicting at the shared bound.
+    const frame = try plane.command("a=f,i=1,r=3,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expectEqual(@as(?Failure, .quota), frame.failure);
+    const staged = try plane.command("a=t,i=4,m=1,s=1,v=1;AQID", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(!staged.changed and staged.failure == null);
+    {
+        // Fail the final RGBA allocation after the pending input is owned.
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+        plane.allocator = failing.allocator();
+        defer plane.allocator = std.testing.allocator;
+        try std.testing.expectError(error.OutOfMemory, plane.command("m=0;BA==", .primary, 0, 0, 0, 1, 1));
+        try std.testing.expect(failing.has_induced_failure);
+    }
+    try std.testing.expectEqual(before, plane.generation());
+    try std.testing.expectEqual(content, plane.content_generation);
+    try std.testing.expectEqual(max_storage_bytes, plane.storage_bytes);
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    try std.testing.expectEqualDeep(primary_placement, plane.placement(0).?);
+    try std.testing.expectEqualDeep(alternate_placement, plane.placement(1).?);
+    try std.testing.expectEqual(@as(u8, 2), plane.frames[0].pixels[0]);
+    try std.testing.expect(plane.loading[@backingInt(Bank.primary)] == null);
+
+    try quotaFixtureImage(&plane, .primary, "a=T,i=4,C=1,s=2048,v=2048,m=1;", 5);
+    try std.testing.expectEqual(before + 1, plane.generation());
+    try std.testing.expectEqual(max_storage_bytes, plane.storage_bytes);
+    try std.testing.expect(plane.kittyImageIndex(2, .alternate) == null);
+    try std.testing.expectEqual(primary.id, plane.image(plane.kittyImageIndex(1, .primary).?).?.id);
+    try std.testing.expectEqual(alternate.id, plane.image(plane.kittyImageIndex(3, .alternate).?).?.id);
+    try std.testing.expectEqualDeep(primary_placement, plane.placement(0).?);
+    try std.testing.expectEqualDeep(alternate_placement, plane.placement(1).?);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+
+    // Every surviving image is placed. The oldest must now be retired,
+    // including its frame allocation; inactive bank data stays independent.
+    try std.testing.expect((try plane.command("a=T,i=5,C=1,s=1,v=1;CQoLDA==", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(before + 2, plane.generation());
+    try std.testing.expectEqual(plane.generation(), plane.content_generation);
+    try std.testing.expect(plane.kittyImageIndex(1, .primary) == null);
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 3), plane.placement_count);
+    try std.testing.expectEqual(2 * max_image_bytes + 4, plane.storage_bytes);
+    const surviving = plane.image(plane.kittyImageIndex(3, .alternate).?).?;
+    try std.testing.expectEqual(alternate.id, surviving.id);
+    try std.testing.expectEqual(alternate.generation, surviving.generation);
+    try std.testing.expectEqual(@as(u8, 4), surviving.pixels[0]);
+    try std.testing.expectEqual(@as(u8, 4), surviving.pixels[surviving.pixels.len - 1]);
+    try std.testing.expectEqualDeep(alternate_placement, plane.placements[plane.identityIndex(alternate_placement.identity).?]);
 }
 
 test "new transmission cancels an incomplete stream without retained mutation" {
@@ -6387,4 +6414,59 @@ test "Kitty history cutoff retains crossing root geometry until its entire exten
     try std.testing.expect(plane.kittyImageIndex(7, .primary) != null);
     try std.testing.expectEqualDeep(alternate, plane.placement(0).?);
     try std.testing.expect(!plane.evictBefore(7));
+}
+
+test "Kitty anonymous final placement retirement releases only matched unreachable images" {
+    const Operation = enum { delete, scroll, history, bounds, erase, shift };
+    for ([_]Operation{ .delete, .scroll, .history, .bounds, .erase, .shift }) |operation| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        try std.testing.expect((try plane.command("a=T,f=16,C=1,s=1,v=1;AoA=", .primary, 0, 0, 0, 1, 1)).changed);
+        const anonymous = plane.image(0).?.id;
+        try std.testing.expect((try plane.command("a=T,i=7,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+        try std.testing.expect((try plane.command("a=T,i=8,p=1,U=1,C=1,s=1,v=1;BQYHCA==", .primary, 0, 0, 0, 1, 1)).changed);
+        // An independently admitted, unplaced resource was not selected.
+        try std.testing.expect((try plane.command("a=t,s=1,v=1;CQoLDA==", .primary, 0, 0, 0, 1, 1)).changed);
+        const unplaced = plane.image(3).?.id;
+        try std.testing.expect((try plane.command("a=T,C=1,s=1,v=1;DQ4PEA==", .alternate, 0, 0, 0, 1, 1)).changed);
+        const alternate = plane.image(4).?.id;
+        const virtual = plane.virtualPrototype(.primary, 8, 1).?;
+        const generation = plane.generation();
+        const changed = switch (operation) {
+            .delete => (try plane.command("a=d,d=p,x=1,y=1", .primary, 0, 0, 0, 1, 1)).changed,
+            .scroll => plane.scroll(.primary, 0, 3, 1, true),
+            .history => plane.evictBefore(1),
+            .bounds => plane.retainBankBounds(.primary, 1, 3, 8),
+            .erase => plane.erase(.primary, 0, 0, 0, 0),
+            .shift => plane.shiftColumnRows(.primary, 0, 0, 0, 7, 1, true),
+        };
+        try std.testing.expect(changed);
+        try std.testing.expectEqual(generation + 1, plane.generation());
+        try std.testing.expectEqual(plane.generation(), plane.content_generation);
+        try std.testing.expect(plane.imageIndex(anonymous) == null);
+        try std.testing.expect(plane.kittyImageIndex(7, .primary) != null);
+        try std.testing.expectEqualDeep(virtual, plane.virtualPrototype(.primary, 8, 1).?);
+        try std.testing.expect(plane.imageIndex(unplaced) != null and plane.imageIndex(alternate) != null);
+        try std.testing.expectEqual(@as(u16, 4), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+        try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+    }
+}
+
+test "Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 1, 1)).changed);
+    const removed = plane.image(0).?.id;
+    try std.testing.expect((try plane.command("a=T,U=1,C=1,s=1,v=1;BQYHCA==", .primary, 0, 0, 0, 1, 1)).changed);
+    const virtual = plane.image(1).?.id;
+    try std.testing.expect(plane.virtualPrototype(.primary, 0, 0) == null);
+    try std.testing.expect((try plane.command("a=d,d=p,x=1,y=1", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect(plane.imageIndex(removed) == null);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(usize, 4), plane.storage_bytes);
+    try std.testing.expectEqual(virtual, plane.virtualPrototype(.primary, 0, 0).?.image_id);
+    const generation = plane.generation();
+    try std.testing.expect(!(try plane.command("a=d,d=p,x=1,y=1", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(generation, plane.generation());
 }

@@ -586,8 +586,8 @@ test "terminal: ED below keeps out-of-width graphics on the cursor row" {
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
     try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).imageCount());
-    try std.testing.expectEqual(pixels_before, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).content_generation > pixels_before);
 }
 
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
@@ -3149,8 +3149,8 @@ test "terminal: DECFRA replaces only graphics in the accepted origin rectangle" 
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-    try std.testing.expectEqual(original_content_generation, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).content_generation > original_content_generation);
     try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
 }
 
@@ -3188,8 +3188,8 @@ test "terminal: DEC origin rectangle erasure moves graphics with the accepted Sc
         const remaining = terminal.images(0).placement(0).?;
         try std.testing.expectEqual(@as(u16, 0), remaining.row);
         try std.testing.expectEqual(@as(u16, 0), remaining.col);
-        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expect(terminal.images(0).content_generation > content_generation);
     }
 }
 

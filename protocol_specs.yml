@@ -10466,6 +10466,9 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: terminal services Kitty animation through visible Unicode placeholders
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
@@ -10517,6 +10520,15 @@ specifications:
             child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
             live viewport policy, no blanket FULL promotion
           baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
+        howl_qualification_20261127_kitty_graphics_13:
+          scope: Retiring the final physical reference of an older anonymous image releases its data and allows the next retained
+            anonymous virtual prototype to resolve. The wave09 oldest-retained tie-break is unchanged; unselected resources are
+            not swept.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644,907-944,1193-1202; graphics.c apply_storage_quota321-335 and filter_refs2448-2494. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
+            byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
+          baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
     - id: relative
       section: Relative placements
       level: defined
@@ -10684,6 +10696,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty anonymous placeholder remains bound through unrelated image deletion
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous final placement retirement releases only matched unreachable images
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Uppercase directly matched images and orphan descendants share a post-closure reclaim set; stable image-slot
@@ -10722,6 +10740,16 @@ specifications:
             local tie-break where author protocol specifies no anonymous ordering; Plane red-green and wire projection proof;
             no blanket FULL promotion
           baseline: 5434c16752d867f58d245ec74ca399df59550926
+        howl_qualification_20261127_kitty_graphics_13:
+          scope: 'Lowercase deletion now reclaims a selected anonymous image after its final reference retires: absent a nonzero
+            client ID or image number it cannot be put again. Named directly selected data remains reusable; existing orphan-descendant
+            and uppercase rules unchanged. The single-leaf and multi-selection paths share the reclamation marker. Unmatched initially
+            unplaced images, surviving virtual references and other-bank resources are preserved; no global unplaced sweep.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644,907-944,1193-1202; graphics.c apply_storage_quota321-335 and filter_refs2448-2494. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
+            byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
+          baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
     - id: replies
       section: Suppressing responses from the terminal
       level: defined
@@ -10878,6 +10906,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty root frame is gapless until its gap is explicitly configured
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty actual byte quota prefers unplaced data and retires oldest placed frames under pressure
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: First animation-frame header initializes owned metadata and calls same append path directly; no synthetic
@@ -10933,6 +10964,15 @@ specifications:
             child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
             live viewport policy, no blanket FULL promotion
           baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
+        howl_qualification_20261127_kitty_graphics_13:
+          scope: Actual full retained byte quota rejects new animation canvas admission without evicting existing images, frames
+            or placements; later successful static eviction releases the selected victim frame allocation. Shared retained quota
+            and non-evicting frame policy remain local rather than Kitty disk-cache or Ghostty frame-reservation parity.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644,907-944,1193-1202; graphics.c apply_storage_quota321-335 and filter_refs2448-2494. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
+            byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
+          baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -11086,6 +11126,15 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty actual byte quota prefers unplaced data and retires oldest placed frames under pressure
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty whole-image retirement resolves its owner again after descendant compaction
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous final placement retirement releases only matched unreachable images
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Full placement table (16384) accepts a new placement for a replacement image whose existing group frees capacity;
@@ -11106,6 +11155,20 @@ specifications:
             deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
             FULL promotion
           baseline: 4ad5135a5eade890744572600b56fffe6072e770
+        howl_qualification_20261127_kitty_graphics_13:
+          scope: 'Actual allocator-owned 64 MiB retained quota fixture, replacing two synthetic storage counter tests: three 16
+            MiB base images and one 16 MiB frame. Frame admission over the byte bound rejects without eviction; injected final
+            RGBA allocation failure leaves retained identities, bytes and placements unchanged. Successful admission first evicts
+            unplaced other-bank data, then under all-placed pressure retires oldest content-generation image plus its frame allocation,
+            leaving 32 MiB + 4 bytes. Existing 256-slot pressure/descendant compaction proof retained. Large raw staging allocation
+            filled directly in test; chunk framing proved separately. Shared global quota, generation-based oldest selection,
+            no transient priority and non-evicting frame admission remain Howl policies; Kitty and Ghostty eviction strategies
+            are not claimed identical. Selected anonymous last-reference retirement reclaims unreachable bytes outside pressure.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644,907-944,1193-1202; graphics.c apply_storage_quota321-335 and filter_refs2448-2494. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
+            byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
+          baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
     - id: direct-chunks
       section: docs/graphics-protocol.rst:470-495
       level: defined
@@ -11583,6 +11646,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty animation control compose and frame deletion respect bank-local image identity
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous final placement retirement releases only matched unreachable images
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Geometric matches resolved against one unchanged placement topology before retirement; selected roots,
@@ -11602,6 +11671,16 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_13:
+          scope: Selected lowercase cell deletion qualifies anonymous final-reference release without sweeping unrelated unplaced
+            images or other-bank resources. Retiring the physical anonymous leaf exposes a surviving anonymous virtual prototype;
+            repeated unmatched deletion is inert. Named lower-case and upper-case reference ownership remain distinct. No change
+            to selector geometry or reply policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644,907-944,1193-1202; graphics.c apply_storage_quota321-335 and filter_refs2448-2494. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
+            byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
+          baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
     - id: file-read-privacy
       section: docs/graphics-protocol.rst:388-443
       level: defined
@@ -11663,6 +11742,18 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/terminal.zig
         test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous final placement retirement releases only matched unreachable images
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: ED below keeps out-of-width graphics on the cursor row'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: DECFRA replaces only graphics in the accepted origin rectangle'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: DEC origin rectangle erasure moves graphics with the accepted Screen rectangle'
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
@@ -11734,6 +11825,17 @@ specifications:
             Screen.zig441-480, PageList.zig997-1047. Five intended baseline failures; direct Screen, selection and terminal proofs,
             including finalized output and queued work preservation.'
           baseline: bb659564c3b950c055f69a68ba46da79b4872922
+        howl_qualification_20261127_kitty_graphics_13:
+          scope: Existing placement retirement selection (scroll, history cutoff, resize bounds, erase and column shift) now also
+            releases selected anonymous data after its final reference. Existing named data, virtual refs and other-bank images
+            survive. Three pre-existing partial ED/DEC rectangle tests retain geometry assertions but now expect selected unreachable
+            anonymous bytes to disappear and content generation to advance. This qualifies resource lifetime only; existing partial
+            erase geometry still differs from Kitty docs1329 and is reserved for separate reconciliation.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644,907-944,1193-1202; graphics.c apply_storage_quota321-335 and filter_refs2448-2494. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
+            byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
+          baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
