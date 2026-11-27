@@ -1259,13 +1259,12 @@ pub const Screen = struct {
         return if (self.rowWrapped(row) and line_cols != 0) line_cols else 0;
     }
 
-    fn extendKnownRowScanEnd(self: *Screen, row: u16, end: u16) void {
+    fn extendKnownRowScanEnd(self: *Screen, physical: u32, end: u16) void {
         const flags = self.row_flags orelse return;
-        const physical = self.rowWrapIndex(row) orelse return;
-        const slot = &flags[@intCast(physical)];
+        const slot = &flags[physical];
         const current = (slot.* & row_scan_mask) >> row_scan_shift;
         if (current == 0) return;
-        const next = encodeRowScanEnd(end, self.lineColumnCount(row));
+        const next = encodeRowScanEnd(end, self.columnCountForGeometry(geometryForRowFlags(slot.*)));
         if (next <= current) return;
         slot.* = (slot.* & ~row_scan_mask) | (next << row_scan_shift);
     }
@@ -2876,7 +2875,7 @@ pub const Screen = struct {
         const right = self.cols - 1;
         const after = col + @as(u16, @intCast(count));
         if (self.history_capacity != 0)
-            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
+            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, physical_row, after });
         // Every scalar write moves one column except the final right-edge write.
         self.cursor.position_changed_by_client_at +|= @intCast(@min(count, right - col));
         self.cursor.setPositionStructural(self.cursor.row, @min(after, right));
@@ -3074,7 +3073,8 @@ pub const Screen = struct {
         // zig-audit: acknowledge orelse_unreachable
         // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
         const cells = self.cells orelse unreachable;
-        const index = self.rowStart(self.cursor.row) + self.cursor.col;
+        const physical_row = self.rowWrapIndex(self.cursor.row).?;
+        const index = @as(u32, physical_row) * @as(u32, self.cols) + self.cursor.col;
         var offset: u8 = 0;
         while (offset < graphic.width) : (offset += 1) {
             const col = self.cursor.col + offset;
@@ -3123,7 +3123,7 @@ pub const Screen = struct {
         const written_col = self.cursor.col;
         const after = written_col + graphic.width;
         if (self.history_capacity != 0)
-            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
+            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, physical_row, after });
         if (after <= right) {
             self.cursor.setColByClient(after);
         } else if (self.auto_wrap) {
@@ -3364,15 +3364,16 @@ pub const Screen = struct {
             const inserted = self.insertChars(width);
             std.debug.assert(inserted or !self.wrap_pending);
         }
+        const physical_row = self.rowWrapIndex(self.cursor.row);
         const row_metadata = if (self.row_metadata) |metadata|
-            if (self.rowWrapIndex(self.cursor.row)) |physical| &metadata[physical] else null
+            if (physical_row) |physical| &metadata[physical] else null
         else
             null;
         // One-cell replacement can prove its BG source from the destination
         // already inspected below; insertion and cluster clearing stay conservative.
         var background_unchanged = false;
         if (self.cells) |cells| {
-            const start = self.rowStart(self.cursor.row);
+            const start = @as(u32, physical_row.?) * @as(u32, self.cols);
             var offset: u8 = 0;
             while (offset < width) : (offset += 1) {
                 const col = self.cursor.col + offset;
@@ -3416,7 +3417,7 @@ pub const Screen = struct {
         const written_col = self.cursor.col;
         const after = written_col + width;
         if (self.history_capacity != 0)
-            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
+            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, physical_row.?, after });
         if (after <= right) {
             self.cursor.setColByClient(after);
         } else if (self.auto_wrap) {
@@ -4745,7 +4746,11 @@ pub const Screen = struct {
     pub fn lineGeometry(self: *const Screen, logical_row: u16) LineGeometry {
         const flags = self.row_flags orelse return .single_width;
         const idx = self.rowWrapIndex(logical_row) orelse return .single_width;
-        return @fromBackingInt(@intCast((flags[@intCast(idx)] & row_geometry_mask) >> row_geometry_shift));
+        return geometryForRowFlags(flags[idx]);
+    }
+
+    fn geometryForRowFlags(flags: u8) LineGeometry {
+        return @fromBackingInt(@intCast((flags & row_geometry_mask) >> row_geometry_shift));
     }
 
     fn setLineGeometry(self: *Screen, logical_row: u16, geometry: LineGeometry) bool {
@@ -4833,10 +4838,7 @@ pub const Screen = struct {
     }
 
     fn lineColumnCount(self: *const Screen, logical_row: u16) u16 {
-        return switch (self.lineGeometry(logical_row)) {
-            .single_width => self.cols,
-            .double_width, .double_height_top, .double_height_bottom => @max(@as(u16, 1), self.cols / 2),
-        };
+        return self.columnCountForGeometry(self.lineGeometry(logical_row));
     }
 
     fn setRowWrapped(self: *Screen, logical_row: u16, wrapped: bool) void {
@@ -9969,4 +9971,61 @@ test "resolved scalar lead crosses physical row wrap without changing ownership"
         try std.testing.expectEqualSlices(u32, &joined, screen.cellScalarsAt(0, 0, &actual));
         try std.testing.expectEqualSlices(u32, &.{'B'}, screen.cellScalarsAt(1, 2, &actual));
     }
+}
+
+test "write scan hints follow the post-placement physical row and DEC geometry" {
+    var cursor_only = Screen.init(2, 8);
+    try std.testing.expect(try cursor_only.writeCodepointGrowing(0x00e9));
+    try std.testing.expectEqual(@as(u16, 1), cursor_only.cursor.col);
+    const geometry_cases = [_]Screen.LineGeometry{ .single_width, .double_width, .double_height_top, .double_height_bottom };
+    for (geometry_cases) |geometry| for ([_]bool{ false, true }) |grow| {
+        var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 16, 4);
+        defer screen.deinit(std.testing.allocator);
+        screen.cursor.setPositionByClient(2, 0);
+        screen.scrollUp();
+        try std.testing.expectEqual(@as(u16, 1), screen.row_origin);
+        if (geometry != .single_width) {
+            try std.testing.expect(screen.applyLineGeometry(geometry));
+            screen.establishEmptyRowScanEnd(2);
+        }
+        const before = screen.next_row_generation;
+        const neighbor_flags = screen.row_flags.?[1..3].*;
+        const neighbor_metadata = screen.row_metadata.?[1..3].*;
+        try std.testing.expect(if (grow) try screen.writeCodepointGrowing(0x754c) else screen.writeCodepoint(0x754c));
+        if (grow) {
+            const progress = screen.repeatPrecedingGrowing(1);
+            try std.testing.expectEqual(@as(u16, 1), progress.completed);
+            try std.testing.expect(progress.blocked == null);
+        } else try std.testing.expect(screen.repeatPreceding(1));
+        if (geometry == .single_width) {
+            try std.testing.expectEqual(@as(usize, 2), screen.writePlainAsciiPrefix("AB"));
+        } else {
+            try std.testing.expect(if (grow) try screen.writeCodepointGrowing('A') else screen.writeCodepoint('A'));
+            try std.testing.expect(if (grow) try screen.writeCodepointGrowing('B') else screen.writeCodepoint('B'));
+        }
+        try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+        try std.testing.expectEqual(@as(u64, before + 4), screen.next_row_generation);
+        try std.testing.expectEqual(@as(u64, before + 3), screen.row_metadata.?[0].generation);
+        try std.testing.expectEqualDeep(neighbor_flags, screen.row_flags.?[1..3].*);
+        try std.testing.expectEqualDeep(neighbor_metadata, screen.row_metadata.?[1..3].*);
+        try std.testing.expectEqual(geometry, screen.lineGeometry(2));
+        try std.testing.expectEqual(@as(u32, 0x754c), screen.cells.?[0].codepoint);
+        try std.testing.expectEqual(@as(u32, 0x754c), screen.cells.?[2].codepoint);
+        try std.testing.expectEqual(@as(u32, 'B'), screen.cells.?[5].codepoint);
+        const line_cols: u16 = if (geometry == .single_width) 16 else 8;
+        try std.testing.expectEqual(@as(u16, 6), Screen.retainedCellsLen(screen.visibleRowCells(2), line_cols, false, .state));
+        try std.testing.expectEqual(@as(u16, 6), screen.retainedVisibleCellsLen(2, .state));
+        try std.testing.expect(screen.rowScanEnd(2) >= 6);
+        try std.testing.expect(screen.rowScanEnd(2) <= line_cols);
+        screen.cursor.setPositionByClient(2, line_cols - 1);
+        try std.testing.expect(if (grow) try screen.writeCodepointGrowing('Z') else screen.writeCodepoint('Z'));
+        try std.testing.expect(screen.wrap_pending);
+        try std.testing.expect(if (grow) try screen.writeCodepointGrowing('Q') else screen.writeCodepoint('Q'));
+        try std.testing.expectEqual(@as(u16, 2), screen.row_origin);
+        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(2));
+        try std.testing.expectEqual(@as(u32, 'Q'), screen.cells.?[16].codepoint);
+        try std.testing.expectEqual(@as(u16, 1), screen.retainedVisibleCellsLen(2, .state));
+        try std.testing.expectEqual(geometry, screen.lineGeometry(1));
+        try std.testing.expectEqual(@as(u32, 'Z'), screen.cells.?[line_cols - 1].codepoint);
+    };
 }
