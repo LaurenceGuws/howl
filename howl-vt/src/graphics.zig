@@ -249,8 +249,10 @@ const Result = struct {
     response_id: ?u32 = null,
     /// Image number echoed alongside generated or selected identity.
     response_number: ?u32 = null,
-    /// Animation frame number echoed for frame admission.
-    response_frame: ?u16 = null,
+    /// Placement identity echoed by a placement acknowledgement.
+    response_placement: ?u32 = null,
+    /// Admitted frame number, or the requested number on rejection.
+    response_frame: ?u32 = null,
     /// Null identifies success; otherwise supplies Kitty's stable short error.
     failure: ?Failure = null,
     /// Moves the terminal cursor after one successful ordinary placement.
@@ -335,15 +337,43 @@ const Command = struct {
     payload: []const u8 = "",
 };
 
-/// Returns whether one command can emit a Kitty protocol response.
-pub fn mayRespond(bytes: []const u8) bool {
-    const command_value = parseCommand(bytes) orelse return true;
-    // Feature queries have a separate exact-byte reply reservation. Do not
-    // reject them using the ordinary 96-byte image-reply headroom.
-    if (command_value.action == 'q' and command_value.feature_action != 0 and
-        command_value.id != 0 and command_value.image_number == 0) return false;
-    return command_value.action != 'd';
-}
+const ReplyIdentity = struct {
+    id: ?u32,
+    number: ?u32,
+    placement: ?u32,
+    frame: ?u32,
+
+    fn command(value: Command) ReplyIdentity {
+        return .{
+            .id = nonzero(value.id),
+            .number = nonzero(value.image_number),
+            .placement = nonzero(value.placement_id),
+            .frame = if (value.action == 'f') nonzero(value.rows) else null,
+        };
+    }
+
+    fn loading(value: *const Loading) ReplyIdentity {
+        return .{
+            .id = if (value.anonymous) null else nonzero(value.id),
+            .number = nonzero(value.image_number),
+            .placement = nonzero(value.placement_id),
+            .frame = if (value.action == 'f') nonzero(value.rows) else null,
+        };
+    }
+
+    fn complete(self: ReplyIdentity, result: Result) Result {
+        // Incomplete chunks and silent deletions have no response identity.
+        if (result.failure == null and result.response_id == null and
+            result.response_number == null and result.response_frame == null) return result;
+        var reply = result;
+        reply.response_id = nonzero(reply.response_id orelse 0) orelse self.id;
+        reply.response_number = reply.response_number orelse self.number;
+        if (reply.response_id != null or reply.response_number != null)
+            reply.response_placement = self.placement;
+        reply.response_frame = reply.response_frame orelse self.frame;
+        return reply;
+    }
+};
 
 // Every selector admitted by Plane.delete also qualifies for e=d queries.
 // The query formatter uses the same vocabulary, but only reports fields
@@ -478,6 +508,34 @@ pub const Plane = struct {
         return self.commandWithAnchors(bytes, bank, screen_origin, row, col, cell_width, cell_height, null, null);
     }
 
+    // Use the same admission classification for preflight and dispatch.
+    // No borrowed loading bytes escape this synchronous decision.
+    fn continuation(self: *const Plane, value: Command) ?*const Loading {
+        const loading = if (self.loading) |*active| active else return null;
+        if (value.medium != 'd' or value.feature_action != 0) return null;
+        if (value.id != 0 or value.image_number != 0) return null;
+        if (value.action == 'f') return loading;
+        if (value.action != 't' and value.action != 'T' and value.action != 'q') return null;
+        if (value.width != 0 or value.height != 0 or value.placement_id != 0) return null;
+        return loading;
+    }
+
+    /// Reports whether an ordinary command needs preflight reply headroom.
+    /// Valid feature queries reserve their exact bytes separately.
+    pub fn mayRespond(self: *const Plane, bytes: []const u8) bool {
+        const value = parseCommand(bytes) orelse return true;
+        if (value.quiet == 2) return false;
+        if (value.feature_action != 0)
+            return value.action != 'q' or value.id == 0 or value.image_number != 0;
+        // A conflicting identity pair is rejected before ordinary dispatch.
+        if (value.id != 0 and value.image_number != 0) return true;
+        if (value.medium != 'd') return true;
+        if (value.action == 'd') return false;
+        if (value.quiet == 0) if (self.continuation(value)) |loading|
+            return loading.quiet != 2;
+        return true;
+    }
+
     /// Applies a graphics command with optional text-derived virtual-parent
     /// positions for geometry deletions. An absent resolver keeps the Plane
     /// independent from terminal cell storage and ignores unanchored hits.
@@ -498,15 +556,19 @@ pub const Plane = struct {
             self.cancel();
             return .{ .failure = .invalid };
         };
+        const continuation_load = self.continuation(command_value);
+        const identity = if (continuation_load) |loading|
+            ReplyIdentity.loading(loading)
+        else
+            ReplyIdentity.command(command_value);
+        if (command_value.id != 0 and command_value.image_number != 0)
+            return identity.complete(.{ .failure = .invalid, .quiet = command_value.quiet });
         if (command_value.feature_action != 0) {
             // Kitty feature queries are observations. They must not cancel
             // an ongoing chunked image upload, even if they carry a payload.
             if (command_value.action != 'q' or command_value.id == 0 or
-                command_value.image_number != 0) return .{
-                .response_id = nonzero(command_value.id),
-                .failure = .invalid,
-                .quiet = command_value.quiet,
-            };
+                command_value.image_number != 0)
+                return identity.complete(.{ .failure = .invalid, .quiet = command_value.quiet });
             // Current Kitty rejects invalid delete-selector bytes at parse
             // time. A feature query must neither fabricate an e=d success
             // nor cancel a suspended upload when d has an unknown value.
@@ -521,16 +583,11 @@ pub const Plane = struct {
         }
         if (command_value.medium != 'd') {
             self.cancel();
-            return .{
-                .response_id = nonzero(command_value.id),
-                .response_number = nonzero(command_value.image_number),
-                .failure = .unsupported,
-                .quiet = command_value.quiet,
-            };
+            return identity.complete(.{ .failure = .unsupported, .quiet = command_value.quiet });
         }
-        return switch (command_value.action) {
+        const result: Result = switch (command_value.action) {
             't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors),
-            'f' => if (self.loading != null and command_value.id == 0 and command_value.image_number == 0)
+            'f' => if (continuation_load != null)
                 try self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors)
             else
                 try self.frame(command_value),
@@ -545,6 +602,7 @@ pub const Plane = struct {
                 .quiet = command_value.quiet,
             },
         };
+        return identity.complete(result);
     }
 
     // -------------------------------------------------------------------------
@@ -566,11 +624,9 @@ pub const Plane = struct {
             // Preserve the existing recovery policy: an unmistakable new
             // image header abandons an unfinished transfer. Otherwise
             // validate the continuation by field presence, not values.
-            if (command_value.width != 0 or command_value.height != 0 or
-                command_value.id != 0 or command_value.image_number != 0 or command_value.placement_id != 0)
-                self.cancel()
-            else
+            if (self.continuation(command_value) != null)
                 return self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors);
+            self.cancel();
         }
         if (!validChunk(command_value)) return .{
             .response_id = nonzero(command_value.id),
@@ -918,8 +974,6 @@ pub const Plane = struct {
             0;
         if (canvas_bytes > max_image_bytes or self.storage_bytes - prior_bytes > max_storage_bytes - canvas_bytes)
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
-        const canvas = try self.allocator.alloc(u8, canvas_bytes);
-        errdefer self.allocator.free(canvas);
         const base: ?[]const u8 = if (root)
             image_value.pixels
         else if (existing) |index|
@@ -929,6 +983,8 @@ pub const Plane = struct {
         else
             self.framePixels(image_value, loading.columns) orelse
                 return .{ .response_id = loading.id, .failure = .missing, .quiet = loading.quiet };
+        const canvas = try self.allocator.alloc(u8, canvas_bytes);
+        errdefer self.allocator.free(canvas);
         if (base) |pixels|
             @memcpy(canvas, pixels)
         else
@@ -3476,7 +3532,7 @@ test "Kitty direct zlib transmission is exact bounded and shared by frames" {
         1,
     );
     try std.testing.expect(compressed_frame.changed);
-    try std.testing.expectEqual(@as(?u16, 2), compressed_frame.response_frame);
+    try std.testing.expectEqual(@as(?u32, 2), compressed_frame.response_frame);
     try std.testing.expectEqualSlices(
         u8,
         &.{ 0, 0, 255, 255 },
@@ -4748,7 +4804,7 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
     );
     try std.testing.expect(frame.changed);
     try std.testing.expect(!frame.visual_changed);
-    try std.testing.expectEqual(@as(?u16, 2), frame.response_frame);
+    try std.testing.expectEqual(@as(?u32, 2), frame.response_frame);
     try std.testing.expectEqual(@as(usize, 1), plane.frame_count);
     try std.testing.expectEqualSlices(u8, &.{ 127, 0, 128, 255 }, plane.frames[0].pixels);
     const generation_before_bad_composition = plane.generation();
@@ -4842,7 +4898,7 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
     );
     try std.testing.expect(root_edit.changed);
     try std.testing.expect(root_edit.visual_changed);
-    try std.testing.expectEqual(@as(?u16, 1), root_edit.response_frame);
+    try std.testing.expectEqual(@as(?u32, 1), root_edit.response_frame);
     try std.testing.expectEqual(bytes_before_root_edit, plane.storage_bytes);
     try std.testing.expectEqualSlices(u8, &.{ 0, 1, 254, 255 }, plane.images[0].pixels);
     try std.testing.expectEqual(@as(u32, 70), plane.images[0].root_gap_ms);
@@ -5540,7 +5596,7 @@ test "Kitty usage hints are bounded advisory no-op metadata" {
     );
     try std.testing.expect(frame.changed);
     try std.testing.expect(!frame.visual_changed);
-    try std.testing.expectEqual(@as(?u16, 2), frame.response_frame);
+    try std.testing.expectEqual(@as(?u32, 2), frame.response_frame);
     try std.testing.expectEqualSlices(
         u8,
         &.{ 0, 0, 255, 255 },

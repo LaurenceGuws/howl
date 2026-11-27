@@ -4670,7 +4670,7 @@ test "terminal: Kitty image number gets stable identity for put reply and deleti
     try std.testing.expectEqualStrings("\x1b_Gi=1,I=44;OK\x1b\\", terminal.replyBytes());
     try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b_Ga=p,I=44,p=2\x1b\\")).stateChanged());
-    try std.testing.expectEqualStrings("\x1b_Gi=1,I=44;OK\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqualStrings("\x1b_Gi=1,I=44,p=2;OK\x1b\\", terminal.replyBytes());
     try consumeReplies(&terminal);
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,I=44;BQYHCA==\x1b\\")).stateChanged(),
@@ -6872,4 +6872,112 @@ test "Kitty chunk quiet overrides and explicit frame continuations retain exact 
         try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, images.image(1).?.pixels);
         try std.testing.expectEqual(@as(usize, 0), images.placementCount());
     }
+}
+
+test "Kitty graphics replies identify placements and rejected frame requests across C1 profiles" {
+    const cases = [_]struct { body: []const u8, reply: []const u8 }{
+        .{ .body = "a=T,i=77,p=4294967295,s=1,v=1,C=1;AQIDBA==", .reply = "i=77,p=4294967295;OK" },
+        .{ .body = "a=p,i=77,p=8,C=1", .reply = "i=77,p=8;OK" },
+        .{ .body = "a=p,i=78,p=9", .reply = "i=78,p=9;ENOENT" },
+        .{ .body = "a=p,I=44,p=9", .reply = "I=44,p=9;ENOENT" },
+        .{ .body = "a=p,i=77,I=44,p=9", .reply = "i=77,I=44,p=9;EINVAL" },
+        .{ .body = "a=f,i=78,r=4294967295;AQIDBA==", .reply = "i=78,r=4294967295;ENOENT" },
+        .{ .body = "a=f,i=77,r=2,c=999;AQIDBA==", .reply = "i=77,r=2;ENOENT" },
+        .{ .body = "a=f,i=77,r=2,m=1;AQID", .reply = "" },
+        .{ .body = "a=f,m=0;A", .reply = "i=77,r=2;EINVAL" },
+        .{ .body = "a=f,i=77,r=2;BQYHCA==", .reply = "i=77,r=2;OK" },
+        .{ .body = "a=T,i=77,p=21,C=1,s=1,v=1,m=1;CQoL", .reply = "" },
+        .{ .body = "m=0;A", .reply = "i=77,p=21;EINVAL" },
+    };
+    for ([_]bool{ false, true }) |eight| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        if (eight) try feed(&terminal, "\x1b G");
+        for (cases) |case| {
+            var bytes: [256]u8 = undefined;
+            const command = try std.fmt.bufPrint(&bytes, "{s}G{s}{s}", .{ if (eight) "\x9f" else "\x1b_", case.body, if (eight) "\x9c" else "\x1b\\" });
+            const before = terminal.images(0).generation;
+            // Fragment at each byte, including the terminator.
+            for (command) |byte| try feed(&terminal, &.{byte});
+            var response: [96]u8 = undefined;
+            const expected = if (case.reply.len == 0) "" else try std.fmt.bufPrint(&response, "\x1b_G{s}\x1b\\", .{case.reply});
+            try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+            if (case.reply.len == 0 or !std.mem.endsWith(u8, case.reply, ";OK"))
+                try std.testing.expectEqual(before, terminal.images(0).generation);
+            try consumeReplies(&terminal);
+        }
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
+    }
+}
+
+test "Kitty quiet transfers bypass saturated replies and blocked final chunk retries exactly" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 12);
+    defer terminal.deinit();
+    const filler = try reply_fill.fill(&terminal, allocator, 64 * 1024, false);
+    defer allocator.free(filler);
+
+    try feed(&terminal, "\x1b_Ga=T,i=71,p=4,C=1,s=1,v=1,q=2,m=1;AQID\x1b\\");
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try feed(&terminal, "\x1b_Gm=0;BA==\x1b\\");
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try feed(&terminal, "\x1b_Ga=p,i=71,p=5,C=1,q=2\x1b\\");
+    try feed(&terminal, "\x1b_Ga=f,i=71,r=1,C=1,q=2,m=1;BQYH\x1b\\");
+    try feed(&terminal, "\x1b_Ga=f,m=0;CA==\x1b\\");
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, terminal.images(0).image(0).?.pixels);
+    try feed(&terminal, "\x1b_Ga=p,i=99,q=2\x1b\\");
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try consumeReplies(&terminal);
+
+    // A final nonzero q override makes the inherited silent transfer
+    // response-producing. The blocked attempt must not append bytes.
+    try feed(&terminal, "\x1b_Ga=T,i=72,p=6,C=1,s=1,v=1,q=2,m=1;CQoL\x1b\\");
+    const full = try reply_fill.fill(&terminal, allocator, 64 * 1024, false);
+    defer allocator.free(full);
+    const before = terminal.images(0).generation;
+    const final = "\x1b_Gm=0,q=1;DA==\x1b\\";
+    for (0..2) |_| {
+        try std.testing.expectError(error.ReplyLimit, terminal.feed(final));
+        try std.testing.expectEqual(before, terminal.images(0).generation);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+        try std.testing.expectEqualSlices(u8, full, terminal.replyBytes());
+    }
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[3;4H");
+    try feed(&terminal, final);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).placementCount());
+    try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, terminal.images(0).image(1).?.pixels);
+    try std.testing.expectEqual(@as(u16, 2), terminal.images(0).placement(2).?.row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.images(0).placement(2).?.col);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "Kitty final acknowledgement reserves before mutation and emits once at available headroom" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b_Ga=T,i=77,p=9,s=1,v=1,C=1,m=1;AQID\x1b\\");
+    const filler = try reply_fill.fill(&terminal, allocator, 64 * 1024 - 95, false);
+    defer allocator.free(filler);
+    const final = "\x1b_Gm=0;BA==\x1b\\";
+    const generation = terminal.images(0).generation;
+    try std.testing.expectError(error.ReplyLimit, terminal.feed(final));
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+    // The ordinary reply owner deliberately reserves a conservative 96
+    // bytes before dispatch. Free the single missing byte, not the queue.
+    try terminal.consumeReplyBytes(1);
+    try feed(&terminal, final);
+    const response = "\x1b_Gi=77,p=9;OK\x1b\\";
+    try std.testing.expectEqualSlices(u8, filler[1..], terminal.replyBytes()[0 .. filler.len - 1]);
+    try std.testing.expectEqualStrings(response, terminal.replyBytes()[filler.len - 1 ..]);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
 }

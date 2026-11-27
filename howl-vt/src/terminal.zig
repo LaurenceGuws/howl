@@ -5320,7 +5320,7 @@ fn discardedStringControl() EventEffect {
 
 fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEventError!bool {
     const response_reserve: usize = 96;
-    if (graphics_mod.mayRespond(packet)) {
+    if (terminal.graphics.mayRespond(packet)) {
         if (terminal.reply_buffer.bytes().len >
             replies.max_bytes - response_reserve)
             return error.ReplyLimit;
@@ -5376,31 +5376,27 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         result.response_number != null or result.response_frame != null;
     const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);
     if (respond and !suppressed) {
-        try terminal.reply_buffer.append("\x1b_G");
-        var metadata: [48]u8 = undefined;
-        if (result.response_id) |id| {
-            const id_bytes = if (result.response_number) |number|
-                if (result.response_frame) |frame_number|
-                    std.fmt.bufPrint(&metadata, "i={d},I={d},r={d};", .{ id, number, frame_number })
-                else
-                    std.fmt.bufPrint(&metadata, "i={d},I={d};", .{ id, number })
-            else if (result.response_frame) |frame_number|
-                std.fmt.bufPrint(&metadata, "i={d},r={d};", .{ id, frame_number })
-            else
-                std.fmt.bufPrint(&metadata, "i={d};", .{id});
-            const written = id_bytes catch return error.ReplyLimit;
-            try terminal.reply_buffer.append(written);
-        } else if (result.response_number) |number| {
-            const number_bytes = std.fmt.bufPrint(&metadata, "I={d};", .{number}) catch
-                return error.ReplyLimit;
-            try terminal.reply_buffer.append(number_bytes);
-        } else {
-            try terminal.reply_buffer.append(";");
+        // The preflight reserves the complete worst case (four u32
+        // fields and the longest stable error token). Emit fields in
+        // one ordered lane, including number-only error responses.
+        var packet_buf: [response_reserve]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&packet_buf);
+        writer.writeAll("\x1b_G") catch return error.ReplyLimit;
+        var first = true;
+        for ([_]struct { key: u8, value: ?u32 }{
+            .{ .key = 'i', .value = result.response_id },
+            .{ .key = 'I', .value = result.response_number },
+            .{ .key = 'p', .value = result.response_placement },
+            .{ .key = 'r', .value = result.response_frame },
+        }) |field| {
+            if (field.value) |value| {
+                if (!first) writer.writeByte(',') catch return error.ReplyLimit;
+                writer.print("{c}={d}", .{ field.key, value }) catch return error.ReplyLimit;
+                first = false;
+            }
         }
-        try terminal.reply_buffer.append(
-            if (result.failure) |failure| failure.bytes() else "OK",
-        );
-        try terminal.reply_buffer.append("\x1b\\");
+        writer.print(";{s}\x1b\\", .{if (result.failure) |failure| failure.bytes() else "OK"}) catch return error.ReplyLimit;
+        try terminal.reply_buffer.append(writer.buffered());
     }
 
     const cursor_changed = if (result.cursor_advance) |advance|

@@ -2730,3 +2730,37 @@ test "contextual operator joining cannot consume independently shadowed ink" {
     try std.testing.expectEqual(@as(usize, 3), held.snapshot.glyphs[0].len);
     try std.testing.expect(!held.snapshot.glyphs[0][1].alpha_mask.cursor_component);
 }
+
+test "Kitty chunked image replacement preserves a held resource through rejection and commit" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    try owner.feed("\x1b_Ga=T,i=56,p=7,C=1,q=2,s=1,v=1;/wAA/w==\x1b\\");
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const before = held.?.snapshot;
+    const resource = before.graphics.images[0].resource;
+    const command = before.graphics.positive[0];
+    try owner.feed("\x1b_Ga=t,i=56,q=2,s=1,v=1,m=1;AAD/\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, owner.observation().images(0).image(0).?.pixels);
+    try owner.feed("\x1b_Gm=0;A\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, owner.observation().images(0).image(0).?.pixels);
+    try owner.feed("\x1b_Ga=t,i=56,q=2,s=1,v=1,m=1;AAD/\x1b\\\x1b_Gm=0;/w==\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, before.graphics.images[0].pixels);
+    try std.testing.expectEqualDeep(resource, before.graphics.images[0].resource);
+    try std.testing.expectEqualDeep(command, before.graphics.positive[0]);
+    try owner.release(held.?);
+    held = null;
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expectEqual(@as(usize, 1), next.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), next.snapshot.graphics.positive.len);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, next.snapshot.graphics.images[0].pixels);
+    try std.testing.expectEqual(resource.resource, next.snapshot.graphics.images[0].resource.resource);
+    try std.testing.expect(@backingInt(next.snapshot.graphics.images[0].resource.generation) > @backingInt(resource.generation));
+}

@@ -10102,6 +10102,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: APC G metadata and payload share existing bounded parser packet owner, split static and multi-command wire
@@ -10111,6 +10114,13 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: Selected byte-at-a-time APC G sequences using ESC_ / ESC-backslash and 8-bit APC/ST; fixed7-bit response
+            framing in both C1 reply profiles, ordered response metadata and no state mutation on selected rejections.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: rgb-rgba
       section: Transferring pixel data / RGB and RGBA data
       level: defined
@@ -10255,6 +10265,23 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.put
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty quiet transfers bypass saturated replies and blocked final chunk retries exactly
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty image number gets stable identity for put reply and deletion'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: Ordinary placement ACK retains p, including max-u32, and missing-image error includes requested identity
+            and placement. Explicit quiet placement admits even with full reply queue. Prior layout and geometry rules unchanged.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -10341,6 +10368,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty graphics feature queries reserve exact reply bytes atomically'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty quiet transfers bypass saturated replies and blocked final chunk retries exactly
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty final acknowledgement reserves before mutation and emits once at available headroom
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty image number gets stable identity for put reply and deletion'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty frame reply includes exact admitted frame number'
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Nonzero q overrides inherited quiet on continuation; explicit/implicit0 inherits prior setting, q1 suppresses
@@ -10355,6 +10397,23 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: One request/continuation identity projection completes ordinary results with image ID, client number, placement
+            ID and admitted/requested frame number; zero IDs normalized, number-only errors retain their fields, both nonzero
+            i/I rejected before dispatch. Complete ordinary packet formatted in existing bounded96-byte reserve with ordered
+            i,I,p,r and stable short error tokens. Selected seven/eight-bit APC request fragmentation, fixed7-bit Kitty replies,
+            max-u32 placement/requested frame values, successful/failed placements, explicit frame continuation failures,
+            conflicting identity and numbered placement success. Explicit q2 and inherited q2 continuation need no reply space,
+            nonzero q1 override reserves for possible errors. Shared continuation classification drives both preflight and
+            dispatch; valid feature query retains exact reservation, ordinary replies retain conservative96-byte headroom.
+            Full queue quiet static/frame/put proofs and blocked final-chunk retry via refeeding complete packet after error.ReplyLimit;
+            95-byte headroom rejected,96 accepted, old queued bytes preserved and exactly one acknowledgement appended. Generic
+            service-boundary consumed-prefix retry and exact smaller ordinary reservation remain unqualified. Anonymous error
+            framing, all author failure prose and all resolved-number error metadata remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: frame-load
       section: Animation / Transferring animation frame data
       level: defined
@@ -10372,6 +10431,15 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty frames compose transactionally and advance on monotonic gaps
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty quiet transfers bypass saturated replies and blocked final chunk retries exactly
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty frame reply includes exact admitted frame number'
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: First animation-frame header initializes owned metadata and calls same append path directly; no synthetic
@@ -10383,6 +10451,15 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: Selected frame failure replies retain requested r (including full u32 rejection), admitted frame success
+            retains exact actual frame number. Missing base frame is checked before canvas allocation, preventing allocation
+            leak on semantic rejection; allocator-backed VT test exercises the failure then valid frame admission. Explicit/inherited
+            quiet frame transfer succeeds with saturated queue. No timing, frame-number assignment or composition-policy change.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -10471,6 +10548,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty graphics feature query cannot cancel an unfinished image'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty quiet transfers bypass saturated replies and blocked final chunk retries exactly
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty final acknowledgement reserves before mutation and emits once at available headroom
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty chunked image replacement preserves a held resource through rejection and commit
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -10487,6 +10573,17 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: Preflight and dispatch share existing continuation classification, inherited q2 and explicit q2 bypass ordinary
+            reservation, q1 override restores headroom requirement. Full queue and exact95/96-byte conservative headroom witness
+            reject before appending final data or mutating image/placement; drain and refeed full final packet once, exact
+            retained pixels and ACK, final cursor anchor. Actual output lease remains immutable during partial, failed and
+            accepted replacement. Existing placement lifetime and explicit packet retry policy retained; no general service-progress
+            retry claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -10521,6 +10618,22 @@ specifications:
       - APC G
       rule: Nonunique image number requests unique terminal-assigned id; later I selects newest matching image. Both i and
         I in request EINVAL unless silenced.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty image number gets stable identity for put reply and deletion'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: Existing generated identity and newest-number selection retained; successful numbered placement now echoes
+            its placement ID, missing numbered request echoes I without fabricated zero i, conflicting nonzero i/I rejected
+            before dispatch. Existing shared-bank ID and number lifetime remains local policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: placement-identity
       section: docs/graphics-protocol.rst:635-660
       level: defined
@@ -10529,6 +10642,26 @@ specifications:
       - APC G
       rule: Nonzero image/placement pair identifies replacement; p=0 or omitted allows multiple placements; p ignored for
         id=0. Retransmitting explicit image id deletes old data and all placements.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty graphics replies identify placements and rejected frame requests across C1 profiles
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty image number gets stable identity for put reply and deletion'
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty chunked image replacement preserves a held resource through rejection and commit
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_02:
+          scope: Selected p acknowledgement and same-ID replacement retained output proof. Existing local explicit image-ID
+            replacement keeps previously owned placement and resource identity with new content generation, differs from documented
+            delete-all-placements behavior. This test qualifies local lifetime/immutability only; do not infer conformance
+            of replacement geometry or anonymous p handling.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
+            VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
+          baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
     - id: placement-layout
       section: docs/graphics-protocol.rst:667-688
       level: defined
