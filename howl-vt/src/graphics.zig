@@ -589,16 +589,19 @@ pub const Plane = struct {
                 .quiet = command_value.quiet,
             };
         }
-        if (command_value.medium != 'd') {
-            self.cancel(bank);
+        if (continuation_load != null)
+            return identity.complete(try self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors));
+
+        // Clients must finish an upload before another graphics command.
+        // For an interrupted stream, abandon only this bank's partial data
+        // and dispatch the new command under its own identity. Feature
+        // queries and conflicting identities return above without mutation.
+        self.cancel(bank);
+        if (command_value.medium != 'd')
             return identity.complete(.{ .failure = .unsupported, .quiet = command_value.quiet });
-        }
         const result: Result = switch (command_value.action) {
             't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors),
-            'f' => if (continuation_load != null)
-                try self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors orelse &default_indexed_colors)
-            else
-                try self.frame(command_value, bank),
+            'f' => try self.frame(command_value, bank),
             'a' => self.animate(command_value, bank),
             'c' => try self.composeFrames(command_value, bank),
             'p' => self.put(command_value, bank, row, col, cell_width, cell_height),
@@ -627,15 +630,8 @@ pub const Plane = struct {
         cell_height: u32,
         colors: *const properties.ColorState,
     ) std.mem.Allocator.Error!Result {
+        std.debug.assert(self.loading[@backingInt(bank)] == null);
         errdefer self.cancel(bank);
-        if (self.loading[@backingInt(bank)] != null) {
-            // Preserve the existing recovery policy: an unmistakable new
-            // image header abandons an unfinished transfer. Otherwise
-            // validate the continuation by field presence, not values.
-            if (self.continuation(command_value, bank) != null)
-                return self.continueChunk(command_value, bank, row, col, cell_width, cell_height, colors);
-            self.cancel(bank);
-        }
         if (!validChunk(command_value)) return .{
             .response_id = nonzero(command_value.id),
             .response_number = nonzero(command_value.image_number),
@@ -876,10 +872,7 @@ pub const Plane = struct {
     // -------------------------------------------------------------------------
 
     fn frame(self: *Plane, command_value: Command, bank: Bank) std.mem.Allocator.Error!Result {
-        if (self.loading[@backingInt(bank)] != null) {
-            self.cancel(bank);
-            return .{ .failure = .invalid, .quiet = command_value.quiet };
-        }
+        std.debug.assert(self.loading[@backingInt(bank)] == null);
         if ((command_value.id == 0) == (command_value.image_number == 0))
             return .{ .failure = .invalid, .quiet = command_value.quiet };
         const image_index = (if (command_value.id != 0)
@@ -1436,7 +1429,7 @@ pub const Plane = struct {
         cursor_col: u16,
         anchors: ?AnchorSource,
     ) Result {
-        self.cancel(bank);
+        std.debug.assert(self.loading[@backingInt(bank)] == null);
         const selector = if (command_value.delete == 0) 'a' else command_value.delete;
         const remove_data = std.ascii.isUpper(selector);
         const normalized = std.ascii.toLower(selector);
@@ -6207,4 +6200,74 @@ test "Kitty clearing one bank retires its unplaced data frames and unfinished tr
     const stale = try plane.command("m=0;FA==", .alternate, 0, 0, 0, 8, 16);
     try std.testing.expect(!stale.changed);
     try std.testing.expect(!plane.clearBank(.alternate));
+}
+
+test "Kitty ordinary interruption retires only the local pending transfer" {
+    const cases = [_]struct {
+        body: []const u8,
+        changed: bool,
+        failure: ?Failure = null,
+        response_id: ?u32 = 7,
+        quiet: u2 = 0,
+    }{
+        .{ .body = "a=p,i=7,p=2,C=1", .changed = true },
+        .{ .body = "a=a,i=7,c=2", .changed = true },
+        .{ .body = "a=c,i=7,r=2,c=1,w=1,h=1,C=1", .changed = true },
+        .{ .body = "a=f,i=7,r=3,C=1;ERITFA==", .changed = true },
+        .{ .body = "a=d,d=i,i=7,p=1", .changed = true, .response_id = null, .quiet = 2 },
+        .{ .body = "a=q,i=8,s=1,v=1;AQIDBA==", .changed = false, .response_id = 8 },
+        .{ .body = "a=p,i=404,p=3", .changed = false, .failure = .missing, .response_id = 404 },
+        .{ .body = "a=z,i=8", .changed = false, .failure = .unsupported, .response_id = 8 },
+    };
+    for (cases) |case| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        try std.testing.expect((try plane.command("a=T,i=7,p=1,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+        try std.testing.expect((try plane.command("a=f,i=7,r=2,C=1;BQYHCA==", .primary, 0, 0, 0, 8, 16)).changed);
+        try std.testing.expect(!(try plane.command("a=t,i=99,q=2,s=1,v=1,m=1;CQoL", .primary, 0, 0, 0, 8, 16)).changed);
+        try std.testing.expect(!(try plane.command("a=t,i=99,q=2,s=1,v=1,m=1;DQ4P", .alternate, 0, 0, 0, 8, 16)).changed);
+        const result = try plane.command(case.body, .primary, 0, 0, 0, 8, 16);
+        try std.testing.expectEqual(case.failure, result.failure);
+        try std.testing.expectEqual(case.changed, result.changed);
+        try std.testing.expectEqual(case.response_id, result.response_id);
+        try std.testing.expectEqual(case.quiet, result.quiet);
+        try std.testing.expect(plane.loading[@backingInt(Bank.primary)] == null);
+        try std.testing.expect(plane.loading[@backingInt(Bank.alternate)] != null);
+        const generation = plane.generation();
+        const storage = plane.storage_bytes;
+        const stale = try plane.command("m=0;DA==", .primary, 0, 0, 0, 8, 16);
+        try std.testing.expectEqual(@as(?Failure, .invalid), stale.failure);
+        try std.testing.expectEqual(@as(?u32, null), stale.response_id);
+        try std.testing.expectEqual(generation, plane.generation());
+        try std.testing.expectEqual(storage, plane.storage_bytes);
+        try std.testing.expect(plane.kittyImageIndex(99, .primary) == null);
+        const alternate = try plane.command("m=0;EA==", .alternate, 0, 0, 0, 8, 16);
+        try std.testing.expect(alternate.changed and alternate.failure == null);
+        try std.testing.expectEqual(@as(?u32, 99), alternate.response_id);
+        try std.testing.expectEqual(@as(u2, 2), alternate.quiet);
+        try std.testing.expectEqualSlices(u8, &.{ 13, 14, 15, 16 }, plane.images[plane.kittyImageIndex(99, .alternate).?].pixels);
+    }
+}
+
+test "Kitty feature query and conflicting identity rejection preserve pending frame metadata" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=t,i=7,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+    try std.testing.expect(!(try plane.command("a=f,i=7,r=2,C=1,q=2,m=1;BQYH", .primary, 0, 0, 0, 8, 16)).changed);
+    const before = plane.generation();
+    const feature = try plane.command("a=q,i=31,e=f,r=2,X=1;ignored", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expect(feature.feature_query != null and !feature.changed);
+    const conflict = try plane.command("a=p,i=7,I=8", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(@as(?Failure, .invalid), conflict.failure);
+    try std.testing.expectEqual(@as(?u32, 7), conflict.response_id);
+    try std.testing.expectEqual(@as(?u32, 8), conflict.response_number);
+    try std.testing.expectEqual(before, plane.generation());
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expect(!plane.mayRespond("a=f,m=0;CA==", .primary));
+    const completed = try plane.command("a=f,m=0;CA==", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expect(completed.changed and completed.failure == null);
+    try std.testing.expectEqual(@as(?u32, 7), completed.response_id);
+    try std.testing.expectEqual(@as(?u32, 2), completed.response_frame);
+    try std.testing.expectEqual(@as(u2, 2), completed.quiet);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.frames[0].pixels);
 }

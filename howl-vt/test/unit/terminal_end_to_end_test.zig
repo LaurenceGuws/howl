@@ -7157,3 +7157,35 @@ test "Kitty bank clears and canceled APC preserve the other pending upload" {
         try std.testing.expectEqualStrings("", terminal.replyBytes());
     }
 }
+
+test "Kitty interrupted upload remains pending until the new command is admitted" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b_Ga=T,i=7,p=1,C=1,s=1,v=1,q=2;AQIDBA==\x1b\\");
+    try feed(&terminal, "\x1b_Ga=T,i=77,p=4,C=1,s=1,v=1,q=2,m=1;BQYH\x1b\\");
+    const filler = try reply_fill.fill(&terminal, allocator, 64 * 1024 - 95, false);
+    defer allocator.free(filler);
+    const interrupt = "\x1b_Ga=p,i=7,p=9,C=1\x1b\\";
+    const tail = "\x1b_Gm=0,q=2;CA==\x1b\\Z";
+    const before = terminal.images(0).generation;
+    const blocked = try terminal.feedAtServiceBoundary(interrupt ++ tail, 1);
+    try std.testing.expectEqual(error.ReplyLimit, blocked.input_blocked.?);
+    try std.testing.expectEqual(interrupt.len, blocked.consumed);
+    try std.testing.expectEqual(before, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
+    try std.testing.expectEqualSlices(u8, filler, terminal.replyBytes());
+    try terminal.consumeReplyBytes(1);
+    const resumed = try terminal.feedAtServiceBoundary(tail, 2);
+    try std.testing.expect(resumed.input_blocked == null);
+    try std.testing.expectEqual(@as(usize, 0), resumed.consumed);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+    try std.testing.expectEqualStrings("\x1b_Gi=7,p=9;OK\x1b\\", terminal.replyBytes()[filler.len - 1 ..]);
+    try feed(&terminal, tail);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqualSlices(u8, filler[1..], terminal.replyBytes()[0 .. filler.len - 1]);
+    try std.testing.expectEqualStrings("\x1b_Gi=7,p=9;OK\x1b\\", terminal.replyBytes()[filler.len - 1 ..]);
+}

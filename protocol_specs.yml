@@ -10120,6 +10120,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty bank-local transfer reply pressure preserves the unread screen switch
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty interrupted upload remains pending until the new command is admitted
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: APC G metadata and payload share existing bounded parser packet owner, split static and multi-command wire
@@ -10154,6 +10160,15 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Selected ordinary non-continuation graphics packets retire only the active bank pending upload before independent
+            dispatch. Partial/stale tail cannot commit abandoned bytes. Feature and conflicting identity exceptions remain distinct;
+            no generic parser framing change.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: rgb-rgba
       section: Transferring pixel data / RGB and RGBA data
       level: defined
@@ -10282,6 +10297,19 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.graphics.feature_query
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Normal image-data probe, unlike e= feature observation, is an ordinary non-continuation command in local recovery
+            policy; cancels the unfinished local upload without admitting probe pixels. Subsequent other-bank completion remains
+            independent.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: put
       section: Display images on screen
       level: defined
@@ -10325,6 +10353,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty same client ID in another bank preserves held output and clears only alternate resources
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty interrupted upload remains pending until the new command is admitted
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Ordinary placement ACK retains p, including max-u32, and missing-image error includes requested identity
@@ -10350,6 +10384,15 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: An intervening explicit put operates on its own retained image identity, not the suspended upload. Success and
+            missing target cases retire the local upload; one exact ACK after reply-pressure resume. Other bank pending bytes
+            survive. Local recovery policy, not author-defined malformed stream semantics.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -10513,6 +10556,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty clearing one bank retires its unplaced data frames and unfinished transfer
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Uppercase directly matched images and orphan descendants share a post-closure reclaim set; stable image-slot
@@ -10533,6 +10579,14 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Selected intervening lowercase ID/placement deletion cancels the local pending transfer and still performs the
+            requested deletion, with no ordinary response. Other bank remains independent.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: replies
       section: Suppressing responses from the terminal
       level: defined
@@ -10574,6 +10628,15 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty bank-local transfer reply pressure preserves the unread screen switch
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty interrupted upload remains pending until the new command is admitted
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -10626,6 +10689,16 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Ordinary interruption keeps the new command response identity and quiet value rather than inheriting the abandoned
+            upload metadata. Feature query and conflicting i/I rejection preserve a pending frame and its later inherited quiet/frame
+            identity. Reply-pressure preflight blocks retained mutation; zero-byte resume emits one exact put ACK before unread
+            stale tail/text.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: frame-load
       section: Animation / Transferring animation frame data
       level: defined
@@ -10654,6 +10727,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty clearing one bank retires its unplaced data frames and unfinished transfer
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -10684,6 +10763,15 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: An explicitly addressed new frame command can replace an unfinished static upload and admit its own frame rather
+            than merely cancel/reject. Feature observation and conflicting identity rejection preserve pending frame metadata;
+            explicit a=f continuation completes exact bytes. No claim for all invalid mixed transfer combinations.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -10695,6 +10783,9 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.animate
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_07:
           scope: Bank-local client lookup rejects frame selection from the wrong bank and preserves existing primary frame/current-pixel
@@ -10704,6 +10795,15 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Selected intervening frame selection targets the explicitly named retained image and retires the local pending
+            static upload. Does not implement the pinned author behavior of redirecting animation actions to an in-progress loading
+            identity for an out-of-contract stream.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: composition
       section: Animation / Composing animation frames
       level: defined
@@ -10715,6 +10815,9 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.graphics.compose
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_07:
           scope: Wrong-bank frame composition rejects without changing primary pixels or frame identity; the same command succeeds
@@ -10724,6 +10827,14 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Selected intervening composition operates on its explicitly addressed retained image while retiring the unfinished
+            upload. Other bank pending transfer stays intact. No general rectangle or allocation parity claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: no-indexed-animation
       section: Indexed color data
       level: defined
@@ -10842,6 +10953,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty bank clears and canceled APC preserve the other pending upload
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty interrupted upload remains pending until the new command is admitted
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -10900,6 +11020,17 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Documented serialization is a client precondition, not a prescribed terminal recovery algorithm. Howl selects
+            one ordinary non-continuation cancellation lane before independent dispatch. Put, animation, compose, new frame, delete,
+            normal query, missing put and unsupported action cases tested. Stale final fails without retained mutation; alternate
+            transfer completes independently. Eligible continuation, feature-query and conflicting i/I exceptions retain existing
+            identity handling. Selected reply-pressure service cut proven.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -10927,6 +11058,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty graphics placement feature replies are atomically quota bounded'
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -10956,6 +11090,14 @@ specifications:
             lines475-495,497-609,943-965; graphics.c grman_handle_command; deterministic VT red-green, app outbox and actual
             native C peer; scoped local service policy, no blanket FULL promotion
           baseline: 37092b0fb8c92efec1d6be32e89690b0bd5a74ce
+        howl_qualification_20261127_kitty_graphics_08:
+          scope: Feature query with payload preserves a pending animation frame in the selected bank; inherited silent explicit
+            frame continuation still admits the exact bytes and frame identity. Existing static-upload feature-query proofs retained.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs470-495 client serialization and587-591 feature-query exception; graphics.c handle_add_command954-1004, handle_animation_frame_load_command1992-2013,
+            handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
+            interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
+          baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
     - id: image-number
       section: docs/graphics-protocol.rst:967-996
       level: defined
