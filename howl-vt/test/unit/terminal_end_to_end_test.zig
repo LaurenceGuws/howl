@@ -6806,3 +6806,50 @@ test "Mintty shadow survives regional rendition selective stack and cold history
     try terminal.resize(3, 6);
     for (original, 0..) |cell, col| try std.testing.expectEqualDeep(cell, terminal.semanticView(1).cellInfoAt(0, @intCast(col)));
 }
+
+test "ECMA framing selectors retain distinct rendition and never change text occupancy" {
+    for ([_][]const u8{
+        "\x1b[51m1\x1b[52m2\x1b[54m3\x1b[52;51m4\x1b[22m5\x1bP$qm\x1b\\\x1b[0m6",
+        "\x9b51m1\x9b52m2\x9b54m3\x9b52;51m4\x9b22m5\x90$qm\x9c\x9b0m6",
+    }) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            const view = terminal.semanticView(0);
+            for (0..6) |col| {
+                const cell = view.cellInfoAt(0, @intCast(col));
+                try std.testing.expectEqual(@as(u32, @intCast('1' + col)), cell.codepoint);
+                try std.testing.expectEqual(@as(u8, 1), cell.width);
+                try std.testing.expectEqual(@as(u8, 1), cell.height);
+                try std.testing.expect(!cell.attrs.bold and !cell.attrs.dim);
+                try std.testing.expectEqual(([_]Terminal.Enclosure{ .framed, .encircled, .none, .framed, .framed, .none })[col], cell.attrs.enclosure);
+            }
+            try std.testing.expectEqual(@as(u16, 6), view.cursor_col);
+            try std.testing.expectEqualStrings("\x1bP1$r0;51m\x1b\\", terminal.replyBytes());
+        }
+    }
+}
+
+test "ECMA enclosure survives regional rendition reports and full rendition stack" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[51mA\x1b[52mA\x1b[54mA\x1b[2*x\x1b[1;1;1;1#|\x1b[1;2;1;2#|\x1b[1;1;1;2#|");
+    try std.testing.expectEqualStrings("\x1b[0;51m\x1b[0;52m\x1b[0m", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[1;2;1;3;51$r\x1b[1;1;1;3#|");
+    try std.testing.expectEqualStrings("\x1b[0;51m", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[52m\x1b[#{\x1b[54m\x1b[#}B\x1bP$qm\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r0;52m\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    var original: [4]Terminal.Cell = undefined;
+    for (&original, 0..) |*cell, col| cell.* = terminal.semanticView(0).cellInfoAt(0, @intCast(col));
+    for (original, 0..) |cell, col|
+        try std.testing.expectEqual(if (col == 3) Terminal.Enclosure.encircled else .framed, cell.attrs.enclosure);
+    try feed(&terminal, "\x1b[S");
+    for (original, 0..) |cell, col| try std.testing.expectEqualDeep(cell, terminal.semanticView(1).cellInfoAt(0, @intCast(col)));
+    try terminal.resize(3, 6);
+    for (original, 0..) |cell, col| try std.testing.expectEqualDeep(cell, terminal.semanticView(1).cellInfoAt(0, @intCast(col)));
+}

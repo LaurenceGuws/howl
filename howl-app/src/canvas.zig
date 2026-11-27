@@ -2788,3 +2788,73 @@ test "Mintty shadow pixels compose muted underlay before original ink" {
     try std.testing.expect(c.SDL_ReadSurfacePixel(surface, snap.cell_width, snap.cell_height / 2, &edge[0], &edge[1], &edge[2], &edge[3]));
     for (expected[0], edge) |want, got| try std.testing.expect(@abs(@as(i16, want) - got) <= 2);
 }
+
+test "ECMA enclosures and Mintty script ink have distinct bounded SDL pixels" {
+    const output = @import("howl_vt_output");
+    const allocator = std.testing.allocator;
+    const font = try @import("howl_text").FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 20 },
+    });
+    defer font.deinit();
+    const owner = try output.Terminal.init(allocator, font);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The sole held output lease releases before the owner.
+    defer owner.deinit() catch unreachable;
+    try owner.resize(2, 6);
+    try owner.feed("\x1b[?25l\x1b]11;#000000\x07\x1b[38:6:255:0:0:128;51m \x1b[52m \x1b[54m \r\n\x1b[38;2;255;255;255;75m█\x1b[73m█\x1b[74m█\x1b[75;74m█");
+    try owner.flush();
+    const lease = try owner.hold();
+    // zig-audit: acknowledge catch_unreachable
+    // reason: This proof owns exactly the one immutable lease.
+    defer owner.release(lease) catch unreachable;
+    const snap = &lease.snapshot;
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(snap.surface.width, snap.surface.height, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    var backend = Canvas.init(allocator);
+    defer backend.deinit();
+    const geometry = try allocator.create(Geometry);
+    defer allocator.destroy(geometry);
+    geometry.* = .{};
+    try backend.applySnapshotResources(renderer, 1, snap);
+    const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(snap.surface.width), .h = @floatFromInt(snap.surface.height) };
+    try backend.drawCut(renderer, geometry, pane, 1, .hidden, 1, null, snap);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+
+    const w: usize = snap.cell_width;
+    const h: usize = snap.cell_height;
+    const metrics = font.metrics();
+    const thickness: usize = @max(1, metrics.underline_height);
+    const ring = snap.decorations[0][4].alpha_mask.resource.source.?;
+    try std.testing.expectEqual(w, ring.width);
+    try std.testing.expectEqual(h, ring.height);
+    for (0..h) |y| for (0..w) |x| {
+        const border = x < thickness or x >= w - thickness or y < thickness or y >= h - thickness;
+        const coverage = snap.atlas_pixels[(@as(usize, ring.y) + y) * snap.atlas_width + ring.x + x];
+        const red = [_]u8{ if (border) 128 else 0, @intCast((@as(u16, coverage) * 128 + 127) / 255), 0 };
+        for (red, 0..) |want, col| {
+            var actual: [4]u8 = undefined;
+            try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(col * w + x), @intCast(y), &actual[0], &actual[1], &actual[2], &actual[3]));
+            try std.testing.expect(@abs(@as(i16, want) - actual[0]) <= 2);
+            try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255 }, actual[1..]);
+        }
+    };
+
+    const sw = (w * 3 + 4) / 5;
+    const sh = (h * 3 + 4) / 5;
+    const dx = @min(w - sw, w * 3 / 10);
+    const small_baseline = @as(usize, metrics.baseline) * 3 / 5;
+    const offsets = [_]usize{ 0, @min(h / 8, h - sh), @min(metrics.baseline - small_baseline, h - sh), @min(h * 13 / 32, h - sh) };
+    for (offsets, 0..) |dy, col| for (0..h) |y| for (0..w) |x| {
+        const ink = col == 0 or (x >= dx and x < dx + sw and y >= dy and y < dy + sh);
+        const value: u8 = if (ink) 255 else 0;
+        var actual: [4]u8 = undefined;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(col * w + x), @intCast(h + y), &actual[0], &actual[1], &actual[2], &actual[3]));
+        try std.testing.expectEqualDeep([4]u8{ value, value, value, 255 }, actual);
+    };
+}

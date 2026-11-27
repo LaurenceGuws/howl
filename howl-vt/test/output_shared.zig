@@ -569,3 +569,25 @@ test "automatic row bound admits dense two-layer shadow decorations and glyph in
     try std.testing.expectEqual(@as(usize, 512 * 6), held.snapshot.decorations[0].len);
     try std.testing.expectEqual(@as(usize, 1), held.snapshot.backgrounds[0].len);
 }
+
+test "automatic bound admits dense framed shadow double underline and strike rows" {
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try output.initPresentationStore(a, threaded.io(), .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 24 } } } }, .{
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 2048, .glyph_capacity = 1024, .max_sequence_scalars = 80 },
+        .shaped_capacity = 1,
+        .raster_bytes = 512 * 512,
+    });
+    defer output.releasePresentationStore(store);
+    const owner = try output.Terminal.initShared(a, store, .{ .atlas = .{ .width = 512, .height = 512, .entry_capacity = 128 } });
+    defer destroy(owner);
+    try owner.resize(1, 512);
+    try owner.feed("\x1b[?25l\x1b[?7l\x1b[51;1:2;4:2;9;44m");
+    for (0..512) |_| try owner.feed("X");
+    try owner.flush();
+    const held = try owner.hold();
+    defer unpin(owner, held);
+    try std.testing.expectEqual(@as(usize, 1024), held.snapshot.glyphs[0].len);
+    try std.testing.expectEqual(@as(usize, 5120), held.snapshot.decorations[0].len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.backgrounds[0].len);
+}

@@ -31,9 +31,10 @@ fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) erro
     // Each occupied column needs at most one background and two
     // passes of its shaped ink, two underline commands and one strike.
     // The optional shadow layer changes the bound, not lazy admission.
+    // One unshadowed enclosure needs at most four disjoint edges.
     const ink = std.math.add(usize, glyph_capacity, 3) catch return error.InvalidCommandLimit;
     const layered = std.math.mul(usize, ink, 2) catch return error.InvalidCommandLimit;
-    const per_cell = std.math.add(usize, layered, 1) catch return error.InvalidCommandLimit;
+    const per_cell = std.math.add(usize, layered, 5) catch return error.InvalidCommandLimit;
     const cells = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
     const maximum = std.math.add(usize, cells, private_glyph_capacity) catch return error.InvalidCommandLimit;
     if (config.command_limit == 0) return maximum;

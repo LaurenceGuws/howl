@@ -101,6 +101,13 @@ pub const Baseline = enum(u2) {
     }
 };
 
+/// Identifies the selected ECMA-48 character enclosure.
+pub const Enclosure = enum(u2) {
+    none,
+    framed,
+    encircled,
+};
+
 /// Distinguishes ISO guarded areas from DEC selective-erase protection.
 pub const Protection = enum(u2) {
     none,
@@ -128,6 +135,7 @@ pub const CellAttrs = struct {
     protected: Protection,
     // Independent of bold/dim; occupies previously unused tail padding.
     shadow: bool = false,
+    enclosure: Enclosure = .none,
     link_id: u32,
 };
 

@@ -2569,3 +2569,164 @@ test "Mintty shadow composes with script sizing and blink but leaves intrinsic i
     try std.testing.expectEqual(@as(usize, 1), s.glyphs[2].len);
     try std.testing.expectEqualDeep(s.glyphs[0][2], s.glyphs[2][0]);
 }
+
+test "ECMA rectangle and ellipse enclosures retain distinct ink without forcing emoji" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b[38:6:100:120:140:128m1\r\n\x1b[51m1\r\n\x1b[52m1\r\n\x1b[54m1");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const s = held.snapshot;
+    for (0..4) |row| {
+        try std.testing.expectEqual(@as(usize, 1), s.glyphs[row].len);
+        try std.testing.expectEqualDeep(s.glyphs[0][0], s.glyphs[row][0]);
+    }
+    try std.testing.expectEqual(@as(usize, 0), s.decorations[0].len);
+    try std.testing.expectEqual(@as(usize, 4), s.decorations[1].len);
+    try std.testing.expectEqual(@as(usize, 1), s.decorations[2].len);
+    try std.testing.expectEqual(@as(usize, 0), s.decorations[3].len);
+    const color: output.commands.Color = .{ .r = 100, .g = 120, .b = 140, .a = 128 };
+    var area: usize = 0;
+    for (s.decorations[1], 0..) |cmd, i| {
+        try std.testing.expect(cmd == .solid);
+        try std.testing.expectEqual(color, cmd.solid.color);
+        const rect = cmd.solid.rect;
+        area += @as(usize, rect.width) * rect.height;
+        for (s.decorations[1][0..i]) |previous|
+            try std.testing.expect((try output.commands.intersectRects(rect, previous.solid.rect)) == null);
+    }
+    const ring = s.decorations[2][0].alpha_mask;
+    try std.testing.expectEqual(color, ring.color);
+    try std.testing.expect(!ring.cursor_component);
+    const source = ring.resource.source.?;
+    const center = (@as(usize, source.y) + source.height / 2) * s.atlas_width + source.x + source.width / 2;
+    try std.testing.expectEqual(@as(u8, 0), s.atlas_pixels[center]);
+    const north = @as(usize, source.y) * s.atlas_width + source.x + source.width / 2;
+    try std.testing.expect(s.atlas_pixels[north] != 0);
+    const corner = @as(usize, source.y) * s.atlas_width + source.x;
+    try std.testing.expectEqual(@as(u8, 0), s.atlas_pixels[corner]);
+    try std.testing.expect(area > 0 and area < @as(usize, s.cell_width) * s.cell_height);
+}
+
+test "ECMA enclosures preserve text and emoji variation choice in both fallback orders" {
+    const fonts = @import("test_fonts");
+    for ([_]bool{ false, true }) |colour_first| {
+        const fallbacks = if (colour_first)
+            [_][]const u8{ fonts.colour_font, fonts.symbol_font }
+        else
+            [_][]const u8{ fonts.symbol_font, fonts.colour_font };
+        const f = try text.FontSet.init(a, .{ .primary = fonts.primary_font, .fallbacks = &fallbacks, .size = .{ .pixels = 20 } });
+        defer f.deinit();
+        const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 } });
+        defer destroy(owner);
+        try owner.resize(3, 12);
+        try owner.feed("\x1b[?25l\x1b[?2027h☺\u{fe0e}☺\u{fe0f}☺\r\n\x1b[51m☺\u{fe0e}☺\u{fe0f}☺\r\n\x1b[52m☺\u{fe0e}☺\u{fe0f}☺");
+        try owner.flush();
+        const held = try owner.hold();
+        defer release(owner, held);
+        const s = held.snapshot;
+        for (0..3) |row| {
+            try std.testing.expectEqual(@as(usize, 3), s.glyphs[row].len);
+            try std.testing.expect(s.glyphs[row][0] == .alpha_mask);
+            try std.testing.expect(s.glyphs[row][1] == .rgba);
+            try std.testing.expectEqual(colour_first, s.glyphs[row][2] == .rgba);
+            try std.testing.expectEqualSlices(output.commands.Command, s.glyphs[0], s.glyphs[row]);
+        }
+        try std.testing.expectEqual(@as(usize, 12), s.decorations[1].len);
+        try std.testing.expectEqual(@as(usize, 3), s.decorations[2].len);
+    }
+}
+
+test "ECMA tiny and sized enclosure geometry stays bounded through history" {
+    for ([_]u16{ 4, 6, 20 }) |pixels| {
+        const f = try font(pixels);
+        defer f.deinit();
+        const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+        defer destroy(owner);
+        try owner.resize(4, 8);
+        try owner.feed("\x1b[?25l\x1b[51;73;74;5m\x1b]66;s=2;█\x07\x1b[3;1H\x1b[52m\x1b]66;s=2:n=1:d=2;█\x07");
+        try owner.flush();
+        var held: ?output.Lease = try owner.hold();
+        defer if (held) |lease| release(owner, lease);
+        const s = held.?.snapshot;
+        var saved: [4][]output.commands.Command = undefined;
+        var initialized: usize = 0;
+        defer for (saved[0..initialized]) |row| a.free(row);
+        for (0..4) |row| {
+            const commands = s.decorations[row];
+            saved[row] = try a.dupe(output.commands.Command, commands);
+            initialized += 1;
+            try std.testing.expectEqual(commands.len != 0, s.text_blink_rows[row]);
+            for (commands, 0..) |cmd, index| {
+                const rect = switch (cmd) {
+                    .solid => |v| v.rect,
+                    .alpha_mask => |v| v.clip,
+                    else => return error.UnexpectedDecoration,
+                };
+                try std.testing.expect(rect.width > 0 and rect.height > 0);
+                try std.testing.expect(rect.x >= 0 and rect.x + @as(i32, rect.width) <= @as(i32, s.cell_width) * 2);
+                try std.testing.expect(rect.y >= 0 and rect.y + @as(i32, rect.height) <= s.cell_height);
+                try std.testing.expect(output.commands.blinks(cmd));
+                if (cmd == .solid) for (commands[0..index]) |earlier|
+                    try std.testing.expect((try output.commands.intersectRects(rect, earlier.solid.rect)) == null);
+            }
+        }
+        try std.testing.expect(saved[0].len + saved[1].len > 0);
+        try std.testing.expect(saved[2].len + saved[3].len > 0);
+        try owner.feed("\x1b[2S");
+        owner.selectHistoryOffset(2);
+        try owner.flush();
+        for (saved, 0..) |row, i| try std.testing.expectEqualSlices(output.commands.Command, row, s.decorations[i]);
+        try owner.release(held.?);
+        held = null;
+        const next = try owner.hold();
+        defer release(owner, next);
+        for (saved, 0..) |row, i| try std.testing.expectEqualSlices(output.commands.Command, row, next.snapshot.decorations[i]);
+    }
+}
+
+test "ECMA blank enclosure is blink ink without manufacturing a glyph" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(2, 8);
+    try owner.feed("\x1b[?25l\x1b[51;5m \x1b[2*x\x1b[1;3;1;3;52;5$r");
+    const start = owner.serviceAnimations(0);
+    try std.testing.expectEqual(@as(?u32, 500), start.next_ms);
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const s = held.?.snapshot;
+    try std.testing.expect(s.text_blink_rows[0] and s.text_blink_visible);
+    try std.testing.expectEqual(@as(usize, 0), s.glyphs[0].len);
+    try std.testing.expectEqual(@as(usize, 5), s.decorations[0].len);
+    for (s.decorations[0]) |cmd| try std.testing.expect(output.commands.blinks(cmd));
+    const step = owner.serviceAnimations(500 * std.time.ns_per_ms);
+    try std.testing.expect(step.changed);
+    try owner.flush();
+    try std.testing.expect(s.text_blink_visible);
+    try owner.release(held.?);
+    held = null;
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expect(!next.snapshot.text_blink_visible);
+}
+
+test "contextual operator joining cannot consume independently shadowed ink" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(2, 8);
+    try owner.feed("\x1b[?25l=\x1b[1:2m=");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    try std.testing.expectEqual(@as(usize, 3), held.snapshot.glyphs[0].len);
+    try std.testing.expect(!held.snapshot.glyphs[0][1].alpha_mask.cursor_component);
+}

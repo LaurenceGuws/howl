@@ -422,6 +422,14 @@ comptime {
     std.debug.assert(@offsetOf(CellAttrs, "underline_style") == 39);
     std.debug.assert(@offsetOf(CellAttrs, "protected") == 40);
     std.debug.assert(@offsetOf(CellAttrs, "shadow") == 41);
+    std.debug.assert(@offsetOf(CellAttrs, "enclosure") == 42);
+}
+
+// Both history admission paths use the same semantic tail identity.
+inline fn attrTail(attrs: *const CellAttrs) u64 {
+    return (@as(u64, @backingInt(attrs.protected)) << 40) |
+        (@as(u64, @intFromBool(attrs.shadow)) << 48) |
+        (@as(u64, @backingInt(attrs.enclosure)) << 56);
 }
 
 inline fn historyAttrsEqual(left: *const CellAttrs, right: *const CellAttrs) bool {
@@ -439,7 +447,7 @@ inline fn historyAttrsEqual(left: *const CellAttrs, right: *const CellAttrs) boo
             std.mem.readInt(u64, b[24..32], .little)) |
         (std.mem.readInt(u64, a[32..40], .little) ^
             std.mem.readInt(u64, b[32..40], .little));
-    return difference == 0 and left.protected == right.protected and left.shadow == right.shadow;
+    return difference == 0 and attrTail(left) == attrTail(right);
 }
 
 const Recycled = struct {
@@ -591,8 +599,7 @@ pub const Store = struct {
                 const current1 = std.mem.readInt(u64, bytes[8..16], .little) & color_mask;
                 const current2 =
                     (std.mem.readInt(u64, bytes[16..24], .little) & color_mask) |
-                    (@as(u64, @backingInt(value.attrs.protected)) << 40) |
-                    (@as(u64, @intFromBool(value.attrs.shadow)) << 48);
+                    attrTail(&value.attrs);
                 const current3 = std.mem.readInt(u64, bytes[24..32], .little);
                 const current4 = std.mem.readInt(u64, bytes[32..40], .little);
                 const same = previous_valid and
@@ -1449,6 +1456,19 @@ test "no-scalar history shape counts semantic attribute runs despite padding" {
     });
     defer store.discardPrepared(&shadow_runs);
     try std.testing.expectEqual(@as(u16, 3), shadow_runs.shape.attrs);
+
+    cells[1].attrs.shadow = false;
+    cells[1].attrs.enclosure = .framed;
+    cells[2].attrs.enclosure = .encircled;
+    var enclosure_runs = try store.preparePush(.{
+        .cells = &cells,
+        .scalars = &scalars,
+        .scalar_start = 0,
+        .wrapped = false,
+        .geometry = .single_width,
+    });
+    defer store.discardPrepared(&enclosure_runs);
+    try std.testing.expectEqual(@as(u16, 4), enclosure_runs.shape.attrs);
 }
 
 test "history retains the accepted scalar density for every row" {

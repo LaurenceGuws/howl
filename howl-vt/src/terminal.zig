@@ -62,7 +62,7 @@ comptime {
 // =============================================================================
 
 const sgr_stack_capacity = 10;
-const sgr_stack_default_selection: u16 = 0b1_1111_1111_1111;
+const sgr_stack_default_selection: u16 = 0b11_1111_1111_1111;
 
 // Retains one bounded selective rendition snapshot for XTPUSHSGR.
 const SgrStackEntry = struct {
@@ -951,6 +951,9 @@ fn restoreSelectedSgr(current: *ScreenCellAttrs, entry: SgrStackEntry) void {
     if (entry.selection & (1 << 7) != 0) current.strikethrough = entry.attrs.strikethrough;
     if (entry.selection & (1 << 9) != 0) current.fg = entry.attrs.fg;
     if (entry.selection & (1 << 10) != 0) current.bg = entry.attrs.bg;
+    // The whole-rendition save includes enclosure. Do not invent
+    // new explicit xterm subset selectors for this standard attribute.
+    if (entry.selection & (1 << 13) != 0) current.enclosure = entry.attrs.enclosure;
     const script_mask: u2 = @truncate(entry.selection >> 11);
     current.baseline = @fromBackingInt((@backingInt(current.baseline) & ~script_mask) | (@backingInt(entry.attrs.baseline) & script_mask));
 }
@@ -2903,6 +2906,11 @@ fn appendSgrAttrs(
     if (attrs.reverse) try appendSgrParam(output, &first, "7");
     if (attrs.invisible) try appendSgrParam(output, &first, "8");
     if (attrs.strikethrough) try appendSgrParam(output, &first, "9");
+    switch (attrs.enclosure) {
+        .none => {},
+        .framed => try appendSgrParam(output, &first, "51"),
+        .encircled => try appendSgrParam(output, &first, "52"),
+    }
     if (attrs.font != 0) {
         const font = std.fmt.bufPrint(encode_buf, "{d}", .{@as(u8, 10) + attrs.font}) catch return error.ReplyLimit;
         try appendSgrParam(output, &first, font);
@@ -3018,6 +3026,7 @@ const CommonAttrs = struct {
     baseline: Screen.Baseline,
     bold: bool,
     shadow: bool,
+    enclosure: Screen.Enclosure,
     dim: bool,
     italic: bool,
     underline: bool,
@@ -3040,6 +3049,7 @@ fn sgrReportAttrs(attrs: Screen.CellAttrs) CommonAttrs {
         .baseline = attrs.baseline,
         .bold = attrs.bold,
         .shadow = attrs.shadow,
+        .enclosure = attrs.enclosure,
         .dim = attrs.dim,
         .italic = attrs.italic,
         .underline = attrs.underline,
@@ -3102,6 +3112,7 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
             common.baseline = common.baseline.common(attrs.baseline);
             if (attrs.bold != common.bold) common.bold = false;
             common.shadow = common.shadow and attrs.shadow;
+            if (attrs.enclosure != common.enclosure) common.enclosure = .none;
             if (attrs.dim != common.dim) common.dim = false;
             if (attrs.italic != common.italic) common.italic = false;
             if (attrs.underline != common.underline) common.underline = false;
@@ -6224,6 +6235,8 @@ pub const Terminal = struct {
     pub const UnderlineStyle = Screen.UnderlineStyle;
     /// Uses the canonical terminal baseline displacement.
     pub const Baseline = Screen.Baseline;
+    /// Uses the canonical ECMA-48 enclosure style.
+    pub const Enclosure = Screen.Enclosure;
     /// Uses the canonical resolved cursor shape.
     pub const CursorShape = Screen.CursorShape;
     /// Configured cursor baseline; program controls remain authoritative.
@@ -8377,7 +8390,8 @@ pub const Terminal = struct {
             self.text_blink_present = false;
             for (cells) |cell| {
                 if (cell.attrs.blink and !cell.attrs.invisible and cell.x == 0 and
-                    (cell.codepoint != 0 and cell.codepoint != ' ' and cell.codepoint != 0x10eeee or cell.combining_len != 0))
+                    (cell.codepoint != 0 and cell.codepoint != ' ' and cell.codepoint != 0x10eeee or
+                        cell.combining_len != 0 or (cell.y == 0 and cell.attrs.enclosure != .none)))
                 {
                     self.text_blink_present = true;
                     break;

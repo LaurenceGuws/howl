@@ -944,6 +944,27 @@ specifications:
           location: terminal_attribute
           meaning: CancelBold for21, blink5/6/25 callbacks unhandled. Preserve selected original rendition and distinct adopter
             behavior.
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: 'Accepted Captain ECMA48 8.3.117 framing selection: SGR51 framed,52 encircled,54 and0 clear; local one-active-style
+            last selector wins, independent of intensity/script and existing color/style fields. Retain two-bit enclosure
+            enum in existing44-byte CellAttrs byte42 padding; exact shared patch, report and common-region agreement; no-parameter
+            rendition stack restores enclosure, explicit original xterm subset unchanged. Both history equality paths share
+            semantic tail identity; exact mixed enclosure scroll/reflow and strengthened padding/run count. Actual shape uses
+            disjoint solid rectangle edges, max four commands, or one supersampled retained ellipse mask. Thickness derived
+            from existing underline metric and render transform; native mask up to64x64 and atlas bounds, oversized ellipse
+            samples bounded source with at least half-source-pixel stroke, tiny shapes may fill when hollow interior cannot
+            fit. Enclosure follows existing script/OSC66 render area, uses effective foreground/alpha, single independent
+            outline not duplicated by shadow; text conceal suppresses it, blink tags and scheduler include styled spaces/blank
+            enclosure. Selected scaled tiny-font/history/held-frame proof, exact dense512-cell 6145 commands incl shadow/double
+            underline/strike, actual SDL pixel witness verifies nonoverlapping alpha and sampled ring, glyph identity/variation
+            choices unchanged in both fallback orders. No forced emoji, new font owner, occupancy or C ABI change. Exact shape/combined
+            policy local, not prescribed raster standard; broad physical/remote/compositor and extreme atlas admission remain
+            unqualified.'
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rendition protection and rectangle owners report exact mutation'
@@ -1086,6 +1107,39 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: SGR 21 means double underline rather than Linux console single underline'
         relation: accepted-decision-location
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: ECMA framing selectors retain distinct rendition and never change text occupancy
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: ECMA enclosure survives regional rendition reports and full rendition stack
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA rectangle and ellipse enclosures retain distinct ink without forcing emoji
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA enclosures preserve text and emoji variation choice in both fallback orders
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA tiny and sized enclosure geometry stays bounded through history
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA blank enclosure is blink ink without manufacturing a glyph
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic bound admits dense framed shadow double underline and strike rows
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: ECMA enclosures and Mintty script ink have distinct bounded SDL pixels
+        relation: protocol-family
+      - file: howl-vt/src/output/glyph_cache.zig
+        test: ellipse coverage is symmetric hollow and bounded under tiny and oversized requests
+        relation: protocol-family
+      - file: howl-vt/src/history_store.zig
+        test: no-scalar history shape counts semantic attribute runs despite padding
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
     - id: sm
       section: 8.3.125
       level: defined
@@ -7735,6 +7789,14 @@ specifications:
             red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
             promotion
           baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: Selected whole-rendition save now includes the ECMA enclosure field via existing bounded mask. No new explicit51/52
+            xterm subset selectors or stack storage; adjacent extended attribute evidence.
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: XTPUSHSGR restores selected rendition with bounded stack truth'
@@ -7746,6 +7808,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty shadow survives regional rendition selective stack and cold history
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: ECMA enclosure survives regional rendition reports and full rendition stack
         relation: protocol-family
     - id: sgr-stack-pop
       section: Functions using CSI / XTPOPSGR, lines 1556-1558,1941-1943
@@ -7793,6 +7858,14 @@ specifications:
             red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
             promotion
           baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: Whole-rendition pop restores retained enclosure exactly; existing explicit subset, lifetime and capacity
+            remain unchanged. Adjacent ECMA attribute, not original xterm numeric extension claim.
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: XTPUSHSGR restores selected rendition with bounded stack truth'
@@ -7805,6 +7878,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty shadow survives regional rendition selective stack and cold history
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: ECMA enclosure survives regional rendition reports and full rendition stack
         relation: protocol-family
     - id: sgr-rectangle-report
       section: Functions using CSI / XTREPORTSGR, lines 1886-1890
@@ -20770,6 +20846,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty shadow survives regional rendition selective stack and cold history
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: ECMA enclosure survives regional rendition reports and full rendition stack
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA blank enclosure is blink ink without manufacturing a glyph
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_deccara_01:
           scope: 'Existing shared SGR patch and accepted bare/coordinate-only/zero distinction retained. Originating Kitty
@@ -20834,6 +20916,15 @@ specifications:
             red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
             promotion
           baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: Shared regional patch includes framed/encircled selection and reset, exact common report, independent active
+            pen and history retention. Styled blank enclosure can produce blink decorations without manufacturing glyphs.
+            Existing region geometry and lead-owned sized ink policy retained.
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
   kitty_underlines:
     title: Kitty colored and styled underlines
     author: Kovid Goyal / kitty
@@ -30483,6 +30574,16 @@ specifications:
             and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
             and private namespace decisions; VT/output red-green, no blanket FULL promotion
           baseline: fe940224d9b2ed37be360299488eb492ed1a7598
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: 'Additional script geometry proof: actual SDL software pixel equality against independently computed full/reduced
+            block rectangles for normal/raised/small/lowered, 3/5 scale and true combined baseline offset. Selected 4/6/20px
+            fonts with integer/fractional OSC66 enclosure, bounded decorations, blink and immutable history. Native font hinting,
+            all combined geometry and physical/remote pixels remain scoped.'
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty independent baseline flags survive every split and exact rendition reports
@@ -30504,6 +30605,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/screen.zig
         test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA tiny and sized enclosure geometry stays bounded through history
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: ECMA enclosures and Mintty script ink have distinct bounded SDL pixels
         relation: protocol-family
     - id: private-vertical-align
       section: Tips / Text attributes
@@ -30581,6 +30688,16 @@ specifications:
             red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
             promotion
           baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: 'Fixed contextual operator join boundary: shadowed following operator cannot be absorbed into preceding ordinary
+            run, preserving its independent retained underlay. Dense combined framed shadow/double underline/strike test verifies
+            bounded 6145 commands at512 columns; enclosure independent, not shadow duplicated. Existing sampled ink and scope
+            retained.'
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty shadow SGR is independent of bold and dim across every wire split
@@ -30606,6 +30723,12 @@ specifications:
       - file: howl-vt/src/screen.zig
         test: shared SGR patch matches direct rendition across supported selectors
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: contextual operator joining cannot consume independently shadowed ink
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic bound admits dense framed shadow double underline and strike rows
+        relation: protocol-family
     - id: emoji-style
       section: Tips / Text attributes
       level: defined
@@ -30630,6 +30753,26 @@ specifications:
         - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
           sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
           revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+        howl_qualification_20261127_mintty_rendition_03:
+          scope: Accepted sgr-framed-encircled-vs-mintty-emoji chooses ECMA48 rather than originating Mintty emoji style.
+            Actual 51/52 distinct enclosures,54 reset; exact digit ink and Unicode text/emoji variation and fallback order
+            unchanged under all enclosure states. Evidence of deliberate conflicting profile selection, NOT Mintty emoji-style
+            implementation.
+          method: Indexed ECMA48 fifth edition June1991 section8.3.117 SHA256 9577ad2514c411584b274ef7a4b3238c80aa93defbb349b18b8c78f78873f450
+            and accepted Captain sgr-framed-encircled-vs-mintty-emoji; retained Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d
+            and b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c/wintext.c source observations; deterministic VT/output
+            red-green, retained geometry and actual SDL pixel proof; no blanket FULL promotion
+          baseline: 31374a1cedd12d592a5a46966f97513f412e82d9
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: ECMA framing selectors retain distinct rendition and never change text occupancy
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA rectangle and ellipse enclosures retain distinct ink without forcing emoji
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: ECMA enclosures preserve text and emoji variation choice in both fallback orders
+        relation: protocol-family
   wezterm_rendition_profile:
     title: WezTerm adopting vertical-alignment profile
     author: WezTerm project

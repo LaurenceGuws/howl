@@ -92,7 +92,7 @@ pub fn Emitter(comptime instrumented: bool) type {
         }
         fn operator(cell: VT.Cell, sequence: []const u32) bool {
             if (sequence.len != 1 or cell.width != 1 or cell.x != 0 or cell.attrs.invisible or
-                cell.attrs.font != 0 or cell.attrs.baseline != .normal) return false;
+                cell.attrs.font != 0 or cell.attrs.baseline != .normal or cell.attrs.shadow) return false;
             const v = sequence[0];
             return (v >= 0x21 and v <= 0x2f) or (v >= 0x3a and v <= 0x40) or (v >= 0x5b and v <= 0x60) or (v >= 0x7b and v <= 0x7e);
         }
@@ -318,20 +318,18 @@ pub fn Emitter(comptime instrumented: bool) type {
             const background_end = used;
             const metrics = cache.fontFaces(ctx.atlas).metrics();
             const line_offset = @divFloor(@as(i32, ctx.cell_height) - metrics.line_height, 2);
-            if (!uniform or span.attrs.underline or span.attrs.strikethrough) for (cells, 0..) |cell, col| {
+            if (!uniform or span.attrs.underline or span.attrs.strikethrough or span.attrs.enclosure != .none) for (cells, 0..) |cell, col| {
                 if (cell.x != 0) continue;
                 if (needsScale(cell)) {
                     if (retained_row < cell.y) continue;
                     const lead = screen.retainedCellInfoAt(retained_row - cell.y, @intCast(col)) orelse return error.UnsupportedScene;
-                    if (lead.codepoint == 0 or lead.attrs.invisible or
-                        (!lead.attrs.underline and !lead.attrs.strikethrough)) continue;
+                    if (!hasDecorations(lead)) continue;
                     const start = used;
                     defer if (lead.attrs.blink) markBlink(output, start, used);
                     try appendDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
                     continue;
                 }
-                if (cell.codepoint == 0 or cell.attrs.invisible or
-                    (!cell.attrs.underline and !cell.attrs.strikethrough)) continue;
+                if (!hasDecorations(cell)) continue;
                 const start = used;
                 defer if (cell.attrs.blink) markBlink(output, start, used);
                 const c = shared_colors orelse try colors(cell, p);
@@ -632,18 +630,53 @@ pub fn Emitter(comptime instrumented: bool) type {
             return shifted;
         }
 
+        fn hasDecorations(cell: VT.Cell) bool {
+            return !cell.attrs.invisible and (cell.attrs.enclosure != .none or
+                (cell.codepoint != 0 and (cell.attrs.underline or cell.attrs.strikethrough)));
+        }
+
+        // Rectangular edges are disjoint, including when tiny geometry
+        // cannot accommodate a hollow interior. Alpha is applied once.
+        fn appendFrame(ctx: Context, output: []frame.Command, used: *usize, area: frame.Rect, clip: frame.Rect, thickness: u16, color: frame.Color) BuildError!void {
+            const top = @min(area.height, thickness);
+            const bottom = @min(area.height - top, thickness);
+            const middle = area.height - top - bottom;
+            try solid(ctx.command_bytes_written, output, used, .{ .x = area.x, .y = area.y, .width = area.width, .height = top }, clip, color);
+            if (bottom != 0)
+                try solid(ctx.command_bytes_written, output, used, .{ .x = area.x, .y = area.y + @as(i32, area.height - bottom), .width = area.width, .height = bottom }, clip, color);
+            if (middle == 0) return;
+            const left = @min(area.width, thickness);
+            const right = @min(area.width - left, thickness);
+            const y = area.y + @as(i32, top);
+            try solid(ctx.command_bytes_written, output, used, .{ .x = area.x, .y = y, .width = left, .height = middle }, clip, color);
+            if (right != 0)
+                try solid(ctx.command_bytes_written, output, used, .{ .x = area.x + @as(i32, area.width - right), .y = y, .width = right, .height = middle }, clip, color);
+        }
+
         // Ordinary and scaled cells share one decoration geometry and mask
         // owner. Every row sees the same complete layout, then clips its strip.
         fn appendDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
             const sizing = try baselineLayout(try scaledLayout(ctx, cell, col, row_offset), ctx, cell.attrs.baseline);
             const clip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
-            if (cell.attrs.shadow) {
-                var muted = resolved;
-                muted.fg = shadowColor(ctx, resolved.fg);
-                muted.underline = shadowColor(ctx, resolved.underline);
-                try appendDecorationLayer(ctx, output, used, cell, shadowLayout(sizing, cell.attrs.bold), clip, line_offset, metrics, muted);
+            if (cell.codepoint != 0) {
+                if (cell.attrs.shadow) {
+                    var muted = resolved;
+                    muted.fg = shadowColor(ctx, resolved.fg);
+                    muted.underline = shadowColor(ctx, resolved.underline);
+                    try appendDecorationLayer(ctx, output, used, cell, shadowLayout(sizing, cell.attrs.bold), clip, line_offset, metrics, muted);
+                }
+                try appendDecorationLayer(ctx, output, used, cell, sizing, clip, line_offset, metrics, resolved);
             }
-            try appendDecorationLayer(ctx, output, used, cell, sizing, clip, line_offset, metrics, resolved);
+            const area = sizing.render_area;
+            const thickness = try scaledExtent(@max(@as(u16, 1), metrics.underline_height), sizing.numerator, sizing.denominator);
+            switch (cell.attrs.enclosure) {
+                .none => {},
+                .framed => try appendFrame(ctx, output, used, area, clip, thickness, resolved.fg),
+                .encircled => {
+                    const ring = try cache.resolveEllipseAtlas(ctx.atlas, area.width, area.height, thickness, ctx.raster);
+                    try decorationMask(ctx, output, used, ring, area, clip, resolved.fg);
+                },
+            }
         }
 
         fn appendDecorationLayer(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, sizing: ScaledLayout, clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {

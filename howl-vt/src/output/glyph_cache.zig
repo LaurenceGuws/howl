@@ -209,6 +209,12 @@ const AtlasKey = union(enum) {
         phase: u8 = 0,
         dashed: bool,
     },
+    ellipse: struct {
+        width: u16,
+        height: u16,
+        inset_x: u16,
+        inset_y: u16,
+    },
     generated: struct {
         codepoint: u32,
         width: u16,
@@ -1137,6 +1143,54 @@ pub fn resolveUnderlinePatternAtlas(atlas: *Atlas, width: u16, numerator: u16, d
     return cacheAtlas(impl, key, mask_width, 1, 0, 0, pixels);
 }
 
+// Sample coordinates and radii use quarter-pixel units. The bounded
+// mask extent keeps all products comfortably within u64.
+fn ellipseContains(dx: u32, dy: u32, rx: u32, ry: u32) bool {
+    if (rx == 0 or ry == 0) return false;
+    const rx2 = @as(u64, rx) * rx;
+    const ry2 = @as(u64, ry) * ry;
+    return @as(u64, dx) * dx * ry2 + @as(u64, dy) * dy * rx2 <= rx2 * ry2;
+}
+
+fn ellipseInset(thickness: u16, mask_extent: u16, target_extent: u16) u16 {
+    // Preserve at least half a source pixel of stroke when an oversized
+    // destination is sampled from a smaller bounded mask.
+    const scaled = (@as(u32, thickness) * mask_extent * 4 + target_extent - 1) / target_extent;
+    return @intCast(@min(@as(u32, mask_extent) * 2, @max(2, scaled)));
+}
+
+/// Resolves one supersampled ellipse ring. Oversized destinations sample
+/// a bounded mask; thickness is converted independently for both axes.
+pub fn resolveEllipseAtlas(atlas: *Atlas, width: u16, height: u16, thickness: u16, scratch: []u8) AtlasError!AtlasRaster {
+    if (width == 0 or height == 0 or thickness == 0) return error.InvalidSize;
+    const impl = atlasImpl(atlas);
+    const height_limit = if (impl.config.growth) |growth| growth.alpha_height_limit else impl.alpha.height;
+    const w = @min(width, impl.config.width, 64);
+    const h = @min(height, height_limit, 64);
+    const ix = ellipseInset(thickness, w, width);
+    const iy = ellipseInset(thickness, h, height);
+    const key = AtlasKey{ .ellipse = .{ .width = w, .height = h, .inset_x = ix, .inset_y = iy } };
+    if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
+    const required = @as(usize, w) * h;
+    if (required > scratch.len) return error.BufferTooSmall;
+    const pixels = scratch[0..required];
+    // Twice the quarter-pixel radii keep sample centers integral.
+    const rx: u32 = @as(u32, w) * 4;
+    const ry: u32 = @as(u32, h) * 4;
+    const inner_x = rx -| (@as(u32, ix) * 2);
+    const inner_y = ry -| (@as(u32, iy) * 2);
+    for (0..h) |y| for (0..w) |x| {
+        var covered: u16 = 0;
+        for (0..4) |sy| for (0..4) |sx| {
+            const dx = @abs(@as(i32, @intCast(x * 8 + sx * 2 + 1)) - @as(i32, @intCast(rx)));
+            const dy = @abs(@as(i32, @intCast(y * 8 + sy * 2 + 1)) - @as(i32, @intCast(ry)));
+            if (ellipseContains(dx, dy, rx, ry) and !ellipseContains(dx, dy, inner_x, inner_y)) covered += 1;
+        };
+        pixels[y * @as(usize, w) + x] = @intCast((covered * 255 + 8) / 16);
+    };
+    return cacheAtlas(impl, key, w, h, 0, 0, pixels);
+}
+
 /// Resolves one implemented code-defined glyph into the fixed alpha atlas.
 /// The Atlas owns the immutable box-drawing raster policy; per-entry identity is
 /// therefore only codepoint, pixel extent, and OSC 66 sizing.
@@ -1214,6 +1268,7 @@ fn atlasIdentity(key: AtlasKey) AtlasIdentity {
         .font => |v| .{ .low = @as(u64, v.glyph_id) | (@as(u64, v.face_index) << 32) | (@as(u64, @backingInt(v.variant)) << 40), .high = @as(u64, v.fit_width) << 32 },
         .smooth_wave => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.thickness) << 16) | (@as(u64, v.line_height) << 32), .high = 1 << 16 },
         .underline_pattern => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.numerator) << 16) | (@as(u64, v.denominator) << 32) | (@as(u64, @intFromBool(v.dashed)) << 48) | (@as(u64, v.phase) << 49), .high = 3 << 16 },
+        .ellipse => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.height) << 16) | (@as(u64, v.inset_x) << 32) | (@as(u64, v.inset_y) << 48), .high = 4 << 16 },
         .generated => |v| .{ .low = @as(u64, v.codepoint) | (@as(u64, v.width) << 32) | (@as(u64, v.height) << 48), .high = (2 << 16) | @as(u64, v.sizing.scale) | (@as(u64, v.sizing.subscale_n) << 8) | (@as(u64, v.sizing.subscale_d) << 12) },
     };
 }
@@ -1267,6 +1322,11 @@ test "atlas lookup matches generic key equality and first match across all varia
         .{ .smooth_wave = .{ .width = 11, .thickness = 1, .line_height = 20 } },
         .{ .smooth_wave = .{ .width = 10, .thickness = 2, .line_height = 20 } },
         .{ .smooth_wave = .{ .width = 10, .thickness = 1, .line_height = 21 } },
+        .{ .ellipse = .{ .width = 10, .height = 20, .inset_x = 4, .inset_y = 4 } },
+        .{ .ellipse = .{ .width = 11, .height = 20, .inset_x = 4, .inset_y = 4 } },
+        .{ .ellipse = .{ .width = 10, .height = 21, .inset_x = 4, .inset_y = 4 } },
+        .{ .ellipse = .{ .width = 10, .height = 20, .inset_x = 5, .inset_y = 4 } },
+        .{ .ellipse = .{ .width = 10, .height = 20, .inset_x = 4, .inset_y = 5 } },
     };
     var entries: [2]AtlasEntry = undefined;
     // Lookup borrows only entries/count: no font or raster owner is invoked.
@@ -1873,5 +1933,50 @@ test "underline coverage masks retain rounded segment union and bounded native p
     const before = atlasEntryCount(atlas);
     try std.testing.expectError(error.GlyphTooLarge, resolveUnderlinePatternAtlas(atlas, 33, 1, 1, false, 0, &scratch));
     try std.testing.expectError(error.InvalidSize, resolveUnderlinePatternAtlas(atlas, 11, 1, 0, false, 0, &scratch));
+    try std.testing.expectEqual(before, atlasEntryCount(atlas));
+}
+
+test "ellipse coverage is symmetric hollow and bounded under tiny and oversized requests" {
+    const atlas = try initAtlas(std.testing.allocator, .{ .regular = undefined }, .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, .{ .width = 32, .height = 256, .entry_capacity = 32 });
+    defer deinitAtlas(atlas);
+    var scratch: [4096]u8 = undefined;
+    const cases = [_]struct { w: u16, h: u16, t: u16 }{
+        .{ .w = 1, .h = 1, .t = 1 },
+        .{ .w = 2, .h = 3, .t = 1 },
+        .{ .w = 9, .h = 17, .t = 1 },
+        .{ .w = 9, .h = 17, .t = 2 },
+        .{ .w = 65535, .h = 65535, .t = 1 },
+        .{ .w = 65535, .h = 5, .t = 1 },
+    };
+    for (cases) |case| {
+        const r = try resolveEllipseAtlas(atlas, case.w, case.h, case.t, &scratch);
+        try std.testing.expectEqual(@min(@as(u16, 32), case.w), r.width);
+        try std.testing.expectEqual(@min(@as(u16, 64), case.h), r.height);
+        const entries = atlasEntryCount(atlas);
+        try std.testing.expectEqualDeep(r, try resolveEllipseAtlas(atlas, case.w, case.h, case.t, &scratch));
+        try std.testing.expectEqual(entries, atlasEntryCount(atlas));
+        const pixels = atlasImpl(atlas).alpha.pixels.?;
+        var covered: usize = 0;
+        for (0..r.height) |y| for (0..r.width) |x| {
+            const at = (@as(usize, r.atlas_y) + y) * 32 + r.atlas_x;
+            const opposite = (@as(usize, r.atlas_y) + r.height - y - 1) * 32 + r.atlas_x;
+            const ink = pixels[at + x];
+            try std.testing.expectEqual(ink, pixels[at + r.width - x - 1]);
+            try std.testing.expectEqual(ink, pixels[opposite + x]);
+            if (ink != 0) covered += 1;
+        };
+        try std.testing.expect(covered != 0);
+        if (case.w > 4 and case.h > 4 and case.t == 1) {
+            const center = (@as(usize, r.atlas_y) + r.height / 2) * 32 + r.atlas_x + r.width / 2;
+            try std.testing.expectEqual(@as(u8, 0), pixels[center]);
+        }
+    }
+    const before = atlasEntryCount(atlas);
+    try std.testing.expectError(error.InvalidSize, resolveEllipseAtlas(atlas, 0, 5, 1, &scratch));
+    try std.testing.expectError(error.InvalidSize, resolveEllipseAtlas(atlas, 5, 5, 0, &scratch));
+    try std.testing.expectError(error.BufferTooSmall, resolveEllipseAtlas(atlas, 7, 11, 1, scratch[0..1]));
     try std.testing.expectEqual(before, atlasEntryCount(atlas));
 }

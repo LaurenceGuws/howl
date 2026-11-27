@@ -128,6 +128,8 @@ pub const Screen = struct {
     pub const UnderlineStyle = ScreenUnderlineStyle;
     /// Uses the canonical terminal baseline displacement.
     pub const Baseline = ScreenBaseline;
+    /// Uses the canonical terminal enclosure style.
+    pub const Enclosure = cell_values.Enclosure;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = ScreenCellAttrs;
     /// Uses the canonical terminal cell value.
@@ -3826,6 +3828,9 @@ pub const Screen = struct {
                     39 => setRenditionField(target, "fg", initial_cell_attrs.fg),
                     40...47 => setRenditionField(target, "bg", screenAnsi16Color(@intCast(param - 40))),
                     49 => setRenditionField(target, "bg", initial_cell_attrs.bg),
+                    51 => setRenditionField(target, "enclosure", .framed),
+                    52 => setRenditionField(target, "enclosure", .encircled),
+                    54 => setRenditionField(target, "enclosure", .none),
                     59 => setRenditionField(target, "underline_color", default_cell_underline_color),
                     73, 74 => {
                         const flags: ScreenBaseline = if (param == 73) .raised else .lowered;
@@ -8032,6 +8037,7 @@ test "shared SGR patch matches direct rendition across supported selectors" {
     styled.font = 4;
     styled.baseline = .raised;
     styled.shadow = true;
+    styled.enclosure = .encircled;
     styled.bold = true;
     styled.dim = true;
     styled.italic = true;
