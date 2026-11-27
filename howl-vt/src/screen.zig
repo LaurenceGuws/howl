@@ -4327,19 +4327,22 @@ pub const Screen = struct {
         return null;
     }
 
-    fn commitGraphicPlacement(self: *Screen, placement: GraphicPlacement, comptime grow: bool) (if (grow) error{ OutOfMemory, HistoryCapacity }!void else void) {
-        var history: ?history_store_mod.Store.Prepared = if (grow and placement.scrolls)
-            self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Capacity => return error.HistoryCapacity,
-            }
-        else
-            null;
+    inline fn commitGraphicPlacement(self: *Screen, placement: GraphicPlacement, comptime grow: bool) (if (grow) error{ OutOfMemory, HistoryCapacity }!void else void) {
+        if (grow and placement.scrolls) return self.commitGraphicScrollPlacement(placement);
+        self.commitPlannedGraphicPlacement(placement, null);
+    }
+
+    // Ordinary placement has no reservation to construct or discard.
+    noinline fn commitGraphicScrollPlacement(self: *Screen, placement: GraphicPlacement) error{ OutOfMemory, HistoryCapacity }!void {
+        var history = self.prepareScrollHistoryOne(self.scroll_top, self.scrollBottom(), true) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Capacity => return error.HistoryCapacity,
+        };
         defer self.discardPreparedHistory(&history);
         self.commitPlannedGraphicPlacement(placement, &history);
     }
 
-    fn commitPlannedGraphicPlacement(self: *Screen, placement: GraphicPlacement, history: *?history_store_mod.Store.Prepared) void {
+    fn commitPlannedGraphicPlacement(self: *Screen, placement: GraphicPlacement, history: ?*?history_store_mod.Store.Prepared) void {
         self.wrap_pending = false;
         for (0..placement.feeds) |_| {
             self.setRowWrapped(self.cursor.row, true);
@@ -4349,14 +4352,16 @@ pub const Screen = struct {
         self.cursor.setColByClient(placement.col);
     }
 
-    fn lineFeedWithHistory(self: *Screen, history: *?history_store_mod.Store.Prepared) void {
-        if (history.*) |*row| {
-            if (self.cursor.row == self.scrollBottom()) {
-                // zig-audit: acknowledge discard
-                // reason: The caller observes the completed graphic write, not the scroll witness.
-                _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
-                history.* = null;
-                return;
+    fn lineFeedWithHistory(self: *Screen, history: ?*?history_store_mod.Store.Prepared) void {
+        if (history) |prepared| {
+            if (prepared.*) |*row| {
+                if (self.cursor.row == self.scrollBottom()) {
+                    // zig-audit: acknowledge discard
+                    // reason: The caller observes the completed graphic write, not the scroll witness.
+                    _ = self.scrollUpRegionPrepared(self.scroll_top, self.scrollBottom(), 1, row);
+                    prepared.* = null;
+                    return;
+                }
             }
         }
         self.lineFeed();
@@ -9860,5 +9865,66 @@ test "graphic placement reserves history before skipping multiple obstructed row
         try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(2, 0).width);
         try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
         try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
+    }
+}
+
+test "placement without scrolling and transactional scroll share the same commit semantics" {
+    const Case = struct { row: u16, col: u16, pending: bool, obstructed: bool, narrow_margin: bool };
+    const cases = [_]Case{
+        .{ .row = 0, .col = 0, .pending = false, .obstructed = false, .narrow_margin = false },
+        .{ .row = 0, .col = 7, .pending = true, .obstructed = false, .narrow_margin = false },
+        .{ .row = 1, .col = 0, .pending = false, .obstructed = true, .narrow_margin = false },
+        .{ .row = 2, .col = 7, .pending = true, .obstructed = false, .narrow_margin = false },
+        .{ .row = 2, .col = 6, .pending = true, .obstructed = false, .narrow_margin = true },
+    };
+    for (cases) |case| {
+        var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 8, 4);
+        defer screen.deinit(std.testing.allocator);
+        var reference = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 8, 4);
+        defer reference.deinit(std.testing.allocator);
+        for ([_]*Screen{ &screen, &reference }) |owner| {
+            if (case.obstructed) {
+                owner.cursor.setPositionByClient(0, 1);
+                try std.testing.expect(owner.writeSizedText("s=3:w=2;A"));
+            } else {
+                owner.writeText("history");
+            }
+            if (case.narrow_margin) {
+                owner.left_right_margin_mode = true;
+                owner.left_margin = 1;
+                owner.right_margin = 6;
+            }
+            owner.cursor.setPositionByClient(case.row, case.col);
+            owner.wrap_pending = case.pending;
+        }
+        const plan = screen.planGraphicPlacement(2, screen.cursorRightBoundary()).?;
+        const expected = reference.planGraphicPlacement(2, reference.cursorRightBoundary()).?;
+        try std.testing.expectEqualDeep(expected, plan);
+        // Independently reproduce the prior owner path: prepare only when
+        // required, consume during each line feed, then commit the column.
+        var history: ?history_store_mod.Store.Prepared = if (expected.scrolls)
+            try reference.prepareScrollHistoryOne(reference.scroll_top, reference.scrollBottom(), true)
+        else
+            null;
+        defer reference.discardPreparedHistory(&history);
+        reference.wrap_pending = false;
+        for (0..expected.feeds) |_| {
+            reference.setRowWrapped(reference.cursor.row, true);
+            reference.lineFeedWithHistory(&history);
+            reference.cursor.setColByClient(reference.leftBoundary());
+        }
+        reference.cursor.setColByClient(expected.col);
+        try screen.commitGraphicPlacement(plan, true);
+        try std.testing.expectEqualDeep(reference.cursor, screen.cursor);
+        try std.testing.expectEqual(reference.wrap_pending, screen.wrap_pending);
+        try std.testing.expectEqual(reference.historyCount(), screen.historyCount());
+        try std.testing.expectEqual(reference.history_loss_generation, screen.history_loss_generation);
+        for (0..screen.rows) |row| {
+            try std.testing.expectEqual(reference.rowGeneration(@intCast(row)), screen.rowGeneration(@intCast(row)));
+            try std.testing.expectEqual(reference.rowWrapped(@intCast(row)), screen.rowWrapped(@intCast(row)));
+            for (0..screen.cols) |col| try std.testing.expectEqualDeep(reference.cellInfoAt(@intCast(row), @intCast(col)), screen.cellInfoAt(@intCast(row), @intCast(col)));
+        }
+        for (0..screen.historyCount()) |row| for (0..screen.cols) |col|
+            try std.testing.expectEqualDeep(reference.historyCellAt(@intCast(row), @intCast(col)), screen.historyCellAt(@intCast(row), @intCast(col)));
     }
 }
