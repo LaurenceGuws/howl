@@ -5144,6 +5144,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded inline image erase and refill cycles exceed the canonical slot quota without reset
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded historical images remain owned until their entire retained extent expires
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded image final reference retirement reclaims exact bytes across screen operations
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_images.single
@@ -5196,6 +5205,15 @@ specifications:
             validation, capacity refusal and opaque FIFO independence.
           residual: Native nonimage rendering, full image formats, host downloads and physical integration remain outside qualified
             scope. Non-Kitty orphan retention remains an explicit resource-lifetime residual.
+        howl_qualification_20261127_decoded_image_retirement:
+          scope: Single/multipart decoded PNG ownership now ends when its final retained placement retires, not only on reset
+            or pressure. Existing decoded identity and shared quota remain monotonic/bounded; no file authorization or broader
+            image format claim.
+          method: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+            sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+            term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+            unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+          baseline: b38c7273aa0cdadfb0742076f912a2913a5c15c6
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -10684,7 +10702,7 @@ specifications:
         test: Kitty ordinary ED2 reclaims local unreferenced data and keeps history and virtual prototypes
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
-        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
         relation: protocol-family
       - file: howl-vt/src/terminal.zig
         test: Kitty offscreen physical placement cannot mask a visible virtual animation
@@ -10821,7 +10839,7 @@ specifications:
         test: Kitty physical P Q validates bank and ancestor lifetime without evicting unrelated data
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
-        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
         relation: protocol-family
       - file: howl-vt/src/terminal.zig
         test: Kitty offscreen physical placement cannot mask a visible virtual animation
@@ -11193,7 +11211,7 @@ specifications:
         test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
-        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty animation requires caller visibility and nonzero total duration
@@ -11468,7 +11486,7 @@ specifications:
         test: Kitty blank ordinary display clear releases unplaced data without canceling pending upload
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
-        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty actual byte quota prefers unplaced data and retires oldest placed frames under pressure
@@ -11490,6 +11508,12 @@ specifications:
         relation: protocol-family
       - file: howl-app/src/canvas.zig
         test: Canvas draws all canonical image slots and retires high identities across cuts
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded image final reference retirement reclaims exact bytes across screen operations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded inline image erase and refill cycles exceed the canonical slot quota without reset
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
@@ -11548,6 +11572,16 @@ specifications:
             red-green, exact allocation and held-cut proofs, SDL software pixel and resource retirement qualification. No new
             originating protocol requirement.
           baseline: 00bd9bf16d4b6949f259cc2c3f670fe5e8042b65
+        howl_qualification_20261127_decoded_image_retirement:
+          scope: Decoded non-Kitty resources no longer occupy the common retained image quota after their final placement expires.
+            Actual seven Plane operation cases reclaim exact selected bytes and preserve alternate decoded and reusable Kitty
+            resources. Repeated real wire admission exceeds prior slot ceiling with erase/refill. Existing 64 MiB/256 identities,
+            Kitty eviction ordering and shared quota policy unchanged.
+          method: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+            sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+            term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+            unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+          baseline: b38c7273aa0cdadfb0742076f912a2913a5c15c6
     - id: direct-chunks
       section: docs/graphics-protocol.rst:470-495
       level: defined
@@ -11633,7 +11667,7 @@ specifications:
         test: Kitty blank ordinary display clear releases unplaced data without canceling pending upload
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
-        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
         relation: protocol-family
       - file: howl-vt/src/terminal.zig
         test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
@@ -12271,7 +12305,7 @@ specifications:
         test: Kitty blank ordinary display clear releases unplaced data without canceling pending upload
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
-        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
         relation: protocol-family
       - file: howl-vt/src/terminal.zig
         test: Kitty animation service excludes inactive screen bank and keeps elapsed resume semantics
@@ -12305,6 +12339,15 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty fitted placement margin clipping consumes padding before source pixels
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded image final reference retirement reclaims exact bytes across screen operations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded historical images remain owned until their entire retained extent expires
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: mode 1047 clears only alternate cells and placements on exit
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
@@ -12421,6 +12464,16 @@ specifications:
             stretching the requested rectangle. Deterministic Plane red-green, native manifest and direct held-output geometry
             proofs.
           baseline: 333a723dfd26456138d3bed88dea9f75601ef452
+        howl_qualification_20261127_decoded_image_retirement:
+          scope: Common last-reference marker now includes decoded non-Kitty data; anonymous Kitty, named Kitty, virtual refs,
+            pending transfers, history extent and other-bank selection unchanged. Mixed full-clear proof now releases selected
+            unreachable decoded pixels along with selected Kitty data while preserving referenced resources and frame/transfer
+            guarantees. Supersedes only prior non-Kitty retention expectation; no geometry or Kitty selector policy change.
+          method: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+            sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+            term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+            unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+          baseline: b38c7273aa0cdadfb0742076f912a2913a5c15c6
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
@@ -14473,6 +14526,18 @@ specifications:
           sha256: 2f6f3bbe488f698e45f1e7db58722f8abf5f1935739d83c604a7ae55e281140b
           location: ImageAddon.activate
           meaning: Sixel DCS q registration gated by addon option; core registration does not guarantee image handling.
+        howl_qualification_20261127_decoded_image_retirement:
+          scope: Selected existing Sixel decoding and placement lifetime now reclaim unreachable decoded bytes after final placement
+            retirement. Actual Sixel erase/refill beyond 256 retained slots succeeds without RIS; historical image survives live
+            display clear then retires on ED3. Existing logical-width/rectangle/margin and alternate-bank selection tests preserve
+            geometry and now assert actual data retirement. Foot corroborates destruction of retired pixels, not exact Howl partial-image
+            clipping/selection. This is a local resource-lifetime invariant, not a complete Sixel envelope or pixel-grid conformance
+            claim.
+          method: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+            sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+            term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+            unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+          baseline: b38c7273aa0cdadfb0742076f912a2913a5c15c6
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: fragmented Sixel retains exact image placement and cursor lifetime'
@@ -14496,6 +14561,36 @@ specifications:
         test: 'terminal: Sixel discard at full plane releases decoded pixels'
         relation: protocol-family
         note: Narrow regression evidence at 5cca2e7; not whole-clause qualification.
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded inline image erase and refill cycles exceed the canonical slot quota without reset
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded historical images remain owned until their entire retained extent expires
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded image final reference retirement reclaims exact bytes across screen operations
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: ECH Sixel graphics use the logical DEC row width, not physical columns'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: EL Sixel graphics follow the accepted DEC logical row width'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: ED below keeps out-of-width Sixel graphics on the cursor row'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: DEC origin rectangle erasure moves Sixel graphics with the accepted Screen rectangle'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: DECFRA replaces only Sixel graphics in the accepted origin rectangle'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: horizontal margin row edits retire straddling Sixel placements'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: mode 1047 clears only alternate cells and placements on exit
+        relation: protocol-family
     - id: six-dots
       section: 2.14 / Sixel Data Format, page 96
       level: defined
@@ -24587,6 +24682,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded inline image erase and refill cycles exceed the canonical slot quota without reset
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded historical images remain owned until their entire retained extent expires
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded image final reference retirement reclaims exact bytes across screen operations
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Selected single OSC1337 File=inline=1 PNG with absent/auto dimensions enters canonical graphics Plane at the
@@ -24618,6 +24722,16 @@ specifications:
             oversized explicit geometry and physical presentation remain open. Source inspection confirms erased non-Kitty bytes
             can retain quota without any remaining placement; full count refusal and RIS recovery proven, repeated erase/refill
             lifetime not corrected.
+        howl_qualification_20261127_decoded_image_retirement:
+          scope: 'Supersedes closing review unreachable decoded retention residual: single inline PNG can repeat 257 display/ED2
+            cycles without exhausting retained image slots. Reclaim selected decoded data at last placement retirement; retained
+            historical image survives ED2 and expires at ED3. Held direct cut still owns independent pixels after canonical inventory
+            is empty. Existing geometry, quota bounds and other formats/host policy unchanged.'
+          method: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+            sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+            term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+            unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+          baseline: b38c7273aa0cdadfb0742076f912a2913a5c15c6
     - id: multipart-start
       section: Protocol
       level: defined
@@ -24783,6 +24897,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: iTerm2 single and multipart admission respect full canonical image quota and recover after RIS
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: decoded inline image erase and refill cycles exceed the canonical slot quota without reset
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: decoded image final reference retirement reclaims exact bytes across screen operations
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_iterm2_images_01:
           scope: Author bare FileEnd now reaches existing ordered file-transfer consequence lane; legacy valued FileEnd retained.
@@ -24808,6 +24928,15 @@ specifications:
             incomplete or invalid Base64, non-PNG, truncated PNG and bad CRC; replacement and single-file supersession proven.
           residual: No general multipart file or other-format completion implementation; complete malformed/framing/host geometry
             and allocation matrix remains open.
+        howl_qualification_20261127_decoded_image_retirement:
+          scope: Selected multipart PNG uses the same last-reference retirement as single PNG; 257 display/ED2 cycles succeed
+            beyond canonical slot count without reset. Actual held output remains immutable after canonical data release. No additional
+            transfer, decode, or filesystem semantics.
+          method: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+            sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+            term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+            unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+          baseline: b38c7273aa0cdadfb0742076f912a2913a5c15c6
     - id: metadata
       section: Protocol / optional arguments
       level: defined
@@ -40927,8 +41056,7 @@ reconciliation:
       with exact resource/cursor preservation and RIS recovery, and inline publication independent of full opaque file FIFO.
     boundary: Original single PNG subset; explicit dimensions/automatic shrink separately assessed by iterm2-inline-destination-geometry,
       multipart by iterm2-inline-multipart-transaction. Non-PNG, actual host downloads, FILE detection, full allocation/geometry/framing
-      matrix and physical presentation remain open. Source-confirmed unreachable non-Kitty retention after final placement
-      retirement is a residual.
+      matrix and physical presentation remain open. Last-reference decoded lifetime is separately qualified by decoded-graphics-final-reference-retirement.
     not_full_because: Selected single PNG admission is bounded and qualified, not all source formats, host-file behavior
       or complete geometry and image lifetime.
     closing_evidence_basis: Closing review at b7d49d15b2e81e5c1f6de02b23ffeede3970a1ff against preserved iTerm2 Inline Images
@@ -41094,7 +41222,7 @@ reconciliation:
       retained mutation.
     boundary: Selected inline PNG transaction only. Conservative ST packet bound; broader non-PNG/file download/FILE detection,
       all parser/allocator/cursor/geometry cases, exact author remaining-width/height, physical presentation and arbitrary
-      tmux integration remain open. Shared non-Kitty orphan retention is not corrected.
+      tmux integration remain open. Shared decoded last-reference lifetime is separately qualified by decoded-graphics-final-reference-retirement.
     not_full_because: Bounded selected PNG multipart transaction demonstrated, not broader file formats, complete interruption/metadata/geometry
       matrix or integration parity.
     closing_evidence_basis: Closing review at b7d49d15b2e81e5c1f6de02b23ffeede3970a1ff against preserved iTerm2 Inline Images
@@ -41113,4 +41241,75 @@ reconciliation:
     - iterm2_osc1337.inline-file
     scope: Selected inline PNG multipart transaction; extends single-image geometry without changing decoder, retained
       image quota, or granting host filesystem permissions.
+- id: decoded-graphics-final-reference-retirement
+  status: resolved-by-scoped-source-selection
+  decision_rule: canonical-resource-ownership-and-reference-lifetime
+  operator_alignment: '2026-11-27: operator approved the bounded non-Kitty lifetime follow-up after iTerm2 closing review;
+    retain existing geometry/selection policy.'
+  accepted_interpretation:
+    effect: A selected decoded non-Kitty image has no client-addressable reusable identity. When existing screen operations
+      retire its final placement, reclaim the owned pixel allocation and retained slot through the common last-reference
+      retirement marker. Preserve live and historical references, other banks, named Kitty data, protected transaction
+      resources, and independently owned output cuts. Existing erase, margin, resize, history-cutoff and bank-selection
+      geometry is not redefined. No additional cache, new persistent fields, or quota increase.
+  selects:
+    graphics.decoded.final-reference-lifetime: effect
+  reason: Existing decoder admission has a bounded inventory and no non-Kitty re-put identity; retaining unreachable allocations
+    exhausts the slot quota in erase/refill workloads. Foot frees retired Sixel allocations, while WezTerm has a separately
+    bounded recent-data cache. Reuse the existing anonymous last-reference owner rather than invent cache semantics or
+    preserve an inherited resource-retention accident. This is a local shared owner policy and not a claim of universal
+    Sixel pixel selection parity.
+  evidence_basis: Local resource-lifetime correction at b38c7273aa0cdadfb0742076f912a2913a5c15c6. Pinned Foot cb2771788998f6a6288e2de8273c55a8214551e0
+    sixel.c207-249,417-465,837-842,1061-1099 destroys retired pixel allocations; independent WezTerm cab25161054c50fd6c705db4ceefef0f1e5a9575
+    term/src/terminalstate/image.rs287-298 and mod.rs583 retain a separate bounded recent-image cache, not a client-visible
+    unplaced inventory. Real wire and exact Plane red-green, native held-output proof. No new originating geometry requirement.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected decoded last-reference resource retirement
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:markRetiredImage
+    - howl-vt/src/graphics.zig:retirePlacementSet
+    - howl-vt/src/graphics.zig:reclaimUnplaced
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: decoded inline image erase and refill cycles exceed the canonical slot quota without reset
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: decoded historical images remain owned until their entire retained extent expires
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: decoded image final reference retirement reclaims exact bytes across screen operations
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: iTerm2 multipart publishes one immutable image cut only after FileEnd
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: mode 1047 clears only alternate cells and placements on exit
+      relation: protocol-family
+    verified_subset: 257 actual erase/refill cycles for each single PNG, multipart PNG and Sixel; selected historical
+      image survives live clear and is freed at history retirement; seven Plane routes reclaim exact bytes and preserve
+      other-bank resources; mixed Kitty/decoded full clear, alternate teardown and held output controls. No new retained
+      state or quota change.
+    boundary: Selected decoded lifetime and existing placement selection only. Complete Sixel partial-pixel geometry,
+      reflow/margins, all protocol/allocator/byte-pressure combinations and physical presentation not qualified.
+    not_full_because: The selected ownership invariant is demonstrated for bounded routes; broader source graphics geometry,
+      every lifecycle and all integration cases remain open.
+  applies_to:
+    clauses:
+    - dec_sixel.envelope
+    - iterm2_images.single
+    - iterm2_images.multipart-end
+    - iterm2_osc1337.inline-file
+    - kitty_graphics.terminal-interaction
+    - kitty_graphics.quota
+    scope: Shared non-Kitty decoded resource lifetime only, preserving existing selection geometry and protocol meaning.
 pending_reconciliation: []

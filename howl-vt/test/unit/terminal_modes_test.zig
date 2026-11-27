@@ -3652,8 +3652,9 @@ test "mode 1047 clears only alternate cells and placements on exit" {
             try std.testing.expectEqual(@as(u21, 'M'), terminal.semanticView(0).cellAt(0, 0));
             try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
             try std.testing.expectEqualDeep(primary_placement, terminal.images(0).placement(0).?);
-            try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-            try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+            try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+            try std.testing.expectEqual(primary_placement.image_id, terminal.images(0).image(0).?.id);
+            try std.testing.expect(terminal.images(0).content_generation > content_generation);
             try std.testing.expect(!(try terminal.feed(command)).stateChanged());
             try feed(&terminal, "\x1b[1;1H\x1b8");
             try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);

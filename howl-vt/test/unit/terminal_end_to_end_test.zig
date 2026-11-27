@@ -537,8 +537,8 @@ test "terminal: ECH Sixel graphics use the logical DEC row width, not physical c
     try std.testing.expect((try terminal.feed("\x1b[999X")).stateChanged());
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-    try std.testing.expectEqual(image_content_generation, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).content_generation > image_content_generation);
 }
 
 test "terminal: EL Sixel graphics follow the accepted DEC logical row width" {
@@ -563,8 +563,8 @@ test "terminal: EL Sixel graphics follow the accepted DEC logical row width" {
         try std.testing.expect((try terminal.feed(case.command)).stateChanged());
         try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
         try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
-        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-        try std.testing.expectEqual(image_content, terminal.images(0).content_generation);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expect(terminal.images(0).content_generation > image_content);
     }
 }
 
@@ -586,8 +586,8 @@ test "terminal: ED below keeps out-of-width Sixel graphics on the cursor row" {
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
     try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).imageCount());
-    try std.testing.expectEqual(pixels_before, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).content_generation > pixels_before);
 }
 
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
@@ -3149,8 +3149,8 @@ test "terminal: DECFRA replaces only Sixel graphics in the accepted origin recta
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-    try std.testing.expectEqual(original_content_generation, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).content_generation > original_content_generation);
     try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
 }
 
@@ -3188,8 +3188,8 @@ test "terminal: DEC origin rectangle erasure moves Sixel graphics with the accep
         const remaining = terminal.images(0).placement(0).?;
         try std.testing.expectEqual(@as(u16, 0), remaining.row);
         try std.testing.expectEqual(@as(u16, 0), remaining.col);
-        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
-        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expect(terminal.images(0).content_generation > content_generation);
     }
 }
 
@@ -6524,10 +6524,10 @@ test "terminal: horizontal margin row edits retire straddling Sixel placements" 
     try feed(&terminal, "\x1b[?69h\x1b[3;6s\x1b[2;4r\x1b[2;3H");
     try std.testing.expect((try terminal.feed("\x1b[L")).stateChanged());
     // One image spans the left DECSLRM edge. Translating it wholesale would
-    // move pixels outside the text region, so keep data and drop placement.
+    // move pixels outside the text region, so retire the placement and its unreachable data.
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
-    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
-    try std.testing.expectEqual(pixels, terminal.images(0).content_generation);
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).content_generation > pixels);
 }
 
 test "Kitty DECCARA clips page rows and admits ordered stream endpoints without clamping offscreen starts" {

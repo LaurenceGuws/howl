@@ -4425,3 +4425,63 @@ test "iTerm2 single and multipart admission respect full canonical image quota a
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
     try std.testing.expect(terminal.images(0).image(0).?.id > last.image_id);
 }
+
+test "decoded inline image erase and refill cycles exceed the canonical slot quota without reset" {
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const packets = [_][]const u8{
+        "\x1b]1337;File=inline=1:" ++ sample ++ "\x07",
+        "\x1b]1337;MultipartFile=inline=1\x07\x1b]1337;FilePart=" ++ sample ++ "\x07\x1b]1337;FileEnd\x07",
+        "\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\",
+    };
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 6);
+    var prior_id: u32 = 0;
+    for (packets) |packet| {
+        for (0..Terminal.maximum_images + 1) |_| {
+            try feed(&terminal, "\x1b[H");
+            try std.testing.expect((try terminal.feed(packet)).mutations.images);
+            const admitted = terminal.images(0);
+            const placement = admitted.placement(0) orelse return error.TestUnexpectedResult;
+            try std.testing.expect(placement.image_id > prior_id);
+            prior_id = placement.image_id;
+            try std.testing.expectEqual(@as(usize, 1), admitted.placementCount());
+            try std.testing.expect((try terminal.feed("\x1b[2J")).mutations.images);
+            try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "decoded historical images remain owned until their entire retained extent expires" {
+    const packets = [_][]const u8{
+        "\x1b]1337;File=inline=1;width=1px;height=3;preserveAspectRatio=0:iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=\x07",
+        "\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\",
+    };
+    for (packets, 0..) |packet, index| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 8, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, if (index == 0) 1 else 2);
+        try feed(&terminal, packet);
+        const before = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), before.imageCount());
+        const id = before.image(0).?.id;
+        try feed(&terminal, "\x1b[4;1H\r\n\r\n\r\n");
+        const historical = terminal.images(3);
+        try std.testing.expectEqual(@as(usize, 1), historical.imageCount());
+        var it = historical.placementIterator();
+        try std.testing.expectEqual(id, (it.next() orelse return error.TestUnexpectedResult).placement.image_id);
+        try std.testing.expect(it.next() == null);
+        try feed(&terminal, "\x1b[2J");
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqual(before.content_generation, terminal.images(0).content_generation);
+        try std.testing.expect((try terminal.feed("\x1b[3J")).mutations.images);
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+        try std.testing.expect(terminal.images(0).content_generation > before.content_generation);
+        try feed(&terminal, "\x1b[H");
+        try std.testing.expect((try terminal.feed(packet)).mutations.images);
+        try std.testing.expect(terminal.images(0).image(0).?.id > id);
+    }
+}

@@ -2979,6 +2979,7 @@ test "iTerm2 inline PNG uses native graphics output and survives held-cut retire
     try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).placementCount());
     try owner.feed("\x1b[2J");
     try owner.flush();
+    try std.testing.expectEqual(@as(usize, 0), owner.observation().images(0).imageCount());
     try std.testing.expectEqualDeep(original, held.snapshot.graphics.positive[0].rgba);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, held.snapshot.graphics.images[0].pixels);
     release(owner, held);
@@ -3061,4 +3062,5 @@ test "iTerm2 multipart publishes one immutable image cut only after FileEnd" {
     try owner.flush();
     try std.testing.expectEqual(@as(usize, 1), complete.snapshot.graphics.images.len);
     try std.testing.expectEqual(@as(usize, 0), owner.observation().images(0).placementCount());
+    try std.testing.expectEqual(@as(usize, 0), owner.observation().images(0).imageCount());
 }

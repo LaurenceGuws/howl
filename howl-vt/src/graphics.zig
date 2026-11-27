@@ -1686,8 +1686,7 @@ pub const Plane = struct {
         return .{ .cols = placement_value.cols, .rows = placement_value.rows };
     }
 
-    /// Clears one bank's placements and Kitty data, preserving other banks.
-    /// Non-Kitty decoded image retention follows its existing decoder policy.
+    /// Clears one bank's placements and unreferenced image data, preserving other banks.
     pub fn clearBank(self: *Plane, bank: Bank) bool {
         self.cancel(bank);
         if (self.image_count == 0) return false;
@@ -1795,7 +1794,7 @@ pub const Plane = struct {
 
     /// Clears the live display and retires unreferenced Kitty image data.
     /// History references, virtual prototypes, pending uploads and other
-    /// banks remain independent. Non-Kitty data follows ordinary erase policy.
+    /// banks remain independent. Selected decoded data retires with its final placement.
     pub fn clearDisplay(self: *Plane, bank: Bank, top: u64, bottom: u64, right: u16) bool {
         if (self.image_count == 0) return false;
         var doomed = PlacementSet.empty;
@@ -2644,10 +2643,10 @@ pub const Plane = struct {
         self.reclaimUnplaced(reclaim);
     }
 
-    // A selected anonymous image has no client identity for a later put.
-    // Reclaim it only after its final reference retires, just like orphaned
-    // descendants. Never sweep unrelated unplaced images or a protected
-    // resource in the middle of replacement/whole-image retirement.
+    // Decoded non-Kitty images and anonymous Kitty images have no client
+    // identity for a later put. Reclaim selected data after its final
+    // reference retires, just like orphaned descendants. Never sweep
+    // unrelated unplaced images or the protected transaction resource.
     fn markRetiredImage(
         self: *const Plane,
         image_id: u32,
@@ -2659,7 +2658,7 @@ pub const Plane = struct {
         if (image_id == protected_image_id or image_id == last_marked.*) return;
         const index = self.imageIndex(image_id) orelse return;
         const image_value = self.images[index];
-        if (parent_retired or (image_value.kitty_id == 0 and image_value.kitty_number == null)) {
+        if (parent_retired or ((image_value.kitty_id orelse 0) == 0 and image_value.kitty_number == null)) {
             reclaim[index] = true;
             last_marked.* = image_id;
         }
@@ -6354,7 +6353,7 @@ test "Kitty anonymous physical image does not lend its identity to a later virtu
     try std.testing.expectEqual(virtual, plane.virtualPrototype(.primary, 0, 0).?.image_id);
 }
 
-test "Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes" {
+test "full display retirement frees unreferenced Kitty and decoded data but preserves referenced resources" {
     const allocator = std.testing.allocator;
     var plane = Plane.init(allocator);
     defer plane.deinit();
@@ -6390,16 +6389,16 @@ test "Kitty full display retirement frees frame and indexed data but preserves r
     try std.testing.expect(plane.clearDisplay(.primary, 2, 4, 7));
     try std.testing.expectEqual(before + 1, plane.generation());
     try std.testing.expectEqual(plane.generation(), plane.content_generation);
-    try std.testing.expectEqual(@as(u16, 4), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
     try std.testing.expectEqual(@as(u16, 3), plane.placement_count);
     try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
-    try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+    try std.testing.expectEqual(@as(usize, 12), plane.storage_bytes);
     for ([_]u32{ 7, 8, 9 }) |id|
         try std.testing.expect(plane.kittyImageIndex(id, .primary) == null);
     try std.testing.expectEqualDeep(virtual, plane.virtualPrototype(.primary, 10, 1).?);
     try std.testing.expect(plane.kittyImageIndex(11, .primary) != null);
     try std.testing.expect(plane.kittyImageIndex(7, .alternate) != null);
-    try std.testing.expectEqualSlices(u8, &.{ 25, 26, 27, 28 }, plane.images[plane.imageIndex(decoded_id).?].pixels);
+    try std.testing.expect(plane.imageIndex(decoded_id) == null);
     try std.testing.expect(!plane.hasPlacement(decoded_id));
     const cleared = plane.generation();
     try std.testing.expect(!plane.clearDisplay(.primary, 2, 4, 7));
@@ -6410,7 +6409,7 @@ test "Kitty full display retirement frees frame and indexed data but preserves r
     try std.testing.expectEqual(@as(?u32, 8), missing.response_id);
     try std.testing.expectEqual(@as(?u32, 3), missing.response_frame);
     try std.testing.expectEqual(cleared, plane.generation());
-    try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+    try std.testing.expectEqual(@as(usize, 12), plane.storage_bytes);
 }
 
 test "Kitty history cutoff retains crossing root geometry until its entire extent retires" {
@@ -6636,4 +6635,45 @@ test "decoded destination geometry preflights before consuming pixels and identi
     try std.testing.expectEqual(before + 1, plane.generation());
     try std.testing.expectEqual(identity + 1, plane.next_image_id);
     try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+}
+
+test "decoded image final reference retirement reclaims exact bytes across screen operations" {
+    const Operation = enum { erase, display, history, bounds, scroll, shift, bank };
+    for ([_]Operation{ .erase, .display, .history, .bounds, .scroll, .shift, .bank }) |operation| {
+        var plane = Plane.init(std.testing.allocator);
+        defer plane.deinit();
+        for (0..3) |index| {
+            const pixels = try std.testing.allocator.dupe(u8, &.{ @intCast(index), 2, 3, 4 });
+            const advance = plane.admitDecoded(pixels, 1, 1, if (index == 2) .alternate else .primary, 0, 0, 1, 1, null) catch |failure| {
+                std.testing.allocator.free(pixels);
+                return failure;
+            };
+            try std.testing.expectEqualDeep(CursorAdvance{ .cols = 1, .rows = 1 }, advance);
+        }
+        const alternate_id = plane.image(2).?.id;
+        try std.testing.expect((try plane.command("a=t,i=7,s=1,v=1;BQYHCA==", .alternate, 0, 0, 0, 1, 1)).changed);
+        const named_id = plane.image(3).?.id;
+        const before = plane.generation();
+        try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+        const changed = switch (operation) {
+            .erase => plane.erase(.primary, 0, 0, 0, 0, .non_kitty),
+            .display => plane.clearDisplay(.primary, 0, 3, 7),
+            .history => plane.evictBefore(1),
+            .bounds => plane.retainBankBounds(.primary, 1, 4, 8),
+            .scroll => plane.scroll(.primary, 0, 3, 1, true),
+            .shift => plane.shiftColumnRows(.primary, 0, 0, 0, 7, 1, true),
+            .bank => plane.clearBank(.primary),
+        };
+        try std.testing.expect(changed);
+        try std.testing.expectEqual(before + 1, plane.generation());
+        try std.testing.expectEqual(plane.generation(), plane.content_generation);
+        try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+        try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+        try std.testing.expectEqual(@as(usize, 8), plane.storage_bytes);
+        try std.testing.expectEqual(alternate_id, plane.placement(0).?.image_id);
+        try std.testing.expectEqualSlices(u8, &.{ 2, 2, 3, 4 }, plane.images[plane.imageIndex(alternate_id).?].pixels);
+        try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.images[plane.imageIndex(named_id).?].pixels);
+        try std.testing.expect(!plane.clearDisplay(.primary, 0, 3, 7));
+        try std.testing.expectEqual(before + 1, plane.generation());
+    }
 }
