@@ -4096,6 +4096,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 origin + screen.cursor.row,
                 screen.cursor.col,
                 screen.lineRightBoundary(screen.cursor.row),
+                .non_kitty,
             );
             if (screen.cursor.row + 1 < screen.rows) graphics_changed =
                 vt.graphics.erase(
@@ -4104,6 +4105,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                     origin + screen.rows - 1,
                     0,
                     screen.cols - 1,
+                    .non_kitty,
                 ) or graphics_changed;
             return graphics_changed or changed;
         },
@@ -4118,6 +4120,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 origin + screen.cursor.row,
                 0,
                 screen.cursor.col,
+                .non_kitty,
             );
             if (screen.cursor.row != 0) graphics_changed = vt.graphics.erase(
                 graphicsBank(vt),
@@ -4125,6 +4128,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 origin + screen.cursor.row - 1,
                 0,
                 screen.cols - 1,
+                .non_kitty,
             ) or graphics_changed;
             return graphics_changed or changed;
         },
@@ -4156,6 +4160,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 graphicsScreenOrigin(vt) + range.row,
                 range.left,
                 range.right,
+                .non_kitty,
             ) or result.changed;
         },
         .selective_erase_line => |mode| {
@@ -4171,6 +4176,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 graphicsScreenOrigin(vt) + range.row,
                 range.left,
                 range.right,
+                .non_kitty,
             ) or result.changed;
         },
         .rect_erase => |area| {
@@ -4332,6 +4338,7 @@ fn eraseCompleteDisplay(vt: *Terminal, protected: bool) bool {
         origin + screen.rows - 1,
         0,
         screen.cols - 1,
+        .all,
     ) or changed;
 }
 
@@ -4531,6 +4538,7 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
         origin + bounds.bottom,
         bounds.left,
         bounds.right,
+        .non_kitty,
     );
 }
 

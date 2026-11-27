@@ -520,14 +520,14 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
 }
 
-test "terminal: ECH graphics use the logical DEC row width, not physical columns" {
+test "terminal: ECH Sixel graphics use the logical DEC row width, not physical columns" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
-    try terminal.setCellPixelSize(1, 1);
+    try terminal.setCellPixelSize(1, 6);
     // Image at logical column four and one at physical column six, which
     // ceases to be addressable when the row changes to double-width.
-    try feed(&terminal, "\x1b[1;4H\x1b_Ga=T,f=32,s=1,v=1,i=81,C=1;AQIDBA==\x1b\\");
-    try feed(&terminal, "\x1b[1;6H\x1b_Ga=T,f=32,s=1,v=1,i=82,C=1;AQIDBA==\x1b\\");
+    try feed(&terminal, "\x1b[1;4H\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\");
+    try feed(&terminal, "\x1b[1;6H\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\");
     try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
     const image_content_generation = terminal.images(0).content_generation;
@@ -541,7 +541,7 @@ test "terminal: ECH graphics use the logical DEC row width, not physical columns
     try std.testing.expectEqual(image_content_generation, terminal.images(0).content_generation);
 }
 
-test "terminal: EL graphics follow the accepted DEC logical row width" {
+test "terminal: EL Sixel graphics follow the accepted DEC logical row width" {
     for ([_]struct { command: []const u8, cursor_col: u16 }{
         .{ .command = "\x1b[0K", .cursor_col = 2 },
         .{ .command = "\x1b[1K", .cursor_col = 3 },
@@ -549,9 +549,9 @@ test "terminal: EL graphics follow the accepted DEC logical row width" {
     }) |case| {
         var terminal = try Terminal.init(std.testing.allocator, 2, 8);
         defer terminal.deinit();
-        try terminal.setCellPixelSize(1, 1);
-        try feed(&terminal, "\x1b[1;4H\x1b_Ga=T,f=32,s=1,v=1,i=83,C=1;AQIDBA==\x1b\\");
-        try feed(&terminal, "\x1b[1;6H\x1b_Ga=T,f=32,s=1,v=1,i=84,C=1;AQIDBA==\x1b\\");
+        try terminal.setCellPixelSize(1, 6);
+        try feed(&terminal, "\x1b[1;4H\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\");
+        try feed(&terminal, "\x1b[1;6H\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\");
         try consumeReplies(&terminal);
         try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
         const image_content = terminal.images(0).content_generation;
@@ -568,11 +568,11 @@ test "terminal: EL graphics follow the accepted DEC logical row width" {
     }
 }
 
-test "terminal: ED below keeps out-of-width graphics on the cursor row" {
+test "terminal: ED below keeps out-of-width Sixel graphics on the cursor row" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
-    try terminal.setCellPixelSize(1, 1);
-    const graphics = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+    try terminal.setCellPixelSize(1, 6);
+    const graphics = "\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\";
     try feed(&terminal, "\x1b[1;4H" ++ graphics ++ "\x1b[1;6H" ++ graphics ++ "\x1b[2;4H" ++ graphics);
     try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 3), terminal.images(0).placementCount());
@@ -586,8 +586,8 @@ test "terminal: ED below keeps out-of-width graphics on the cursor row" {
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
     try std.testing.expectEqual(@as(u16, 5), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
-    try std.testing.expect(terminal.images(0).content_generation > pixels_before);
+    try std.testing.expectEqual(@as(usize, 3), terminal.images(0).imageCount());
+    try std.testing.expectEqual(pixels_before, terminal.images(0).content_generation);
 }
 
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
@@ -3114,14 +3114,14 @@ test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
 }
 
-test "terminal: DECFRA replaces only graphics in the accepted origin rectangle" {
+test "terminal: DECFRA replaces only Sixel graphics in the accepted origin rectangle" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
-    try terminal.setCellPixelSize(1, 1);
+    try terminal.setCellPixelSize(1, 6);
 
     // The admitted image at the target cell must disappear even when the
     // replacement glyph is already identical, without retiring other images.
-    const image = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+    const image = "\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\";
     try feed(&terminal, "\x1b[1;1HO\x1b[1;1H" ++ image ++ "\x1b[2;3HX\x1b[2;3H" ++ image);
     try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
@@ -3149,20 +3149,20 @@ test "terminal: DECFRA replaces only graphics in the accepted origin rectangle" 
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.row);
     try std.testing.expectEqual(@as(u16, 0), terminal.images(0).placement(0).?.col);
-    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
-    try std.testing.expect(terminal.images(0).content_generation > original_content_generation);
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(original_content_generation, terminal.images(0).content_generation);
     try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
 }
 
-test "terminal: DEC origin rectangle erasure moves graphics with the accepted Screen rectangle" {
+test "terminal: DEC origin rectangle erasure moves Sixel graphics with the accepted Screen rectangle" {
     for ([_][]const u8{ "\x1b[1;1;1;1$z", "\x1b[1;1;1;1$\x7b" }) |erase| {
         var terminal = try Terminal.init(std.testing.allocator, 4, 8);
         defer terminal.deinit();
-        try terminal.setCellPixelSize(1, 1);
+        try terminal.setCellPixelSize(1, 6);
 
         // Two independent image placements: one at the absolute origin,
         // and one at the first cell of the eventual origin-mode rectangle.
-        const image = "\x1b_Ga=T,f=32,s=1,v=1,C=1;AQIDBA==\x1b\\";
+        const image = "\x1bPq\"1;1;1;6#1;2;100;0;0~\x1b\\";
         try feed(&terminal, "\x1b[1;1HO\x1b[1;1H" ++ image ++ "\x1b[2;3HX\x1b[2;3H" ++ image);
         try consumeReplies(&terminal);
         try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
@@ -3188,8 +3188,8 @@ test "terminal: DEC origin rectangle erasure moves graphics with the accepted Sc
         const remaining = terminal.images(0).placement(0).?;
         try std.testing.expectEqual(@as(u16, 0), remaining.row);
         try std.testing.expectEqual(@as(u16, 0), remaining.col);
-        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
-        try std.testing.expect(terminal.images(0).content_generation > content_generation);
+        try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+        try std.testing.expectEqual(content_generation, terminal.images(0).content_generation);
     }
 }
 
@@ -5004,6 +5004,8 @@ test "terminal: static graphics follow scroll erase resize bank and reset lifeti
     try std.testing.expect((try terminal.feed("\x1b[S")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[2K")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.images(0).placement(0).?.row);
+    try std.testing.expect((try terminal.feed("\x1b_Ga=d,d=i,i=7\x1b\\")).stateChanged());
     try std.testing.expect(terminal.images(0).placement(0) == null);
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
 
@@ -6510,11 +6512,11 @@ test "terminal: full-screen LF scrolls graphics both with and without retained h
     }
 }
 
-test "terminal: horizontal margin row edits retire only straddling graphics placements" {
+test "terminal: horizontal margin row edits retire straddling Sixel placements" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
-    try terminal.setCellPixelSize(1, 1);
-    try feed(&terminal, "\x1b[3;2H\x1b_Ga=T,f=32,s=2,v=1,i=31,C=1;AQIDBAUGBwg=\x1b\\");
+    try terminal.setCellPixelSize(1, 6);
+    try feed(&terminal, "\x1b[3;2H\x1bPq\"1;1;2;6#1;2;100;0;0!2~\x1b\\");
     try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
@@ -7300,5 +7302,71 @@ test "Kitty blank ordinary display clear releases unplaced data without cancelin
         try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
         try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, terminal.images(0).image(0).?.pixels);
         try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}
+
+test "Kitty partial text erasures preserve physical placements and remove only erased placeholder projections" {
+    for ([_][]const u8{
+        "\x1b[0J", "\x1b[1J",        "\x1b[?0J",       "\x1b[?1J",
+        "\x1b[0K", "\x1b[1K",        "\x1b[2K",        "\x1b[?2K",
+        "\x1b[X",  "\x1b[1;1;1;1$z", "\x1b[1;1;1;1${", "\x1b[88;1;1;1;1$x",
+    }) |wire| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;AQIDBA==\x1b\\" ++
+            "\x1b_Ga=T,i=8,p=1,U=1,C=1,q=2,s=1,v=1;BQYHCA==\x1b\\" ++
+            "\x1b[38;5;8;58;5;1m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m\x1b[1;1H");
+        const before = terminal.images(0);
+        const physical = before.placement(0).?;
+        const id = before.image(0).?.id;
+        var it = before.placementIterator();
+        var count: usize = 0;
+        while (it.next()) |_| count += 1;
+        try std.testing.expectEqual(@as(usize, 2), count);
+        for (wire[0 .. wire.len - 1]) |byte|
+            try std.testing.expect(!(try terminal.feed(&.{byte})).stateChanged());
+        try std.testing.expect((try terminal.feed(wire[wire.len - 1 ..])).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(before.generation, after.generation);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
+        try std.testing.expectEqual(@as(usize, 2), after.imageCount());
+        try std.testing.expectEqualDeep(physical, after.placement(0).?);
+        try std.testing.expectEqual(id, after.image(0).?.id);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, after.image(0).?.pixels);
+        it = after.placementIterator();
+        try std.testing.expectEqual(id, (it.next() orelse return error.TestUnexpectedResult).placement.image_id);
+        try std.testing.expect(it.next() == null);
+        try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b[2J")).stateChanged());
+        const cleared = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), cleared.imageCount());
+        it = cleared.placementIterator();
+        try std.testing.expect(it.next() == null);
+    }
+}
+
+test "Kitty row scrolls keep horizontal margin crossing image stationary" {
+    for ([_][]const u8{ "\x1b[L", "\x1b[M", "\x1b[S", "\x1b[T" }) |wire| {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        try feed(&terminal, "\x1b[3;2H\x1b_Ga=T,i=7,C=1,q=2,s=2,v=1;AQIDBAUGBwg=\x1b\\" ++
+            "\x1b[3;6H\x1b_Ga=T,i=8,C=1,q=2,s=2,v=1;CQoLDA0ODxA=\x1b\\" ++
+            "\x1b[3;4H\x1b_Ga=T,i=9,C=1,q=2,s=1,v=1;ERITFA==\x1b\\" ++
+            "\x1b[?69h\x1b[3;6s\x1b[2;4r\x1b[2;3H");
+        const before = terminal.images(0);
+        const left = before.placement(0).?;
+        const right = before.placement(1).?;
+        const inside = before.placement(2).?;
+        try std.testing.expect((try terminal.feed(wire)).stateChanged());
+        const after = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 3), after.placementCount());
+        try std.testing.expectEqualDeep(left, after.placement(0).?);
+        try std.testing.expectEqualDeep(right, after.placement(1).?);
+        var expected = inside;
+        expected.row = if (wire[2] == 'L' or wire[2] == 'T') 3 else 1;
+        try std.testing.expectEqualDeep(expected, after.placement(2).?);
+        try std.testing.expectEqual(before.content_generation, after.content_generation);
     }
 }

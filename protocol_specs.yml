@@ -10469,6 +10469,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty partial text erasures preserve physical placements and remove only erased placeholder projections
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
@@ -10529,6 +10532,15 @@ specifications:
             src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
             byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
           baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
+        howl_qualification_20261127_kitty_graphics_14:
+          scope: Selected partial ED/EL/ECH/rectangle erase or fill changes canonical text and removes erased placeholder projection
+            without retiring its virtual prototype or the independent physical placement at the same cell. Split final-byte admission
+            and repeated inert erase proven; ordinary ED2 still clears physical data and retains the virtual prototype.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1320-1337, screen.c3188-3251 and graphics.c2535-2589. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/Terminal.zig4275-4590 and kitty/graphics_storage.zig557-755. Deterministic wire red-green plus preserved
+            Sixel geometry tests; scoped source-backed policy, no blanket FULL promotion.
+          baseline: 86094955a64b6f448b00a9ca1e84197c86523e39
     - id: relative
       section: Relative placements
       level: defined
@@ -11747,13 +11759,16 @@ specifications:
         test: Kitty anonymous final placement retirement releases only matched unreachable images
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: ED below keeps out-of-width graphics on the cursor row'
+        test: Kitty partial text erasures preserve physical placements and remove only erased placeholder projections
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: DECFRA replaces only graphics in the accepted origin rectangle'
+        test: Kitty row scrolls keep horizontal margin crossing image stationary
         relation: protocol-family
-      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: DEC origin rectangle erasure moves graphics with the accepted Screen rectangle'
+      - file: howl-vt/src/graphics.zig
+        test: Kitty margin scroll leaves initially boundary-crossing placements stationary
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty margin scroll clips image geometry before row deletion
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
@@ -11836,6 +11851,22 @@ specifications:
             src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
             byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
           baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
+        howl_qualification_20261127_kitty_graphics_14:
+          scope: 'Supersedes wave13 partial-text-erasure placement-selection behavior, not its anonymous last-reference reclamation
+            owner. Ordinary ED0/1, EL0/1/2, ECH, DECERA/DECSERA and DECFRA preserve independent Kitty physical placements; erased
+            or replaced placeholder cells cease projecting virtual images. Existing partial DEC selective erasure and protection
+            unchanged. Ordinary ED2/22 and full selective ED2 keep their existing distinct complete-clear policies. Non-Kitty/Sixel
+            still follows accepted erasure rectangles: five prior geometry tests now use actual Sixel wire data. For vertical
+            row operations IL/DL/SU/SD within horizontal margins, Kitty placements crossing either horizontal boundary remain
+            stationary, contained placements move and clip as before; existing non-Kitty straddler retirement retained. Existing
+            vertical-margin clip proofs corroborate selected containment rule. This is a scoped Ghostty-style extension of Kitty
+            vertical margins to left/right margins, not a general horizontal column-edit policy. Top-anchored history-window compensation
+            of vertical straddlers, exact row-only ED2 filter and viewport-edge clipping remain separate.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1320-1337, screen.c3188-3251 and graphics.c2535-2589. Pinned Ghostty 5813c9461d5af78b6307a1254d00b1bc190eaccd
+            src/terminal/Terminal.zig4275-4590 and kitty/graphics_storage.zig557-755. Deterministic wire red-green plus preserved
+            Sixel geometry tests; scoped source-backed policy, no blanket FULL promotion.
+          baseline: 86094955a64b6f448b00a9ca1e84197c86523e39
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
@@ -14384,7 +14415,7 @@ specifications:
           wire: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: DECFRA replaces only graphics in the accepted origin rectangle'
+        test: 'terminal: DECFRA replaces only Sixel graphics in the accepted origin rectangle'
         relation: wire-family
         legacy_records:
         - iterm2.csi.decfra
@@ -39357,4 +39388,61 @@ reconciliation:
     - ecma48.ris
     - kitty_graphics.terminal-interaction
     scope: RIS history and graphics lifetime only; do not redefine ED3 or DECSTR or other reset behavior.
+- id: kitty-independent-physical-erase-and-row-margins
+  status: resolved-by-source-and-reference
+  decision_rule: originating-protocol-with-independent-adopter-corroboration
+  operator_alignment: '2026-11-27: agreed to wave14 source-backed margin and partial-erasure reconciliation; specific
+    horizontal generalization selected from pinned Ghostty.'
+  accepted_interpretation:
+    partial_text_effect: Independent Kitty physical placements survive partial ED/EL/ECH and rectangle text erase/fill;
+      virtual projection follows canonical cells. Complete display clear and existing DEC text-protection semantics remain
+      distinct.
+    row_margin_effect: Vertical row scroll moves contained Kitty placements and clips them at vertical boundaries. Horizontal
+      margin crossing placements remain stationary, rather than being removed; this is the selected Ghostty-style generalization.
+      Non-Kitty behavior and horizontal column edits remain independent.
+  selects:
+    kitty.graphics.partial-text-erase: partial_text_effect
+    kitty.graphics.row-margin-crossing: row_margin_effect
+  reason: Kitty original graphics documentation separates text erasure from graphics deletion except complete display
+    clear, and limits margin scrolling to contained placements. Ghostty corroborates the partial ED/EL/ECH separation
+    and extends containment to horizontal margins. Earlier Howl geometry tests established selection correctness, not
+    an overriding Kitty lifetime policy. Preserve actual Sixel geometry tests and DEC cell protection; DECFRA extension
+    is a coherent local text-fill policy.
+  reference_evidence:
+  - implementation: kitty
+    revision: a79f376b85fd95e3dfd0589877123996bacd4184
+    source: docs/graphics-protocol.rst:1320-1337; kitty/screen.c:3188-3251; kitty/graphics.c:2535-2589
+    observation: Partial text erase preserves independent physical graphics; full clear separate; only fully contained
+      vertical margin refs move and clip.
+  - implementation: ghostty
+    revision: 5813c9461d5af78b6307a1254d00b1bc190eaccd
+    source: src/terminal/Terminal.zig:4275-4590; kitty/graphics_storage.zig:557-755
+    observation: Partial ED/EL/ECH clear cells without clearScreen; complete ED invokes clearScreen. Margin scroll explicitly
+      generalizes whole-placement containment to horizontal margins.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected partial erasure and in-place horizontal-margin vertical row scroll
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:selectErasedPlacements
+    - howl-vt/src/graphics.zig:scrollColumnRows
+    - howl-vt/src/terminal.zig:applySemantic
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty partial text erasures preserve physical placements and remove only erased placeholder projections
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty row scrolls keep horizontal margin crossing image stationary
+    verified_subset: Selected wire cases preserve physical identity and data, remove erased virtual projection, and preserve
+      horizontal-crossing physical geometry while an inside placement moves. Existing Sixel geometry remains tested.
+    not_full_because: Top-anchored partial-region history origin compensation, viewport-edge extent, exact author ED2
+      geometry and remaining horizontal column-edit/protected erase behavior not exhaustively reconciled.
+    boundary: Canonical VT and selected native observation, no physical application or complete Kitty parity claim.
+  applies_to:
+    clauses:
+    - kitty_graphics.terminal-interaction
+    - kitty_graphics.unicode
+    scope: Selected partial-text-erasure and vertical row-scroll rules for independent Kitty placements only; no change
+      to non-Kitty policy, text command semantics, ED3, RIS or quota.
 pending_reconciliation: []

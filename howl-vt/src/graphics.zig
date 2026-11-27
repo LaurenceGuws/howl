@@ -1738,7 +1738,11 @@ pub const Plane = struct {
         return self.commitPlacementChanges(&doomed, changed);
     }
 
-    /// Removes placements intersecting one cell rectangle.
+    /// Selects all graphics or only non-Kitty resources for text erasure.
+    pub const EraseScope = enum { all, non_kitty };
+
+    /// Removes selected physical placements intersecting one cell rectangle.
+    /// Partial text erasure affects non-Kitty graphics only.
     pub fn erase(
         self: *Plane,
         bank: Bank,
@@ -1746,10 +1750,11 @@ pub const Plane = struct {
         bottom: u64,
         left: u16,
         right: u16,
+        scope: EraseScope,
     ) bool {
         if (self.placement_count == 0) return false;
         var doomed = PlacementSet.empty;
-        const count = self.selectErasedPlacements(bank, top, bottom, left, right, &doomed);
+        const count = self.selectErasedPlacements(bank, top, bottom, left, right, scope, &doomed);
         return self.commitPlacementChanges(&doomed, count != 0);
     }
 
@@ -1759,7 +1764,7 @@ pub const Plane = struct {
     pub fn clearDisplay(self: *Plane, bank: Bank, top: u64, bottom: u64, right: u16) bool {
         if (self.image_count == 0) return false;
         var doomed = PlacementSet.empty;
-        const count = self.selectErasedPlacements(bank, top, bottom, 0, right, &doomed);
+        const count = self.selectErasedPlacements(bank, top, bottom, 0, right, .all, &doomed);
         return self.retireBankPlacements(bank, &doomed, count);
     }
 
@@ -1770,6 +1775,7 @@ pub const Plane = struct {
         bottom: u64,
         left: u16,
         right: u16,
+        scope: EraseScope,
         doomed: *PlacementSet,
     ) usize {
         var count: usize = 0;
@@ -1781,10 +1787,16 @@ pub const Plane = struct {
             {
                 continue;
             }
+            if (scope == .non_kitty and self.isKittyImage(retained.image_id)) continue;
             doomed.set(index);
             count += 1;
         }
         return count;
+    }
+
+    fn isKittyImage(self: *const Plane, image_id: u32) bool {
+        const index = self.imageIndex(image_id) orelse return false;
+        return self.images[index].kitty_id != null;
     }
 
     /// Moves full-screen placements while maintaining existing scrollback
@@ -1814,8 +1826,8 @@ pub const Plane = struct {
     }
 
     /// Scrolls the accepted horizontal region with vertical-margin clipping.
-    /// A placement straddling a horizontal boundary cannot move atomically;
-    /// retire it and its descendants while preserving directly owned data.
+    /// Kitty placements crossing either margin remain stationary.
+    /// Non-Kitty crossing placements retain their existing retirement policy.
     pub fn scrollColumns(
         self: *Plane,
         bank: Bank,
@@ -1853,6 +1865,7 @@ pub const Plane = struct {
                 continue;
             }
             if (retained.col < left or placement_right > right) {
+                if (self.isKittyImage(retained.image_id)) continue;
                 doomed.set(index);
                 changed = true;
                 continue;
@@ -3720,7 +3733,7 @@ test "Kitty virtual placements stay invisible and use image selectors for lifeti
     const generation = plane.generation();
     try std.testing.expect(!plane.scroll(.primary, 10, 20, 1, true));
     try std.testing.expectEqual(generation, plane.generation());
-    try std.testing.expect(!plane.erase(.primary, 10, 20, 0, 20));
+    try std.testing.expect(!plane.erase(.primary, 10, 20, 0, 20, .all));
     try std.testing.expectEqual(generation, plane.generation());
     try std.testing.expect(!(try plane.command("a=d,d=a", .primary, 10, 12, 3, 10, 20)).changed);
     try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
@@ -6063,7 +6076,7 @@ test "Kitty screen retirement removes parent groups without skipping later roots
         try std.testing.expect((try plane.command("a=T,i=94,p=5,C=1,s=1,v=1;ERITFA==", .alternate, 0, 0, 0, 8, 16)).changed);
         const before = plane.generation();
         const changed = switch (operation) {
-            .erase => plane.erase(.primary, 0, 0, 0, 0),
+            .erase => plane.erase(.primary, 0, 0, 0, 0, .all),
             .bounds => plane.retainBankBounds(.primary, 1, 8, 8),
             .evict => plane.evictBefore(1),
             .scroll => plane.scroll(.primary, 0, 7, 1, true),
@@ -6437,7 +6450,7 @@ test "Kitty anonymous final placement retirement releases only matched unreachab
             .scroll => plane.scroll(.primary, 0, 3, 1, true),
             .history => plane.evictBefore(1),
             .bounds => plane.retainBankBounds(.primary, 1, 3, 8),
-            .erase => plane.erase(.primary, 0, 0, 0, 0),
+            .erase => plane.erase(.primary, 0, 0, 0, 0, .all),
             .shift => plane.shiftColumnRows(.primary, 0, 0, 0, 7, 1, true),
         };
         try std.testing.expect(changed);
