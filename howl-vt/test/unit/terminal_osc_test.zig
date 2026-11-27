@@ -4982,3 +4982,37 @@ test "Kitty write abort reply pressure and allocation failure preserve ordered r
     try std.testing.expectEqual(Terminal.KittyWriteProgress.ignored, try terminal.stageKittyClipboardWrite(prepared));
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
+
+test "Kitty period inventory reply admits all three packets atomically or retains the exact request" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const start = "\x1b]5522;type=read:id=meta;Lg==\x07";
+    const expected = "\x1b]5522;type=read:status=OK:id=meta\x1b\\\x1b]5522;type=read:status=DATA:id=meta:mime=Lg==;dGV4dC9wbGFpbiBpbWFnZS9wbmcK\x1b\\\x1b]5522;type=read:status=DONE:id=meta\x1b\\";
+    try feed(&terminal, start);
+    const id = terminal.consequenceHead().?.id();
+    const fill = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes - expected.len + 1, false);
+    defer std.testing.allocator.free(fill);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.replyKittyClipboardInventory(id, &.{ "text/plain", "image/png" }));
+    try std.testing.expectEqualStrings(fill, terminal.replyBytes());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
+    try std.testing.expect(!terminal.consequenceHead().?.requiresReply());
+    try consumeReplies(&terminal);
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardInventory(id, &.{"bad name"}));
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try terminal.replyKittyClipboardInventory(id, &.{ "text/plain", "image/png" });
+    try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.replyKittyClipboardInventory(id, &.{}));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b]5522;type=read;LiB0ZXh0L3BsYWlu\x07");
+    const mixed = terminal.consequenceHead().?.id();
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardInventory(mixed, &.{"text/plain"}));
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try terminal.declineKittyClipboard(mixed);
+    try consumeReplies(&terminal);
+    try feed(&terminal, start);
+    try terminal.replyKittyClipboardInventory(terminal.consequenceHead().?.id(), &.{});
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:id=meta\x1b\\\x1b]5522;type=read:status=DATA:id=meta:mime=Lg==\x1b\\\x1b]5522;type=read:status=DONE:id=meta\x1b\\", terminal.replyBytes());
+}

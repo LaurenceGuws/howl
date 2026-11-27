@@ -9123,6 +9123,27 @@ pub const Terminal = struct {
         self.content_sequence = self.semantic_sequence;
     }
 
+    /// Atomically answer a period-only inventory query with one bounded
+    /// metadata packet. No partial read cursor or reply survives rejection.
+    pub fn replyKittyClipboardInventory(self: *Terminal, generation: u64, names: []const []const u8) KittyReadReplyError!void {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        if (request.read_started) return error.InvalidClipboardResponse;
+        var scratch: KittyReadScratch = undefined;
+        const read = clipboard_mod.inspectKittyRead(request.payload, &scratch) orelse return error.InvalidClipboardResponse;
+        if (!std.mem.eql(u8, read.mime_types, ".")) return error.InvalidClipboardResponse;
+        const output = &self.reply_buffer;
+        const before = output.len();
+        errdefer output.truncate(before);
+        const cursor = (try clipboard_mod.appendKittyRead(output, request.payload, null, .{ .begin = read.location })).?;
+        const listed = (try clipboard_mod.appendKittyRead(output, request.payload, cursor, .{ .list = .{ .names = names, .last = true } })).?;
+        const done = try clipboard_mod.appendKittyRead(output, request.payload, listed, .done);
+        std.debug.assert(done == null);
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+    }
+
     /// Declines the exact FIFO-head OSC 5522 packet under caller policy.
     /// Valid starts receive EPERM, invalid encoded writes receive EINVAL,
     /// and other packets are ignored. A started read must complete or reset.

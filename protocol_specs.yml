@@ -12579,6 +12579,21 @@ specifications:
       - file: howl-app/src/clipboard_broker.zig
         test: clipboard supersession revokes prepared data without changing focus or replaying a provider
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty period inventory reply admits all three packets atomically or retains the exact request
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory is focused exact period only and shares the one admission slot
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory pressure retries the snapshot without another provider call and revokes before admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory reset and dead owner retire outstanding provider results
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected inventory retries reply allocation without repeating provider access
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
@@ -12646,6 +12661,18 @@ specifications:
             Current Zig adapter fault-injected ownership tests and actual private Wayland application synthetic consent/second-client
             binary/alias/empty, routed DONE and supersession/EPERM/stale suppression evidence; see workstream wave04d.
           baseline: d5feae8286d7d2fcc95ad6ca38892834b10a57d3
+        howl_qualification_20261127_kitty_clipboard_04e:
+          scope: Exact period-only inventory uses the existing OSC5522 reply serializer and same ordered FIFO/broker. Atomic OK/DATA/DONE
+            within existing64KiB reply queue; invalid or failed admission truncates to prior exact prefix. Copied metadata only,
+            no host payload request. Exact ticket, selection/focus/reset cancellation and no provider replay.
+          method: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines50-102 and clipboard.py650-682;
+            author bare period listing without a double prompt, OK/DATA/DONE and opening errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes
+            contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7 SDL_clipboard.c268-319 (cached metadata
+            copy, not exact installed internals). Compile-negative API baseline, deterministic VT/broker/SDL-adapter tests and
+            actual private Wayland candidate with instrumented independent synthetic clipboard provider: first and replacement
+            inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks. Workstream wave04e.'
+          baseline: 058330af976d2b20e94814973f15b26b5f03cc64
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12678,6 +12705,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read inventory bounds and RIS revoke only the started transfer
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory is focused exact period only and shares the one admission slot
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory pressure retries the snapshot without another provider call and revokes before admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory reset and dead owner retire outstanding provider results
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard inventory copies only complete bounded metadata and filters provider identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Current application policy declines all selected valid read starts, including MIME listing, with EPERM; malformed
@@ -12699,6 +12738,20 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_04e:
+          scope: Focused ordinary clipboard permits exact decoded period-only inventory without consent prompt, under one process-wide
+            admission slot. Background or mixed/data request denied; focused primary inventory unavailable. Provider metadata
+            copy limited256 names and4096 total bytes; invalid/oversized/null list fails closed with EBUSY, no partial names.
+            SDL native metadata allocation itself has no caller-supplied bound. Raw MIME data access remains denied. Actual independent
+            provider confirms no payload callbacks.
+          method: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines50-102 and clipboard.py650-682;
+            author bare period listing without a double prompt, OK/DATA/DONE and opening errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes
+            contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7 SDL_clipboard.c268-319 (cached metadata
+            copy, not exact installed internals). Compile-negative API baseline, deterministic VT/broker/SDL-adapter tests and
+            actual private Wayland candidate with instrumented independent synthetic clipboard provider: first and replacement
+            inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks. Workstream wave04e.'
+          baseline: 058330af976d2b20e94814973f15b26b5f03cc64
     - id: write
       section: Writing data to the system clipboard
       level: defined
@@ -12983,6 +13036,18 @@ specifications:
       - file: howl-app/src/terminal.zig
         test: selected clipboard worker observes PTY hangup while consent blocks further reads
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty period inventory reply admits all three packets atomically or retains the exact request
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory is focused exact period only and shares the one admission slot
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory pressure retries the snapshot without another provider call and revokes before admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory reset and dead owner retire outstanding provider results
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected read/write denial replies echo only allowed ASCII id characters, omit id when sanitized empty, use bounded
@@ -13028,6 +13093,17 @@ specifications:
             lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
             deterministic deadline interleaving proof; no actual desktop clipboard provider.
           baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
+        howl_qualification_20261127_kitty_clipboard_04e:
+          scope: Inventory response and opening failures route exact retained request ID through existing serializer. Worker/main
+            ticket prevents wrong-head or stale result; no new route authority or multi-session grants.
+          method: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines50-102 and clipboard.py650-682;
+            author bare period listing without a double prompt, OK/DATA/DONE and opening errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes
+            contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7 SDL_clipboard.c268-319 (cached metadata
+            copy, not exact installed internals). Compile-negative API baseline, deterministic VT/broker/SDL-adapter tests and
+            actual private Wayland candidate with instrumented independent synthetic clipboard provider: first and replacement
+            inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks. Workstream wave04e.'
+          baseline: 058330af976d2b20e94814973f15b26b5f03cc64
     - id: mime-alias
       section: docs/clipboard.rst:162-173
       level: defined
@@ -13186,6 +13262,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read inventory bounds and RIS revoke only the started transfer
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty period inventory reply admits all three packets atomically or retains the exact request
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory is focused exact period only and shares the one admission slot
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory pressure retries the snapshot without another provider call and revokes before admission
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard inventory copies only complete bounded metadata and filters provider identity
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected inventory retries reply allocation without repeating provider access
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected negative EPERM branch serializes exact seven-bit Kitty OSC5522 response with sanitized id and consumes
@@ -13210,6 +13301,20 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_04e:
+          scope: Complete bounded period response uses existing OK, one DATA mime=period, DONE and sanitized routing; empty list
+            includes payload-less DATA. Atomic admission avoids partially begun read under reply pressure or allocation failure.
+            Exact retained snapshot retries without provider call; revocation before admission emits opening EPERM. Provider absence
+            ENOSYS, temporary failures EBUSY. Selected inventory only; general payload read stream remains caller-owned and actual
+            native payload retrieval not implemented.
+          method: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines50-102 and clipboard.py650-682;
+            author bare period listing without a double prompt, OK/DATA/DONE and opening errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes
+            contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7 SDL_clipboard.c268-319 (cached metadata
+            copy, not exact installed internals). Compile-negative API baseline, deterministic VT/broker/SDL-adapter tests and
+            actual private Wayland candidate with instrumented independent synthetic clipboard provider: first and replacement
+            inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks. Workstream wave04e.'
+          baseline: 058330af976d2b20e94814973f15b26b5f03cc64
     - id: write-data
       section: docs/clipboard.rst:105-160
       level: defined
@@ -25261,6 +25366,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read inventory bounds and RIS revoke only the started transfer
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty period inventory reply admits all three packets atomically or retains the exact request
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard inventory copies only complete bounded metadata and filters provider identity
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_02:
           scope: Selected solicited period-list reply builds ASCII-whitespace-separated MIME tokens from caller-supplied inventory,
@@ -25271,6 +25382,19 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_04e:
+          scope: Solicited focused period inventory emits bounded ASCII-whitespace-separated complete names and final newline
+            for nonempty data, empty DATA for no types. Reuses existing typed listing serializer. Actual provider metadata names
+            observed without requesting data; SDL internal transport-origin name filtered. Unsolicited paste-event inventory not
+            selected.
+          method: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines50-102 and clipboard.py650-682;
+            author bare period listing without a double prompt, OK/DATA/DONE and opening errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes
+            contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7 SDL_clipboard.c268-319 (cached metadata
+            copy, not exact installed internals). Compile-negative API baseline, deterministic VT/broker/SDL-adapter tests and
+            actual private Wayland candidate with instrumented independent synthetic clipboard provider: first and replacement
+            inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks. Workstream wave04e.'
+          baseline: 058330af976d2b20e94814973f15b26b5f03cc64
     - id: read
       section: Paste Notification Format
       level: defined
@@ -25355,6 +25479,21 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty read inventory bounds and RIS revoke only the started transfer
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory is focused exact period only and shares the one admission slot
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory pressure retries the snapshot without another provider call and revokes before admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard inventory reset and dead owner retire outstanding provider results
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard inventory copies only complete bounded metadata and filters provider identity
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected inventory retries reply allocation without repeating provider access
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected host policy grants no read, write or token authorization; valid listing/read requests explicitly denied
@@ -25375,6 +25514,20 @@ specifications:
             caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
             tests with synthetic caller data, no OS clipboard access.
           baseline: 9e15d05725892531f0087cfbd72c114931a547ac
+        howl_qualification_20261127_kitty_clipboard_04e:
+          scope: Selected focused ordinary clipboard listing without prompt is metadata-only. Exact period query is the only no-prompt
+            grant; actual data, mixed request and background access denied, primary unavailable. Focus/supersession/expiry/reset/retirement
+            invalidate pending metadata before atomic reply; no password/token authority. Actual private Wayland probe records
+            zero payload callbacks. Native metadata-copy allocation remains provider-owned and unbounded by SDL public API, app-owned
+            snapshot strictly bounded.
+          method: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines50-102 and clipboard.py650-682;
+            author bare period listing without a double prompt, OK/DATA/DONE and opening errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes
+            contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7 SDL_clipboard.c268-319 (cached metadata
+            copy, not exact installed internals). Compile-negative API baseline, deterministic VT/broker/SDL-adapter tests and
+            actual private Wayland candidate with instrumented independent synthetic clipboard provider: first and replacement
+            inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks. Workstream wave04e.'
+          baseline: 058330af976d2b20e94814973f15b26b5f03cc64
   iterm2_current:
     title: iTerm2 current proprietary escape-code additions and changed profiles
     author: iTerm2 project
@@ -42331,8 +42484,10 @@ reconciliation:
       protection and RIS revocation.
     boundary: Caller supplies data and permission; no actual host MIME clipboard reads, native C positive helper, actual
       MIME availability/permission UI, complete request metadata and all allocation/framing combinations, or paste token/precedence.
-      Direct caller must service pending read before later reply-generating input. Application still refuses MIME reads;
-      selected ordinary native writes are separately assessed by kitty-clipboard-native-local-submission.
+      Direct caller must service pending read before later reply-generating input. Application still refuses MIME payload
+      reads; selected ordinary native writes are separately assessed by kitty-clipboard-native-local-submission. Selected
+      focused native metadata-only inventory is separately assessed by kitty-clipboard-focused-native-inventory; no data-read
+      grant.
     not_full_because: Selected positive read wire machinery is qualified with synthetic caller data, not the full clipboard
       exchange, real host data access or supported paste event contract.
   applies_to:
@@ -42499,8 +42654,9 @@ reconciliation:
       replacement retires grant.
     boundary: Selected synthetic broker and real worker/main scheduling under kitty-clipboard-selected-host-lifecycle; native
       local provider under kitty-clipboard-native-local-submission. Shared slot limits staging, not total provider-owned
-      clipboard bytes. Complete cross-thread stress, ordinary data reads, positive inventory provider, primary MIME, tokens,
-      native C helper and positive mode5522 remain open.
+      clipboard bytes. Complete cross-thread stress, ordinary data reads, primary MIME, tokens, native C helper and positive
+      mode5522 remain open. Selected focused native metadata-only inventory is separately assessed by kitty-clipboard-focused-native-inventory;
+      no data-read grant.
     not_full_because: Write-only broker and owned handoff qualified without actual desktop provider, live consent and worker
       integration; complete underlying clipboard/paste exchange remains missing.
   applies_to:
@@ -42571,10 +42727,11 @@ reconciliation:
       expired main queries and sibling turns.
     boundary: Actual PTY/main scheduling and consent initially qualified with SDL dummy/software renderer and synthetic
       provider; native ordinary Wayland local submission and private-seat consent/supersession separately assessed by kitty-clipboard-native-local-submission.
-      Full event-loop race stress, actual30s timeout duration, other platform backends, actual MIME reads/listing, primary
+      Full event-loop race stress, actual30s timeout duration, other platform backends, actual MIME payload reads, primary
       MIME, token, C helper and positive mode5522 remain unqualified. Reset/HUP/exit/stop revokes before slot release; admitted
       provider effect cannot be undone. Existing100ms status allocation retry may defer consequence service, but expired
-      grants cannot admit provider action.
+      grants cannot admit provider action. Selected focused native metadata-only inventory is separately assessed by kitty-clipboard-focused-native-inventory;
+      no data-read grant.
     not_full_because: Selected worker/main write and consent path is qualified with synthetic provider; actual native publication,
       bounded reads and full clipboard/paste contract remain incomplete.
   applies_to:
@@ -42648,13 +42805,14 @@ reconciliation:
     boundary: Only selected SDL Wayland ordinary MIME write path and local acceptance, not compositor or receiving-client
       guarantee. Adapter failure variants modeled and installed native public API fault probes measured separately; complete
       allocator/backend/reentrancy/async callback matrix and physical or alternate compositor/OS behavior not qualified.
-      Failed provider may alter prior selection or expose bytes before failure is observed; subsequent callback access
-      suppressed. At most one ambiguous revoked candidate retained until cleanup or shutdown; prior provider-owned offer
-      and one staging transaction may coexist, not a64MiB whole-process bound. Full64MiB end-to-end wire/desktop, actual
-      host MIME reads/listing, primary, tokens, native C typed APIs and positive paste event detection remain open. Installed
-      daily unchanged.
-    not_full_because: Ordinary write local-provider subset is qualified; actual full clipboard exchange, all provider
-      and permission combinations and paste events remain incomplete.
+      Failed provider may alter prior selection or expose bytes before failure is observed; subsequent callback access suppressed.
+      At most one ambiguous revoked candidate retained until cleanup or shutdown; prior provider-owned offer and one staging
+      transaction may coexist, not a64MiB whole-process bound. Full64MiB end-to-end wire/desktop, actual host MIME payload
+      reads, primary, tokens, native C typed APIs and positive paste event detection remain open. Installed daily unchanged.
+      Selected focused native metadata-only inventory is separately assessed by kitty-clipboard-focused-native-inventory;
+      no data-read grant.
+    not_full_because: Ordinary write local-provider subset is qualified; actual full clipboard exchange, all provider and
+      permission combinations and paste events remain incomplete.
   applies_to:
     clauses:
     - kitty_clipboard.envelope
@@ -42663,4 +42821,91 @@ reconciliation:
     - kitty_clipboard.write-data
     scope: Portable local submission guarantee and selected SDL ordinary Wayland MIME write provider; no wider host read
       or paste capability claim.
+- id: kitty-clipboard-focused-native-inventory
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-period-only-listing-and-bounded-focused-host-snapshot
+  operator_alignment: '2026-11-27: operator approved continuation into focused metadata-only inventory following selected
+    local-provider submission and prior host consent policy. No host payload read or primary access authorized.'
+  accepted_interpretation:
+    effect: Only exact decoded period request qualifies for no-prompt ordinary clipboard inventory in the currently focused
+      live selected pane. Background EPERM, primary ENOSYS when focused, mixed or payload read retains EPERM, occupied
+      slot or temporary provider/list validation failure EBUSY. Use existing one process-wide broker slot and exact occurrence/reset/start
+      ticket, main provider metadata-only SDL_GetClipboardMimeTypes, bounded complete app snapshot of at most256 names
+      and4096 aggregate bytes including separators, exclude SDL transport-origin identity. Invalid or oversized metadata
+      rejects whole inventory. SDL owns its returned allocation and may allocate before count/size check; do not claim
+      native allocation cap. Reuse existing read serializer for atomic OK, single DATA period, DONE; rollback exact prefix
+      on pressure or OOM and keep request/snapshot, retry via existing bounded allocation scheduler without second provider
+      call. Focus loss, observed clipboard supersession, expiry, reset and transport retirement revoke before reply admission;
+      reset cannot reauthorize retained exact raw head. Already admitted reply bytes remain ordinary retained output.
+      No provider access while locked, no raw clipboard data or positive paste-mode advertisement.
+  selects:
+    kitty.clipboard.focused-native-inventory: effect
+  reason: Author explicitly distinguishes bare period metadata listing from permission-gated data reads. Bounded single-packet
+    inventory allows entire response to commit atomically, avoiding partial authorized listing and re-query under pressure.
+    Existing local provider contract, exact host identity and one slot reused. SDL metadata-only API measured with independent
+    provider zero data callbacks; actual payload read API remains unsuitable for preallocation/deadline requirement. Count/byte
+    limits and strict period-only match are selected local policy.
+  evidence_basis: 'Operator approved focused metadata-only inventory after native write qualification 058330a. Pinned
+    Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+    lines50-102 and clipboard.py650-682; author bare period listing without a double prompt, OK/DATA/DONE and opening
+    errors. Installed SDL3.4.20 public SDL_GetClipboardMimeTypes contract; SDL3.5.0 comparison source 7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7
+    SDL_clipboard.c268-319 (cached metadata copy, not exact installed internals). Compile-negative API baseline, deterministic
+    VT/broker/SDL-adapter tests and actual private Wayland candidate with instrumented independent synthetic clipboard
+    provider: first and replacement inventory, empty, denied raw/mixed/primary/background, ordered DSR, zero payload callbacks.
+    Workstream wave04e.'
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected focused ordinary Wayland metadata-only inventory response
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:replyKittyClipboardInventory
+    - howl-app/src/clipboard_broker.zig:Broker
+    - howl-app/src/native_clipboard.zig:Provider
+    - howl-app/src/consequences.zig:drainSelected
+    - howl-app/src/main.zig:App
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty period inventory reply admits all three packets atomically or retains the exact request
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard inventory is focused exact period only and shares the one admission slot
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard inventory pressure retries the snapshot without another provider call and revokes before admission
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard inventory reset and dead owner retire outstanding provider results
+      relation: protocol-family
+    - file: howl-app/src/native_clipboard.zig
+      test: native clipboard inventory copies only complete bounded metadata and filters provider identity
+      relation: protocol-family
+    - file: howl-app/src/consequences.zig
+      test: selected inventory retries reply allocation without repeating provider access
+      relation: protocol-family
+    verified_subset: Exact complete period OK/DATA/DONE rollback under full reply pressure and invalid metadata, empty/mixed/stale
+      controls; focused/background/primary and occupied slot denial, exact main inventory admission once; snapshot cancellation
+      under pressure, provider in-flight focus loss and expiry; reset and retired-owner result rejection; native metadata
+      limits at exact and plus-one count/byte/name boundaries, malformed/invalid UTF8/null, transport ID filtering; reply
+      allocation retry with no provider replay. Actual private Wayland child obtains first/replacement/empty inventory
+      without prompt, all data/mixed/primary/background requests denied or unavailable, ordered DSR, independent provider
+      zero payload callbacks and one cleanup per offer.
+    boundary: Selected ordinary Wayland cached metadata only. SDL returns an allocated complete MIME vector before app
+      cap, so no SDL peak-allocation/latency claim. Actual result visibility is observed local provider state, not independent
+      global selection snapshot; external updates already observed revoke before admission, not guarantee against unobserved
+      concurrent selection change. No actual payload read, permission token, unsolicited paste event, primary binary provider,
+      other OS/compositor, native C typed helper, complete allocator/metadata/framing/concurrent matrix or positive mode5522
+      advertisement. Installed daily unchanged.
+    not_full_because: The focused metadata-only subset is qualified; actual clipboard contents retrieval, complete backend
+      and permission policy, primary and paste events remain incomplete.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.read
+    - kitty_clipboard.read-response
+    - kitty_clipboard.mux-id
+    - rockorager_paste.mime-list
+    - rockorager_paste.security
+    scope: Selected solicited bare period inventory only; no actual clipboard contents or positive capability grant.
 pending_reconciliation: []

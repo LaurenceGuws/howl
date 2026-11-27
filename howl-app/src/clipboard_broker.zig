@@ -1,4 +1,4 @@
-//! One process-wide clipboard write admission and owned provider handoff.
+//! One process-wide clipboard admission and owned provider handoff.
 //! The worker alone mutates VT; the main-thread provider never borrows VT.
 //! No OS calls or consent UI live here. A host selects this service explicitly.
 const std = @import("std");
@@ -24,6 +24,46 @@ pub const Prompt = struct {
 pub const Notice = union(enum) {
     prompt: Prompt,
     prepared: Ticket,
+    inventory: Ticket,
+};
+
+/// Complete bounded host inventory. Names are stored once with newline
+/// separators; the worker borrows slices only during reply serialization.
+pub const Inventory = struct {
+    /// Maximum number of complete retained names.
+    pub const max_names = 256;
+    /// Maximum total metadata bytes including separators.
+    pub const max_bytes = 4096;
+    bytes: [max_bytes]u8 = undefined,
+    len: u16 = 0,
+    count: u16 = 0,
+
+    /// Append a complete metadata token, never a partial or malformed name.
+    pub fn append(self: *Inventory, name: []const u8) error{InvalidInventory}!void {
+        if (self.count == max_names or name.len == 0 or name.len >= max_bytes - @as(usize, self.len) or
+            std.mem.eql(u8, name, ".") or !std.unicode.utf8ValidateSlice(name)) return error.InvalidInventory;
+        for (name) |byte| if (byte <= 0x20 or byte == 0x7f) return error.InvalidInventory;
+        @memcpy(self.bytes[self.len..][0..name.len], name);
+        self.len += @intCast(name.len);
+        self.bytes[self.len] = '\n';
+        self.len += 1;
+        self.count += 1;
+    }
+
+    fn names(self: *const Inventory, scratch: *[max_names][]const u8) []const []const u8 {
+        var tokens = std.mem.tokenizeScalar(u8, self.bytes[0..self.len], '\n');
+        var count: usize = 0;
+        while (tokens.next()) |name| : (count += 1) scratch[count] = name;
+        std.debug.assert(count == self.count);
+        return scratch[0..count];
+    }
+};
+
+/// Provider returns metadata only, or an opening read failure.
+pub const InventoryResult = union(enum) {
+    available: Inventory,
+    unavailable,
+    busy,
 };
 
 /// Ownership has moved to the provider. It must retire or adopt the data
@@ -44,6 +84,10 @@ const Phase = union(enum) {
     publishing: u64,
     outcome: struct { end: u64, status: Terminal.KittyWriteStatus },
     revoked: bool, // true if VT has admitted a writer
+    inventory_pending,
+    inventory_fetching: bool, // true if revoked during provider call
+    inventory_ready: InventoryResult,
+    inventory_denied,
 };
 const Slot = struct {
     ticket: Ticket,
@@ -92,6 +136,9 @@ pub const Broker = struct {
             // Provider admission is the irreversible boundary. A later
             // focus change cannot pretend an already published offer failed.
             .publishing, .outcome, .revoked => {},
+            .inventory_pending, .inventory_ready => slot.phase = .inventory_denied,
+            .inventory_fetching => slot.phase.inventory_fetching = true,
+            .inventory_denied => {},
         }
     }
 
@@ -102,7 +149,7 @@ pub const Broker = struct {
     }
 
     fn retire(self: *Broker, slot: *Slot) void {
-        if (slot.phase == .publishing) {
+        if (slot.phase == .publishing or slot.phase == .inventory_fetching) {
             // The provider still owns its data. Hold the global slot until
             // its matching result arrives, but never acknowledge a dead VT.
             slot.retired = true;
@@ -142,11 +189,12 @@ pub const Broker = struct {
     pub fn noticeFor(self: *Broker, owner: u64) ?Notice {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        const slot = self.slot orelse return null;
+        const slot = if (self.slot) |*value| value else return null;
         if (slot.ticket.owner != owner or slot.retired) return null;
         return switch (slot.phase) {
             .pending => .{ .prompt = .{ .ticket = slot.ticket, .expires_ns = slot.expires_ns } },
             .prepared => .{ .prepared = slot.ticket },
+            .inventory_pending => .{ .inventory = slot.ticket },
             else => null,
         };
     }
@@ -155,10 +203,11 @@ pub const Broker = struct {
     pub fn deadlineFor(self: *Broker, owner: u64) ?u64 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        const slot = self.slot orelse return null;
+        const slot = if (self.slot) |*value| value else return null;
         if (slot.ticket.owner != owner or slot.retired) return null;
         return switch (slot.phase) {
-            .pending, .approved, .staging, .prepared => slot.expires_ns,
+            .pending, .approved, .staging, .prepared, .inventory_pending, .inventory_ready => slot.expires_ns,
+            .inventory_fetching => |revoked| if (revoked) null else slot.expires_ns,
             else => null,
         };
     }
@@ -178,7 +227,7 @@ pub const Broker = struct {
         defer self.mutex.unlock(self.io);
         // Only the scheduled worker expires its slot. Read-only UI
         // queries must not remove the worker's pending deadline.
-        const slot = self.slot orelse return null;
+        const slot = if (self.slot) |*value| value else return null;
         if (slot.phase != .pending or now >= slot.expires_ns) return null;
         return .{ .ticket = slot.ticket, .expires_ns = slot.expires_ns };
     }
@@ -203,11 +252,40 @@ pub const Broker = struct {
     pub fn deadline(self: *Broker) ?u64 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        const slot = self.slot orelse return null;
+        const slot = if (self.slot) |*value| value else return null;
         return switch (slot.phase) {
-            .pending, .approved, .staging, .prepared => slot.expires_ns,
+            .pending, .approved, .staging, .prepared, .inventory_pending, .inventory_ready => slot.expires_ns,
+            .inventory_fetching => |revoked| if (revoked) null else slot.expires_ns,
             else => null,
         };
+    }
+
+    /// Main-thread admission of one exact focused metadata-only query.
+    /// Provider access is outside the lock and cannot borrow VT.
+    pub fn takeInventory(self: *Broker, ticket: Ticket, now: u64) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const slot = if (self.slot) |*value| value else return false;
+        if (!std.meta.eql(ticket, slot.ticket) or self.focused != ticket.owner or slot.phase != .inventory_pending or now >= slot.expires_ns) return false;
+        slot.phase = .{ .inventory_fetching = false };
+        return true;
+    }
+
+    /// Retain one complete snapshot or opening failure. A superseded,
+    /// expired, retired or wrong-owner result cannot reach the child.
+    pub fn recordInventory(self: *Broker, ticket: Ticket, result: InventoryResult, now: u64) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const slot = if (self.slot) |*value| value else return false;
+        if (!std.meta.eql(ticket, slot.ticket) or slot.phase != .inventory_fetching) return false;
+        if (slot.retired) {
+            self.clear();
+        } else if (slot.phase.inventory_fetching or self.focused != ticket.owner or now >= slot.expires_ns) {
+            slot.phase = .inventory_denied;
+        } else {
+            slot.phase = .{ .inventory_ready = result };
+        }
+        return true;
     }
 
     /// Main-thread admission of the exact prepared offer. Call the provider
@@ -256,16 +334,33 @@ pub const Broker = struct {
         const owner = terminal.observation().occurrenceIdentity();
         const epoch = terminal.resetSequence();
         if (self.slot) |*slot| {
-            if (slot.ticket.owner == owner) {
-                if (slot.ticket.epoch != epoch)
-                    self.retire(slot)
-                else if (now >= slot.expires_ns)
+            if (slot.ticket.owner == owner and !slot.retired) {
+                if (slot.ticket.epoch != epoch) {
+                    const inventory = switch (slot.phase) {
+                        .inventory_pending, .inventory_fetching, .inventory_ready, .inventory_denied => true,
+                        else => false,
+                    };
+                    // RIS retains unstarted raw consequences. Do not turn
+                    // the old inventory request into a fresh permission
+                    // just because its raw FIFO head survived the reset.
+                    if (inventory) {
+                        if (terminal.consequenceHead()) |head| {
+                            if (head.id() == slot.ticket.start) {
+                                try terminal.replyKittyClipboardRead(head.id(), .denied);
+                                self.retire(slot);
+                                return .progressed;
+                            }
+                        }
+                    }
+                    self.retire(slot);
+                } else if (now >= slot.expires_ns) {
                     revoke(slot);
+                }
             }
         }
 
         if (self.slot) |*slot| {
-            if (slot.ticket.owner == owner) {
+            if (slot.ticket.owner == owner and !slot.retired) {
                 switch (slot.phase) {
                     .revoked => |started| {
                         if (started) {
@@ -295,6 +390,24 @@ pub const Broker = struct {
                         self.clear();
                         return .progressed;
                     },
+                    .inventory_pending, .inventory_fetching => return .waiting,
+                    .inventory_denied => {
+                        try terminal.replyKittyClipboardRead(slot.ticket.start, .denied);
+                        self.clear();
+                        return .progressed;
+                    },
+                    .inventory_ready => |*result| {
+                        switch (result.*) {
+                            .available => |*inventory| {
+                                var names: [Inventory.max_names][]const u8 = undefined;
+                                try terminal.replyKittyClipboardInventory(slot.ticket.start, inventory.names(&names));
+                            },
+                            .unavailable => try terminal.replyKittyClipboardRead(slot.ticket.start, .unavailable),
+                            .busy => try terminal.replyKittyClipboardRead(slot.ticket.start, .busy),
+                        }
+                        self.clear();
+                        return .progressed;
+                    },
                     .staging => {},
                 }
             }
@@ -303,6 +416,27 @@ pub const Broker = struct {
         const head = terminal.consequenceHead() orelse return .unhandled;
         if (head != .clipboard or head.clipboard.protocol != .kitty_5522) return .unhandled;
         const id = head.id();
+        var read_scratch: Terminal.KittyReadScratch = undefined;
+        if (try terminal.inspectKittyClipboardRead(id, &read_scratch)) |read| {
+            // Only the exact period request is a metadata query. Mixed
+            // requests and all other MIME reads retain existing refusal.
+            if (!std.mem.eql(u8, read.mime_types, ".")) return .unhandled;
+            if (self.focused != owner) {
+                try terminal.replyKittyClipboardRead(id, .denied);
+            } else if (read.location != .clipboard) {
+                try terminal.replyKittyClipboardRead(id, .unavailable);
+            } else if (self.slot != null) {
+                try terminal.replyKittyClipboardRead(id, .busy);
+            } else {
+                self.slot = .{
+                    .ticket = .{ .owner = owner, .epoch = epoch, .start = id },
+                    .expires_ns = now +| deadline_ns,
+                    .phase = .inventory_pending,
+                };
+                return .waiting;
+            }
+            return .progressed;
+        }
         if (try terminal.inspectKittyClipboardWrite(id)) |location| {
             if (self.slot) |*slot| {
                 if (slot.ticket.owner == owner and slot.phase == .staging) {
@@ -334,8 +468,6 @@ pub const Broker = struct {
         }
         if (self.slot) |*slot| {
             if (slot.ticket.owner == owner and slot.phase == .staging) {
-                var scratch: Terminal.KittyReadScratch = undefined;
-                if ((try terminal.inspectKittyClipboardRead(id, &scratch)) != null) return .unhandled;
                 const progress = terminal.stageKittyClipboardWrite(id) catch |failure| switch (failure) {
                     error.InvalidClipboardResponse => {
                         // A recognized malformed replacement start belongs
@@ -593,4 +725,143 @@ test "clipboard supersession revokes prepared data without changing focus or rep
     try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 4));
     try std.testing.expectEqualStrings("\x1b]5522;type=write:status=DONE:id=route\x1b\\", terminal.replyBytes());
     try std.testing.expect(broker.takePublication(fresh, 4) == null);
+}
+
+const inventory_packet = "\x1b]5522;type=read:id=list;Lg==\x07";
+const inventory_reply = "\x1b]5522;type=read:status=OK:id=list\x1b\\\x1b]5522;type=read:status=DATA:id=list:mime=Lg==;dGV4dC9wbGFpbgo=\x1b\\\x1b]5522;type=read:status=DONE:id=list\x1b\\";
+
+fn requestInventory(broker: *Broker, terminal: *Terminal, now: u64) !Ticket {
+    try feed(terminal, inventory_packet);
+    try std.testing.expectEqual(Service.waiting, try broker.service(terminal, now));
+    try std.testing.expect(broker.prompt(now) == null);
+    const notice = broker.noticeFor(terminal.observation().occurrenceIdentity()) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(notice == .inventory);
+    return notice.inventory;
+}
+
+test "clipboard inventory is focused exact period only and shares the one admission slot" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var broker = Broker.init(threaded.io());
+    defer broker.deinit();
+    var terminal = try Terminal.init(a, 3, 8);
+    defer terminal.deinit();
+    var sibling = try Terminal.init(a, 3, 8);
+    defer sibling.deinit();
+    const owner = terminal.observation().occurrenceIdentity();
+    broker.setFocus(owner, 0);
+    try feed(&sibling, inventory_packet);
+    try std.testing.expectEqual(Service.progressed, try broker.service(&sibling, 0));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=list\x1b\\", sibling.replyBytes());
+    try std.testing.expect(broker.noticeFor(sibling.observation().occurrenceIdentity()) == null);
+    try feed(&terminal, "\x1b]5522;type=read:loc=primary:id=p;Lg==\x07");
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 0));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=ENOSYS:id=p\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    for ([_][]const u8{ "dGV4dC9wbGFpbg==", "LiB0ZXh0L3BsYWlu", "IC4g" }) |payload| {
+        var bytes: [96]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&bytes, "\x1b]5522;type=read;{s}\x07", .{payload}));
+        try std.testing.expectEqual(Service.unhandled, try broker.service(&terminal, 0));
+        try terminal.declineKittyClipboard(terminal.consequenceHead().?.id());
+    }
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try feed(&terminal, start_packet);
+    try std.testing.expectEqual(Service.waiting, try broker.service(&terminal, 1));
+    const writer = broker.prompt(1).?.ticket;
+    try std.testing.expect(broker.decide(writer, true, 1));
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 1));
+    try feed(&terminal, inventory_packet);
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 1));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EBUSY:id=list\x1b\\", terminal.replyBytes());
+    try std.testing.expect(broker.noticeFor(owner) == null);
+    broker.supersede();
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 2));
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    const ticket = try requestInventory(&broker, &terminal, 3);
+    try std.testing.expect(!broker.takeInventory(.{ .owner = owner, .epoch = ticket.epoch, .start = ticket.start + 1 }, 3));
+    try std.testing.expect(broker.takeInventory(ticket, 3));
+    try std.testing.expect(!broker.takeInventory(ticket, 3));
+    var inventory: Inventory = .{};
+    try inventory.append("text/plain");
+    try std.testing.expect(broker.recordInventory(ticket, .{ .available = inventory }, 3));
+    try std.testing.expect(!broker.recordInventory(ticket, .busy, 3));
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 3));
+    try std.testing.expectEqualStrings(inventory_reply, terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "clipboard inventory pressure retries the snapshot without another provider call and revokes before admission" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var broker = Broker.init(threaded.io());
+    defer broker.deinit();
+    var terminal = try Terminal.init(a, 3, 8);
+    defer terminal.deinit();
+    broker.setFocus(terminal.observation().occurrenceIdentity(), 0);
+    const ticket = try requestInventory(&broker, &terminal, 1);
+    try std.testing.expect(broker.takeInventory(ticket, 1));
+    var inventory: Inventory = .{};
+    try inventory.append("text/plain");
+    try std.testing.expect(broker.recordInventory(ticket, .{ .available = inventory }, 1));
+    while (terminal.replyBytes().len < 65532) {
+        const before = terminal.replyBytes().len;
+        const summary = try terminal.feed("\x1b[5n");
+        try std.testing.expect(!summary.titleChanged());
+        try std.testing.expectEqual(before + 4, terminal.replyBytes().len);
+    }
+    const prefix = try a.dupe(u8, terminal.replyBytes());
+    defer a.free(prefix);
+    try std.testing.expectError(error.ReplyLimit, broker.service(&terminal, 2));
+    try std.testing.expectEqualStrings(prefix, terminal.replyBytes());
+    try std.testing.expectEqual(ticket.start, terminal.consequenceHead().?.id());
+    try std.testing.expect(!broker.takeInventory(ticket, 2));
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    broker.supersede();
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 2));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=list\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    const fresh = try requestInventory(&broker, &terminal, 3);
+    try std.testing.expect(broker.takeInventory(fresh, 3));
+    broker.setFocus(null, 4);
+    try std.testing.expect(broker.recordInventory(fresh, .{ .available = inventory }, 4));
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 4));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=list\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    broker.setFocus(fresh.owner, 5);
+    const expired = try requestInventory(&broker, &terminal, 5);
+    try std.testing.expect(!broker.takeInventory(expired, 5 + deadline_ns));
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 5 + deadline_ns));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=list\x1b\\", terminal.replyBytes());
+}
+
+test "clipboard inventory reset and dead owner retire outstanding provider results" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var broker = Broker.init(threaded.io());
+    defer broker.deinit();
+    var terminal = try Terminal.init(a, 3, 8);
+    defer terminal.deinit();
+    const owner = terminal.observation().occurrenceIdentity();
+    broker.setFocus(owner, 0);
+    const ticket = try requestInventory(&broker, &terminal, 1);
+    try std.testing.expect(broker.takeInventory(ticket, 1));
+    broker.retireOwner(owner);
+    try std.testing.expect(broker.recordInventory(ticket, .{ .available = .{} }, 2));
+    try std.testing.expect(broker.noticeFor(owner) == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try terminal.declineKittyClipboard(ticket.start);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    broker.setFocus(owner, 3);
+    const fresh = try requestInventory(&broker, &terminal, 3);
+    try std.testing.expect(broker.takeInventory(fresh, 3));
+    terminal.hardReset();
+    // Reset leaves unstarted raw consequences retained, but no prior grant.
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 4));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=list\x1b\\", terminal.replyBytes());
+    try std.testing.expect(broker.recordInventory(fresh, .{ .available = .{} }, 4));
+    try std.testing.expect(broker.noticeFor(owner) == null);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }

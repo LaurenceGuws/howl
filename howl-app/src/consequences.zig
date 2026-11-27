@@ -19,7 +19,7 @@ pub const Applied = struct {
     attention: bool = false,
     /// A copied status summary changed; this worker may notify its GUI.
     status_changed: bool = false,
-    /// The exact status FIFO head remains owned by VT for a bounded retry.
+    /// A retained consequence needs a bounded allocation retry.
     status_blocked: bool = false,
     clipboard: ?[]u8 = null,
     /// A selected clipboard exchange waits for the host or reply capacity.
@@ -43,8 +43,8 @@ pub fn drain(
     return drainSelected(terminal, allocator, preference, statuses, null, 0);
 }
 
-/// Selects an explicitly supplied host broker; default SDL app still
-/// refuses MIME access until the provider and consent UI are qualified.
+/// Selects an explicitly supplied host broker. Unselected requests retain
+/// the ordinary refusal path; actual access follows the broker policy.
 pub fn drainSelected(
     terminal: *vt.Terminal,
     allocator: std.mem.Allocator,
@@ -63,6 +63,11 @@ pub fn drainSelected(
             const service = selected.service(terminal, now) catch |failure| switch (failure) {
                 error.ReplyLimit => {
                     result.clipboard_waiting = true;
+                    return result;
+                },
+                error.OutOfMemory => {
+                    result.clipboard_waiting = true;
+                    result.status_blocked = true;
                     return result;
                 },
                 else => return failure,
@@ -820,4 +825,51 @@ test "selected clipboard broker refuses malformed replacement and retires the pr
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
     try std.testing.expect(broker.deadline() == null);
     try std.testing.expect(broker.takePublication(ticket, 2) == null);
+}
+
+test "selected inventory retries reply allocation without repeating provider access" {
+    const allocator = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    var broker = clipboard_broker.Broker.init(threaded.io());
+    defer broker.deinit();
+    var statuses = host_status.Index.init(allocator);
+    defer statuses.deinit();
+    var terminal = try vt.Terminal.init(failing.allocator(), 3, 8);
+    defer terminal.deinit();
+    broker.setFocus(terminal.observation().occurrenceIdentity(), 1);
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=read:id=meta;Lg==\x07")).stateChanged());
+    {
+        var pending = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 1);
+        defer pending.deinit(allocator);
+        try std.testing.expect(!pending.worked and pending.clipboard_waiting and !pending.status_blocked);
+    }
+    const notice = broker.noticeFor(terminal.observation().occurrenceIdentity()).?;
+    try std.testing.expect(notice == .inventory);
+    try std.testing.expect(broker.takeInventory(notice.inventory, 1));
+    var inventory: clipboard_broker.Inventory = .{};
+    try inventory.append("text/plain");
+    try std.testing.expect(broker.recordInventory(notice.inventory, .{ .available = inventory }, 1));
+    const sequence = terminal.semanticSequence();
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    {
+        var blocked = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 2);
+        defer blocked.deinit(allocator);
+        try std.testing.expect(!blocked.worked and blocked.clipboard_waiting and blocked.status_blocked);
+    }
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(notice.inventory.start, terminal.consequenceHead().?.id());
+    try std.testing.expect(!broker.takeInventory(notice.inventory, 2));
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    {
+        var applied = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 3);
+        defer applied.deinit(allocator);
+        try std.testing.expect(applied.worked and !applied.clipboard_waiting and !applied.status_blocked);
+    }
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:id=meta\x1b\\\x1b]5522;type=read:status=DATA:id=meta:mime=Lg==;dGV4dC9wbGFpbgo=\x1b\\\x1b]5522;type=read:status=DONE:id=meta\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }

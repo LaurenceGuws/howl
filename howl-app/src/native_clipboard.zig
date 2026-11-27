@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("desktop");
 const Terminal = @import("howl_vt").Terminal;
+const clipboard = @import("clipboard_broker.zig");
 
 const max_names = 256;
 const max_name_bytes = 4096;
@@ -97,6 +98,18 @@ pub const Provider = struct {
         self.candidate = null;
     }
 
+    /// Read only the provider's cached MIME-name inventory on the main
+    /// thread. Never request clipboard payload bytes or expose a partial list.
+    pub fn inventory(_: *Provider) clipboard.InventoryResult {
+        if (c.SDL_WasInit(c.SDL_INIT_VIDEO) & c.SDL_INIT_VIDEO == 0) return .unavailable;
+        var count: usize = 0;
+        const names = c.SDL_GetClipboardMimeTypes(&count) orelse return .busy;
+        // zig-audit: acknowledge ptr_cast
+        // reason: SDL returns one owned MIME vector and requires its base address in SDL_free.
+        defer c.SDL_free(@ptrCast(names));
+        return collectInventory(names, count);
+    }
+
     /// Submit a prepared ordinary clipboard offer. On local acceptance
     /// SDL owns callback access until cleanup; no external receipt is claimed.
     pub fn publish(self: *Provider, data: *Terminal.KittyWriteData) Terminal.KittyWriteStatus {
@@ -163,6 +176,25 @@ pub const Provider = struct {
         return .EIO;
     }
 };
+
+// SDL owns the valid NUL-terminated vector until SDL_free. Cap the
+// application's copied snapshot before retaining or returning any names.
+fn collectInventory(names: [*c]const [*c]const u8, count: usize) clipboard.InventoryResult {
+    if (count > clipboard.Inventory.max_names) return .busy;
+    var result: clipboard.Inventory = .{};
+    for (0..count) |index| {
+        const pointer = names[index];
+        if (pointer == null) return .busy;
+        var len: usize = 0;
+        while (len < clipboard.Inventory.max_bytes and pointer[len] != 0) : (len += 1) {}
+        if (len == clipboard.Inventory.max_bytes) return .busy;
+        const name = pointer[0..len];
+        // SDL's Wayland transport identity is not user clipboard data.
+        if (std.mem.eql(u8, name, "application/x-sdl3-source-id")) continue;
+        result.append(name) catch return .busy;
+    }
+    return .{ .available = result };
+}
 
 // All test data travels through the actual VT write decoder and ownership move.
 fn prepared(allocator: std.mem.Allocator, location: Terminal.KittyLocation) !Terminal.KittyWriteData {
@@ -330,4 +362,31 @@ test "native clipboard preflight failure leaves old offer and new caller data in
     defer primary.deinit();
     try std.testing.expectEqual(Terminal.KittyWriteStatus.ENOSYS, provider.submit(&primary, Fake.backend));
     try std.testing.expectEqual(@as(usize, 1), Fake.set_calls);
+}
+
+test "native clipboard inventory copies only complete bounded metadata and filters provider identity" {
+    const names = [_][*c]const u8{ "text/plain", "application/x-sdl3-source-id", "image/png" };
+    const result = collectInventory(&names, names.len);
+    try std.testing.expect(result == .available);
+    try std.testing.expectEqual(@as(u16, 2), result.available.count);
+    try std.testing.expectEqualStrings("text/plain\nimage/png\n", result.available.bytes[0..result.available.len]);
+    try std.testing.expect(collectInventory(&names, 0) == .available);
+    try std.testing.expectEqual(@as(u16, 0), collectInventory(&names, 0).available.count);
+    try std.testing.expect(collectInventory(&names, clipboard.Inventory.max_names + 1) == .busy);
+    const invalid = [_][*c]const u8{ "text/plain", "bad name" };
+    try std.testing.expect(collectInventory(&invalid, invalid.len) == .busy);
+    const null_name = [_][*c]const u8{null};
+    try std.testing.expect(collectInventory(&null_name, 1) == .busy);
+    const invalid_utf8 = [_][*c]const u8{"\xff"};
+    try std.testing.expect(collectInventory(&invalid_utf8, 1) == .busy);
+    const maximum: [4095:0]u8 = @splat('x');
+    const excess: [4096:0]u8 = @splat('x');
+    const exact = [_][*c]const u8{&maximum};
+    try std.testing.expectEqual(@as(u16, 4096), collectInventory(&exact, 1).available.len);
+    const over = [_][*c]const u8{&excess};
+    try std.testing.expect(collectInventory(&over, 1) == .busy);
+    const aggregate = [_][*c]const u8{ &maximum, "x" };
+    try std.testing.expect(collectInventory(&aggregate, 2) == .busy);
+    const many: [clipboard.Inventory.max_names][*c]const u8 = @splat("x");
+    try std.testing.expectEqual(@as(u16, clipboard.Inventory.max_names), collectInventory(&many, many.len).available.count);
 }

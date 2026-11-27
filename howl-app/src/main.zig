@@ -197,6 +197,13 @@ const ClipboardHost = struct {
         synthetic: *const fn (*vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus,
     },
 
+    fn inventory(self: ClipboardHost) clipboard_broker.InventoryResult {
+        return switch (self.provider) {
+            .native => |provider| provider.inventory(),
+            .synthetic => .unavailable,
+        };
+    }
+
     fn publish(self: ClipboardHost, data: *vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus {
         return switch (self.provider) {
             .native => |provider| provider.publish(data),
@@ -1916,6 +1923,14 @@ pub const App = struct {
                 if (host.broker.decide(notice.prompt.ticket, false, self.clipboardNow())) self.wakeClipboardWorkers();
                 return;
             };
+        }
+        if (notice == .inventory) {
+            self.clipboard_input_prompt = null;
+            if (!host.broker.takeInventory(notice.inventory, self.clipboardNow())) return;
+            const result = host.inventory();
+            const recorded = host.broker.recordInventory(notice.inventory, result, self.clipboardNow());
+            std.debug.assert(recorded);
+            self.wakeClipboardWorkers();
         }
         if (notice == .prepared) {
             self.clipboard_input_prompt = null;
