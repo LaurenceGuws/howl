@@ -12543,6 +12543,24 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker denies background and primary writes and never reuses revoked consent
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker expires pending and prepared writes before provider admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker reset and retired provider outcomes cannot authorize a successor
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker drains ordinary consequences without replaying provider publication
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker refuses malformed replacement and retires the prior grant
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
@@ -12576,6 +12594,16 @@ specifications:
             lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
             deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
           baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
+        howl_qualification_20261127_kitty_clipboard_04a:
+          scope: Explicit selected host write broker shares one process slot, binds consent and completion to terminal occurrence/reset/start/final
+            identities, and services the existing FIFO through drainSelected. Copied prompt, explicit allow/deny, expiry and revocation;
+            no provider/GUI calls while locked. Default app still refuses MIME; actual worker wake, main event-loop and dialog/provider
+            wiring not enabled.
+          method: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+            Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+            write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+            in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+          baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12661,6 +12689,24 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker denies background and primary writes and never reuses revoked consent
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker expires pending and prepared writes before provider admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker reset and retired provider outcomes cannot authorize a successor
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker drains ordinary consequences without replaying provider publication
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker refuses malformed replacement and retires the prior grant
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Current application declines selected valid write starts with EPERM and structurally unambiguous writes with
@@ -12684,6 +12730,17 @@ specifications:
             lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
             deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
           baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
+        howl_qualification_20261127_kitty_clipboard_04a:
+          scope: 'Supersedes prior write ownership timing: move the exact prepared data once without DONE, provider owns data,
+            then serialize recorded outcome at the retained final FIFO head. DONE cannot precede handoff; retry does not repeat
+            provider admission or change recorded status. Explicit ask-once selected broker requires focused owner; background
+            EPERM, primary ENOSYS, occupied slot EBUSY, local allocation/failure statuses. Synthetic provider only; no actual
+            clipboard or live consent UI.'
+          method: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+            Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+            write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+            in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+          baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
     - id: password
       section: Avoiding repeated permission prompts
       level: defined
@@ -12692,6 +12749,12 @@ specifications:
       test_locations:
       - file: howl-app/src/consequences.zig
         test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker denies background and primary writes and never reuses revoked consent
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker expires pending and prepared writes before provider admission
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
@@ -12703,6 +12766,15 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_04a:
+          scope: No app-supplied name or password used as consent identity; copied prompt binds exact occurrence/reset/start.
+            Allow once, deny, timeout, focus loss and stale-decision rejection. No password store, prompt UI, user gesture token
+            or persistent grant implemented.
+          method: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+            Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+            write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+            in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+          baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
     - id: paste-events
       section: Allowing terminal applications to respond to paste events
       level: defined
@@ -12789,6 +12861,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker denies background and primary writes and never reuses revoked consent
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker reset and retired provider outcomes cannot authorize a successor
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker refuses malformed replacement and retires the prior grant
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected read/write denial replies echo only allowed ASCII id characters, omit id when sanitized empty, use bounded
@@ -12816,6 +12900,15 @@ specifications:
             lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
             deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
           baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
+        howl_qualification_20261127_kitty_clipboard_04a:
+          scope: Original sanitized write route stays in VT after data ownership moves. Record exact final outcome once; stale
+            or wrong-end result rejected, actual queued status retains original route under reply pressure. Malformed replacement
+            uses its own EINVAL route and retires previous staging. No independent multiplexer write sessions.
+          method: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+            Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+            write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+            in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+          baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
     - id: mime-alias
       section: docs/clipboard.rst:162-173
       level: defined
@@ -12836,6 +12929,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty write aborts incomplete groups alias conflicts and cancelled or overflowed packets
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_03:
           scope: Aliases share the target direct byte range, with forward target reservation supported before target data arrives.
@@ -12847,6 +12943,14 @@ specifications:
             lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
             deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
           baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
+        howl_qualification_20261127_kitty_clipboard_04a:
+          scope: Moved synthetic completed data preserves shared allocation pointer for direct and aliased MIME names. Provider
+            owns the entire result without copying; actual SDL callback adoption and cleanup remain unqualified.
+          method: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+            Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+            write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+            in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+          baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
     - id: base64-admission
       section: docs/clipboard.rst:23-45
       level: defined
@@ -13008,6 +13112,24 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
         relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker denies background and primary writes and never reuses revoked consent
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker expires pending and prepared writes before provider admission
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard broker reset and retired provider outcomes cannot authorize a successor
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker drains ordinary consequences without replaying provider publication
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: selected clipboard broker refuses malformed replacement and retires the prior grant
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: No active write is admitted by this profile; continuations, aliases and end are ignored after denial. No multipart
@@ -13028,6 +13150,17 @@ specifications:
             lines12-45,104-173,194-198,242-252; kitty/clipboard.py262-367,384-477,521-565. Compile-negative new caller API baseline,
             deterministic wire and actual decoded-owner 64MiB capacity tests. No actual clipboard access.
           baseline: 997044ac88bbf70d251eea7f7dc60e75401d336e
+        howl_qualification_20261127_kitty_clipboard_04a:
+          scope: Selected broker holds one authorized staging/prepared/publishing/outcome slot; moves completed bytes before provider
+            acknowledgement. Pending consent and staging/prepared deadlines each30s; focus revokes before admission, reset recognized
+            on worker service, retireOwner after worker stop. Pending provider result holds slot until retirement. Provider admission
+            is irreversible boundary; later focus loss does not falsify its recorded outcome. Actual worker scheduling/epoch synchronization
+            and SDL callback lifetime still to qualify.
+          method: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+            Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+            write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+            in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+          baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
     - id: paste-password
       section: docs/clipboard.rst:200-221,264-266
       level: defined
@@ -42069,7 +42202,8 @@ reconciliation:
     - howl-vt/src/clipboard.zig:KittyWrite
     - howl-vt/src/clipboard.zig:KittyWriteData
     - howl-vt/src/terminal.zig:stageKittyClipboardWrite
-    - howl-vt/src/terminal.zig:finishKittyClipboardWrite
+    - howl-vt/src/terminal.zig:takeKittyClipboardWrite
+    - howl-vt/src/terminal.zig:acknowledgeKittyClipboardWrite
     - howl-vt/src/parser.zig:exitPhase
     tests:
     - file: howl-vt/test/unit/terminal_osc_test.zig
@@ -42096,14 +42230,14 @@ reconciliation:
     - file: howl-vt/test/unit/terminal_osc_test.zig
       test: Kitty write abort reply pressure and allocation failure preserve ordered recovery
       relation: protocol-family
-    verified_subset: Caller-selected primary/clipboard start, forward aliases share exact bytes, split binary Base64,
-      exact final acceptance and DONE retry, malformed/incomplete/alias/cancellation/overflow abort, stale suppression,
-      actual64MiB direct owner acceptance and plus-one rejection,256-name capacity, allocation and reply-pressure error
-      recovery, reset revocation and independent completed ownership.
-    boundary: Synthetic data only; no actual OS clipboard write/read or user permission grant, native C typed write API,
-      full host opening/ongoing error API, token/UI and paste events, full malformed/routing/allocation/transport matrix.
-      Capacity tests use actual decoded-owner packets rather than full64MiB terminal-wire path. Local metadata/alias/continuation-ID
-      policies remain selected, not source-wide parity.
+    verified_subset: Caller-selected primary/clipboard start, forward aliases share exact bytes, split binary Base64, exact
+      final acceptance and DONE retry, malformed/incomplete/alias/cancellation/overflow abort, stale suppression, actual64MiB
+      direct owner acceptance and plus-one rejection,256-name capacity, allocation and reply-pressure error recovery, reset
+      revocation and independent completed ownership.
+    boundary: Synthetic data only; current ownership move precedes provider outcome acknowledgement under kitty-clipboard-host-write-broker,
+      superseding prior DONE-before-move API. Actual desktop provider, live worker/main scheduling, user-facing permission
+      UI, native C helpers, full metadata/routing/allocator matrix and paste events remain unqualified. Capacity tests are
+      actual decoded-owner packets, not full64MiB OSC wire. Local metadata and alias rules remain selected.
     not_full_because: Selected bounded write and transfer machinery is qualified, but the full clipboard exchange, actual
       host data/permission and supported paste contract remain incomplete.
   applies_to:
@@ -42115,4 +42249,88 @@ reconciliation:
     - kitty_clipboard.base64-admission
     - kitty_clipboard.write-data
     scope: Selected caller-authorized write staging and completion, no host permission or positive advertisement grant.
+- id: kitty-clipboard-host-write-broker
+  status: resolved-by-scoped-source-selection
+  decision_rule: approved-host-policy-and-exact-provider-outcome
+  operator_alignment: '2026-11-27: operator approved proposed focused metadata-only listing and ask-once data access policy,
+    ordinary clipboard first, background denial, primary deferred and one process transaction. This slice qualifies selected
+    write broker and pre-acknowledgement handoff with synthetic data; no actual provider activation.'
+  accepted_interpretation:
+    effect: Separate prepared data move from outcome acknowledgement, replacing finish-and-move API. DONE requires earlier
+      single-use move. Selected host Broker uses one shared slot with exact terminal occurrence, reset epoch and start/final
+      identity, copied prompt and explicit allow-once decision. Ordinary focused write only; deny background, unavailable
+      primary, occupied slot; no stored or app-supplied password authority. Pending prompt30s and approved staging/prepared30s
+      deadline, focus loss before provider admission irrevocably revokes pending work. Worker services exact VT head,
+      cancels staging or retains routed error under pressure, moves data without copying into prepared broker slot. Main-side
+      takePublication transfers ownership once and is provider admission boundary; recordOutcome fixes result once, retry
+      only serializes status. Revocation before take frees staging/prepared data; after provider admission cannot undo/falsify
+      effect. Worker observes reset epoch and retires old result; retireOwner after stop preserves in-flight slot until
+      outcome. No provider/UI wait under mailbox lock, no GUI VT reference. Selected drain entrypoint exists; ordinary
+      app uses unchanged default refusal. Actual provider/read/listing/UI/scheduling not yet enabled.
+  selects:
+    kitty.clipboard.host-write-broker: effect
+  reason: Operator approved scoped host policy. Original DONE-before-handoff API cannot safely acknowledge a real desktop
+    publication; separate ownership move and exact recorded status, retain one global transaction slot and deny stale
+    consent. Distinguish reversible staging from admitted provider action. Synthetic proof avoids OS clipboard access
+    while provider bounds and SDL failure semantics remain unqualified. The accepted initial read/listing policy is not
+    implemented in this write-only slice.
+  evidence_basis: Operator approved host-boundary proposal (2026-11-27; durable review waves/20261127-kitty-clipboard-host-boundary-review).
+    Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9,
+    write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
+    in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected synthetic host write broker and pre-acknowledgement owned handoff
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/terminal.zig:takeKittyClipboardWrite
+    - howl-vt/src/terminal.zig:acknowledgeKittyClipboardWrite
+    - howl-vt/src/terminal.zig:abortKittyClipboardWrite
+    - howl-app/src/clipboard_broker.zig:Broker
+    - howl-app/src/consequences.zig:drainSelected
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty caller-authorized write resolves forward aliases and publishes only after explicit acceptance
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard broker denies background and primary writes and never reuses revoked consent
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard broker expires pending and prepared writes before provider admission
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard broker reset and retired provider outcomes cannot authorize a successor
+      relation: protocol-family
+    - file: howl-app/src/consequences.zig
+      test: selected clipboard broker drains ordinary consequences without replaying provider publication
+      relation: protocol-family
+    - file: howl-app/src/consequences.zig
+      test: selected clipboard broker refuses malformed replacement and retires the prior grant
+      relation: protocol-family
+    verified_subset: Single-use prepared ownership move before DONE; synthetic binary/alias identity; exact recorded outcome
+      with full reply queue and retry; focus/primary/background/busy refusals; stale consent, denial, prompt and prepared
+      expiry; reset service and retired provider result; selected consequence drain preserves OSC52 and idle waiting;
+      malformed replacement retires grant.
+    boundary: Synthetic selected write service only; not installed or wired to live worker/main scheduler or consent dialog.
+      Reset epoch checked at worker service; actual scheduler must order lifecycle and provider admission, wake affected
+      workers and deadlines. No actual SDL clipboard calls, provider failure/adoption or cross-thread lifetime/latency
+      qualification. No ordinary data reads, positive inventory provider, primary MIME, tokens, native C helper or positive
+      mode5522 advertisement. Shared slot limits staging, not total retained OS clipboard bytes.
+    not_full_because: Write-only broker and owned handoff qualified without actual desktop provider, live consent and
+      worker integration; complete underlying clipboard/paste exchange remains missing.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.write
+    - kitty_clipboard.mux-id
+    - kitty_clipboard.mime-alias
+    - kitty_clipboard.write-data
+    - kitty_clipboard.password
+    scope: Selected host write policy and synthetic transaction handoff; no actual OS clipboard permission or positive
+      capability grant.
 pending_reconciliation: []

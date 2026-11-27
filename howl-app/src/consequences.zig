@@ -4,6 +4,7 @@ const std = @import("std");
 const vt = @import("howl_vt");
 const pty_vt = @import("pty_vt.zig");
 const host_status = @import("program_status.zig");
+const clipboard_broker = @import("clipboard_broker.zig");
 
 const clipboard_limit = 1024 * 1024;
 
@@ -21,6 +22,8 @@ pub const Applied = struct {
     /// The exact status FIFO head remains owned by VT for a bounded retry.
     status_blocked: bool = false,
     clipboard: ?[]u8 = null,
+    /// A selected clipboard exchange waits for the host or reply capacity.
+    clipboard_waiting: bool = false,
 
     /// Releases the latest accepted clipboard payload.
     pub fn deinit(self: *Applied, allocator: std.mem.Allocator) void {
@@ -37,12 +40,46 @@ pub fn drain(
     preference: vt.Terminal.ColorSchemePreference,
     statuses: *host_status.Index,
 ) Error!Applied {
+    return drainSelected(terminal, allocator, preference, statuses, null, 0);
+}
+
+/// Selects an explicitly supplied host broker; default SDL app still
+/// refuses MIME access until the provider and consent UI are qualified.
+pub fn drainSelected(
+    terminal: *vt.Terminal,
+    allocator: std.mem.Allocator,
+    preference: vt.Terminal.ColorSchemePreference,
+    statuses: *host_status.Index,
+    broker: ?*clipboard_broker.Broker,
+    now: u64,
+) Error!Applied {
     var result: Applied = .{};
     errdefer result.deinit(allocator);
     // Host owns the reset boundary. Ignore events from earlier VT epochs.
     result.status_changed = statuses.syncReset(terminal.resetSequence());
     const current_reset = terminal.resetSequence();
-    while (terminal.consequenceHead()) |head| {
+    while (true) {
+        if (broker) |selected| {
+            const service = selected.service(terminal, now) catch |failure| switch (failure) {
+                error.ReplyLimit => {
+                    result.clipboard_waiting = true;
+                    return result;
+                },
+                else => return failure,
+            };
+            switch (service) {
+                .progressed => {
+                    result.worked = true;
+                    continue;
+                },
+                .waiting => {
+                    result.clipboard_waiting = true;
+                    return result;
+                },
+                .unhandled => {},
+            }
+        }
+        const head = terminal.consequenceHead() orelse break;
         const id = head.id();
         const previously_worked = result.worked;
         result.worked = true;
@@ -692,4 +729,95 @@ test "unsupported MIME clipboard policy returns routed errors without granting h
             "\x1b]5522;type=write:status=EPERM:id=write\x1b\\",
         terminal.replyBytes(),
     );
+}
+
+test "selected clipboard broker drains ordinary consequences without replaying provider publication" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    var broker = clipboard_broker.Broker.init(threaded.io());
+    defer broker.deinit();
+    var statuses = host_status.Index.init(allocator);
+    defer statuses.deinit();
+    var terminal = try vt.Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    broker.setFocus(terminal.observation().occurrenceIdentity(), 1);
+    try std.testing.expect((try terminal.feed("\x1b]52;c;T25l\x07\x1b]5522;type=write:id=route\x07")).stateChanged());
+    {
+        var applied = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 1);
+        defer applied.deinit(allocator);
+        try std.testing.expect(applied.worked and applied.clipboard_waiting);
+        try std.testing.expectEqualStrings("One", applied.clipboard.?);
+    }
+    const prompt = broker.prompt(1).?;
+    {
+        var idle = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 2);
+        defer idle.deinit(allocator);
+        try std.testing.expect(!idle.worked and idle.clipboard_waiting);
+        try std.testing.expect(idle.clipboard == null);
+        try std.testing.expectEqual(prompt.ticket.start, terminal.consequenceHead().?.id());
+    }
+    try std.testing.expect(broker.decide(prompt.ticket, true, 3));
+    {
+        var accepted = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 3);
+        defer accepted.deinit(allocator);
+        try std.testing.expect(accepted.worked and !accepted.clipboard_waiting);
+    }
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=wdata:mime=YQ==;QQ==\x07\x1b]52;c;VHdv\x07\x1b]5522;type=wdata\x07")).stateChanged());
+    {
+        var prepared = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 4);
+        defer prepared.deinit(allocator);
+        try std.testing.expect(prepared.worked and prepared.clipboard_waiting);
+        try std.testing.expectEqualStrings("Two", prepared.clipboard.?);
+    }
+    var publication = broker.takePublication(prompt.ticket, 4).?;
+    defer publication.data.deinit();
+    try std.testing.expectEqualStrings("A", publication.data.view().get("a").?);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expect(broker.recordOutcome(publication.completion, .DONE));
+    {
+        var acknowledged = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 5);
+        defer acknowledged.deinit(allocator);
+        try std.testing.expect(acknowledged.worked and !acknowledged.clipboard_waiting);
+        try std.testing.expect(acknowledged.clipboard == null);
+    }
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=DONE:id=route\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expect(broker.takePublication(prompt.ticket, 5) == null);
+}
+
+test "selected clipboard broker refuses malformed replacement and retires the prior grant" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    var broker = clipboard_broker.Broker.init(threaded.io());
+    defer broker.deinit();
+    var statuses = host_status.Index.init(allocator);
+    defer statuses.deinit();
+    var terminal = try vt.Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    broker.setFocus(terminal.observation().occurrenceIdentity(), 1);
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=write:id=old\x07")).stateChanged());
+    {
+        var pending = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 1);
+        defer pending.deinit(allocator);
+        try std.testing.expect(pending.clipboard_waiting);
+    }
+    const ticket = broker.prompt(1).?.ticket;
+    try std.testing.expect(broker.decide(ticket, true, 1));
+    {
+        var accepted = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 1);
+        defer accepted.deinit(allocator);
+        try std.testing.expect(accepted.worked);
+    }
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=wdata:mime=YQ==;QQ==\x07\x1b]5522;type=write:id=bad:name=!!!!\x07\x1b]5522;type=wdata\x07")).stateChanged());
+    {
+        var refused = try drainSelected(&terminal, allocator, .dark, &statuses, &broker, 2);
+        defer refused.deinit(allocator);
+        try std.testing.expect(refused.worked and !refused.clipboard_waiting);
+    }
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EINVAL:id=bad\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expect(broker.deadline() == null);
+    try std.testing.expect(broker.takePublication(ticket, 2) == null);
 }

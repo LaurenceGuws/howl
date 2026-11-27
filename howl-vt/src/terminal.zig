@@ -6323,6 +6323,8 @@ pub const Terminal = struct {
     pub const KittyWriteProgress = clipboard_mod.KittyWriteProgress;
     /// Final status supplied by the embedding clipboard owner.
     pub const KittyWriteStatus = clipboard_mod.KittyWriteStatus;
+    /// Failure-only status for refused or cancelled writes.
+    pub const KittyWriteFailure = clipboard_mod.KittyWriteFailure;
     /// Owns completed MIME bytes until caller deinit.
     pub const KittyWriteData = clipboard_mod.KittyWriteData;
     /// Borrows the prepared write result without copying payloads.
@@ -9209,25 +9211,67 @@ pub const Terminal = struct {
     pub fn inspectKittyClipboardWriteData(self: *const Terminal, generation: u64) KittyReadReplyError!KittyWriteView {
         const request = try self.kittyClipboardHead(generation);
         const writer = self.kitty_write orelse return error.InvalidClipboardResponse;
-        if (request.read_started or !writer.ready) return error.InvalidClipboardResponse;
+        if (request.read_started or !writer.ready or writer.transferred) return error.InvalidClipboardResponse;
         return writer.contents.view();
     }
 
-    /// Caller confirms completion or failure. DONE is admitted only on
-    /// explicit acceptance; then ownership moves without copying. If reply
-    /// admission fails, retain the exact result and retry serialization only.
-    pub fn finishKittyClipboardWrite(self: *Terminal, generation: u64, status: KittyWriteStatus) KittyReadReplyError!?KittyWriteData {
+    /// Move the prepared payload exactly once, without acknowledging success.
+    /// The external provider now owns the bytes; VT retains the final head
+    /// and original routing identity until the caller records the outcome.
+    pub fn takeKittyClipboardWrite(self: *Terminal, generation: u64) KittyReadReplyError!KittyWriteData {
         self.requireNoPreparedResize();
         const request = try self.kittyClipboardHead(generation);
         const writer = self.kitty_write orelse return error.InvalidClipboardResponse;
-        if (request.read_started or !writer.ready) return error.InvalidClipboardResponse;
+        if (request.read_started or !writer.ready or writer.transferred) return error.InvalidClipboardResponse;
+        return writer.take();
+    }
+
+    /// Serialize the recorded provider outcome. DONE requires the earlier
+    /// ownership move; no payload transfer or provider action occurs here.
+    pub fn acknowledgeKittyClipboardWrite(self: *Terminal, generation: u64, status: KittyWriteStatus) KittyReadReplyError!void {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        const writer = self.kitty_write orelse return error.InvalidClipboardResponse;
+        if (request.read_started or !writer.ready or (status == .DONE and !writer.transferred))
+            return error.InvalidClipboardResponse;
         try writer.appendStatus(&self.reply_buffer, status);
-        const completed = if (status == .DONE) writer.take() else null;
         self.discardKittyWrite();
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
         advanceIdentity(&self.semantic_sequence);
         self.content_sequence = self.semantic_sequence;
-        return completed;
+    }
+
+    /// Refuse a valid pending write start without admitting any data.
+    pub fn rejectKittyClipboardWrite(self: *Terminal, generation: u64, failure: KittyWriteFailure) KittyReadReplyError!void {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        if (request.read_started) return error.InvalidClipboardResponse;
+        try clipboard_mod.appendKittyWriteStartFailure(&self.reply_buffer, request.payload, failure);
+        self.discardKittyWrite();
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+    }
+
+    /// Revoke selected staging without consuming an unrelated pending head.
+    /// Drop bytes immediately; retain the original route and first failure
+    /// if the reply queue cannot yet accept the cancellation status.
+    pub fn abortKittyClipboardWrite(self: *Terminal, failure: KittyWriteFailure) ClipboardReplyError!bool {
+        self.requireNoPreparedResize();
+        const writer = self.kitty_write orelse return false;
+        writer.fail(switch (failure) {
+            .EIO => .EIO,
+            .EINVAL => .EINVAL,
+            .ENOSYS => .ENOSYS,
+            .EPERM => .EPERM,
+            .EBUSY => .EBUSY,
+            .EFBIG => .EFBIG,
+        });
+        try writer.appendStatus(&self.reply_buffer, writer.failure.?);
+        self.discardKittyWrite();
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+        return true;
     }
 
     /// Queue one exact reply for the matching FIFO-head OSC 22 query.

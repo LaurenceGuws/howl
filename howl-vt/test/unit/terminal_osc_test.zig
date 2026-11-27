@@ -4818,13 +4818,20 @@ test "Kitty caller-authorized write resolves forward aliases and publishes only 
     try std.testing.expectError(error.ReplyRequired, terminal.consumeConsequence(end));
     const fill = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes, false);
     defer std.testing.allocator.free(fill);
-    try std.testing.expectError(error.ReplyLimit, terminal.finishKittyClipboardWrite(end, .DONE));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.acknowledgeKittyClipboardWrite(end, .DONE));
+    // Provider can take the prepared bytes even while the reply queue is full.
+    var completed = try terminal.takeKittyClipboardWrite(end);
+    defer completed.deinit();
+    try std.testing.expectEqual(original.ptr, completed.view().get("text/plain").?.ptr);
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.takeKittyClipboardWrite(end));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.inspectKittyClipboardWriteData(end));
+    try std.testing.expectError(error.ReplyRequired, terminal.consumeConsequence(end));
+    try std.testing.expectError(error.ReplyLimit, terminal.acknowledgeKittyClipboardWrite(end, .DONE));
     try std.testing.expectEqual(end, terminal.consequenceHead().?.id());
-    try std.testing.expectEqualSlices(u8, original, (try terminal.inspectKittyClipboardWriteData(end)).get("text/plain").?);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, completed.view().get("text/plain").?);
     try std.testing.expectEqualStrings(fill, terminal.replyBytes());
     try consumeReplies(&terminal);
-    var completed = (try terminal.finishKittyClipboardWrite(end, .DONE)) orelse return error.TestUnexpectedResult;
-    defer completed.deinit();
+    try terminal.acknowledgeKittyClipboardWrite(end, .DONE);
     try std.testing.expectEqualStrings("\x1b]5522;type=write:status=DONE:id=ab+\x1b\\", terminal.replyBytes());
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
     try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, completed.view().get("text/html").?);
@@ -4861,7 +4868,7 @@ test "Kitty malformed write releases transaction and ignores stale continuations
         const end = terminal.consequenceHead().?.id();
         try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(end));
         try std.testing.expectEqual(@as(usize, 0), (try terminal.inspectKittyClipboardWriteData(end)).count());
-        try std.testing.expect((try terminal.finishKittyClipboardWrite(end, .EIO)) == null);
+        try terminal.acknowledgeKittyClipboardWrite(end, .EIO);
         try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EIO:id=new\x1b\\", terminal.replyBytes());
     }
 }
@@ -4883,7 +4890,8 @@ test "Kitty write concatenation accepts every split of a padded binary value" {
         try feed(&terminal, "\x1b]5522;type=wdata\x07");
         const end = terminal.consequenceHead().?.id();
         try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(end));
-        var completed = (try terminal.finishKittyClipboardWrite(end, .DONE)).?;
+        var completed = try terminal.takeKittyClipboardWrite(end);
+        try terminal.acknowledgeKittyClipboardWrite(end, .DONE);
         defer completed.deinit();
         try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 255 }, completed.view().get("a").?);
     }
@@ -4970,7 +4978,7 @@ test "Kitty write abort reply pressure and allocation failure preserve ordered r
     const prepared = terminal.consequenceHead().?.id();
     try std.testing.expectEqual(Terminal.KittyWriteProgress.ready, try terminal.stageKittyClipboardWrite(prepared));
     terminal.hardReset();
-    try std.testing.expectError(error.InvalidClipboardResponse, terminal.finishKittyClipboardWrite(prepared, .DONE));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.acknowledgeKittyClipboardWrite(prepared, .DONE));
     try std.testing.expectEqual(Terminal.KittyWriteProgress.ignored, try terminal.stageKittyClipboardWrite(prepared));
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 }

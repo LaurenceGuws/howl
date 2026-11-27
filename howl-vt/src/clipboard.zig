@@ -369,6 +369,8 @@ const max_mime_name_bytes = 4096;
 
 /// Terminal write completion is chosen by the authorized embedding caller.
 pub const KittyWriteStatus = enum { DONE, EIO, EINVAL, ENOSYS, EPERM, EBUSY, EFBIG };
+/// Failure status for a write which has not published data.
+pub const KittyWriteFailure = enum { EIO, EINVAL, ENOSYS, EPERM, EBUSY, EFBIG };
 /// Staging result: only ready permits observing or transferring the complete data.
 pub const KittyWriteProgress = enum { ignored, staged, ready, aborted };
 const WriteStageError = error{ InvalidClipboardResponse, ClipboardLimit, OutOfMemory };
@@ -412,7 +414,7 @@ pub const KittyWriteView = struct {
 };
 
 /// Caller-owned completed clipboard bytes. The transaction owner moves
-/// these allocations once, after the caller accepts the prepared result.
+/// these allocations once, before external publication is acknowledged.
 pub const KittyWriteData = struct {
     allocator: std.mem.Allocator,
     location: KittyLocation,
@@ -466,6 +468,21 @@ pub fn inspectKittyWrite(raw: []const u8) ?KittyLocation {
     var scratch: KittyReadScratch = undefined;
     const request = kittyStart(raw, &scratch) orelse return null;
     return if (request.kind == .write and request.valid) request.location else null;
+}
+
+/// Reject a validated write start with an explicit caller-selected failure.
+pub fn appendKittyWriteStartFailure(output: *replies.Buffer, raw: []const u8, failure: KittyWriteFailure) KittyReadError!void {
+    var scratch: KittyReadScratch = undefined;
+    const request = kittyStart(raw, &scratch) orelse return error.InvalidClipboardResponse;
+    if (request.kind != .write or !request.valid) return error.InvalidClipboardResponse;
+    try appendKittyResponse(output, request, switch (failure) {
+        .EIO => .EIO,
+        .EINVAL => .EINVAL,
+        .ENOSYS => .ENOSYS,
+        .EPERM => .EPERM,
+        .EBUSY => .EBUSY,
+        .EFBIG => .EFBIG,
+    }, "", "");
 }
 
 /// Whether the exact packet is a structurally recognized start, including
@@ -531,6 +548,7 @@ pub const KittyWrite = struct {
     tail_len: u2 = 0,
     padded: bool = false,
     ready: bool = false,
+    transferred: bool = false,
     failure: ?KittyWriteStatus = null,
 
     /// Allocates the small owner and route only after caller selection.
@@ -679,7 +697,8 @@ pub const KittyWrite = struct {
 
     /// Move completed allocations to the caller without copying bytes.
     pub fn take(self: *KittyWrite) KittyWriteData {
-        std.debug.assert(self.ready and self.failure == null);
+        std.debug.assert(self.ready and self.failure == null and !self.transferred);
+        self.transferred = true;
         const result = self.contents;
         self.contents = .{ .allocator = result.allocator, .location = result.location };
         return result;
