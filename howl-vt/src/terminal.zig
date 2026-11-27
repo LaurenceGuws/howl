@@ -923,7 +923,11 @@ fn sgrSelection(params: ModeParams) u16 {
 }
 
 fn restoreSelectedSgr(current: *ScreenCellAttrs, entry: SgrStackEntry) void {
-    if (entry.selection & (1 << 0) != 0) current.bold = entry.attrs.bold;
+    if (entry.selection & (1 << 0) != 0) {
+        current.bold = entry.attrs.bold;
+        // Mintty's intensity selector 1 saves both bold and shadow.
+        current.shadow = entry.attrs.shadow;
+    }
     if (entry.selection & (1 << 1) != 0) current.dim = entry.attrs.dim;
     if (entry.selection & (1 << 2) != 0) current.italic = entry.attrs.italic;
     if (entry.selection & (1 << 3) != 0) {
@@ -2891,6 +2895,7 @@ fn appendSgrAttrs(
     var first = true;
     try appendSgrParam(output, &first, "0");
     if (attrs.bold) try appendSgrParam(output, &first, "1");
+    if (attrs.shadow) try appendSgrParam(output, &first, "1:2");
     if (attrs.dim) try appendSgrParam(output, &first, "2");
     if (attrs.italic) try appendSgrParam(output, &first, "3");
     if (attrs.underline) try appendSgrParam(output, &first, underlineStyleParam(attrs.underline_style));
@@ -3012,6 +3017,7 @@ const CommonAttrs = struct {
     font: u4,
     baseline: Screen.Baseline,
     bold: bool,
+    shadow: bool,
     dim: bool,
     italic: bool,
     underline: bool,
@@ -3033,6 +3039,7 @@ fn sgrReportAttrs(attrs: Screen.CellAttrs) CommonAttrs {
         .font = attrs.font,
         .baseline = attrs.baseline,
         .bold = attrs.bold,
+        .shadow = attrs.shadow,
         .dim = attrs.dim,
         .italic = attrs.italic,
         .underline = attrs.underline,
@@ -3094,6 +3101,7 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
             if (attrs.font != common.font) common.font = 0;
             common.baseline = common.baseline.common(attrs.baseline);
             if (attrs.bold != common.bold) common.bold = false;
+            common.shadow = common.shadow and attrs.shadow;
             if (attrs.dim != common.dim) common.dim = false;
             if (attrs.italic != common.italic) common.italic = false;
             if (attrs.underline != common.underline) common.underline = false;

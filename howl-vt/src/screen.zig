@@ -3756,6 +3756,15 @@ pub const Screen = struct {
                 while (idx < param_len) : (idx += 1) {
                     const param = params[idxOf(idx)];
                     switch (param) {
+                        1 => {
+                            if (operands.colonAfter(idx) and idx + 1 < param_len and params[idxOf(idx + 1)] == 2) {
+                                setRenditionField(target, "shadow", true);
+                            } else {
+                                // Retain the existing local first-selector
+                                // interpretation of other colon groups.
+                                applyBasicSgr(target, param);
+                            }
+                        },
                         4 => applyUnderlineStyle(target, operands, &idx),
                         38 => applyExtendedColor(target, operands, &idx, "fg"),
                         48 => applyExtendedColor(target, operands, &idx, "bg"),
@@ -3800,6 +3809,7 @@ pub const Screen = struct {
                     22 => {
                         setRenditionField(target, "bold", false);
                         setRenditionField(target, "dim", false);
+                        setRenditionField(target, "shadow", false);
                     },
                     221 => setRenditionField(target, "bold", false),
                     222 => setRenditionField(target, "dim", false),
@@ -8021,6 +8031,7 @@ test "shared SGR patch matches direct rendition across supported selectors" {
     styled.bg = .rgbComponents(7, 8, 9);
     styled.font = 4;
     styled.baseline = .raised;
+    styled.shadow = true;
     styled.bold = true;
     styled.dim = true;
     styled.italic = true;
@@ -8048,6 +8059,8 @@ test "shared SGR patch matches direct rendition across supported selectors" {
         .{ .values = &.{ 73, 74 } },
         .{ .values = &.{ 74, 73, 75, 74 } },
         .{ .values = &.{ 73, 0, 74 } },
+        .{ .values = &.{ 1, 2 }, .colon_after = 1 },
+        .{ .values = &.{ 1, 2, 22, 1, 2 }, .colon_after = 0b1001 },
     };
     var lowered = styled;
     lowered.baseline = .lowered;

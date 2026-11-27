@@ -126,6 +126,8 @@ pub const CellAttrs = struct {
     underline_style: UnderlineStyle,
     underline_color: Color,
     protected: Protection,
+    // Independent of bold/dim; occupies previously unused tail padding.
+    shadow: bool = false,
     link_id: u32,
 };
 

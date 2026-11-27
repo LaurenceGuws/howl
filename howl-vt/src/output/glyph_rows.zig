@@ -348,7 +348,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 column += 1;
                 const cell = cells[col];
                 if (cell.x != 0) continue;
-                if (needsScale(cell) or cell.attrs.baseline != .normal) {
+                if (needsScale(cell) or cell.attrs.baseline != .normal or cell.attrs.shadow) {
                     if (retained_row < cell.y) continue;
                     const lead_row = retained_row - cell.y;
                     const lead = screen.retainedCellInfoAt(lead_row, @intCast(col)) orelse return error.UnsupportedScene;
@@ -616,12 +616,38 @@ pub fn Emitter(comptime instrumented: bool) type {
             }
         }
 
+        // Mintty's shadow underlay is offset up/right and mixed with
+        // the default background. Preserve the resolved ink's alpha.
+        fn shadowColor(ctx: Context, color: frame.Color) frame.Color {
+            const bg = ctx.presentation.background;
+            return .{ .r = color.r / 2 + bg.r / 2, .g = color.g / 2 + bg.g / 2, .b = color.b / 2 + bg.b / 2, .a = color.a };
+        }
+
+        fn shadowLayout(sizing: ScaledLayout, bold: bool) ScaledLayout {
+            var shifted = sizing;
+            const factor: u32 = if (bold) 4 else 3;
+            const distance: i32 = @intCast(@max(1, @as(u32, sizing.render_area.height) * factor / 40));
+            shifted.render_area.x += distance;
+            shifted.render_area.y -= distance;
+            return shifted;
+        }
+
         // Ordinary and scaled cells share one decoration geometry and mask
         // owner. Every row sees the same complete layout, then clips its strip.
         fn appendDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
             const sizing = try baselineLayout(try scaledLayout(ctx, cell, col, row_offset), ctx, cell.attrs.baseline);
+            const clip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
+            if (cell.attrs.shadow) {
+                var muted = resolved;
+                muted.fg = shadowColor(ctx, resolved.fg);
+                muted.underline = shadowColor(ctx, resolved.underline);
+                try appendDecorationLayer(ctx, output, used, cell, shadowLayout(sizing, cell.attrs.bold), clip, line_offset, metrics, muted);
+            }
+            try appendDecorationLayer(ctx, output, used, cell, sizing, clip, line_offset, metrics, resolved);
+        }
+
+        fn appendDecorationLayer(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, sizing: ScaledLayout, clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
             const area = sizing.render_area;
-            const clip = (try frame.intersectRects(area, row_clip)) orelse return;
             if (cell.attrs.underline) {
                 const height = @max(@as(u16, 1), metrics.underline_height);
                 const y = line_offset + metrics.underline_y;
@@ -672,6 +698,12 @@ pub fn Emitter(comptime instrumented: bool) type {
             const outer = try scaledLayout(ctx, cell, col, row_offset);
             const sizing = try baselineLayout(outer, ctx, cell.attrs.baseline);
             const strip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
+            if (cell.attrs.shadow)
+                try appendScaledLayer(ctx, output, used, sequence, style, cell, outer, shadowLayout(sizing, cell.attrs.bold), strip, shadowColor(ctx, color), true);
+            try appendScaledLayer(ctx, output, used, sequence, style, cell, outer, sizing, strip, color, false);
+        }
+
+        fn appendScaledLayer(ctx: Context, output: []frame.Command, used: *usize, sequence: []const u32, style: cache.FontVariant, cell: VT.Cell, outer: ScaledLayout, sizing: ScaledLayout, strip: frame.Rect, color: frame.Color, shadow: bool) BuildError!void {
             if (sequence.len == 1 and text.generated.classify(sequence[0]) != null) {
                 const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = 0, .width = sizing.base_width, .height = ctx.cell_height });
                 const proper_fraction = cell.subscale_n != 0 and cell.subscale_d != 0 and cell.subscale_n < cell.subscale_d;
@@ -684,7 +716,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                         .destination = destination,
                         .clip = clip,
                         .color = color,
-                        .cursor_component = true,
+                        .cursor_component = !shadow,
                         .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                     } });
                 }
@@ -714,14 +746,18 @@ pub fn Emitter(comptime instrumented: bool) type {
                         destination.y = @max(destination.y, sizing.render_area.y);
                     }
                     if (raster.format == .rgba8) {
-                        const fitted = fitColor(destination, sizing.render_area);
-                        if (try frame.intersectRects(fitted, strip)) |clip| {
-                            const size = cache.colorAtlasSize(ctx.atlas);
-                            try append(ctx.command_bytes_written, output, used, .{ .rgba = .{
-                                .destination = fitted,
-                                .clip = clip,
-                                .resource = .{ .resource = ctx.color_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
-                            } });
+                        // Intrinsic images have no monochrome foreground
+                        // mask; never tint or duplicate them as shadows.
+                        if (!shadow) {
+                            const fitted = fitColor(destination, sizing.render_area);
+                            if (try frame.intersectRects(fitted, strip)) |clip| {
+                                const size = cache.colorAtlasSize(ctx.atlas);
+                                try append(ctx.command_bytes_written, output, used, .{ .rgba = .{
+                                    .destination = fitted,
+                                    .clip = clip,
+                                    .resource = .{ .resource = ctx.color_resource, .format = .rgba8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
+                                } });
+                            }
                         }
                     } else if (try frame.intersectRects(destination, strip)) |clip| {
                         const size = cache.atlasSize(ctx.atlas);
@@ -729,7 +765,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                             .destination = destination,
                             .clip = clip,
                             .color = color,
-                            .cursor_component = true,
+                            .cursor_component = !shadow,
                             .resource = .{ .resource = ctx.alpha_resource, .format = .alpha8, .size = .{ .width = size.width, .height = size.height }, .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height } },
                         } });
                     }

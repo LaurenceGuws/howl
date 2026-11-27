@@ -28,9 +28,12 @@ fn resolveCommandLimit(config: Config, shared: ?*support.PresentationStore) erro
         support.storeConfig(support.borrowStore(store)).shaped_capacity
     else
         private_glyph_capacity;
-    // Each occupied column needs at most one background, two underline
-    // commands and one strike, irrespective of font width or cell scale.
-    const per_cell = std.math.add(usize, glyph_capacity, 4) catch return error.InvalidCommandLimit;
+    // Each occupied column needs at most one background and two
+    // passes of its shaped ink, two underline commands and one strike.
+    // The optional shadow layer changes the bound, not lazy admission.
+    const ink = std.math.add(usize, glyph_capacity, 3) catch return error.InvalidCommandLimit;
+    const layered = std.math.mul(usize, ink, 2) catch return error.InvalidCommandLimit;
+    const per_cell = std.math.add(usize, layered, 1) catch return error.InvalidCommandLimit;
     const cells = std.math.mul(usize, cols, per_cell) catch return error.InvalidCommandLimit;
     const maximum = std.math.add(usize, cells, private_glyph_capacity) catch return error.InvalidCommandLimit;
     if (config.command_limit == 0) return maximum;

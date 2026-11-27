@@ -2506,3 +2506,66 @@ test "Mintty script ink composes with sized text and survives the retained histo
         try std.testing.expect(owner.observation().semanticView(2).cellInfoAt(@intCast(row), 0).attrs.baseline == .small);
     }
 }
+
+test "Mintty shadow uses retained ink resources and clipped ordered layers" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.init(a, f);
+    defer destroy(owner);
+    try owner.resize(3, 8);
+    try owner.feed("\x1b[?25l\x1b]11;#143c64\x07\x1b[38:6:200:40:20:128;58:2:80:100:120;4mA\r\n\x1b[1:2mA\r\n\x1b[22mA");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const snap = held.snapshot;
+    try std.testing.expectEqual(@as(usize, 1), snap.glyphs[0].len);
+    try std.testing.expectEqual(@as(usize, 2), snap.glyphs[1].len);
+    try std.testing.expectEqual(@as(usize, 1), snap.glyphs[2].len);
+    const original = snap.glyphs[0][0].alpha_mask;
+    const shadow = snap.glyphs[1][0].alpha_mask;
+    const primary = snap.glyphs[1][1].alpha_mask;
+    const shift: i32 = @max(1, @divTrunc(@as(i32, snap.cell_height) * 3, 40));
+    try std.testing.expectEqualDeep(original.resource, primary.resource);
+    try std.testing.expectEqualDeep(primary.resource, shadow.resource);
+    try std.testing.expectEqualDeep(original.destination, primary.destination);
+    try std.testing.expectEqual(primary.destination.x + shift, shadow.destination.x);
+    try std.testing.expectEqual(primary.destination.y - shift, shadow.destination.y);
+    try std.testing.expectEqual(output.commands.Color{ .r = 110, .g = 50, .b = 60, .a = 128 }, shadow.color);
+    try std.testing.expectEqual(original.color, primary.color);
+    try std.testing.expect(!shadow.cursor_component and primary.cursor_component);
+    try std.testing.expect(shadow.clip.x >= 0 and shadow.clip.x + @as(i32, shadow.clip.width) <= snap.cell_width);
+    try std.testing.expect(shadow.clip.y >= 0 and shadow.clip.y + @as(i32, shadow.clip.height) <= snap.cell_height);
+    try std.testing.expectEqual(@as(usize, 2), snap.decorations[1].len);
+    try std.testing.expectEqual(output.commands.Color{ .r = 50, .g = 80, .b = 110, .a = 255 }, snap.decorations[1][0].solid.color);
+    try std.testing.expectEqual(snap.decorations[0][0].solid.color, snap.decorations[1][1].solid.color);
+    try std.testing.expectEqual(snap.glyphs[0][0], snap.glyphs[2][0]);
+}
+
+test "Mintty shadow composes with script sizing and blink but leaves intrinsic images single" {
+    const fonts = @import("test_fonts");
+    const f = try text.FontSet.init(a, .{ .primary = fonts.primary_font, .fallbacks = &.{fonts.colour_font}, .size = .{ .pixels = 20 } });
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .atlas = .{ .width = 256, .height = 256, .color_height = 256, .entry_capacity = 128 }, .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b]11;#000000\x07\x1b[1:2;2;5;73;74;38:6:200:40:20:128m\x1b]66;s=2;█\x07\x1b[1;4H😀\x1b[3;4H\x1b[22m😀");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const s = held.snapshot;
+    for (0..2) |row| {
+        const glyphs = s.glyphs[row];
+        try std.testing.expectEqual(@as(usize, if (row == 0) 3 else 2), glyphs.len);
+        const shadow = glyphs[0].alpha_mask;
+        const primary = glyphs[1].alpha_mask;
+        try std.testing.expectEqualDeep(primary.resource, shadow.resource);
+        try std.testing.expectEqual(output.commands.Color{ .r = 100, .g = 20, .b = 10, .a = 70 }, shadow.color);
+        try std.testing.expectEqual(output.commands.Color{ .r = 200, .g = 40, .b = 20, .a = 70 }, primary.color);
+        try std.testing.expect(shadow.blink and primary.blink);
+        try std.testing.expect(!shadow.cursor_component and primary.cursor_component);
+        try std.testing.expect(shadow.clip.x >= 0 and shadow.clip.x + @as(i32, shadow.clip.width) <= @as(i32, s.cell_width) * 2);
+        try std.testing.expect(shadow.clip.y >= 0 and shadow.clip.y + @as(i32, shadow.clip.height) <= s.cell_height);
+    }
+    try std.testing.expectEqual(@as(usize, 1), s.glyphs[2].len);
+    try std.testing.expectEqualDeep(s.glyphs[0][2], s.glyphs[2][0]);
+}

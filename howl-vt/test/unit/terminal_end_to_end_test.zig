@@ -6754,3 +6754,55 @@ test "Mintty baseline flags compose regional patches and selective rendition sta
     try feed(&terminal, "\x1b[75m\x1b[73#{\x1b[73;74m\x1b[#}H");
     try std.testing.expectEqual(@as(u2, 2), @as(u2, @backingInt(terminal.semanticView(0).cellInfoAt(0, 7).attrs.baseline)));
 }
+
+test "Mintty shadow SGR is independent of bold and dim across every wire split" {
+    const seven = "\x1b[1:2mA\x1b[1;2mB\x1b[221;222mC\x1b[22mD\x1b[1;2mE\x1b[0;1:2mF\x1bP$qm\x1b\\\x1b[0mG";
+    const eight = "\x9b1:2mA\x9b1;2mB\x9b221;222mC\x9b22mD\x9b1;2mE\x9b0;1:2mF\x90$qm\x9c\x9b0mG";
+    for ([_][]const u8{ seven, eight }) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            const view = terminal.semanticView(0);
+            for ([_]bool{ false, true, false, false, true, false, false }, 0..) |intensity, col| {
+                const cell = view.cellInfoAt(0, @intCast(col));
+                try std.testing.expectEqual(intensity, cell.attrs.bold);
+                try std.testing.expectEqual(intensity, cell.attrs.dim);
+                try std.testing.expectEqual(col < 3 or col == 5, cell.attrs.shadow);
+                try std.testing.expectEqual(@as(u32, @intCast('A' + col)), cell.codepoint);
+            }
+            try std.testing.expectEqualStrings("\x1bP1$r0;1:2m\x1b\\", terminal.replyBytes());
+        }
+    }
+}
+
+test "Mintty shadow survives regional rendition selective stack and cold history" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[1:2mA\x1b[22mB\x1b[1;2;1:2mC\x1b[2*x\x1b[1;2;1;2;1:2$r\x1b[1;1;1;2#|");
+    try std.testing.expectEqualStrings("\x1b[0;1:2m", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[1;3;1;3;22$r");
+    var original: [3]Terminal.Cell = undefined;
+    for (&original, 0..) |*cell, col| cell.* = terminal.semanticView(0).cellInfoAt(0, @intCast(col));
+    try std.testing.expect(original[0].attrs.shadow and original[1].attrs.shadow and !original[2].attrs.shadow);
+    for (original) |cell| try std.testing.expect(!cell.attrs.bold and !cell.attrs.dim);
+    // The active pen was not modified by either regional patch.
+    try feed(&terminal, "\x1b[2;1H\x1b[#{\x1b[0m\x1b[#}D\x1b[1#{\x1b[22m\x1b[#}E\x1b[221mF\x1b[2#{\x1b[22;2m\x1b[#}G");
+    const view = terminal.semanticView(0);
+    for ([_]bool{ true, true, true, false }, 0..) |shadow, col| {
+        const attrs = view.cellInfoAt(1, @intCast(col)).attrs;
+        try std.testing.expectEqual(shadow, attrs.shadow);
+        try std.testing.expectEqual(col < 2, attrs.bold);
+        try std.testing.expectEqual(col == 0, attrs.dim);
+    }
+    try feed(&terminal, "\x1b[1:2:5mH");
+    const tail = terminal.semanticView(0).cellInfoAt(1, 4).attrs;
+    try std.testing.expect(tail.shadow and !tail.blink and !tail.bold);
+    try feed(&terminal, "\x1b[S");
+    const retained = terminal.semanticView(1);
+    for (original, 0..) |cell, col| try std.testing.expectEqualDeep(cell, retained.cellInfoAt(0, @intCast(col)));
+    try terminal.resize(3, 6);
+    for (original, 0..) |cell, col| try std.testing.expectEqualDeep(cell, terminal.semanticView(1).cellInfoAt(0, @intCast(col)));
+}

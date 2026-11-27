@@ -7725,6 +7725,16 @@ specifications:
             and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
             and private namespace decisions; VT/output red-green, no blanket FULL promotion
           baseline: fe940224d9b2ed37be360299488eb492ed1a7598
+        howl_qualification_20261127_mintty_rendition_02:
+          scope: Adjacent Mintty source extends selector1 to save shadow together with bold; default saves both and selector2
+            stays dim-only. Existing bounded LIFO and original selector interpretation otherwise retained. Not an original
+            xterm shadow claim.
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; native VT and output-owner
+            red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
+            promotion
+          baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: XTPUSHSGR restores selected rendition with bounded stack truth'
@@ -7733,6 +7743,9 @@ specifications:
         - iterm2.csi.xtpushsgr
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty baseline flags compose regional patches and selective rendition stack restoration
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty shadow survives regional rendition selective stack and cold history
         relation: protocol-family
     - id: sgr-stack-pop
       section: Functions using CSI / XTPOPSGR, lines 1556-1558,1941-1943
@@ -7771,6 +7784,15 @@ specifications:
             and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
             and private namespace decisions; VT/output red-green, no blanket FULL promotion
           baseline: fe940224d9b2ed37be360299488eb492ed1a7598
+        howl_qualification_20261127_mintty_rendition_02:
+          scope: Adjacent Mintty source restores shadow with bold for selection1/default; dim-only pop does not restore shadow.
+            Exact retained cell and mixed cold history evidence; existing stack lifetime/capacity unchanged.
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; native VT and output-owner
+            red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
+            promotion
+          baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: XTPUSHSGR restores selected rendition with bounded stack truth'
@@ -7780,6 +7802,9 @@ specifications:
         - iterm2.csi.xtpopsgr_q
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty baseline flags compose regional patches and selective rendition stack restoration
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty shadow survives regional rendition selective stack and cold history
         relation: protocol-family
     - id: sgr-rectangle-report
       section: Functions using CSI / XTREPORTSGR, lines 1886-1890
@@ -20742,6 +20767,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Mintty baseline flags compose regional patches and selective rendition stack restoration
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty shadow survives regional rendition selective stack and cold history
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_deccara_01:
           scope: 'Existing shared SGR patch and accepted bare/coordinate-only/zero distinction retained. Originating Kitty
@@ -20796,6 +20824,16 @@ specifications:
             and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
             and private namespace decisions; VT/output red-green, no blanket FULL promotion
           baseline: fe940224d9b2ed37be360299488eb492ed1a7598
+        howl_qualification_20261127_mintty_rendition_02:
+          scope: Shared regional rendition supports independent SGR1:2 shadow and22 reset without mutating pen, uses same
+            patch as ordinary SGR and preserves existing coordinate/protection/link/scalar authority. Exact common-region
+            report and cold history round trip.
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; native VT and output-owner
+            red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
+            promotion
+          baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
   kitty_underlines:
     title: Kitty colored and styled underlines
     author: Kovid Goyal / kitty
@@ -30522,6 +30560,52 @@ specifications:
         - url: https://github.com/mintty/mintty/wiki/Changelog
           sha256: 2b10c8ba091f73055257869924158a57d2a5ac596b0b561edf39061443d8c117
           revision: 951dd5cc92d88e930c8ff143d92a5aec6730413d
+        howl_qualification_20261127_mintty_rendition_02:
+          scope: 'Independent shadow flag occupies previously unused byte41 of existing44-byte CellAttrs; no hot/cold record
+            size change. SGR1:2 enables shadow without bold/dim, ordinary1;2 sets bold/dim without manufacturing shadow,22/0
+            clear,221/222 retain shadow; all split points of selected sequences in both CSI profiles, lossless report1:2 and
+            regional shared patch. Existing first-value malformed colon-group behavior retained; selected surplus suffix cannot
+            leak blink. Pinned termout.c subset stack selector1 restores bold and shadow, default mask includes both; selector2
+            independent. Both cold-history equality and optimized no-scalar run-count identity include shadow; mixed shadow-only
+            cells survive scroll and reflow, strengthened padding/run-count proof. Source-inspired wintext.c layer order:
+            muted copy up/right before original ink, per-channel half-sum with default background, preserve effective alpha
+            and dim policy. Distance max1 floor(render-area-height*(3 or bold4)/40); local clip to original render rectangle
+            and physical strip. Shared scaled lane uses same raster resources, shadow decoration layer and primary; intrinsic
+            RGBA image not tinted/duplicated, shadow not cursor-recolor component, blink applies to both. Automatic ceiling
+            admits two glyph/decoration layers with lazy allocation, dense512-cell proof. Actual SDL software-rendered source-over
+            witness and boundary pixel, selected script/OSC66/blink and intrinsic image output proofs. No Windows raster equivalence,
+            arbitrary font/combined scale/DEC geometry or physical compositor claim.'
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; native VT and output-owner
+            red-green, history counter regression, actual SDL software pixels and bounded dense row proof; no blanket FULL
+            promotion
+          baseline: d1a11b1bd708353d90ed2e966322d106e92fd126
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty shadow SGR is independent of bold and dim across every wire split
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty shadow survives regional rendition selective stack and cold history
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Mintty shadow uses retained ink resources and clipped ordered layers
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Mintty shadow composes with script sizing and blink but leaves intrinsic images single
+        relation: protocol-family
+      - file: howl-vt/test/output_shared.zig
+        test: automatic row bound admits dense two-layer shadow decorations and glyph ink
+        relation: protocol-family
+      - file: howl-app/src/canvas.zig
+        test: Mintty shadow pixels compose muted underlay before original ink
+        relation: protocol-family
+      - file: howl-vt/src/history_store.zig
+        test: no-scalar history shape counts semantic attribute runs despite padding
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
     - id: emoji-style
       section: Tips / Text attributes
       level: defined

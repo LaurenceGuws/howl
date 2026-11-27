@@ -421,6 +421,7 @@ comptime {
     std.debug.assert(@offsetOf(CellAttrs, "strikethrough") == 38);
     std.debug.assert(@offsetOf(CellAttrs, "underline_style") == 39);
     std.debug.assert(@offsetOf(CellAttrs, "protected") == 40);
+    std.debug.assert(@offsetOf(CellAttrs, "shadow") == 41);
 }
 
 inline fn historyAttrsEqual(left: *const CellAttrs, right: *const CellAttrs) bool {
@@ -438,7 +439,7 @@ inline fn historyAttrsEqual(left: *const CellAttrs, right: *const CellAttrs) boo
             std.mem.readInt(u64, b[24..32], .little)) |
         (std.mem.readInt(u64, a[32..40], .little) ^
             std.mem.readInt(u64, b[32..40], .little));
-    return difference == 0 and left.protected == right.protected;
+    return difference == 0 and left.protected == right.protected and left.shadow == right.shadow;
 }
 
 const Recycled = struct {
@@ -590,7 +591,8 @@ pub const Store = struct {
                 const current1 = std.mem.readInt(u64, bytes[8..16], .little) & color_mask;
                 const current2 =
                     (std.mem.readInt(u64, bytes[16..24], .little) & color_mask) |
-                    (@as(u64, @backingInt(value.attrs.protected)) << 40);
+                    (@as(u64, @backingInt(value.attrs.protected)) << 40) |
+                    (@as(u64, @intFromBool(value.attrs.shadow)) << 48);
                 const current3 = std.mem.readInt(u64, bytes[24..32], .little);
                 const current4 = std.mem.readInt(u64, bytes[32..40], .little);
                 const same = previous_valid and
@@ -1435,6 +1437,18 @@ test "no-scalar history shape counts semantic attribute runs despite padding" {
     });
     defer store.discardPrepared(&runs);
     try std.testing.expectEqual(@as(u16, 3), runs.shape.attrs);
+
+    cells[1].attrs.bold = false;
+    cells[1].attrs.shadow = true;
+    var shadow_runs = try store.preparePush(.{
+        .cells = &cells,
+        .scalars = &scalars,
+        .scalar_start = 0,
+        .wrapped = false,
+        .geometry = .single_width,
+    });
+    defer store.discardPrepared(&shadow_runs);
+    try std.testing.expectEqual(@as(u16, 3), shadow_runs.shape.attrs);
 }
 
 test "history retains the accepted scalar density for every row" {
