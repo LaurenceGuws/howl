@@ -2756,6 +2756,15 @@ test "Kitty chunked image replacement preserves a held resource through rejectio
     try std.testing.expectEqualDeep(command, before.graphics.positive[0]);
     try owner.release(held.?);
     held = null;
+    {
+        const unplaced = try owner.hold();
+        defer release(owner, unplaced);
+        try std.testing.expectEqual(@as(usize, 0), unplaced.snapshot.graphics.images.len);
+        try std.testing.expectEqual(@as(usize, 0), unplaced.snapshot.graphics.positive.len);
+        try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, owner.observation().images(0).image(0).?.pixels);
+    }
+    try owner.feed("\x1b_Ga=p,i=56,p=7,C=1,q=2\x1b\\");
+    try owner.flush();
     const next = try owner.hold();
     defer release(owner, next);
     try std.testing.expectEqual(@as(usize, 1), next.snapshot.graphics.images.len);

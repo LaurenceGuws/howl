@@ -10274,6 +10274,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty image number gets stable identity for put reply and deletion'
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous p is ignored while zero placement IDs accumulate
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty replacement reuses full placement capacity by retiring the prior group
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty placement identity replaces and deletes only the exact retained placement
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty chunked image replacement preserves a held resource through rejection and commit
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Ordinary placement ACK retains p, including max-u32, and missing-image error includes requested identity
@@ -10282,6 +10294,14 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_03:
+          scope: Anonymous transmit-display ignores supplied p, explicit zero and omitted p accumulate independent placements.
+            Ordinary re-put still replaces a nonzero image/placement pair. Successful data-only retransmission is unplaced
+            until later put; held immutable old image resource unchanged, re-put publishes new content generation.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
+            Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
+          baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -10315,6 +10335,20 @@ specifications:
         legacy_records:
         - kitty.graphics.delete_point
         - kitty.graphics.delete_point3d
+      - file: howl-vt/src/graphics.zig
+        test: Kitty retransmission retires placement groups only after complete validated replacement
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_03:
+          scope: Replacement seeds all old placement roots in one existing bounded ancestry closure (16 rounds), compacts
+            once and repairs surviving parent slots. Relative descendant placement retirement reclaims its image only if no
+            placement survives, excluding replacement image; independently placed child and unrelated unplaced data preserved.
+            Ordinary re-put and lowercase deletion retain their existing policy. No change to relative geometry or all other
+            deletion/scroll orphan lifetime cases.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
+            Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
+          baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
     - id: delete
       section: Deleting images
       level: defined
@@ -10509,6 +10543,25 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.graphics.feature_query
+      - file: howl-vt/src/graphics.zig
+        test: Kitty replacement reuses full placement capacity by retiring the prior group
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty retransmission retires placement groups only after complete validated replacement
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: static image allocation failure leaves the plane reusable
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_03:
+          scope: Full placement table (16384) accepts a new placement for a replacement image whose existing group frees capacity;
+            new unrelated display remains rejected without generation change. Replacement closure retires orphan relative
+            data before existing bounded byte-quota reclaim, protecting replacement image. Allocation failure leaves original
+            placement and bytes unchanged. No complete quota-eviction strategy equivalence.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
+            Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
+          baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
     - id: direct-chunks
       section: docs/graphics-protocol.rst:470-495
       level: defined
@@ -10557,6 +10610,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty chunked image replacement preserves a held resource through rejection and commit
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty retransmission retires placement groups only after complete validated replacement
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: static image allocation failure leaves the plane reusable
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -10584,6 +10643,15 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_03:
+          scope: Replacement lifetime changes only at successful final validation and allocation admission, not partial or
+            failed upload. Exact old placement identities, retained data, storage, frame count and generation remain on rejection;
+            all old references retire on accepted data replacement. Existing allocation failure and output lease proofs include
+            fresh placement identity and unplaced interval.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
+            Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
+          baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -10652,6 +10720,24 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty chunked image replacement preserves a held resource through rejection and commit
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty retransmission retires placement groups only after complete validated replacement
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous p is ignored while zero placement IDs accumulate
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty replacement reuses full placement capacity by retiring the prior group
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: plane identities survive Kitty replacement and isolate decoded images from Kitty deletion
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty placement identity replaces and deletes only the exact retained placement
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: static image allocation failure leaves the plane reusable
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Selected p acknowledgement and same-ID replacement retained output proof. Existing local explicit image-ID
@@ -10662,6 +10748,22 @@ specifications:
             lines611-642,960-995,1070-1109; graphics.c finish_command_response_with_keys and grman_handle_command; native
             VT red-green and output-owner immutable replacement proof; no blanket FULL promotion
           baseline: f77ef307a7c68e7327fb793b3fbc4fa12704e13c
+        howl_qualification_20261127_kitty_graphics_03:
+          scope: 'Correct prior retained-placement divergence: successful explicit-ID retransmission retires every old placement
+            including virtual, physical, other-bank and relative descendants under existing shared-image namespace. All validation
+            and allocations complete before retirement; retain old data and placements through incomplete or failed replacement,
+            unlike author eager teardown at first header. New a=T placement receives fresh identity even with same p; a=t
+            remains unplaced until re-put. Internal image resource identity stable with new generation, independent from placement
+            identity. Orphaned relative-child images reclaimed only for replacement group, preserving child data with surviving
+            placement and unrelated unplaced data. Anonymous p ignored, distinct anonymous internal images; explicit zero/omitted
+            p accumulate. Full16384-slot table permits replacing own old group without unrelated eviction, rejects unrelated
+            new display. Ordinary a=p replacement semantics unchanged. Existing allocation-failure and held-resource proofs
+            updated to distinguish old versus new placement lifetime. Shared bank namespace, anonymous virtual admission and
+            complete deletion/relative lifetime policy remain scoped.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb
+            lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
+            Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
+          baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
     - id: placement-layout
       section: docs/graphics-protocol.rst:667-688
       level: defined

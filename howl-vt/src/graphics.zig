@@ -1174,24 +1174,16 @@ pub const Plane = struct {
             self.kittyImageIndex(loading.id);
         const protected_image_id = if (prior_index) |index| self.images[index].id else null;
         const display = loading.action == 'T';
-        const replaced_placement = if (display and prior_index != null)
-            self.placementIndex(self.images[prior_index.?].id, loading.placement_id)
-        else
-            null;
-        if (replaced_placement) |index| {
-            // A virtual placeholder needs a different text-owned anchor.
-            // Until it is implemented, never strand children of an existing
-            // physical placement by converting that parent in place.
-            if (self.hasChildren(self.placements[index].identity) and
-                (loading.unicode_placement or self.placements[index].bank != bank))
-                return .{ .response_id = loading.id, .failure = .unsupported, .quiet = loading.quiet };
-        }
-        if (display and self.placement_count == max_placements and replaced_placement == null)
+        // A successful retransmission retires every prior placement of
+        // that image, including descendants. Admission must not reject a
+        // full placement table when this retirement frees a slot.
+        if (display and self.placement_count == max_placements and
+            (protected_image_id == null or !self.hasPlacement(protected_image_id.?)))
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         var planned_placement = if (display)
             makePlacement(
                 1,
-                loading.placement_id,
+                if (loading.anonymous) 0 else loading.placement_id,
                 bank,
                 row,
                 col,
@@ -1247,15 +1239,15 @@ pub const Plane = struct {
         }
         const retained_bytes = rgba.len + if (indexed_source) |source| source.len else @as(usize, 0);
         std.debug.assert(retained_bytes <= max_indexed_retained_bytes);
+        // Every fallible allocation and geometry check has completed.
+        // Commit the placement retirement before reclaiming quota so
+        // newly orphaned relative data can satisfy storage pressure.
+        if (protected_image_id) |id| self.retireReplacementPlacements(id);
         self.reclaimForKittyAdmission(retained_bytes, protected_image_id);
         const admitted_prior_index = if (protected_image_id) |image_id|
             // zig-audit: acknowledge orelse_unreachable
             // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
             self.imageIndex(image_id) orelse unreachable
-        else
-            null;
-        const admitted_replaced_placement = if (display and protected_image_id != null)
-            self.placementIndex(protected_image_id.?, loading.placement_id)
         else
             null;
         self.advance();
@@ -1305,16 +1297,9 @@ pub const Plane = struct {
             const image_id = self.images[admitted_prior_index orelse self.image_count - 1].id;
             planned_placement.?.image_id = image_id;
             planned_placement.?.generation = content_generation;
-            if (admitted_replaced_placement) |index| {
-                // Updating one existing Kitty placement preserves its stable
-                // identity so children follow the new parent geometry.
-                planned_placement.?.identity = self.placements[index].identity;
-                self.placements[index] = planned_placement.?;
-            } else {
-                planned_placement.?.identity = content_generation;
-                self.placements[self.placement_count] = planned_placement.?;
-                self.placement_count += 1;
-            }
+            planned_placement.?.identity = content_generation;
+            self.placements[self.placement_count] = planned_placement.?;
+            self.placement_count += 1;
         }
         return .{
             .changed = true,
@@ -2588,11 +2573,30 @@ pub const Plane = struct {
             }
             return;
         }
-        // One bounded closure over parent links, not recursive per-child
-        // scans. At most 16 ancestry rounds over the declared 16K placement
-        // bound, regardless of a group's fan-out or dense slot ordering.
         var doomed: [max_placements]bool = @splat(false);
         doomed[index] = true;
+        self.retirePlacementSet(&doomed, null);
+    }
+
+    // A retransmission owns the entire old placement group, not a re-put
+    // of one placement. Seed all roots at once, then reuse the closure.
+    fn retireReplacementPlacements(self: *Plane, image_id: u32) void {
+        var doomed: [max_placements]bool = @splat(false);
+        var found = false;
+        for (self.placements[0..self.placement_count], 0..) |placement_value, index| {
+            if (placement_value.image_id != image_id) continue;
+            doomed[index] = true;
+            found = true;
+        }
+        if (found) self.retirePlacementSet(&doomed, image_id);
+    }
+
+    // One bounded closure over parent links, not recursive per-child
+    // scans. At most 16 ancestry rounds over the declared 16K placement
+    // bound, regardless of a group's fan-out or dense slot ordering.
+    // Only retransmission requests orphan reclamation: ordinary lowercase
+    // deletion retains its established image-data lifetime.
+    fn retirePlacementSet(self: *Plane, doomed: *[max_placements]bool, replacement_id: ?u32) void {
         for (0..max_parent_depth) |_| {
             var extended = false;
             for (self.placements[0..self.placement_count], 0..) |placement_value, i| {
@@ -2607,10 +2611,18 @@ pub const Plane = struct {
             }
             if (!extended) break;
         }
+        var orphan_candidates: [max_images]bool = @splat(false);
         var map: [max_placements]u16 = undefined;
         var retained: usize = 0;
         for (self.placements[0..self.placement_count], 0..) |placement_value, prior| {
-            if (doomed[prior]) continue;
+            if (doomed[prior]) {
+                if (replacement_id) |id| {
+                    if (placement_value.image_id != id and placement_value.parent_identity != 0) {
+                        if (self.imageIndex(placement_value.image_id)) |index| orphan_candidates[index] = true;
+                    }
+                }
+                continue;
+            }
             map[prior] = @intCast(retained);
             self.placements[retained] = placement_value;
             retained += 1;
@@ -2624,8 +2636,18 @@ pub const Plane = struct {
                 placement_value.parent_slot = map[parent_slot];
             }
         }
-        for (self.images[0..self.image_count]) |*image_value| {
-            if (!self.hasPlacement(image_value.id)) image_value.frame_started_ms = null;
+        var image_index: usize = 0;
+        while (image_index < self.image_count) {
+            const image_value = &self.images[image_index];
+            if (!self.hasPlacement(image_value.id)) {
+                if (orphan_candidates[image_index]) {
+                    self.removeImage(image_index);
+                    orphan_candidates[image_index] = orphan_candidates[self.image_count];
+                    continue;
+                }
+                image_value.frame_started_ms = null;
+            }
+            image_index += 1;
         }
     }
 
@@ -3869,12 +3891,15 @@ test "plane identities survive Kitty replacement and isolate decoded images from
         1,
     )).changed);
     try std.testing.expectEqual(kitty_identity, plane.image(0).?.id);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
 
     const decoded = try std.testing.allocator.dupe(u8, &.{ 1, 2, 3, 4 });
     try plane.admitDecoded(decoded, 1, 1, .primary, 1, 1, 1, 1);
     const decoded_identity = plane.image(1).?.id;
     try std.testing.expect(decoded_identity != kitty_identity);
-    try std.testing.expect((try plane.command("a=d,d=A", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect(!(try plane.command("a=d,d=A", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expect((try plane.command("a=d,d=I,i=99", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(usize, 1), plane.image_count);
     try std.testing.expectEqual(decoded_identity, plane.image(0).?.id);
     try std.testing.expectEqual(@as(usize, 1), plane.placement_count);
@@ -5651,7 +5676,7 @@ fn indexedAllocationFailure(allocator: std.mem.Allocator, starts_indexed: bool) 
     };
     try std.testing.expect(result.changed and result.failure == null);
     try std.testing.expectEqual(image_id, plane.image(0).?.id);
-    try std.testing.expectEqual(placement.identity, plane.placement(0).?.identity);
+    try std.testing.expect(placement.identity != plane.placement(0).?.identity);
     try std.testing.expectEqual(if (starts_indexed) @as(usize, 4) else @as(usize, 6), plane.storage_bytes);
 }
 
@@ -5883,4 +5908,107 @@ test "Kitty continuation admits only continuation metadata and retains rejection
         try std.testing.expectEqual(@as(u16, 1), plane.image_count);
         try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, plane.image(0).?.pixels);
     }
+}
+
+test "Kitty retransmission retires placement groups only after complete validated replacement" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    for ([_][]const u8{
+        "a=T,i=70,p=3,C=1,s=1,v=1;AQIDBA==",
+        "a=p,i=70,p=4,U=1",
+        "a=p,i=70,p=0,C=1",
+        "a=f,i=70,r=2;BQYHCA==",
+        "a=t,i=71,s=1,v=1;AQIDBA==",
+        "a=p,i=71,p=5,P=70,Q=3",
+        "a=t,i=72,s=1,v=1;AQIDBA==",
+        "a=p,i=72,p=6,P=71,Q=5",
+        "a=p,i=72,p=7,C=1",
+        "a=t,i=73,s=1,v=1;AQIDBA==",
+    }) |command_bytes| {
+        const result = try plane.command(command_bytes, .primary, 0, 1, 2, 8, 16);
+        try std.testing.expect(result.changed and result.failure == null);
+    }
+    try std.testing.expect((try plane.command("a=p,i=70,p=8,C=1", .alternate, 0, 0, 0, 8, 16)).changed);
+    const original = plane.images[plane.kittyImageIndex(70).?];
+    const survivor = plane.placements[plane.placementIndex(plane.images[plane.kittyImageIndex(72).?].id, 7).?];
+    const old_placement = plane.placements[plane.placementIndex(original.id, 3).?];
+    const generation = plane.generation();
+    const storage = plane.storage_bytes;
+    const count = plane.placement_count;
+    const first = try plane.command("a=T,i=70,p=3,C=1,U=1,s=1,v=1,m=1;CQoL", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expect(!first.changed);
+    const rejected = try plane.command("m=0;A", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(@as(?Failure, .invalid), rejected.failure);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(storage, plane.storage_bytes);
+    try std.testing.expectEqual(count, plane.placement_count);
+    try std.testing.expectEqualDeep(old_placement, plane.placements[plane.placementIndex(original.id, 3).?]);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    const replaced = try plane.command("a=T,i=70,p=3,U=1,C=1,s=1,v=1;CQoLDA==", .primary, 0, 2, 3, 8, 16);
+    try std.testing.expect(replaced.changed and replaced.failure == null);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expectEqual(@as(usize, 12), plane.storage_bytes);
+    try std.testing.expect(plane.kittyImageIndex(71) == null);
+    try std.testing.expect(plane.kittyImageIndex(73) != null);
+    const current = plane.images[plane.kittyImageIndex(70).?];
+    try std.testing.expectEqual(original.id, current.id);
+    try std.testing.expect(current.generation > original.generation);
+    try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, current.pixels);
+    const new_placement = plane.placements[plane.placementIndex(current.id, 3).?];
+    try std.testing.expect(new_placement.identity != old_placement.identity);
+    try std.testing.expect(new_placement.virtual);
+    try std.testing.expectEqualDeep(survivor, plane.placements[plane.identityIndex(survivor.identity).?]);
+    try std.testing.expect((try plane.command("a=t,i=70,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expect(plane.placementIndex(current.id, 3) == null);
+}
+
+test "Kitty anonymous p is ignored while zero placement IDs accumulate" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    for ([_][]const u8{
+        "a=T,p=9,C=1,s=1,v=1;AQIDBA==",
+        "a=T,i=0,p=9,C=1,s=1,v=1;BQYHCA==",
+        "a=T,i=50,p=0,C=1,s=1,v=1;AQIDBA==",
+        "a=p,i=50,p=0,C=1",
+        "a=p,i=50,C=1",
+    }) |command_bytes| {
+        const result = try plane.command(command_bytes, .primary, 0, 0, 0, 8, 16);
+        try std.testing.expect(result.changed and result.failure == null);
+        if (plane.image_count < 3) {
+            try std.testing.expect(result.response_id == null);
+            try std.testing.expect(result.response_placement == null);
+        }
+    }
+    try std.testing.expectEqual(@as(u16, 3), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 5), plane.placement_count);
+    for (plane.placements[0..plane.placement_count]) |placement_value|
+        try std.testing.expectEqual(@as(u32, 0), placement_value.kitty_id);
+    try std.testing.expect(plane.images[0].id != plane.images[1].id);
+}
+
+test "Kitty replacement reuses full placement capacity by retiring the prior group" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,i=70,p=3,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+    // Fill via ordinary zero-ID placement admission; unique identities
+    // remain monotonic and no unrelated placement is evicted.
+    try std.testing.expect((try plane.command("a=t,i=71,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+    for (1..max_placements) |_| {
+        const result = try plane.command("a=p,i=71,C=1", .primary, 0, 0, 0, 8, 16);
+        try std.testing.expect(result.changed and result.failure == null);
+    }
+    try std.testing.expectEqual(max_placements, plane.placement_count);
+    const before = plane.generation();
+    const miss = try plane.command("a=T,i=72,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16);
+    try std.testing.expectEqual(@as(?Failure, .quota), miss.failure);
+    try std.testing.expectEqual(before, plane.generation());
+    const replacement = try plane.command("a=T,i=70,p=4,C=1,s=1,v=1;BQYHCA==", .primary, 0, 1, 1, 8, 16);
+    try std.testing.expect(replacement.changed and replacement.failure == null);
+    try std.testing.expectEqual(max_placements, plane.placement_count);
+    const id = plane.images[plane.kittyImageIndex(70).?].id;
+    try std.testing.expect(plane.placementIndex(id, 3) == null);
+    try std.testing.expect(plane.placementIndex(id, 4) != null);
 }
