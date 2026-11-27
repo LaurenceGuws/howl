@@ -38,9 +38,63 @@ pub const Command = union(enum) {
     steal_focus,
     request_attention: []const u8,
     file_transfer: []const u8,
+    inline_png: []const u8,
 };
 
 const maximum_shell_name_bytes: u8 = 32;
+
+/// Selects the single-file inline subset before decoding or host dispatch.
+pub const InlineFileKind = enum { other, unsupported, natural };
+
+/// Classifies one complete File= header (without its colon or image data).
+/// An explicit inline request never falls back to the download lane.
+/// The initial PNG profile admits only native-size (auto) dimensions.
+pub fn inlineFileHeader(header: []const u8) InlineFileKind {
+    if (!std.mem.startsWith(u8, header, "File=")) return .other;
+    var fields = std.mem.splitScalar(u8, header["File=".len..], ';');
+    var seen: u8 = 0;
+    var inline_intent = false;
+    var valid = true;
+    while (fields.next()) |field| {
+        const separator = std.mem.indexOfScalar(u8, field, '=') orelse {
+            valid = false;
+            continue;
+        };
+        const key = field[0..separator];
+        const value = field[separator + 1 ..];
+        const slot: u3 = if (std.mem.eql(u8, key, "inline")) blk: {
+            if (std.mem.eql(u8, value, "1")) inline_intent = true else valid = false;
+            break :blk 0;
+        } else if (std.mem.eql(u8, key, "width")) blk: {
+            if (!std.mem.eql(u8, value, "auto")) valid = false;
+            break :blk 1;
+        } else if (std.mem.eql(u8, key, "height")) blk: {
+            if (!std.mem.eql(u8, value, "auto")) valid = false;
+            break :blk 2;
+        } else if (std.mem.eql(u8, key, "preserveAspectRatio")) blk: {
+            if (!std.mem.eql(u8, value, "0") and !std.mem.eql(u8, value, "1")) valid = false;
+            break :blk 3;
+        } else if (std.mem.eql(u8, key, "name"))
+            4 // Filename is inert display metadata, never a filesystem path.
+        else if (std.mem.eql(u8, key, "size")) blk: {
+            // The author defines size as a progress hint, not admission size.
+            if (value.len == 0) valid = false;
+            for (value) |byte| if (!std.ascii.isDigit(byte)) {
+                valid = false;
+                break;
+            };
+            break :blk 5;
+        } else {
+            valid = false;
+            continue;
+        };
+        const bit = @as(u8, 1) << slot;
+        if (seen & bit != 0) valid = false;
+        seen |= bit;
+    }
+    if (!inline_intent) return .other;
+    return if (valid) .natural else .unsupported;
+}
 
 /// Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
 pub fn parse(command: u16, payload: []const u8) ?Command {
@@ -76,6 +130,8 @@ fn parse1337(payload: []const u8) ?Command {
             .clear_scrollback
         else if (std.mem.eql(u8, payload, "RequestAttention"))
             .{ .request_attention = "" }
+        else if (std.mem.eql(u8, payload, "FileEnd"))
+            .{ .file_transfer = payload }
         else
             null;
     };
@@ -90,8 +146,15 @@ fn parse1337(payload: []const u8) ?Command {
     if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
     if (std.mem.eql(u8, key, "StealFocus")) return .steal_focus;
     if (std.mem.eql(u8, key, "RequestAttention")) return .{ .request_attention = value };
-    if (std.mem.eql(u8, key, "File") or
-        std.mem.eql(u8, key, "MultipartFile") or
+    if (std.mem.eql(u8, key, "File")) {
+        const colon = std.mem.indexOfScalar(u8, payload, ':') orelse payload.len;
+        return switch (inlineFileHeader(payload[0..colon])) {
+            .other => .{ .file_transfer = payload },
+            .unsupported => null,
+            .natural => if (colon < payload.len) .{ .inline_png = payload[colon + 1 ..] } else null,
+        };
+    }
+    if (std.mem.eql(u8, key, "MultipartFile") or
         std.mem.eql(u8, key, "FilePart") or
         std.mem.eql(u8, key, "FileEnd")) return .{ .file_transfer = payload };
     if (std.mem.eql(u8, key, "ShellIntegrationVersion"))

@@ -3889,3 +3889,155 @@ test "WezTerm RGBA rectangular admission and reports preserve alpha across both 
         }
     }
 }
+
+test "iTerm2 single inline PNG admits natural pixels only at completed BEL or ST" {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |terminator| {
+        var packet: [256]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&packet, "\x1b]1337;File=name=cHJldmlldy5wbmc=;size=1;width=auto;height=auto;inline=1:{s}{s}", .{ png, terminator });
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+            defer terminal.deinit();
+            try terminal.setCellPixelSize(1, 1);
+            try feed(&terminal, "\x1b[2;2H");
+            const before = terminal.images(0).generation;
+            const first = try terminal.feed(wire[0..split]);
+            if (split != wire.len) {
+                try std.testing.expect(!first.stateChanged());
+                try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+            }
+            try feed(&terminal, wire[split..]);
+            const images = terminal.images(0);
+            try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+            try std.testing.expectEqual(before + 1, images.generation);
+            const image = images.image(0).?;
+            try std.testing.expectEqual(@as(u32, 2), image.width);
+            try std.testing.expectEqual(@as(u32, 1), image.height);
+            try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, image.pixels);
+            const placement = images.placement(0).?;
+            try std.testing.expectEqual(image.id, placement.image_id);
+            try std.testing.expectEqual(@as(u16, 1), placement.row);
+            try std.testing.expectEqual(@as(u16, 1), placement.col);
+            try std.testing.expectEqual(@as(u32, 2), placement.pixel_width);
+            try std.testing.expectEqual(@as(u32, 1), placement.pixel_height);
+            try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+            try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+            try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+            try std.testing.expectEqualStrings("", terminal.replyBytes());
+        }
+    }
+}
+
+test "iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const before = terminal.images(0).generation;
+    for ([_][]const u8{
+        "\x1b]1337;File=inline=1:!!!!\x07",
+        "\x1b]1337;File=inline=1:SGVsbG8=\x1b\\",
+        "\x1b]1337;File=inline=1;width=2px:" ++ png ++ "\x07",
+        "\x1b]1337;File=inline=1;inline=0:" ++ png ++ "\x07",
+        "\x1b]1337;File=inline=1:" ++ png[0..8] ++ "\x01" ++ png[8..] ++ "\x07",
+        "\x1b]1337;File=inli\x01ne=1:" ++ png ++ "\x07",
+    }) |wire| {
+        try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(before, terminal.images(0).generation);
+        try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    }
+    try feed(&terminal, "\x1b]1337;File=inline=0:" ++ png ++ "\x07");
+    const download = terminal.consequenceHead().?.file_transfer;
+    try std.testing.expectEqualStrings("File=inline=0:" ++ png, download.payload);
+    try terminal.consumeConsequence(download.generation);
+    try feed(&terminal, "\x1b]1337;FileEnd\x1b\\");
+    const end = terminal.consequenceHead() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("FileEnd", end.file_transfer.payload);
+    try terminal.consumeConsequence(end.id());
+}
+
+test "iTerm2 selected inline capture exceeds metadata bound and recovers from overflow" {
+    const allocator = std.testing.allocator;
+    const sample = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const decoder = std.base64.standard.Decoder;
+    const source = try allocator.alloc(u8, try decoder.calcSizeForSlice(sample));
+    defer allocator.free(source);
+    try decoder.decode(source, sample);
+    // A real PNG with a valid ancillary text chunk, not a synthetic length
+    // or decoder bypass. The small decoded image remains exactly the same.
+    const text_bytes = 4096;
+    const file = try allocator.alloc(u8, source.len + text_bytes + 12);
+    defer allocator.free(file);
+    const iend = source.len - 12;
+    @memcpy(file[0..iend], source[0..iend]);
+    std.mem.writeInt(u32, file[iend..][0..4], text_bytes, .big);
+    @memcpy(file[iend + 4 ..][0..4], "tEXt");
+    @memcpy(file[iend + 8 ..][0..8], "Comment\x00");
+    @memset(file[iend + 16 .. iend + 8 + text_bytes], 'x');
+    const crc = std.hash.Crc32.hash(file[iend + 4 .. iend + 8 + text_bytes]);
+    std.mem.writeInt(u32, file[iend + 8 + text_bytes ..][0..4], crc, .big);
+    @memcpy(file[iend + text_bytes + 12 ..], source[iend..]);
+    const encoder = std.base64.standard.Encoder;
+    const encoded = try allocator.alloc(u8, encoder.calcSize(file.len));
+    defer allocator.free(encoded);
+    const payload = encoder.encode(encoded, file);
+    try std.testing.expect(payload.len > parser_mod.max_metadata_control_bytes);
+
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;File=inline=1:")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(payload)).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b\\")).mutations.images);
+    const original = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), original.imageCount());
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, original.image(0).?.pixels);
+    const generation = original.generation;
+    const oversized = try allocator.alloc(u8, parser_mod.max_inline_image_control_bytes);
+    defer allocator.free(oversized);
+    @memset(oversized, 'A');
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;File=inline=1:")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(oversized)).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x07")).stateChanged());
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    // An ordinary metadata packet is still subject to its original limit,
+    // even after the widened inline-image capture.
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;FilePart=")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(payload)).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    try feed(&terminal, "\x1b[Hok\x1b]2;Recovered\x07");
+    try std.testing.expectEqualStrings("Recovered", terminal.title().?);
+    try std.testing.expectEqual(@as(u21, 'o'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+}
+
+test "iTerm2 inline PNG allocation failure preserves prior resource and allows a new request" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.init(failing.allocator(), 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    const packet = "\x1b]1337;File=inline=1:" ++ png;
+    try feed(&terminal, packet ++ "\x07");
+    const before = terminal.images(0);
+    const retained = before.image(0).?;
+    const placement = before.placement(0).?;
+    try std.testing.expect(!(try terminal.feed(packet)).stateChanged());
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.feed("\x07"));
+    const unchanged = terminal.images(0);
+    try std.testing.expectEqual(before.generation, unchanged.generation);
+    try std.testing.expectEqual(before.content_generation, unchanged.content_generation);
+    try std.testing.expectEqual(@as(usize, 1), unchanged.imageCount());
+    try std.testing.expectEqualDeep(placement, unchanged.placement(0).?);
+    try std.testing.expectEqual(retained.id, unchanged.image(0).?.id);
+    try std.testing.expectEqualSlices(u8, retained.pixels, unchanged.image(0).?.pixels);
+    try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    failing.fail_index = std.math.maxInt(usize);
+    try feed(&terminal, packet ++ "\x1b\\");
+    try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
+    try std.testing.expectEqual(before.generation + 1, terminal.images(0).generation);
+}

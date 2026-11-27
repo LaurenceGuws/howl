@@ -9,6 +9,7 @@ const progress_mod = @import("progress.zig");
 const program_status_mod = @import("program_status.zig");
 const kitty_placeholders = @import("kitty_placeholders.zig");
 const sixel = @import("sixel.zig");
+const png = @import("png.zig");
 const replies = @import("replies.zig");
 const properties = @import("properties.zig");
 const color_control = @import("color_control.zig");
@@ -362,6 +363,7 @@ const SemanticEvent = union(enum) {
     clipboard_set: []const u8,
     kitty_clipboard_packet: []const u8,
     file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
+    iterm_inline_png: []const u8,
     drag_drop: ParsedDragDrop,
     dec_mode_query: u16,
     sixel_register_count_query,
@@ -1715,6 +1717,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
                 .command = 1337,
                 .payload = payload,
             } },
+            .inline_png => |payload| SemanticEvent{ .iterm_inline_png = payload },
             .file_transfer => |payload| SemanticEvent{ .file_transfer_packet = .{
                 .protocol = .iterm2_1337,
                 .payload = payload,
@@ -2324,6 +2327,7 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         },
         .kitty_clipboard_packet => |payload| try vt.consequences.retainKittyClipboard(payload),
         .file_transfer_packet => |packet| try vt.consequences.retainFileTransfer(packet.protocol, packet.payload),
+        .iterm_inline_png => |payload| return applyItermInlinePng(vt, payload),
         .drag_drop => |command| try vt.consequences.retainDragDrop(.{
             .kind = command.kind,
             .command = command.command,
@@ -3609,6 +3613,7 @@ fn semanticMutationSet(
         // only when the image plane actually changed.
         .dcs_payload,
         .string_payload,
+        .iterm_inline_png,
         => {},
         .title_and_icon_set,
         .title_set,
@@ -4035,6 +4040,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .clipboard_set,
         .kitty_clipboard_packet,
         .file_transfer_packet,
+        .iterm_inline_png,
         .drag_drop,
         .locator_reporting,
         .locator_filter,
@@ -5410,7 +5416,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
     }
 
     const cursor_changed = if (result.cursor_advance) |advance|
-        applyKittyGraphicsCursorAdvance(terminal, advance)
+        applyImageCursorAdvance(terminal, advance)
     else
         false;
     return result.changed or cursor_changed or (respond and !suppressed);
@@ -5430,7 +5436,47 @@ fn resolveGraphicsVirtualAnchor(context: graphics_mod.Plane.AnchorContext, index
     return projection.cache.get(&projection.images, index);
 }
 
-fn applyKittyGraphicsCursorAdvance(
+// A selected iTerm inline file owns decoded PNG pixels directly in VT.
+// No filesystem action or opaque download consequence follows rejection.
+fn applyItermInlinePng(vt: *Terminal, encoded: []const u8) error{OutOfMemory}!bool {
+    if (encoded.len == 0 or encoded.len % 4 != 0) return false;
+    const active = vt.screen_state.activeConst();
+    const cell = active.cellPixelSize() orelse return false;
+    const decoder = std.base64.standard.Decoder;
+    const byte_count = decoder.calcSizeForSlice(encoded) catch return false;
+    const file = try vt.allocator.alloc(u8, byte_count);
+    defer vt.allocator.free(file);
+    decoder.decode(file, encoded) catch return false;
+    const decoded = png.decode(vt.allocator, file) catch |failure| switch (failure) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Invalid, error.Unsupported, error.Quota => return false,
+    };
+    var admitted = false;
+    defer if (!admitted) vt.allocator.free(decoded.pixels);
+    // The initial profile selects native pixels, not an invented implicit
+    // shrink or explicit dimension policy. Reject a too-large natural box.
+    if (@as(u64, decoded.width) > @as(u64, active.cols) * cell.width or
+        @as(u64, decoded.height) > @as(u64, active.rows) * cell.height) return false;
+    const before = vt.graphics.generation();
+    vt.graphics.admitDecoded(
+        decoded.pixels,
+        decoded.width,
+        decoded.height,
+        graphicsBank(vt),
+        graphicsScreenOrigin(vt) + active.cursor.row,
+        active.cursor.col,
+        cell.width,
+        cell.height,
+    ) catch return false;
+    admitted = true;
+    const advance: graphics_mod.CursorAdvance = .{
+        .cols = @intCast(1 + (decoded.width - 1) / cell.width),
+        .rows = @intCast(1 + (decoded.height - 1) / cell.height),
+    };
+    return applyImageCursorAdvance(vt, advance) or vt.graphics.generation() != before;
+}
+
+fn applyImageCursorAdvance(
     terminal: *Terminal,
     advance: graphics_mod.CursorAdvance,
 ) bool {

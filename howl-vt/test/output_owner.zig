@@ -2956,3 +2956,35 @@ test "Kitty centered fit reaches direct output and preserves a held cut across r
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, fitted.snapshot.graphics.images[0].pixels);
     try std.testing.expectEqual(image_generation, owner.observation().images(0).image(0).?.generation);
 }
+
+test "iTerm2 inline PNG uses native graphics output and survives held-cut retirement" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVQI12P4z8Dwn4Hh/38AD/kD/XjubY4AAAAASUVORK5CYII=";
+    try owner.feed("\x1b[H\x1b]1337;File=inline=1:" ++ png ++ "\x07");
+    try owner.flush();
+    const held = try owner.hold();
+    var pinned = true;
+    defer if (pinned) release(owner, held);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 1), held.snapshot.graphics.positive.len);
+    const original = held.snapshot.graphics.positive[0].rgba;
+    try std.testing.expectEqualDeep(output.commands.Rect{ .x = 0, .y = 0, .width = 2, .height = 1 }, original.destination);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, held.snapshot.graphics.images[0].pixels);
+    // Kitty selectors cannot acquire an unrelated decoded image.
+    try owner.feed("\x1b_Ga=d,d=A,q=2\x1b\\");
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 1), owner.observation().images(0).placementCount());
+    try owner.feed("\x1b[2J");
+    try owner.flush();
+    try std.testing.expectEqualDeep(original, held.snapshot.graphics.positive[0].rgba);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 0, 255, 255 }, held.snapshot.graphics.images[0].pixels);
+    release(owner, held);
+    pinned = false;
+    const cleared = try owner.hold();
+    defer release(owner, cleared);
+    try std.testing.expectEqual(@as(usize, 0), cleared.snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 0), cleared.snapshot.graphics.positive.len);
+}

@@ -5096,6 +5096,21 @@ specifications:
         relation: protocol-family
         legacy_records:
         - iterm2.osc1337.file
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single inline PNG admits natural pixels only at completed BEL or ST
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 selected inline capture exceeds metadata bound and recovers from overflow
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline PNG allocation failure preserves prior resource and allows a new request
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
+        relation: protocol-family
       relations:
       - kind: related
         clause: iterm2_images.single
@@ -5115,6 +5130,15 @@ specifications:
           sha256: 2f6f3bbe488f698e45f1e7db58722f8abf5f1935739d83c604a7ae55e281140b
           location: ImageAddon.activate
           meaning: OSC1337 image registration gated by iipSupport; not blanket support for other iTerm2 subcommands.
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Single natural inline PNG now has direct canonical admission. Opaque non-inline and multipart packet owner remains
+            separate, including bare FileEnd framing. See iterm2_images.single and the selected scoped inline profile. No download
+            or general file transfer implementation inferred.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: custom-buttons
       section: Buttons
       level: defined
@@ -24459,6 +24483,34 @@ specifications:
       - OSC 1337
       rule: Original single-frame file transfer with optional semicolon-separated metadata preceding colon and Base64 file bytes.
         OSC uses ESC ], BEL or ESC backslash terminates. inline flag determines display/download.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single inline PNG admits natural pixels only at completed BEL or ST
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 selected inline capture exceeds metadata bound and recovers from overflow
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline PNG allocation failure preserves prior resource and allows a new request
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Selected single OSC1337 File=inline=1 PNG with absent/auto dimensions enters canonical graphics Plane at the
+            cursor, not opaque download queue. BEL/ST every split; exact pixels, geometry, cursor advance, no reply/consequence;
+            larger valid ancillary PNG, local 1MiB payload cap and failure recovery. No new image inventory or host permission.
+            Explicit dimensions, non-PNG, large natural box and missing cell geometry not selected; no full single-file conformance
+            claim.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: multipart-start
       section: Protocol
       level: defined
@@ -24469,6 +24521,19 @@ specifications:
       relations:
       - kind: extends
         clause: iterm2_images.single
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm and Kitty file transfers retain one opaque ordered stream
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Existing bounded opaque MultipartFile packet retention only; no inline multipart transaction or decoded image
+            admission claimed.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: multipart-part
       section: Protocol
       level: defined
@@ -24486,6 +24551,26 @@ specifications:
           legacy_tmux: 256
           modern_tmux: 1048576
           iterm2: 1048576
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm and Kitty file transfers retain one opaque ordered stream
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: opaque file-transfer bounds preserve FIFO identity and wrap
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 selected inline capture exceeds metadata bound and recovers from overflow
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Existing opaque FilePart retains old 2KiB metadata packet limit; selected single inline widening does not enlarge
+            this lane. Author whole-sequence multipart bound, chunk decoding, total transfer bound and transaction assembly remain
+            open.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: multipart-end
       section: Protocol
       level: defined
@@ -24497,6 +24582,22 @@ specifications:
       - kind: related
         clause: iterm2_images.multipart-part
         role: transfer
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm and Kitty file transfers retain one opaque ordered stream
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Author bare FileEnd now reaches existing ordered file-transfer consequence lane; legacy valued FileEnd retained.
+            No multipart completion, decode or filesystem effects claimed.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: metadata
       section: Protocol / optional arguments
       level: defined
@@ -24512,12 +24613,50 @@ specifications:
           height: dimension
           preserveAspectRatio: 0 stretch allowed, default1
           inline: 0 download, 1 inline, default0
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single inline PNG admits natural pixels only at completed BEL or ST
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Known unique metadata selects natural-size inline PNG only. Name inert (not decoded or used as a path); decimal
+            size remains a progress hint, intentionally inaccurate size accepted; width/height absent or auto, preserveAspectRatio
+            0/1 accepted but immaterial to native pixels. Duplicate/unsupported selected inline headers refuse rather than enter
+            host file lane. Full filename validation, dimension units and metadata defaults not qualified.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: dimensions
       section: Protocol / width and height
       level: defined
       wire: width=N|Npx|N%|auto / height=N|Npx|N%|auto
       rule: N unitless counts character cells, Npx pixels, N% percentage of session width/height, auto inherent image dimension.
         Preserve original dimension semantics; exact rounding and absent-value defaults not separately specified.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 single inline PNG admits natural pixels only at completed BEL or ST
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: Native-size subset preserves inherent decoded pixel extent and cursor placement. Explicit sized requests refused
+            pending shared destination-geometry design. Natural images exceeding full screen pixel extent and missing cell geometry
+            refused by implementation; resizing, percent, cell, px and stretch/fit policy not yet qualified.
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: download
       section: More on File Transfers
       level: defined
@@ -24529,6 +24668,24 @@ specifications:
       - kind: related
         clause: iterm2_osc1337.native-file-render
         role: extension
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_iterm2_images_01:
+          scope: 'No download authorization: explicit inline selected requests decode PNG in VT or refuse, never become a download
+            consequence on selected invalid/unsupported input. Inline=0 remains existing opaque caller-neutral packet; actual
+            host download and other image/document formats remain deferred. Kitty selectors cannot delete the unrelated decoded
+            image; existing non-Kitty text-clear policy and held output preserved.'
+          method: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+            (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+            sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+            VT red-green, actual PNG and native held-output proofs.
+          baseline: de7604c53e616ecdb0ec6cb5d7d24c321e3d4249
     - id: detection
       section: Detection
       level: defined
@@ -40325,4 +40482,71 @@ reconciliation:
     - kitty_graphics.terminal-interaction
     scope: Selected ordinary physical two-axis fit only; no changes to source wording, virtual projection, non-Kitty admission,
       quota or other selected terminal policy.
+- id: iterm2-single-natural-inline-png-profile
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-protocol-and-bounded-native-graphics-owner
+  operator_alignment: '2026-11-27: operator approved continuation into the next modern protocol family; selected the initial
+    native inline PNG slice using the existing graphics owner, not host downloads or a full file-transfer grant.'
+  accepted_interpretation:
+    effect: Target single OSC1337 File= with explicit inline=1 and absent/auto dimensions, known unique metadata, padded
+      standard Base64 PNG and local complete payload bound1MiB (header remains2KiB). Admit native-size decoded pixels
+      through the canonical Plane when cell geometry exists and the natural extent fits the full screen; use existing
+      image cursor movement and non-Kitty placement policy. Refuse unsupported selected inline requests without download
+      fallback. Retain opaque non-inline and multipart packets for caller policy, including exact bare FileEnd. No filesystem
+      authorization, explicit scaling, multipart assembly, other formats or FILE feature advertisement selected.
+  selects:
+    iterm2.images.initial-native-png: effect
+  reason: Author distinguishes inline display from downloads, defines native auto geometry and size as progress-only.
+    Existing canonical PNG decoder/graphics Plane already owns bounded RGBA and output leases; reuse rather than duplicate.
+    Pinned iTerm2 writeBaseCharacter advances down occupied rows minus one and right occupied columns. Larger natural-box
+    fit, exact sized-image policy and multipart framing require separate qualification.
+  evidence_basis: Preserved author Inline Images Protocol HTML SHA256 a0a11ee1c5f54231309b9e2f4f1ad4add11c827cc1ec065d9947e602a853985d
+    (2026-11-24), Protocol/optional arguments/More on File Transfers/Detection; pinned iTerm2 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    sources/InlineImages/VT100InlineImageHelper.m:writeBaseCharacter and sources/VT100/VT100Terminal.m FileEnd; deterministic
+    VT red-green, actual PNG and native held-output proofs.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected single natural-size inline PNG admission and bounded capture
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/iterm_control.zig:inlineFileHeader
+    - howl-vt/src/parser.zig:OscControl
+    - howl-vt/src/terminal.zig:applyItermInlinePng
+    - howl-vt/src/graphics.zig:admitDecoded
+    - howl-vt/src/png.zig:decode
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 single inline PNG admits natural pixels only at completed BEL or ST
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 inline refusal never becomes a download consequence and bare FileEnd is retained
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 selected inline capture exceeds metadata bound and recovers from overflow
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: iTerm2 inline PNG allocation failure preserves prior resource and allows a new request
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: iTerm2 inline PNG uses native graphics output and survives held-cut retirement
+      relation: protocol-family
+    verified_subset: Every split of selected BEL/ST PNG, exact native pixels and cursor, real PNG beyond old metadata
+      cap, overflow and allocation-failure recovery, caller-neutral download separation and bare FileEnd, direct held
+      output and cross-protocol ownership isolation.
+    boundary: No full source family conformance. Selected single PNG only; explicit dimensions, multipart state, non-PNG
+      formats, large natural-box resizing, actual host downloads, FILE detection, complete allocation/geometry/framing
+      matrix and physical presentation remain unqualified.
+    not_full_because: Only a bounded natural-size PNG subset is implemented and qualified; broader source-defined image/file
+      and sizing behavior remains open.
+  applies_to:
+    clauses:
+    - iterm2_images.single
+    - iterm2_images.metadata
+    - iterm2_images.dimensions
+    - iterm2_images.multipart-end
+    - iterm2_images.download
+    - iterm2_osc1337.inline-file
+    scope: Selected single inline PNG and bare terminator framing; no broad file transfer or host permission decision.
 pending_reconciliation: []

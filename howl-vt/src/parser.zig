@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const program_status = @import("program_status.zig");
+const iterm_control = @import("iterm_control.zig");
 
 // File map:
 //   - parser bounds and borrowed phase-action vocabulary
@@ -67,6 +68,9 @@ pub const max_metadata_control_bytes = metadata_control_max_bytes;
 pub const max_palette_control_bytes = palette_control_max_bytes;
 /// Maximum complete payload accepted for one chunked Kitty control.
 pub const max_chunk_control_bytes = chunk_control_max_bytes;
+/// Local complete OSC payload bound for selected natural-size inline images.
+/// Ordinary iTerm metadata and unselected file packets keep their old bound.
+pub const max_inline_image_control_bytes: u32 = 1024 * 1024;
 
 // Borrowed parser event vocabulary.
 
@@ -528,8 +532,11 @@ pub const Parser = struct {
                 defer self.state = next_state;
                 return self.buildPhases(current_state, next_state, action, byte, null);
             }
-            if (self.osc.state == .prefix or self.osc.state == .prefix_esc)
+            if (self.osc.state == .prefix or self.osc.state == .prefix_esc or self.osc.policy.command == 1337)
                 self.osc.prefix_filtered = true;
+            // The inline image decoder must not see normalized Base64 after
+            // an ignored wire control disappeared from its encoded body.
+            if (self.osc.isInlineImage()) self.osc.overflowed = true;
         }
         const sos_kind = if (current_state == .sos_pm_apc_string) self.sosPmApcKind() else null;
         const finishing_escape = byte == '\\' and switch (current_state) {
@@ -2021,6 +2028,11 @@ pub const OscControl = struct {
 
     /// Returns OSC state to idle while retaining reusable capacity.
     pub fn reset(self: *OscControl) void {
+        // Large image packets are temporary input, not a metadata cache.
+        if (self.isInlineImage() and self.buffer.capacity > self.metadata_max_len) {
+            self.buffer.deinit(self.allocator);
+            self.buffer = .empty;
+        }
         self.state = .idle;
         self.prefix = .start;
         self.prefix_filtered = false;
@@ -2287,7 +2299,11 @@ pub const OscControl = struct {
                     self.finishBody(kind);
                     return .{ .finish = .st };
                 }
-                if (self.policy.class == .program_status) {
+                if (self.policy.command == 1337) {
+                    self.prefix_filtered = true;
+                    if (self.isInlineImage()) self.overflowed = true;
+                }
+                if (self.policy.class == .program_status or self.isInlineImage()) {
                     // A stray ESC is a malformed value byte, not an escape
                     // that quotes BEL or the next ESC in a real ST.
                     self.append(0x1B);
@@ -2357,8 +2373,24 @@ pub const OscControl = struct {
         return true;
     }
 
+    fn isInlineImage(self: *const OscControl) bool {
+        return self.policy.command == 1337 and self.policy.max_len == max_inline_image_control_bytes;
+    }
+
     fn append(self: *OscControl, byte: u8) void {
         if (self.overflowed) return;
+        // The metadata header must fit its original bound. Widen only
+        // after the exact File= header selects the supported inline profile.
+        if (byte == ':' and self.policy.command == 1337 and !self.isInlineImage() and
+            self.buffer.items.len < self.policy.max_len and
+            iterm_control.inlineFileHeader(self.buffer.items) == .natural)
+        {
+            if (self.prefix_filtered) {
+                self.overflowed = true;
+                return;
+            }
+            self.policy.max_len = max_inline_image_control_bytes;
+        }
         std.debug.assert(self.buffer.items.len <= std.math.maxInt(u32));
         const buffer_len: u32 = @intCast(self.buffer.items.len);
         if (buffer_len >= self.policy.max_len) {
