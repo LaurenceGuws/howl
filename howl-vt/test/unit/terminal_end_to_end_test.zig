@@ -7222,3 +7222,83 @@ test "Kitty anonymous placeholder remains bound through unrelated image deletion
     try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, image.pixels);
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
+
+test "Kitty ordinary ED2 reclaims local unreferenced data and keeps history and virtual prototypes" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const placeholder = "\x1b[1;4H\x1b[38;5;8m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m";
+    try feed(&terminal, "\x1b_Ga=T,i=7,p=1,C=1,s=1,v=1,q=2;AQIDBA==\x1b\\");
+    try feed(&terminal, "\x1b[3;1H\n\x1b[1;1H\x1b_Ga=p,i=7,p=2,C=1,q=2\x1b\\");
+    try feed(&terminal, "\x1b_Ga=T,i=8,p=1,U=1,C=1,s=1,v=1,q=2;BQYHCA==\x1b\\");
+    try feed(&terminal, "\x1b[2;2H\x1b_Ga=T,i=10,p=1,C=1,s=1,v=1,q=2;CQoLDA==\x1b\\");
+    try feed(&terminal, "\x1b_Ga=f,i=10,r=2,C=1,q=2;DQ4PEA==\x1b\\");
+    try feed(&terminal, "\x1b_Ga=t,i=11,s=1,v=1,q=2;ERITFA==\x1b\\");
+    try feed(&terminal, "\x1b[?47h\x1b_Ga=T,i=7,p=1,C=1,s=1,v=1,q=2;FRYXGA==\x1b\\\x1b[?47l" ++ placeholder);
+    const before = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 5), before.imageCount());
+    const retained = [_]Terminal.Image{ before.image(0).?, before.image(1).?, before.image(4).? };
+    const history = terminal.images(1).placement(0).?;
+    const cursor = terminal.semanticView(0);
+    var before_visible = before.placementIterator();
+    var visible_count: usize = 0;
+    while (before_visible.next()) |_| visible_count += 1;
+    try std.testing.expectEqual(@as(usize, 3), visible_count);
+    try std.testing.expect((try terminal.feed("\x1b[2J")).mutations.images);
+    const after = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 3), after.imageCount());
+    try std.testing.expect(after.content_generation > before.content_generation);
+    try std.testing.expectEqual(before.generation + 1, after.generation);
+    try std.testing.expectEqualDeep(history, terminal.images(1).placement(0).?);
+    try std.testing.expectEqual(cursor.history_count, terminal.semanticView(0).history_count);
+    try std.testing.expectEqual(cursor.cursor_row, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(cursor.cursor_col, terminal.semanticView(0).cursor_col);
+    var visible = after.placementIterator();
+    try std.testing.expect(visible.next() == null);
+    for (retained) |prior| {
+        var found = false;
+        for (0..after.imageCount()) |index| {
+            const image = after.image(index).?;
+            if (image.id != prior.id) continue;
+            try std.testing.expectEqual(prior.generation, image.generation);
+            try std.testing.expectEqualSlices(u8, prior.pixels, image.pixels);
+            found = true;
+        }
+        try std.testing.expect(found);
+    }
+    try std.testing.expect(!(try terminal.feed("\x1b[2J")).stateChanged());
+    try feed(&terminal, "\x1b_Ga=p,i=10,p=2\x1b\\\x1b_Ga=p,i=11\x1b\\");
+    try std.testing.expectEqualStrings("\x1b_Gi=10,p=2;ENOENT\x1b\\\x1b_Gi=11;ENOENT\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try feed(&terminal, placeholder);
+    const projected = terminal.images(0);
+    visible = projected.placementIterator();
+    try std.testing.expectEqual(retained[1].id, visible.next().?.placement.image_id);
+    try std.testing.expect(visible.next() == null);
+    try feed(&terminal, "\x1b[?47h");
+    const alternate = terminal.images(0);
+    visible = alternate.placementIterator();
+    try std.testing.expectEqual(retained[2].id, visible.next().?.placement.image_id);
+    try std.testing.expect(visible.next() == null);
+}
+
+test "Kitty blank ordinary display clear releases unplaced data without canceling pending upload" {
+    for ([_][]const u8{ "\x1b[2J", "\x9b2J", "\x1b[22J" }) |wire| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+        defer terminal.deinit();
+        try feed(&terminal, "\x1b_Ga=t,i=7,s=1,v=1,q=2;AQIDBA==\x1b\\");
+        try feed(&terminal, "\x1b_Ga=t,i=8,s=1,v=1,q=2,m=1;BQYH\x1b\\");
+        const before = terminal.images(0).generation;
+        for (wire[0 .. wire.len - 1]) |byte|
+            try std.testing.expect(!(try terminal.feed(&.{byte})).stateChanged());
+        const cleared = try terminal.feed(wire[wire.len - 1 ..]);
+        try std.testing.expect(cleared.mutations.images);
+        try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+        try std.testing.expectEqual(before + 1, terminal.images(0).generation);
+        try std.testing.expect(!(try terminal.feed(wire)).stateChanged());
+        try feed(&terminal, "\x1b_Gm=0;CA==\x1b\\");
+        try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+        try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, terminal.images(0).image(0).?.pixels);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    }
+}

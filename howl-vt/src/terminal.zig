@@ -4320,6 +4320,12 @@ fn eraseCompleteDisplay(vt: *Terminal, protected: bool) bool {
     const screen = vt.screen_state.active();
     const changed = screen.eraseDisplay(.all, protected);
     const origin = graphicsScreenOrigin(vt);
+    if (!protected) return vt.graphics.clearDisplay(
+        graphicsBank(vt),
+        origin,
+        origin + screen.rows - 1,
+        screen.cols - 1,
+    ) or changed;
     return vt.graphics.erase(
         graphicsBank(vt),
         origin,

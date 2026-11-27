@@ -1663,12 +1663,19 @@ pub const Plane = struct {
             doomed.set(index);
             count += 1;
         }
+        return self.retireBankPlacements(bank, &doomed, count);
+    }
+
+    // Full-display clear and bank teardown select different placements but
+    // share the same bank-local unreferenced Kitty data reclamation.
+    fn retireBankPlacements(self: *Plane, bank: Bank, doomed: *PlacementSet, count: usize) bool {
+        std.debug.assert(count == doomed.count());
         var reclaim: [max_images]bool = @splat(false);
         for (self.images[0..self.image_count], 0..) |retained, index|
             reclaim[index] = retained.bank == bank and retained.kitty_id != null;
         const prior_images = self.image_count;
         if (count != 0)
-            self.retirePlacementSet(&doomed, count, &reclaim, null)
+            self.retirePlacementSet(doomed, count, &reclaim, null)
         else
             self.reclaimUnplaced(&reclaim);
         const content_changed = self.image_count != prior_images;
@@ -1738,7 +1745,30 @@ pub const Plane = struct {
     ) bool {
         if (self.placement_count == 0) return false;
         var doomed = PlacementSet.empty;
-        var changed = false;
+        const count = self.selectErasedPlacements(bank, top, bottom, left, right, &doomed);
+        return self.commitPlacementChanges(&doomed, count != 0);
+    }
+
+    /// Clears the live display and retires unreferenced Kitty image data.
+    /// History references, virtual prototypes, pending uploads and other
+    /// banks remain independent. Non-Kitty data follows ordinary erase policy.
+    pub fn clearDisplay(self: *Plane, bank: Bank, top: u64, bottom: u64, right: u16) bool {
+        if (self.image_count == 0) return false;
+        var doomed = PlacementSet.empty;
+        const count = self.selectErasedPlacements(bank, top, bottom, 0, right, &doomed);
+        return self.retireBankPlacements(bank, &doomed, count);
+    }
+
+    fn selectErasedPlacements(
+        self: *const Plane,
+        bank: Bank,
+        top: u64,
+        bottom: u64,
+        left: u16,
+        right: u16,
+        doomed: *PlacementSet,
+    ) usize {
+        var count: usize = 0;
         for (self.placements[0..self.placement_count], 0..) |retained, index| {
             const retained_bottom = retained.row + retained.rows - 1;
             const retained_right = @as(u32, retained.col) + retained.cols - 1;
@@ -1748,9 +1778,9 @@ pub const Plane = struct {
                 continue;
             }
             doomed.set(index);
-            changed = true;
+            count += 1;
         }
-        return self.commitPlacementChanges(&doomed, changed);
+        return count;
     }
 
     /// Moves full-screen placements while maintaining existing scrollback
@@ -6314,4 +6344,62 @@ test "Kitty anonymous physical image does not lend its identity to a later virtu
     try std.testing.expect(plane.virtualPrototype(.primary, 0, 0) == null);
     try std.testing.expect((try plane.command("a=d,d=A", .primary, 0, 0, 0, 8, 16)).changed);
     try std.testing.expectEqual(virtual, plane.virtualPrototype(.primary, 0, 0).?.image_id);
+}
+
+test "Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes" {
+    const allocator = std.testing.allocator;
+    var plane = Plane.init(allocator);
+    defer plane.deinit();
+    for ([_][]const u8{
+        "a=T,i=7,p=1,C=1,s=1,v=1;AQIDBA==",
+        "a=t,i=8,s=1,v=1;BQYHCA==",
+        "a=p,i=8,p=2,P=7,Q=1",
+        "a=f,i=8,r=2,C=1;CQoLDA==",
+        "a=t,i=9,f=16,s=1,v=1;AoA=",
+        "a=T,i=10,p=1,U=1,s=1,v=1;DQ4PEA==",
+    }) |packet| {
+        const result = try plane.command(packet, .primary, 2, 2, 0, 1, 1);
+        try std.testing.expect(result.changed and result.failure == null);
+    }
+    try std.testing.expect((try plane.command("a=T,i=11,C=1,s=1,v=1;ERITFA==", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=T,i=7,C=1,s=1,v=1;FRYXGA==", .alternate, 0, 0, 0, 1, 1)).changed);
+    const decoded = try allocator.dupe(u8, &.{ 25, 26, 27, 28 });
+    plane.admitDecoded(decoded, 1, 1, .primary, 2, 1, 1, 1) catch |failure| {
+        allocator.free(decoded);
+        return failure;
+    };
+    const decoded_id = plane.images[plane.image_count - 1].id;
+    const virtual = plane.virtualPrototype(.primary, 10, 1).?;
+    try std.testing.expectEqual(@as(u16, 7), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 6), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    try std.testing.expectEqual(@as(usize, 34), plane.storage_bytes);
+    // A pending frame's target can disappear through a non-graphics erase.
+    // The staged payload remains owned and completion must reject the target.
+    try std.testing.expect(!(try plane.command("a=f,i=8,r=3,C=1,m=1;AQID", .primary, 2, 2, 0, 1, 1)).changed);
+    const before = plane.generation();
+    try std.testing.expect(plane.clearDisplay(.primary, 2, 4, 7));
+    try std.testing.expectEqual(before + 1, plane.generation());
+    try std.testing.expectEqual(plane.generation(), plane.content_generation);
+    try std.testing.expectEqual(@as(u16, 4), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 3), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
+    for ([_]u32{ 7, 8, 9 }) |id|
+        try std.testing.expect(plane.kittyImageIndex(id, .primary) == null);
+    try std.testing.expectEqualDeep(virtual, plane.virtualPrototype(.primary, 10, 1).?);
+    try std.testing.expect(plane.kittyImageIndex(11, .primary) != null);
+    try std.testing.expect(plane.kittyImageIndex(7, .alternate) != null);
+    try std.testing.expectEqualSlices(u8, &.{ 25, 26, 27, 28 }, plane.images[plane.imageIndex(decoded_id).?].pixels);
+    try std.testing.expect(!plane.hasPlacement(decoded_id));
+    const cleared = plane.generation();
+    try std.testing.expect(!plane.clearDisplay(.primary, 2, 4, 7));
+    try std.testing.expectEqual(cleared, plane.generation());
+    try std.testing.expect(plane.loading[@backingInt(Bank.primary)] != null);
+    const missing = try plane.command("a=f,m=0;BA==", .primary, 2, 2, 0, 1, 1);
+    try std.testing.expectEqual(@as(?Failure, .missing), missing.failure);
+    try std.testing.expectEqual(@as(?u32, 8), missing.response_id);
+    try std.testing.expectEqual(@as(?u32, 3), missing.response_frame);
+    try std.testing.expectEqual(cleared, plane.generation());
+    try std.testing.expectEqual(@as(usize, 16), plane.storage_bytes);
 }

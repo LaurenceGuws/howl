@@ -10427,6 +10427,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty anonymous placeholder remains bound through unrelated image deletion
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty ordinary ED2 reclaims local unreferenced data and keeps history and virtual prototypes
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
@@ -10460,6 +10466,15 @@ specifications:
             local tie-break where author protocol specifies no anonymous ordering; Plane red-green and wire projection proof;
             no blanket FULL promotion
           baseline: 5434c16752d867f58d245ec74ca399df59550926
+        howl_qualification_20261127_kitty_graphics_10:
+          scope: Selected ordinary ED2 erases live placeholder text while retaining virtual prototype and decoded resource identity.
+            Re-emitting the placeholder projects the same image; history/virtual references prevent unreferenced data reclamation.
+            No new alternate-screen or relative geometry policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c filter_refs2453-2475 and clear_filter_func/grman_clear2626-2645, screen.c screen_erase_in_display3188-3251;
+            deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
+            FULL promotion
+          baseline: 4ad5135a5eade890744572600b56fffe6072e770
     - id: relative
       section: Relative placements
       level: defined
@@ -10498,6 +10513,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty physical P Q validates bank and ancestor lifetime without evicting unrelated data
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Replacement seeds all old placement roots in one existing bounded ancestry closure (16 rounds), compacts
@@ -10531,6 +10549,15 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_10:
+          scope: Selected physical-root display retirement reuses existing bounded descendant closure and frees orphan child frames/data.
+            Virtual prototype and history roots outside selected rectangle remain. No new independent child geometry matching
+            or full author relative-clear claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c filter_refs2453-2475 and clear_filter_func/grman_clear2626-2645, screen.c screen_erase_in_display3188-3251;
+            deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
+            FULL promotion
+          baseline: 4ad5135a5eade890744572600b56fffe6072e770
     - id: delete
       section: Deleting images
       level: defined
@@ -10772,6 +10799,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: First animation-frame header initializes owned metadata and calls same append path directly; no synthetic
@@ -10810,6 +10840,15 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_qualification_20261127_kitty_graphics_10:
+          scope: Selected ordinary display clear retires animated image and frame storage. A staged frame whose target image was
+            reclaimed completes with ENOENT-class missing failure under its original image/frame identity and no retained mutation.
+            Other pending transfers and existing admission bounds unchanged.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c filter_refs2453-2475 and clear_filter_func/grman_clear2626-2645, screen.c screen_erase_in_display3188-3251;
+            deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
+            FULL promotion
+          baseline: 4ad5135a5eade890744572600b56fffe6072e770
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -10909,6 +10948,15 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: static image allocation failure leaves the plane reusable
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty ordinary ED2 reclaims local unreferenced data and keeps history and virtual prototypes
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty blank ordinary display clear releases unplaced data without canceling pending upload
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Full placement table (16384) accepts a new placement for a replacement image whose existing group frees capacity;
@@ -10919,6 +10967,16 @@ specifications:
             lines611-663, relative placements section; graphics.c free_image_resources and handle_add_command; deterministic
             Plane red-green, allocation failure and actual held output proof; no blanket FULL promotion
           baseline: 67f106ba73af8ac91b11cb387b55204b9e8c10f9
+        howl_qualification_20261127_kitty_graphics_10:
+          scope: Full ordinary display clear reclaims previously unplaced Kitty data and data orphaned by selected physical placement
+            retirement; frames and indexed source bytes released via existing allocator ownership. Exact bounded storage proof
+            34 to16 bytes with other-bank, history, virtual and non-Kitty decoded data preserved. No new pressure/eviction policy
+            or quota expansion.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c filter_refs2453-2475 and clear_filter_func/grman_clear2626-2645, screen.c screen_erase_in_display3188-3251;
+            deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
+            FULL promotion
+          baseline: 4ad5135a5eade890744572600b56fffe6072e770
     - id: direct-chunks
       section: docs/graphics-protocol.rst:470-495
       level: defined
@@ -11000,6 +11058,12 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty interrupted upload remains pending until the new command is admitted
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty blank ordinary display clear releases unplaced data without canceling pending upload
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Separate author4096-byte encoded data ceiling from existing8192-byte full APC packet ceiling; require nonfinal
@@ -11069,6 +11133,16 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_qualification_20261127_kitty_graphics_10:
+          scope: Local ordinary text display-clear policy leaves staged upload bytes owned; split ED2/ED22 on blank display reclaims
+            unplaced retained image without canceling a different pending static upload. Repeated clear is a no-op, final chunk
+            admits exact pixels. Pending frame whose target disappeared rejects safely. No claim of author malformed-interleaving
+            or clear-during-load parity.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c filter_refs2453-2475 and clear_filter_func/grman_clear2626-2645, screen.c screen_erase_in_display3188-3251;
+            deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
+            FULL promotion
+          baseline: 4ad5135a5eade890744572600b56fffe6072e770
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -11425,6 +11499,15 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty same client ID in another bank preserves held output and clears only alternate resources
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty ordinary ED2 reclaims local unreferenced data and keeps history and virtual prototypes
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty blank ordinary display clear releases unplaced data without canceling pending upload
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Six screen retirement routes (erase, bounds, history eviction, scroll, column shift, clear bank) select
@@ -11447,6 +11530,18 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_10:
+          scope: Ordinary ED2 and shared ED22 completion now retire unreferenced local Kitty image data after existing full-rectangle
+            root selection and descendant closure. Primary history-only placements, images with surviving history references,
+            virtual prototypes, inactive-bank data and non-Kitty decoded bytes survive. Blank ED2/ED22 unplaced-only sweep reports
+            graphics mutation once; pending static transfer preserved, pending frame whose owner is reclaimed later rejects. Existing
+            selective DEC erasure, ED3, alternate teardown, partial erasures and placement geometry unchanged. Not complete parity
+            with author row-only clear filter or relative children anchored outside selected roots.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1323-1337, graphics.c filter_refs2453-2475 and clear_filter_func/grman_clear2626-2645, screen.c screen_erase_in_display3188-3251;
+            deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
+            FULL promotion
+          baseline: 4ad5135a5eade890744572600b56fffe6072e770
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
